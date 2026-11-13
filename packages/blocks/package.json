@@ -1,7 +1,7 @@
 {
   "name": "@audiorective/blocks",
   "version": "2.3.2",
-  "description": "Headless audio blocks for loading, selecting and auditioning audio ranges",
+  "description": "Headless audio range playback and pure MIDI note data with shared selection",
   "type": "module",
   "license": "MIT",
   "homepage": "https://github.com/audiorective/audiorective/tree/main/packages/blocks#readme",
@@ -25,7 +25,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./midi": {
+      "types": "./dist/midi.d.ts",
+      "import": "./dist/midi.js"
+    }
   },
   "scripts": {
     "build": "tsdown",

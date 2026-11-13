@@ -1,5 +1,13 @@
 [
   {
+    "query": "Build a browser MIDI file inspector with a piano roll, beat snap and two views sharing selected notes/time. We already own the AudioContext and synth.",
+    "should_trigger": true
+  },
+  {
+    "query": "Explain the MIDI note number formula and the frequency of A4. No app, library integration, audio playback or visualization code.",
+    "should_trigger": false
+  },
+  {
     "query": "I need a browser waveform editor in vanilla TypeScript: load a local audio file, drag a time range, and loop audition that selection. I already have an AudioContext and an effects chain.",
     "should_trigger": true
   },

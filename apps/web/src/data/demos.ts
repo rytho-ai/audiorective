@@ -10,6 +10,15 @@ export interface Demo {
 
 export const demos: Demo[] = [
   {
+    slug: "piano-roll",
+    title: "MIDI Piano Roll",
+    blurb: "Inspect and edit MIDI notes in two shared views. Select a range, snap to beats and audition it.",
+    thumb: "/showroom/piano-roll.svg",
+    route: "/showroom/piano-roll",
+    source: "https://github.com/audiorective/audiorective/tree/main/apps/web/src/demos/midi",
+    packages: ["@audiorective/blocks", "@audiorective/widgets"],
+  },
+  {
     slug: "waveform",
     title: "Waveform Selector",
     blurb: "Select, resize, and loop an audio range. A framework-independent widget with optional interaction plugins.",

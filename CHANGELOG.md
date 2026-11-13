@@ -19,6 +19,9 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Added
 
+- **blocks:** Pure `@audiorective/blocks/midi` entry with `parseMidi`, `tickToSeconds`, `midiGrid`, `visibleMidiNotes`, immutable MIDI types and `MidiSequence` for source-time note/selection snapshots and atomic note edits. SMF format0/1 PPQ note projection follows tempo/signature maps without DOM, AudioContext or device permissions.
+- **widgets:** Audio-independent `mountPianoRoll` and renderer/model contracts from `@audiorective/widgets/piano-roll`; shared time selection, snap, keyboard handles, independent pitch/zoom/scroll, external playheads and custom note drawing. Views borrow note state and leave audio/synth ownership to the caller. MIDI docs and showroom demonstrate two views and caller-owned range audition.
+
 - **blocks**: `WavePlayer.getState().loadProgress` snapshots via `getState()`/`subscribe()` (download/read bytes, decode, peaks), `cancelLoad()`, and `WavePlayerOptions.loadSource` for shared URL/decode caches. Built-in loading streams bytes, treats unknown/encoded totals as indeterminate, and rejects text or mismatched transfers. Cancelled/stale loads do not publish progress or errors.
 - **widgets**: selector loading phases/byte feedback, determinate or indeterminate progress, Cancel loading control and `handle.cancelLoad()`, all driven by the shared player.
 

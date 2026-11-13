@@ -11,8 +11,8 @@ Which `@audiorective/*` packages to install, what they pull in, and how to keep 
 | `@audiorective/core`       | Reactive audio state — `AudioProcessor`, `Param`, `Cell`, `createEngine`, `defineGraph`, the players | —                       |
 | `@audiorective/clock`      | Transport, tempo, look-ahead scheduling, rulers (sequencers, drum machines, loopers)                 | —                       |
 | `@audiorective/effects`    | DSP effects, channel strips, send buses, offline rendering of an effects chain                       | —                       |
-| `@audiorective/widgets`    | Waveform display, range selection, and audio audition without a UI framework                         | —                       |
-| `@audiorective/blocks`     | Headless range selection/playback, standalone or shared between waveform widgets                     | —                       |
+| `@audiorective/widgets`    | Waveform/MIDI piano-roll display, range selection and audio audition without a UI framework          | —                       |
+| `@audiorective/blocks`     | Headless WavePlayer audio selection/playback and pure MidiSequence note data                         | —                       |
 | `@audiorective/react`      | React hooks and an engine context                                                                    | `react` `^18 \|\| ^19`  |
 | `@audiorective/threejs`    | Spatial audio that follows three.js objects                                                          | `three` `>=0.150.0`     |
 | `@audiorective/playcanvas` | A shared `AudioContext` and spatial sound bound to PlayCanvas entity transforms                      | `playcanvas` `>=2.18.1` |
@@ -47,7 +47,7 @@ Browser waveform display and selection:
 npm install @audiorective/widgets
 ```
 
-Use `@audiorective/widgets` for the complete selector or `@audiorective/widgets/waveform` for audio-independent rendering and plugins. See [Widgets](./widgets.md). Check the [changelog](../CHANGELOG.md) against the installed package: APIs listed under Unreleased require a workspace build or packed artifact until a release includes them.
+Use `@audiorective/widgets` for the complete selector or `@audiorective/widgets/waveform` for audio-independent rendering and plugins. See [Widgets](./widgets.md). For MIDI parsing/shared note state use `@audiorective/blocks/midi`; for audio-independent piano-roll rendering use `@audiorective/widgets/piano-roll`. See [MIDI and Piano Roll](./midi.md). Check the [changelog](../CHANGELOG.md) against the installed package: APIs listed under Unreleased require a workspace build or packed artifact until a release includes them.
 
 Latency tests for your own processors:
 

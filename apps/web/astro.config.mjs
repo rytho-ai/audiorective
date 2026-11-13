@@ -40,6 +40,7 @@ export default defineConfig({
             { label: "Effects", slug: "docs/effects" },
             { label: "Blocks", slug: "docs/blocks" },
             { label: "Widgets", slug: "docs/widgets" },
+            { label: "MIDI and Piano Roll", slug: "docs/midi" },
             { label: "Devtools", slug: "docs/devtools" },
           ],
         },

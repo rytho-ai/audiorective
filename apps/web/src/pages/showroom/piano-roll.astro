@@ -1,0 +1,81 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+---
+
+<BaseLayout title="MIDI Piano Roll" description="Explore MIDI notes with shared selection and customizable piano-roll views.">
+  <main class="midi-demo">
+    <header>
+      <p>@audiorective/blocks · @audiorective/widgets</p>
+      <h1>MIDI piano roll</h1>
+      <p>Open a MIDI file, drag a time range to select it, then press Play to hear that range. Click a note to change its pitch or velocity in both views.</p>
+      <p>The example score includes a tempo change, a sustained note and a second track. The two views share notes and selection, with independent drawing and zoom.</p>
+      <a href="/docs/midi">MIDI and piano-roll API →</a>
+    </header>
+    <p>
+      <button id="midi-example" type="button">Load example score</button>
+      <output id="midi-status" aria-live="polite"></output>
+    </p>
+    <div id="midi-demo"></div>
+  </main>
+</BaseLayout>
+
+<script>
+  import { mountMidiApp } from "../../demos/midi/app";
+  import { createAuditioner } from "../../demos/midi/audition";
+
+  const root = document.getElementById("midi-demo")!;
+  const context = new AudioContext();
+  const master = context.createGain();
+  master.gain.value = 0.3;
+  master.connect(context.destination);
+  const app = mountMidiApp(root, {
+    context,
+    output: master,
+    makeAuditioner: (read) => createAuditioner(context, master, read),
+  });
+  const status = document.getElementById("midi-status")!;
+  const loadButton = document.getElementById("midi-example")!;
+  let request = 0;
+
+  async function example() {
+    const token = ++request;
+    try {
+      const response = await fetch("/showroom/midi.mid");
+      if (!response.ok) throw new Error("Example score could not be loaded.");
+      const bytes = await response.arrayBuffer();
+      if (token !== request) return;
+      app.load(bytes);
+      status.textContent = "Example score loaded.";
+    } catch (error) {
+      if (token === request) status.textContent = String(error);
+    }
+  }
+
+  loadButton.addEventListener("click", example);
+  void example();
+  window.addEventListener("pagehide", () => {
+    ++request;
+    loadButton.removeEventListener("click", example);
+    app.destroy();
+    master.disconnect();
+    void context.close();
+  }, { once: true });
+</script>
+
+<style>
+  .midi-demo {
+    max-width: 68rem;
+    margin: 0 auto;
+    padding: 3rem 1.5rem;
+    min-width: 0;
+  }
+  header { max-width: 50rem; margin-bottom: 1.5rem; }
+  h1 { font: 600 3rem/1.1 var(--display); }
+  header p { line-height: 1.6; color: var(--fg-dim); }
+  a { color: var(--accent-2); }
+  button { font: inherit; padding: 0.5rem 0.8rem; cursor: pointer; }
+  output { font-family: var(--mono); }
+  #midi-demo { min-width: 0; --piano-roll-height: 280px; }
+  #midi-demo :global(input[type=file]) { max-width: 100%; width: 100%; }
+  #midi-demo :global(label), #midi-demo :global(fieldset) { min-width: 0; max-width: 100%; }
+</style>

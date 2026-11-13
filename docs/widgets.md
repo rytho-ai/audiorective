@@ -2,7 +2,7 @@
 title: Widgets
 ---
 
-Try the [waveform showroom](/showroom/waveform) for a working selector.
+Try the [waveform showroom](/showroom/waveform) for a working selector, or the [piano-roll showroom](/showroom/piano-roll) for shared MIDI views. See [MIDI and Piano Roll](./midi.md) for `mountPianoRoll` from the audio-independent `@audiorective/widgets/piano-roll` entry.
 
 `@audiorective/widgets` provides browser DOM widgets that mount into an element and return an imperative handle. Use `mountWaveformSelector` for loading audio, selecting a range, and auditioning it. Use the audio-independent `@audiorective/widgets/waveform` entry for a waveform driven by your own data and playback position.
 

@@ -1,7 +1,7 @@
 {
   "name": "@audiorective/widgets",
   "version": "2.3.2",
-  "description": "Composable waveform display, selection and audio audition widgets",
+  "description": "Composable waveform and MIDI piano-roll display, selection and audio audition widgets",
   "type": "module",
   "license": "MIT",
   "homepage": "https://github.com/audiorective/audiorective/tree/main/packages/widgets#readme",
@@ -29,7 +29,11 @@
       "types": "./dist/waveform.d.ts",
       "import": "./dist/waveform.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./piano-roll": {
+      "types": "./dist/piano-roll.d.ts",
+      "import": "./dist/piano-roll.js"
+    }
   },
   "scripts": {
     "build": "tsdown",

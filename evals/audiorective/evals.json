@@ -59,7 +59,7 @@
     },
     {
       "id": 5,
-      "prompt": "Build a vanilla TypeScript clip selector with @audiorective/widgets. My app supplies an AudioContext and a gain node for the output; do not create or close a context inside the widget integration. Load /audio/loop.wav, support replacing it with a File, select 1–2 seconds programmatically, show loading errors, and clean up on unmount. Explain which interactions start audition. Use the current workspace package if this API is Unreleased. Do not run anything.",
+      "prompt": "Build a vanilla TypeScript clip selector with @audiorective/widgets. My app supplies an AudioContext and a gain node for the output; do not create or close a context inside the widget integration. Load /audio/loop.wav, support replacing it with a File, select 1\u20132 seconds programmatically, show loading errors, and clean up on unmount. Explain which interactions start audition. Use the current workspace package if this API is Unreleased. Do not run anything.",
       "expected_output": "A mountWaveformSelector integration using a caller-owned context and routed output, asynchronous readiness and recovery, and explicit lifecycle cleanup.",
       "files": [],
       "expectations": [
@@ -154,6 +154,22 @@
         "The cache adapter removes progress/abort listeners when cancelled or settled while protecting other readers.",
         "Loading another source or destroying the block cannot publish stale progress or decoded results.",
         "Cleans up observers and views before destroying the app-owned player, and leaves the caller-owned context open."
+      ]
+    },
+    {
+      "id": 11,
+      "prompt": "Use current Audiorective workspace packages to inspect an SMF File in two piano rolls with shared time selection and source-tempo snapping. Use different note drawings, a pitch/velocity inspector, external playhead, and an existing caller-owned synth. Include invalid file recovery, one-view removal and final cleanup. Do not create a MIDI device connection or a new synth/transport in the widget.",
+      "expected_output": "MidiSequence and MIDI utilities from blocks/midi own note data and selection. mountPianoRoll from widgets/piano-roll borrows the same model; custom renderer changes note drawing while caller instruments and audio scheduling remain independent.",
+      "files": [],
+      "expectations": [
+        "Imports MidiSequence/midiGrid from @audiorective/blocks/midi and mountPianoRoll from @audiorective/widgets/piano-roll, using a workspace build for Unreleased APIs.",
+        "Awaits File.arrayBuffer before synchronous sequence.load, guards stale reads, and catches parse failures without replacing the previous snapshot.",
+        "Uses source tempo/signature metadata via midiGrid rather than assuming a constant120 BPM.",
+        "Both views borrow one sequence; note edits go through updateNote and selection through the shared model without mirrored audio/UI state.",
+        "Renderer uses frame timeToX/pitchToY and visible spanning notes; view has no AudioContext, synth or device permissions.",
+        "Note inspection calls caller controls; this version does not promise note drag/resize, lossless SMF export, pedal/controller rendering or Web MIDI I/O.",
+        "Caller clips sustained notes to audition bounds, schedules its instrument and cancels active/future voices on pause/seek/source replacement/edit/destroy.",
+        "Removing one view preserves peer/model/audio; final cleanup destroys views, caller audio and sequence independently."
       ]
     }
   ]

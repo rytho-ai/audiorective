@@ -13,8 +13,8 @@ The audio engine owns its state. Your interfaces observe parameters, change valu
 | [Core](/docs/core)             | Reactive parameters and cells, processors, playback, analysis, spatial audio, and graph routing          |
 | [Clock](/docs/clock)           | Transport, tempo automation, scheduling windows, and beat/bar/time rulers                                |
 | [Effects](/docs/effects)       | Filters, delay, reverb, distortion, modulation, pitch shifting, dynamics, channel strips, and send buses |
-| [Widgets](/docs/widgets)       | Browser waveform display, selection, and audition with optional visual plugins                           |
-| [Blocks](/docs/blocks)         | Headless range loading, selection, playback and loop audition shared by multiple views                   |
+| [Widgets](/docs/widgets)       | Browser waveform/piano-roll display, shared selection, audition and custom drawing                       |
+| [Blocks](/docs/blocks)         | Headless WavePlayer audio workflows and pure MidiSequence note data shared by multiple views             |
 | [React](/docs/react)           | Hooks and an engine context for reactive interfaces                                                      |
 | [Three.js](/docs/threejs)      | A shared audio context and spatial sound that follows scene objects                                      |
 | [PlayCanvas](/docs/playcanvas) | Engine integration and entity-to-panner bindings                                                         |
@@ -54,3 +54,7 @@ Use `renderOffline` for a graph or `renderTimeline` for clock-driven audio. Both
 Follow [Get Started](/docs/get-started) for a runnable sound, or [Installation](/docs/installation) to choose packages. The [showroom](/showroom) contains working examples and source links.
 
 Audiorective's audio engine runs in the browser. For Astro, Next.js, or other server-rendered frameworks, keep audio code behind a [client-only boundary](/docs/client-boundary).
+
+### MIDI notes and piano roll
+
+Use the pure `blocks/midi` entry to parse SMF note data, preserve source-tempo coordinates, edit notes and share a selection. Mount independent piano-roll views through `widgets/piano-roll`; the caller chooses instruments and playback. See [MIDI and Piano Roll](/docs/midi) and the [showroom](/showroom/piano-roll).

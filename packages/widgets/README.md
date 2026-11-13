@@ -34,3 +34,7 @@ Both mount functions accept a `renderer` factory to replace waveform drawing wit
 See the [widget reference](../../docs/widgets.md) for public types, loading and cleanup behavior, plugin examples, and styling.
 
 For offline edits, pass a `WavePlayer` configured with a borrowed stretch processor and call `await player.setStretch(ratio)`. See the [complete composition example](../../docs/blocks.md#compose-offline-stretch-and-a-selector) for caller-hosted WASM, routing, URL/File errors and cleanup.
+
+## Piano roll
+
+Import `mountPianoRoll` from `@audiorective/widgets/piano-roll` for MIDI notes, a piano keyboard, source-time range selection, beat snapping, zoom/scroll and an external playhead. Pass a shared `MidiSequence` or structural model. Each view borrows data and selection, owns its renderer/viewport, and creates no audio nodes. `renderer` replaces note drawing; `onNoteClick` connects your inspector and model editing controls. See [MIDI and Piano Roll](../../docs/midi.md).
