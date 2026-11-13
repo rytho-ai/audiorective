@@ -38,6 +38,8 @@ export default defineConfig({
             { label: "Three.js", slug: "docs/threejs" },
             { label: "PlayCanvas", slug: "docs/playcanvas" },
             { label: "Effects", slug: "docs/effects" },
+            { label: "Blocks", slug: "docs/blocks" },
+            { label: "Widgets", slug: "docs/widgets" },
             { label: "Devtools", slug: "docs/devtools" },
           ],
         },

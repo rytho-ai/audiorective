@@ -8,6 +8,8 @@ Reactive primitives for Web Audio. Bridges audio parameter automation and UI fra
 
 Audio state is the single source of truth. UI frameworks observe and mutate directly. No state duplication.
 
+For data-only waveform summaries, use the [`@audiorective/core/peaks`](#pcm-peak-summaries) entry. It requires neither Web Audio nor a DOM.
+
 ## Quick Start
 
 ```typescript
@@ -478,6 +480,41 @@ analyser.readFrequencies(bins); // bins[i] = 0–255
 **Analyser data is not reactive** — it changes every audio frame with no signal to subscribe to. Poll it from your render loop, **not** from an `effect()` or `useValue()`. See [pixijs.md](./pixijs.md) for the `effect`-vs-render-loop decision in a full app.
 
 ---
+
+## PCM peak summaries
+
+`@audiorective/core/peaks` is a pure PCM entry for browsers, Node.js, and Workers. It imports no audio-runtime implementation and creates no nodes or DOM. The root entry also exports these functions and types.
+
+```typescript
+import { summarizePeaks, peakFrameRange, type PCMData } from "@audiorective/core/peaks";
+
+const pcm: PCMData = {
+  channels: [Float32Array.of(0.25, 0.75, 0.5)],
+  sampleRate: 48000,
+};
+const summary = summarizePeaks(pcm, { framesPerPeak: 2 });
+// summary.min: [0.25, 0.5]; summary.max: [0.75, 0.5]
+const tail = peakFrameRange(summary, 1);
+// { startFrame: 2, endFrame: 3, startTime: 2 / 48000, endTime: 3 / 48000 }
+```
+
+`PCMData` has readonly `channels: readonly Float32Array[]` and `sampleRate: number`. Channels must have equal lengths and finite samples, with at least one channel and a finite positive sample rate. Equally empty channels are valid.
+
+`summarizePeaks(pcm, { framesPerPeak? })` uses **source frames per bin**, defaulting to `128`; the option must be a positive safe integer. Each bin merges the true minimum and maximum across all supplied channels. Channels are not summed. It preserves DC offsets and amplitudes outside ±1, without clipping, zero-baseline expansion or display normalization. It creates `Math.ceil(frameCount / framesPerPeak)` bins, including the full final partial bin, and never changes the source arrays.
+
+`PeakSummary` has readonly fields `min: Float32Array`, `max: Float32Array`, `sampleRate`, `frameCount`, `framesPerPeak`, and `duration` (`frameCount / sampleRate`). Empty input produces empty extrema arrays and duration zero. Readonly fields do not freeze typed-array elements; treat shared summaries as read-only.
+
+`peakFrameRange(summary, index)` returns a half-open `[startFrame, endFrame)` range and its `startTime`/`endTime` in seconds. Coordinates are local to the supplied PCM, including a channel created with `subarray`; the final range ends at `frameCount`. Indices must identify existing bins. Source offsets, source/output edit mapping, cache lifetime and rendering density belong to callers.
+
+| Error                                                           | Fix                                               |
+| --------------------------------------------------------------- | ------------------------------------------------- |
+| `summarizePeaks: sampleRate must be a finite positive number`   | Supply the PCM's positive sample rate.            |
+| `summarizePeaks: framesPerPeak must be a positive safe integer` | Use an integer of at least 1.                     |
+| `summarizePeaks: at least one channel is required`              | Supply at least one channel, which may be empty.  |
+| `summarizePeaks: every channel must be a Float32Array`          | Convert each channel to a Float32Array.           |
+| `summarizePeaks: channels must have equal frame counts`         | Supply equally sized channels.                    |
+| `summarizePeaks: samples must be finite numbers`                | Remove NaN and infinite samples.                  |
+| `peakFrameRange: index must identify an existing peak`          | Use a valid bin index; empty summaries have none. |
 
 ## Sound Playback
 
@@ -1059,6 +1096,7 @@ signals/src/
 ├── ParamSync.ts         # per-context RAF sync loop
 ├── Spatial.ts           # AudioProcessor wrapping a PannerNode
 ├── Analyser.ts          # AudioProcessor wrapping an AnalyserNode (spectrum/waveform tap)
+├── peaks.ts             # pure PCM summaries and frame/time bin ranges
 ├── types.ts             # SignalAccessor, ComputedAccessor, Readable, ParamBind, etc.
 └── index.ts             # public exports
 ```
@@ -1075,6 +1113,7 @@ export { EngineEnvironmentError, LatencyUnknownError };
 // Factories
 export { createEngine, cell, defineGraph };
 export { loadAudioBuffer };
+export { summarizePeaks, peakFrameRange };
 
 // Constants
 export { DEFAULT_SYNC_INTERVAL_MS };
@@ -1103,5 +1142,7 @@ export type {
   GraphOptions,
   GraphSource,
   GraphSink,
+  PCMData,
+  PeakSummary,
 };
 ```

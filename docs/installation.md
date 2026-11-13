@@ -6,15 +6,17 @@ Which `@audiorective/*` packages to install, what they pull in, and how to keep 
 
 ## Packages
 
-| Package                    | Install when you need…                                                                          | Peer dependency         |
-| -------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------- |
-| `@audiorective/core`       | Anything at all — `AudioProcessor`, `Param`, `Cell`, `createEngine`, `defineGraph`, the players | —                       |
-| `@audiorective/clock`      | Transport, tempo, look-ahead scheduling, rulers (sequencers, drum machines, loopers)            | —                       |
-| `@audiorective/effects`    | DSP effects, channel strips, send buses, offline rendering of an effects chain                  | —                       |
-| `@audiorective/react`      | React hooks and an engine context                                                               | `react` `^18 \|\| ^19`  |
-| `@audiorective/threejs`    | Spatial audio that follows three.js objects                                                     | `three` `>=0.150.0`     |
-| `@audiorective/playcanvas` | A shared `AudioContext` and spatial sound bound to PlayCanvas entity transforms                 | `playcanvas` `>=2.18.1` |
-| `@audiorective/devtools`   | Measuring and asserting a processor's latency in tests (dev dependency)                         | —                       |
+| Package                    | Install when you need…                                                                               | Peer dependency         |
+| -------------------------- | ---------------------------------------------------------------------------------------------------- | ----------------------- |
+| `@audiorective/core`       | Reactive audio state — `AudioProcessor`, `Param`, `Cell`, `createEngine`, `defineGraph`, the players | —                       |
+| `@audiorective/clock`      | Transport, tempo, look-ahead scheduling, rulers (sequencers, drum machines, loopers)                 | —                       |
+| `@audiorective/effects`    | DSP effects, channel strips, send buses, offline rendering of an effects chain                       | —                       |
+| `@audiorective/widgets`    | Waveform display, range selection, and audio audition without a UI framework                         | —                       |
+| `@audiorective/blocks`     | Headless range selection/playback, standalone or shared between waveform widgets                     | —                       |
+| `@audiorective/react`      | React hooks and an engine context                                                                    | `react` `^18 \|\| ^19`  |
+| `@audiorective/threejs`    | Spatial audio that follows three.js objects                                                          | `three` `>=0.150.0`     |
+| `@audiorective/playcanvas` | A shared `AudioContext` and spatial sound bound to PlayCanvas entity transforms                      | `playcanvas` `>=2.18.1` |
+| `@audiorective/devtools`   | Measuring and asserting a processor's latency in tests (dev dependency)                              | —                       |
 
 Every package depends on `@audiorective/core`; installing any of them installs core. `core` brings `alien-signals` (the reactive primitive) and `immer` (for `Cell.update`) along with it — you do not install those yourself unless you call `signal`/`computed`/`effect` from `alien-signals` directly in your own code.
 
@@ -38,6 +40,14 @@ Spatial audio in a three.js scene, no React:
 ```sh
 npm install @audiorective/core @audiorective/threejs
 ```
+
+Browser waveform display and selection:
+
+```sh
+npm install @audiorective/widgets
+```
+
+Use `@audiorective/widgets` for the complete selector or `@audiorective/widgets/waveform` for audio-independent rendering and plugins. See [Widgets](./widgets.md). Check the [changelog](../CHANGELOG.md) against the installed package: APIs listed under Unreleased require a workspace build or packed artifact until a release includes them.
 
 Latency tests for your own processors:
 

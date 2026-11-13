@@ -2,7 +2,7 @@
 title: Effects
 ---
 
-DSP effects for audiorective — the Tone.js replacement set. Ten `AudioProcessor` classes (nine effects plus `Channel`), a `SendBus`, and dB conversion helpers, all built on `@audiorective/core`.
+DSP effects for audiorective — the Tone.js replacement set. Ten `AudioProcessor` classes (nine effects plus `Channel`), a `SendBus`, and dB conversion helpers are built on `@audiorective/core`. [`TimeStretch`](#timestretch) provides separate data-only offline processing.
 
 ## Install
 
@@ -12,7 +12,7 @@ pnpm add @audiorective/effects
 
 ## The contract
 
-Every effect in this package is an `AudioProcessor` with a stable `input: GainNode` and `output: GainNode`, so it drops into `defineGraph` like any other processor. Continuous controls are `SchedulableParam`s (rampable, sample-accurate); controls that must rebuild a node (a WaveShaper curve, a filter type) are plain `Param`s. Every effect has `params.wet: SchedulableParam` (default `1`) — a linear crossfade between the dry input and the processed signal, computed from one automation signal so both arms land in step on a ramp. Bypass is `wet = 0`; effects stay connected at `wet = 0`, there is no connect/disconnect toggling. Each effect declares `latency` (samples) or lets it derive from its internal `defineGraph` — unless documented otherwise below, an effect's latency is its wet arm's latency, since the dry arm is delay-compensated to match. Every class accepts a `BaseAudioContext`, so the same code runs live or through `renderOffline` (from `@audiorective/core`).
+Every live effect in this package is an `AudioProcessor` with a stable `input: GainNode` and `output: GainNode`, so it drops into `defineGraph` like any other processor. Continuous controls are `SchedulableParam`s (rampable, sample-accurate); controls that must rebuild a node (a WaveShaper curve, a filter type) are plain `Param`s. Every effect has `params.wet: SchedulableParam` (default `1`) — a linear crossfade between the dry input and the processed signal, computed from one automation signal so both arms land in step on a ramp. Bypass is `wet = 0`; effects stay connected at `wet = 0`, there is no connect/disconnect toggling. Each effect declares `latency` (samples) or lets it derive from its internal `defineGraph` — unless documented otherwise below, an effect's latency is its wet arm's latency, since the dry arm is delay-compensated to match. Live processors accept a `BaseAudioContext`, so the same code runs live or through `renderOffline` (from `@audiorective/core`). The separate `TimeStretch` class accepts a compiled WASM module and has no audio nodes, context, `wet`, or `Effect` inheritance.
 
 ## Writing your own effect
 
@@ -74,6 +74,49 @@ const stretch = new PitchShift(ctx, { engine: "stretch", pitch: -5, stretch: { b
 await stretch.ready;
 console.log(stretch.latency.value); // samples, known only after `ready`
 ```
+
+## TimeStretch
+
+`TimeStretch` renders a uniform, pitch-preserving duration change from planar [`PCMData`](./core.md#pcm-peak-summaries). Import `@audiorective/effects/time-stretch` to avoid evaluating the live effects/audio-runtime implementations. Importing it creates no nodes or DOM; processing requires browser Web Workers and WASM support.
+
+The constructor **requires a caller-supplied compiled `WebAssembly.Module`** implementing the `rubberband-wasm3.3` C ABI. The package includes its adapter, but no Rubber Band WASM binary or third-party GPL wrapper. Obtaining, hosting, loading, and compiling a compatible module belongs to the application; there is no built-in module URL or download.
+
+The pure entry exports `TimeStretch`, `TimeStretchOptions`, and `TimeStretchResult`.
+
+```typescript
+import { TimeStretch } from "@audiorective/effects/time-stretch";
+import type { PCMData } from "@audiorective/core/peaks";
+
+async function stretchPCM(pcm: PCMData, compiledModule: WebAssembly.Module) {
+  const processor = new TimeStretch(compiledModule);
+  try {
+    return await processor.process(pcm, { ratio: 1.5 });
+  } finally {
+    processor.destroy();
+  }
+}
+```
+
+`process(input, { ratio, signal? }): Promise<TimeStretchResult>` uses an offline two-pass study/process render. `ratio` is output duration divided by input duration: `0.75` shortens and `1.5` lengthens. Output channels have exactly `Math.round(inputFrames * ratio)` frames. This is a complete offline render, rather than playback-rate automation or a seamless live warp; it has no fixed processing-time guarantee.
+
+Input requires at least one nonempty `Float32Array` channel, equal channel lengths, finite samples, and an integer sample rate from 8000 through 192000. The ratio must be finite and positive and yield a positive safe-integer frame count. Private source copies are transferred to each job; caller buffers stay attached and unchanged. Output includes `channels`, unchanged `sampleRate`, `inputFrames`, `outputFrames`, and the requested `ratio`.
+
+Each call owns a Worker, so concurrent calls remain independent. An already-aborted or subsequently aborted `AbortSignal` rejects that job with `AbortError`. `destroy()` idempotently cancels all pending jobs and prevents further processing; it owns no application audio context. Failure or cancellation of one job does not prevent another valid call on a live processor.
+
+| Error                                                                                               | Cause and fix                                                                                                |
+| --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `TimeStretch requires a compiled WebAssembly.Module.`                                               | Compile compatible caller-owned WASM bytes before construction.                                              |
+| `TimeStretch ratio must be positive and produce at least one frame.`                                | Supply a finite positive ratio whose rounded output frame count is a positive safe integer.                  |
+| `TimeStretch needs finite equal-length PCM channels and an integer sampleRate from 8000 to 192000.` | Check channel type, lengths, samples and sample rate.                                                        |
+| `TimeStretch requires Web Workers.`                                                                 | Run processing in a browser environment with Worker support.                                                 |
+| `TimeStretch: unsupported Rubber Band WASM ABI.`                                                    | Supply the compatible C-ABI module, including memory, allocation and `rb_*` exports.                         |
+| `TimeStretch processing was aborted.` (`AbortError`)                                                | The caller cancelled the job; create a fresh signal to retry.                                                |
+| `TimeStretch is destroyed.`                                                                         | Construct another processor for further jobs.                                                                |
+| `TimeStretch produced an unexpected frame count.` / `TimeStretch produced nonfinite PCM.`           | The supplied module did not produce the required finite output; check module compatibility and input.        |
+| `TimeStretch allocation failed.` / `TimeStretch could not create a Rubber Band state.`              | The supplied module could not allocate its processing resources.                                             |
+| `TimeStretch worker failed.` / `Rubber Band exited: <code>`                                         | Worker execution or the supplied module failed; inspect the browser's worker error and module compatibility. |
+
+See [RangePlayer composition](./blocks.md#compose-offline-stretch-and-a-selector) for module loading, audio routing, selection mapping, and cleanup with a waveform selector.
 
 ## Compressor and Limiter
 

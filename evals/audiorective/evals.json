@@ -56,6 +56,89 @@
         "Checks the installed version via node_modules/@audiorective/core/package.json or an equivalent command",
         "Recommends upgrading the @audiorective/* packages together instead of hand-rolling a mute gain node"
       ]
+    },
+    {
+      "id": 5,
+      "prompt": "Build a vanilla TypeScript clip selector with @audiorective/widgets. My app supplies an AudioContext and a gain node for the output; do not create or close a context inside the widget integration. Load /audio/loop.wav, support replacing it with a File, select 1–2 seconds programmatically, show loading errors, and clean up on unmount. Explain which interactions start audition. Use the current workspace package if this API is Unreleased. Do not run anything.",
+      "expected_output": "A mountWaveformSelector integration using a caller-owned context and routed output, asynchronous readiness and recovery, and explicit lifecycle cleanup.",
+      "files": [],
+      "expectations": [
+        "Imports mountWaveformSelector from @audiorective/widgets and supplies the existing context in options",
+        "Connects handle.output to the supplied gain node and does not automatically bypass that chain with a destination connection",
+        "Awaits or catches handle.ready and uses handle.load(file) for replacement; catches loading failures or reads getState().error",
+        "Calls setSelection({ start: 1, end: 2 }) only after confirming at least 2 seconds of loaded duration",
+        "Uses getState() fields including loading or error rather than inventing a subscribe/onStateChange API",
+        "Destroys the selector on unmount and leaves the caller context open",
+        "Explains that pointer selection creation and pointer handle resize audition/loop, clicking seeks/plays, and keyboard or programmatic metadata changes do not start a stopped player",
+        "Does not introduce WaveSurfer, React bindings, or a generic preset/plugin framework",
+        "Identifies that Unreleased APIs need a workspace build or packed artifact instead of claiming npm @latest includes them"
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "Use only @audiorective/widgets/waveform in vanilla TypeScript to display supplied Float32Array peaks for a 6-second clip. Add metadata-only selection and a custom marker at 2 seconds that tracks zoom/data changes. Feed an external playhead position. No audio context, node, player, or framework. Show cleanup and implement the marker only through public plugin APIs. Do not run anything.",
+      "expected_output": "An audio-independent mountWaveform view with createSelectionPlugin, externally supplied playhead, and a WaveformPlugin using attachment-owned overlays and subscriptions.",
+      "files": [],
+      "expectations": [
+        "Imports mountWaveform, createSelectionPlugin, and WaveformPlugin types from @audiorective/widgets/waveform only",
+        "Provides data as { peaks: Float32Array, duration: 6 } and feeds position with setPlayhead",
+        "Attaches the selection plugin before calling its setSelection and treats change/commit callbacks as metadata only",
+        "Creates no AudioContext, audio nodes, engine, or audio player and never starts audio in selection callbacks",
+        "Implements the marker as attach(context), mounts its overlay with context.mountOverlay, and positions it with context.timeToX(2)",
+        "Subscribes through context.onViewportChange and context.onDataChange so marker position tracks geometry and data changes",
+        "Uses attachment-owned resource helpers or context.onCleanup for added resources; calls attachment.destroy or view.destroy to clean up",
+        "Uses no private DOM queries, ar- class selectors, test ids, deep imports, or patching of widget internals"
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "Use @audiorective/widgets/waveform to display a six-second clip with a custom SVG or Canvas waveform drawing, not a plugin overlay on the default waveform. Retain metadata selection, beat snapping, zoom, and an external playhead. Use the public renderer option, handle data clearing and resize, and clean up resources. Also show how the same renderer is passed to the complete mountWaveformSelector with a caller-owned AudioContext. Use the workspace build for this Unreleased API. Do not run anything.",
+      "expected_output": "A WaveformRenderer factory passed to the renderer option, with actual custom drawing and an instance render/destroy lifecycle; widget owns timeline and selection.",
+      "files": [],
+      "expectations": [
+        "Uses public WaveformRenderer and passes renderer to mountWaveform, without hiding/querying the default drawing or using a plugin to cover it",
+        "Mounts custom SVG, Canvas, or DOM once in the supplied container and returns an object with render(frame) and optional destroy()",
+        "Draws from frame.peaks.min/max and width/height, handles null peaks by clearing, and treats peak arrays as read-only",
+        "Uses full content CSS-pixel dimensions and preserves the linear time axis; Canvas examples manage their own backing resolution",
+        "Attaches createSelectionPlugin with a supplied beat grid and snap mode; feeds external position through setPlayhead without creating audio in the pure view",
+        "Releases additional resources in destroy and lets the widget handle redraws for zoom, resize, and source replacement",
+        "Passes the same factory via renderer to mountWaveformSelector, with the caller supplying the AudioContext and routing output",
+        "Introduces no new renderer package, React binding, WaveSurfer dependency, or audio editing state in the renderer"
+      ]
+    },
+    {
+      "id": 8,
+      "prompt": "Use the current Audiorective workspace build to load one audio File into a headless block, then attach two waveform selectors sharing selection and playback. Use one caller-owned AudioContext and output gain chain, distinct renderers and beat snapping, and allow either view to be unmounted while audition continues. Show headless selection/audition, source replacement, error handling and final cleanup. Do not run anything.",
+      "expected_output": "RangePlayer from @audiorective/blocks owns audio and selection; two mountWaveformSelector calls receive the same player; cleanup respects borrowed ownership.",
+      "files": [],
+      "expectations": [
+        "Imports RangePlayer from @audiorective/blocks; awaits player.load and catches current load failures",
+        "Routes player.output to the caller gain once; creates or closes no context inside the integration",
+        "Passes the same player to both mountWaveformSelector calls, without context or a second player",
+        "Uses player.setSelection and player.audition for headless operation instead of synthesizing DOM gestures",
+        "Uses renderer and grid options per view without mirroring selection into a separate store",
+        "Destroying one view leaves player and peer usable; final cleanup destroys both views then player",
+        "Uses documented subscribe for non-clock changes and reads position on animation frames if a custom playhead is needed",
+        "Does not claim PCM editing or time-stretch is part of RangePlayer; APIs under Unreleased require a workspace build"
+      ]
+    },
+    {
+      "id": 9,
+      "prompt": "Build a full pitch-preserving time-stretch waveform selector with the current Audiorective workspace packages. Host supplies AudioContext, output gain and a compiled compatible Rubber Band WebAssembly.Module. Load a File, use two shared selectors with SVG/Canvas and source beat snapping, preserve original PCM, render from original for each ratio, show pending/errors, keep waveform/audio same revision, audition the output selection, handle stale jobs and cleanup without closing context. Do not run anything.",
+      "expected_output": "TimeStretch from pure effects/time-stretch is injected into RangePlayer; setStretch commits a complete buffer/peaks version consumed by both selectors.",
+      "files": [],
+      "expectations": [
+        "Uses new TimeStretch(module) from @audiorective/effects/time-stretch with caller-supplied WASM, without bundling a GPL binary or inventing a default WASM URL",
+        "Injects the processor via new RangePlayer(context, {stretch}) and connects player.output to the caller gain once",
+        "Mounts two selectors with the same player, separate renderers and source-coordinate grids",
+        "Awaits player.load before editing and calls player.setStretch(ratio) rather than rebuilding transport or rewriting original PCM",
+        "Uses committed stretchRatio/duration/revision and processing/error state; pending render keeps the previous version usable",
+        "Treats successful stretch as a stopped commit with selection/position mapped into output seconds; sourceToOutput/outputToSource can convert coordinates",
+        "Uses player.version.peaks as the committed summary and lets the selector share it; standalone PCM summaries use core/peaks and have no display normalization",
+        "Handles newer edit/source load replacing older work without publishing stale results; does not mirror buffers/selection into UI stores",
+        "Destroys views then player then borrowed TimeStretch, leaving context and caller gain chain alive",
+        "Uses workspace/packed artifacts for Unreleased APIs and does not claim seamless live warp or sample-accurate dynamic stretch"
+      ]
     }
   ]
 }

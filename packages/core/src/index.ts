@@ -25,3 +25,5 @@ export { renderOffline } from "./renderOffline";
 export type { RenderOfflineOptions } from "./renderOffline";
 export { defineGraph } from "./graph";
 export type { GraphEdge, EdgeList, EdgeOptions, GraphHandle, GraphOptions, GraphSource, GraphSink, GraphSnapshot } from "./graph";
+export { summarizePeaks, peakFrameRange } from "./peaks";
+export type { PCMData, PeakSummary } from "./peaks";

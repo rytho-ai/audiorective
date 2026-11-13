@@ -3,8 +3,8 @@ name: audiorective
 description: >
   Build web audio apps with the @audiorective/* packages — synthesizers, drum
   machines and step sequencers, DAW-style transports, samplers and loop players,
-  audio visualizers, positional/3D audio attached to three.js or PlayCanvas
-  objects, effects racks, and offline rendering or WAV export of a Web Audio
+  audio visualizers, waveform range selection and loop audition, positional/3D
+  audio attached to three.js or PlayCanvas objects, effects racks, and offline rendering or WAV export of a Web Audio
   graph. Use whenever a project depends on @audiorective/*, whenever an error
   names one of its APIs (EngineEnvironmentError, createEngine, defineGraph,
   LatencyUnknownError), and whenever the user asks for reactive audio state
@@ -13,7 +13,7 @@ description: >
   they never say "audiorective" and even when the request touches the Web Audio
   API (AudioContext, AudioParam, AudioWorklet) only indirectly.
 license: MIT
-compatibility: Browser runtime with the Web Audio API (client-only, no server rendering). TypeScript or JavaScript. Packages install from npm as @audiorective/*.
+compatibility: Browser DOM for widgets; Web Audio API for audio (client-only, no server rendering). TypeScript or JavaScript. Packages install from npm as @audiorective/*.
 ---
 
 # Audiorective
@@ -114,9 +114,11 @@ processor methods for anything scheduled.
 
 | Package                    | Purpose                                                                                                                                         | Reference                  |
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
-| `@audiorective/core`       | Reactive audio primitives, `AudioProcessor`, engine, `defineGraph`, `Spatial`, `Analyser`, `Sampler`, `BufferPlayer`, `FilePlayer`. Required.   | `references/core.md`       |
+| `@audiorective/core`       | Reactive audio primitives, `AudioProcessor`, engine, `defineGraph`, `Spatial`, `Analyser`, `Sampler`, `BufferPlayer`, `FilePlayer`.             | `references/core.md`       |
 | `@audiorective/clock`      | Timing/scheduling engine — transport, tempo, look-ahead tick windows, rulers (bars, cycles/loops, seconds).                                     | `references/clock.md`      |
 | `@audiorective/effects`    | DSP effects — Filter, Distortion, Phaser, FrequencyShifter, PingPongDelay, Convolver, Compressor, Limiter, PitchShift; Channel strip + SendBus. | `references/effects.md`    |
+| `@audiorective/widgets`    | DOM waveform selector and audition; audio-independent waveform view and visual plugins.                                                         | `references/widgets.md`    |
+| `@audiorective/blocks`     | Headless `RangePlayer`: loading, range audition and shared audio/selection ownership.                                                           | `references/blocks.md`     |
 | `@audiorective/react`      | React bindings (`useValue`, `createEngineContext` → `EngineProvider`, `useEngine`).                                                             | `references/react.md`      |
 | `@audiorective/threejs`    | three.js scene bindings (`attach`, `PannerAnchor`).                                                                                             | `references/threejs.md`    |
 | `@audiorective/playcanvas` | PlayCanvas scene bindings (`attach`, `bindPanner`).                                                                                             | `references/playcanvas.md` |
@@ -124,7 +126,7 @@ processor methods for anything scheduled.
 
 ## What to read next
 
-**`references/core.md` is the API reference for everything** (1100 lines). Read
+**`references/core.md` is the core API reference**. Read
 the section you need rather than the whole file:
 
 | Task                                                            | Section of `core.md`                                         |
@@ -138,66 +140,54 @@ the section you need rather than the whole file:
 
 Then load only what the task needs:
 
-| If you're doing…                                                                | Also read                                      |
-| ------------------------------------------------------------------------------- | ---------------------------------------------- |
-| Designing a whole audio app (multiple sources, multiple UIs, spatial)           | `references/designing-audio-apps.md`           |
-| Choosing a playback primitive (Sampler vs BufferPlayer vs FilePlayer)           | `references/choosing-playback.md`              |
-| Sequencing, transport, tempo, a step sequencer or drum machine                  | `references/clock.md`                          |
-| Deciding what goes in the audio layer vs the UI; Cell vs Param                  | `references/architecture.md`                   |
-| Writing or modifying an `AudioProcessor` subclass                               | the `audio-processor-authoring` skill          |
-| React UI bound to an engine                                                     | `references/react.md`                          |
-| Next.js / Remix / Astro / any app that renders on a server                      | `references/client-boundary.md`                |
-| 3D scene with spatial audio (three.js)                                          | `references/threejs.md` + `architecture.md`    |
-| 3D scene with spatial audio (PlayCanvas)                                        | `references/playcanvas.md` + `architecture.md` |
-| PixiJS (2D) audio visualizer or interactive canvas                              | `references/pixijs.md`                         |
-| Sharing state between React and an imperative view (three.js, Canvas2D, WebGPU) | `references/architecture.md`                   |
-| Adding effects, building an FX rack, replacing Tone.js effects, offline export  | `references/effects.md`                        |
-| Understanding rationale ("why does this exist?")                                | `references/overview.md`                       |
+| If you're doing…                                                                           | Also read                                        |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------ |
+| Designing a whole audio app (multiple sources, multiple UIs, spatial)                      | `references/designing-audio-apps.md`             |
+| Choosing a playback primitive (Sampler vs BufferPlayer vs FilePlayer)                      | `references/choosing-playback.md`                |
+| Sequencing, transport, tempo, a step sequencer or drum machine                             | `references/clock.md`                            |
+| Deciding what goes in the audio layer vs the UI; Cell vs Param                             | `references/architecture.md`                     |
+| Writing or modifying an `AudioProcessor` subclass                                          | the `audio-processor-authoring` skill            |
+| Waveform drawing (`renderer`), range selection/audition, external playhead, visual plugins | `references/widgets.md`                          |
+| Stretching PCM, preserving pitch, cancelling a render                                      | `references/effects.md` → TimeStretch            |
+| PCM min/max summaries and source-frame/time metadata                                       | `references/core.md` → PCM peak summaries        |
+| Headless range audition or two waveform views sharing selection and playback               | `references/blocks.md` + `references/widgets.md` |
+| React UI bound to an engine                                                                | `references/react.md`                            |
+| Next.js / Remix / Astro / any app that renders on a server                                 | `references/client-boundary.md`                  |
+| 3D scene with spatial audio (three.js)                                                     | `references/threejs.md` + `architecture.md`      |
+| 3D scene with spatial audio (PlayCanvas)                                                   | `references/playcanvas.md` + `architecture.md`   |
+| PixiJS (2D) audio visualizer or interactive canvas                                         | `references/pixijs.md`                           |
+| Sharing state between React and an imperative view (three.js, Canvas2D, WebGPU)            | `references/architecture.md`                     |
+| Adding effects, building an FX rack, replacing Tone.js effects, offline export             | `references/effects.md`                          |
+| Understanding rationale ("why does this exist?")                                           | `references/overview.md`                         |
 
 ## The one rule that always applies
 
-**Audio operations live as methods on `AudioProcessor` subclasses.** UI
+**Audio graphs and playback live as methods on `AudioProcessor` subclasses.** The complete
+waveform selector delegates to `RangePlayer`: pass a caller-owned shared `player`,
+or supply `context` to let the selector own a player; route its `output` once.
+Destroying a view leaves a supplied player alive. For metadata-only views, import from
+`@audiorective/widgets/waveform`; visual plugins own no audio transport. UI
 components call these methods — they never orchestrate audio logic themselves.
+Pure PCM computation uses ordinary functions/classes: core `summarizePeaks`, and
+effects `TimeStretch.process`. Use `RangePlayer(ctx, { stretch })` and
+`await player.setStretch(ratio)` to commit PCM/peaks/selection together while stopped.
+Every edit renders the original source; pending results never overwrite newer edits.
 
 - **Audio layer owns:** graph construction, envelope shaping, parameter
   automation, transport logic, anything touching `AudioContext.currentTime`.
 - **UI layer does:** read params (`useValue(processor.params.foo)`), set params
   (`processor.params.foo.value = x`), call audio methods (`synth.filterSweep()`).
 
-**Litmus test:** _Can I run this audio behaviour from a unit test with no DOM?_
-If not, it's in the wrong layer.
+Keep UI callbacks thin, such as `() => synth.filterSweep()`. Read
+`references/architecture.md` for scheduling examples, Cell vs Param choices and
+sharing state with imperative views.
 
-Wrong — scheduling in React:
+## Audio runtime is client-only
 
-```typescript
-const handleSweep = useCallback(() => {
-  const now = synth.context.currentTime;
-  synth.params.cutoff.setValueAtTime(synth.params.cutoff.value, now);
-  synth.params.cutoff.linearRampToValueAtTime(18000, now + 1);
-}, [synth]);
-```
-
-Right — method on the processor, thin UI call:
-
-```typescript
-class StepSynth extends AudioProcessor<{ cutoff: SchedulableParam }> {
-  filterSweep(peakFreq = 18000, duration = 2) {
-    const now = this.context.currentTime;
-    const cur = this.params.cutoff.value;
-    this.params.cutoff.setValueAtTime(cur, now);
-    this.params.cutoff.linearRampToValueAtTime(peakFreq, now + duration / 2);
-    this.params.cutoff.linearRampToValueAtTime(cur, now + duration);
-  }
-}
-
-const handleSweep = useCallback(() => synth.filterSweep(), [synth]);
-```
-
-`references/architecture.md` has the full guide — Cell vs Param choices,
-automation gotchas, structured state via `Cell`, and decoupling React from an
-imperative view.
-
-## audiorective is client-only
+Pure `@audiorective/core/peaks` imports and computation work in Node/Workers.
+`@audiorective/effects/time-stretch` imports no audio implementation; processing
+requires browser Web Workers and a caller-provided compiled Rubber Band WASM module.
+It is an offline PCM processor, not an input/output wet/dry insert.
 
 `createEngine` builds a real `AudioContext`; there is none on a server, and
 there is no SSR mode to enable. In Next.js, Remix, or Astro, mount the audio
@@ -223,7 +213,8 @@ type error on a documented API:
    `node -p "require('@audiorective/core/package.json').version"`.
 3. If the API postdates the installed version, tell the user to upgrade
    (`npm i @audiorective/core@latest`, all `@audiorective/*` together) rather
-   than hand-rolling the missing API.
+   than hand-rolling the missing API. APIs under **Unreleased** require a workspace
+   build or packed artifact; `@latest` cannot supply an unreleased API.
 
 ## Common errors
 
@@ -240,9 +231,62 @@ type error on a documented API:
 | `WorkletUnavailableError` from `@audiorective/effects`                  | Context without `audioWorklet` (old browser, some test contexts) | Use a browser with AudioWorklet, or the `granular` `PitchShift` engine which needs no worklet |
 | `Cannot start a destroyed engine`                                       | Reusing an engine after `destroy()`                              | Create a new engine; `destroy()` is final                                                     |
 
+### Waveform errors
+
+| Symptom                                                                 | Cause                                              | Fix                                                                                 |
+| ----------------------------------------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `Waveform selector is destroyed.`                                       | Calling `load` or `setSelection` after cleanup     | Mount a new selector.                                                               |
+| `Range player is destroyed.`                                            | Mutating or subscribing after block cleanup        | Create a new RangePlayer; shared views must not destroy their caller's player.      |
+| `Position must be finite seconds.`                                      | Nonfinite seek position                            | Pass finite source seconds; the block clamps to duration.                           |
+| `Enter an audio URL.`                                                   | Empty URL passed to `load`                         | Supply a URL or File.                                                               |
+| `Audio request failed: HTTP 404.` (status varies)                       | URL response is unsuccessful                       | Check the URL, access, and server response; call `load` again to recover.           |
+| `Audio file has no playable duration.`                                  | Decoded audio has zero duration                    | Supply audio with a positive duration.                                              |
+| `Waveform is destroyed.`                                                | Mutating or attaching to a destroyed view          | Mount a new view.                                                                   |
+| `Waveform data needs finite peaks and a positive duration.`             | Invalid peaks or duration                          | Supply nonempty finite peaks, matching extrema arrays, and finite positive seconds. |
+| `Zoom must be finite and at least 1.`                                   | Invalid zoom factor                                | Use `1` to fit, or a larger finite factor.                                          |
+| `Playhead must be finite or null.`                                      | Invalid playhead                                   | Supply finite source seconds or `null` to hide it.                                  |
+| `Plugin is already attached to this waveform.`                          | Duplicate attachment of one instance               | Reuse its attachment or detach it before attaching again.                           |
+| `Plugin attachment is destroyed.`                                       | Mounting an overlay from a disposed attachment     | Stop asynchronous work during cleanup; use a live attachment context.               |
+| `Selection plugin is not attached.`                                     | Setting metadata before attachment or after detach | Call `view.attach(selection)` before `selection.setSelection`.                      |
+| `Selection plugin is already attached.`                                 | Reusing a selection plugin across live views       | Detach first, or create one plugin per view.                                        |
+| `Waveform already has a Selection owner.`                               | Multiple selection plugins on one view             | Keep one selection plugin per view.                                                 |
+| `Selection must satisfy 0 <= start < end <= duration (finite seconds).` | Invalid programmatic range                         | Await loading, then pass ordered finite endpoints within duration, or `null`.       |
+
+### PCM and stretch errors
+
+| Symptom                                                                                             | Cause                            | Fix                                                                              |
+| --------------------------------------------------------------------------------------------------- | -------------------------------- | -------------------------------------------------------------------------------- |
+| `summarizePeaks: sampleRate must be a finite positive number`                                       | Invalid PCM rate                 | Provide the actual finite positive source sample rate.                           |
+| `summarizePeaks: framesPerPeak must be a positive safe integer`                                     | Invalid bin size                 | Use whole source frames, default 128.                                            |
+| `summarizePeaks: at least one channel is required`                                                  | No PCM channels                  | Provide at least one Float32Array.                                               |
+| `summarizePeaks: every channel must be a Float32Array`                                              | Wrong sample representation      | Convert decoded samples to Float32Array.                                         |
+| `summarizePeaks: channels must have equal frame counts`                                             | Unequal channel lengths          | Use planar channels of equal length.                                             |
+| `summarizePeaks: samples must be finite numbers`                                                    | NaN/Infinity samples             | Repair or reject invalid PCM.                                                    |
+| `peakFrameRange: index must identify an existing peak`                                              | Invalid bin index                | Check min.length; empty input has no bins.                                       |
+| `TimeStretch requires a compiled WebAssembly.Module.`                                               | Missing/wrong backend            | Compile the caller-hosted compatible WASM before construction.                   |
+| `TimeStretch is destroyed.`                                                                         | Processor already cleaned up     | Create a new processor; block borrows it.                                        |
+| `TimeStretch processing was aborted.`                                                               | Cancelled render                 | Handle AbortError; do not publish partial output.                                |
+| `TimeStretch ratio must be positive and produce at least one frame.`                                | Invalid ratio/result size        | Use a finite positive duration ratio; output rounds to whole frames.             |
+| `TimeStretch needs finite equal-length PCM channels and an integer sampleRate from 8000 to 192000.` | Unsupported PCM                  | Use equal finite Float32 channels at a supported integer rate.                   |
+| `TimeStretch requires Web Workers.`                                                                 | No browser Worker runtime        | Process in a browser with Workers.                                               |
+| `TimeStretch: unsupported Rubber Band WASM ABI.`                                                    | Wrong module exports             | Use the documented rubberband-wasm3.3 C ABI.                                     |
+| `TimeStretch produced an unexpected frame count.`                                                   | Backend duration mismatch        | Check WASM compatibility; keep the prior block version.                          |
+| `TimeStretch produced nonfinite PCM.`                                                               | Backend produced invalid samples | Reject this render and check the backend/input.                                  |
+| `TimeStretch could not create a Rubber Band state.`                                                 | Backend initialization failed    | Check module/input support and available memory.                                 |
+| `TimeStretch allocation failed.`                                                                    | Backend allocation failed        | Use a smaller source/job or release other jobs.                                  |
+| `Rubber Band exited: …`                                                                             | Backend exited                   | Check the supplied module and input; retain prior playback.                      |
+| `TimeStretch worker failed.`                                                                        | Worker startup/execution failure | Check Worker/blob CSP and supplied module.                                       |
+| `Stretch ratio must be finite and positive.`                                                        | Invalid block edit               | Use a finite duration multiplier greater than zero.                              |
+| `No audio source is loaded.`                                                                        | Edit before load                 | Await player.load before setStretch.                                             |
+| `RangePlayer needs a stretch processor.`                                                            | No injected processor            | Construct RangePlayer(ctx, { stretch }); caller destroys stretch.                |
+| `Stretch processor returned incompatible PCM.`                                                      | Wrong rendered shape             | Keep original sample rate/channel count and round(originalFrames\*ratio) frames. |
+| `Time must be finite seconds.`                                                                      | Invalid coordinate conversion    | Pass finite source/output seconds.                                               |
+
 ## References
 
 - [Installation](references/installation.md) — packages, peers, version alignment, environment
+- [Blocks](references/blocks.md) — headless range audition and shared-player ownership
+- [Widgets](references/widgets.md) — complete selector, audio-independent view, plugins, cleanup
 - [Core](references/core.md) — full API reference
 - [Architecture](references/architecture.md) — audio vs UI layer, Cell vs Param
 - [Designing Audio Apps](references/designing-audio-apps.md) — methodology for a whole app

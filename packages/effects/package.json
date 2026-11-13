@@ -22,6 +22,7 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": "./dist/index.js",
+    "./time-stretch": "./dist/time-stretch.js",
     "./package.json": "./package.json"
   },
   "scripts": {

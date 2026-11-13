@@ -10,6 +10,15 @@ export interface Demo {
 
 export const demos: Demo[] = [
   {
+    slug: "waveform",
+    title: "Waveform Selector",
+    blurb: "Select, resize, and loop an audio range. A framework-independent widget with optional interaction plugins.",
+    thumb: "/showroom/waveform.svg",
+    route: "/showroom/waveform",
+    source: "https://github.com/audiorective/audiorective/blob/main/apps/web/src/pages/showroom/waveform.astro",
+    packages: ["@audiorective/widgets"],
+  },
+  {
     slug: "livehouse",
     title: "Livehouse PA Simulator",
     blurb: "Move sound sources in a 3D venue. Mix the same engine through PlayCanvas, React, and Three.js interfaces.",

@@ -13,6 +13,8 @@ The audio engine owns its state. Your interfaces observe parameters, change valu
 | [Core](/docs/core)             | Reactive parameters and cells, processors, playback, analysis, spatial audio, and graph routing          |
 | [Clock](/docs/clock)           | Transport, tempo automation, scheduling windows, and beat/bar/time rulers                                |
 | [Effects](/docs/effects)       | Filters, delay, reverb, distortion, modulation, pitch shifting, dynamics, channel strips, and send buses |
+| [Widgets](/docs/widgets)       | Browser waveform display, selection, and audition with optional visual plugins                           |
+| [Blocks](/docs/blocks)         | Headless range loading, selection, playback and loop audition shared by multiple views                   |
 | [React](/docs/react)           | Hooks and an engine context for reactive interfaces                                                      |
 | [Three.js](/docs/threejs)      | A shared audio context and spatial sound that follows scene objects                                      |
 | [PlayCanvas](/docs/playcanvas) | Engine integration and entity-to-panner bindings                                                         |
@@ -30,6 +32,10 @@ Choose a source for the job:
 - **AudioProcessor** is the base for your own instruments and effects.
 
 Route sources through effects, add a `Spatial` processor for positional sound, and use `Analyser` for waveform or frequency data. See [Choosing Playback](/docs/choosing-playback).
+
+## Waveform tools
+
+Mount a complete waveform selector into a DOM element to load a URL or File, select a range, and audition it through your own audio context and routing. For a visual-only view, provide peaks and an external playhead, then attach optional selection or marker plugins. See [Widgets](/docs/widgets) and the [waveform showroom](/showroom/waveform).
 
 ## Timing and automation
 
