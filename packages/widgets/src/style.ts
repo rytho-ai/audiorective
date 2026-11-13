@@ -30,6 +30,7 @@ export const styles = `
 .ar-grip::after { content:''; position:absolute; left:clamp(0px,calc(var(--ar-grip-boundary,9px) - 5px),8px); top:calc(50% - 16px); width:10px; height:32px; border:2px solid var(--ar-accent); border-radius:4px; background:#172638; }
 .ar-playhead { position:absolute; top:0; height:100%; width:2px; background:var(--waveform-playhead,#fff); pointer-events:none; z-index:4; }
 .ar-footer { justify-content:space-between; color:var(--waveform-muted,#baccdf); font-variant-numeric:tabular-nums; margin-top:10px; }
+.ar-widget progress { accent-color:var(--ar-accent); max-width:100%; }
 .ar-status { min-height:20px; margin-top:6px; }
 .ar-error { color:var(--waveform-error,#ffb7b7); }
 .ar-widget [hidden] { display:none!important; }

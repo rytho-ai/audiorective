@@ -11,7 +11,7 @@ export const mountWaveformSelector: MountWaveformSelector = (root, options) => {
   container.setAttribute("aria-label", "Waveform selector");
   container.innerHTML = `<style>${styles}</style>
     <div class="ar-source"><input data-testid="source-url" type="url" aria-label="Audio URL" placeholder="Audio URL"><button data-testid="load-url" type="button">Load URL</button><label>Audio file <input data-testid="source-file" type="file" accept="audio/*"></label></div>
-    <div class="ar-status" aria-live="polite"><span data-testid="loading" hidden>Loading audio…</span><span data-testid="processing" hidden>Processing audio…</span><span data-testid="error" class="ar-error" role="alert" hidden></span></div>
+    <div class="ar-status" aria-live="polite"><span data-testid="loading" hidden>Loading audio…</span><progress data-testid="load-progress" aria-label="Audio loading progress" hidden></progress><button data-testid="cancel-load" type="button" hidden>Cancel loading</button><span data-testid="processing" hidden>Processing audio…</span><span data-testid="error" class="ar-error" role="alert" hidden></span></div>
     <div class="ar-toolbar"><button data-testid="play-pause" type="button">Play</button><button data-testid="stop" type="button">Stop</button><button data-testid="loop" type="button" aria-pressed="false">Loop</button><button data-testid="clear" type="button">Clear selection</button>${options.grid ? '<label class="ar-snap">Snap <select data-testid="snap" aria-label="Snap"><option value="off">Off</option><option value="beat">Beat</option><option value="downbeat">Downbeat</option></select></label>' : ""}</div>
     <div class="ar-wave-mount"></div>
     <div class="ar-footer"><output data-testid="selection-readout">No selection</output><output class="ar-position">0:00.00 / 0:00.00</output></div>
@@ -84,6 +84,21 @@ export const mountWaveformSelector: MountWaveformSelector = (root, options) => {
     query("play-pause").textContent = state.isPlaying ? "Pause" : "Play";
     query("loop").setAttribute("aria-pressed", String(state.isLooping));
     query("loading").hidden = !state.loading;
+    const progress = state.loadProgress;
+    let loadingText = "Loading audio…";
+    if (progress?.phase === "download" || progress?.phase === "read") {
+      const bytes = (value: number) => `${(value / 1048576).toFixed(2)} MiB`;
+      loadingText = `${progress.phase === "download" ? "Downloading" : "Reading"} audio… ${bytes(progress.loadedBytes)}${progress.totalBytes === null ? "" : ` / ${bytes(progress.totalBytes)}`}`;
+    } else if (progress?.phase === "decode") loadingText = "Decoding audio…";
+    else if (progress?.phase === "peaks") loadingText = "Summarizing audio…";
+    query("loading").textContent = loadingText;
+    const meter = query<HTMLProgressElement>("load-progress");
+    meter.hidden = !state.loading;
+    if ((progress?.phase === "download" || progress?.phase === "read") && progress.totalBytes !== null && progress.totalBytes > 0) {
+      meter.max = progress.totalBytes;
+      meter.value = progress.loadedBytes;
+    } else meter.removeAttribute("value");
+    query("cancel-load").hidden = !state.loading;
     query("processing").hidden = !state.processing;
     const error = playbackError ?? state.error;
     query("error").hidden = !error;
@@ -125,6 +140,7 @@ export const mountWaveformSelector: MountWaveformSelector = (root, options) => {
     await player.load(source);
   }
   on(query("load-url"), "click", () => run(() => loadSource(url.value)));
+  on(query("cancel-load"), "click", () => player.cancelLoad());
   on(url, "keydown", (event) => {
     if ((event as KeyboardEvent).key === "Enter") run(() => loadSource(url.value));
   });
@@ -158,6 +174,10 @@ export const mountWaveformSelector: MountWaveformSelector = (root, options) => {
     ready,
     output: player.output,
     load: (source) => loadSource(source),
+    cancelLoad() {
+      if (destroyed) throw new Error("Waveform selector is destroyed.");
+      player.cancelLoad();
+    },
     setSelection(range) {
       if (destroyed) throw new Error("Waveform selector is destroyed.");
       selection.setSelection(range);

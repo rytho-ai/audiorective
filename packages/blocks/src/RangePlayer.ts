@@ -1,5 +1,6 @@
 import { AudioProcessor, BufferPlayer, cell, type SchedulableParam } from "@audiorective/core";
 import { summarizePeaks, type PCMData, type PeakSummary } from "@audiorective/core/peaks";
+import { loadSource, type RangeLoadProgress, type RangeSourceLoader } from "./source";
 
 /** A processor is borrowed; its lifetime belongs to the caller. */
 export interface RangeStretchProcessor {
@@ -7,6 +8,8 @@ export interface RangeStretchProcessor {
 }
 export interface RangePlayerOptions {
   stretch?: RangeStretchProcessor;
+  /** Optional URL/cache adapter. Files use native loading; the player owns lifecycle and summary. */
+  loadSource?: RangeSourceLoader;
 }
 export interface PlaybackVersion {
   readonly revision: number;
@@ -27,6 +30,8 @@ export type RangePlayerState = {
   isPlaying: boolean;
   isLooping: boolean;
   loading: boolean;
+  /** Null when idle or before a custom loader reports its first phase. */
+  loadProgress: RangeLoadProgress | null;
   error: string | null;
   processing: boolean;
   stretchRatio: number;
@@ -44,6 +49,7 @@ export class RangePlayer extends AudioProcessor<{ volume: SchedulableParam }, {}
   private held = 0;
   private anchor: { time: number; offset: number; start: number; end: number } | null = null;
   private loading = false;
+  private loadProgress: RangeLoadProgress | null = null;
   private error: string | null = null;
   private request = 0;
   private command = 0;
@@ -129,6 +135,7 @@ export class RangePlayer extends AudioProcessor<{ volume: SchedulableParam }, {}
       isPlaying: this.isPlaying,
       isLooping: this.looping,
       loading: this.loading,
+      loadProgress: this.loadProgress,
       error: this.error,
       processing: this.processing,
       stretchRatio: this.version?.ratio ?? 1,
@@ -321,6 +328,37 @@ export class RangePlayer extends AudioProcessor<{ volume: SchedulableParam }, {}
       if (id === this.editRequest) this.editAbort = null;
     }
   }
+  /** Cancel this load without publishing an error. Late decode/cache results are ignored. */
+  cancelLoad(): void {
+    this.assertAlive();
+    if (!this.loading) return;
+    this.change(() => {
+      ++this.request;
+      this.abort?.abort();
+      this.abort = null;
+      this.loading = false;
+      this.loadProgress = null;
+      this.error = null;
+    });
+  }
+  private reportLoad(request: number, progress: RangeLoadProgress): void {
+    if (this.disposed || request !== this.request || !this.loading) return;
+    if (progress.phase === "download" || progress.phase === "read") {
+      const { loadedBytes, totalBytes } = progress;
+      if (
+        !Number.isSafeInteger(loadedBytes) ||
+        loadedBytes < 0 ||
+        (totalBytes !== null && (!Number.isSafeInteger(totalBytes) || totalBytes < loadedBytes))
+      ) {
+        throw new RangeError("Load progress needs non-negative byte counts and a null or matching total.");
+      }
+      progress = { phase: progress.phase, loadedBytes, totalBytes };
+    } else if (progress.phase === "decode" || progress.phase === "peaks") progress = { phase: progress.phase };
+    else throw new RangeError("Unknown audio loading phase.");
+    this.change(() => {
+      this.loadProgress = Object.freeze(progress);
+    });
+  }
   /** Replacing the source cancels playback, selection, loop and any older load. */
   async load(source: RangePlayerSource): Promise<void> {
     this.assertAlive();
@@ -337,6 +375,7 @@ export class RangePlayer extends AudioProcessor<{ volume: SchedulableParam }, {}
       this.looping = false;
       this.held = 0;
       this.loading = true;
+      this.loadProgress = null;
       this.error = null;
       this.original = null;
       this.current.value = null;
@@ -346,29 +385,32 @@ export class RangePlayer extends AudioProcessor<{ volume: SchedulableParam }, {}
       let buffer: AudioBuffer;
       if (typeof source !== "string" && "getChannelData" in source) buffer = source;
       else {
-        let bytes: ArrayBuffer;
-        if (typeof source === "string") {
-          if (!source.trim()) throw new Error("Enter an audio URL.");
-          const response = await fetch(source, { signal: controller.signal });
-          if (!response.ok) throw new Error(`Audio request failed: HTTP ${response.status}.`);
-          bytes = await response.arrayBuffer();
-        } else bytes = await source.arrayBuffer();
-        if (this.disposed || request !== this.request) return;
-        buffer = await this.audioContext.decodeAudioData(bytes);
+        const options = {
+          context: this.audioContext,
+          signal: controller.signal,
+          onProgress: (progress: Exclude<RangeLoadProgress, { phase: "peaks" }>) => this.reportLoad(request, progress),
+        };
+        buffer = await (typeof source === "string" && this.options.loadSource
+          ? this.options.loadSource(source, options)
+          : loadSource(source, options));
       }
       if (this.disposed || request !== this.request) return;
       if (!Number.isFinite(buffer.duration) || buffer.duration <= 0) throw new Error("Audio file has no playable duration.");
+      this.reportLoad(request, { phase: "peaks" });
+      if (this.disposed || request !== this.request) return;
       const peaks = summarizePeaks(this.pcm(buffer));
       this.change(() => {
         this.player.buffer = buffer;
         this.original = buffer;
         this.loading = false;
+        this.loadProgress = null;
         this.current.value = Object.freeze({ revision: ++this.revision, sourceRevision: this.sourceRevision, buffer, peaks, ratio: 1 });
       });
     } catch (reason) {
       if (this.disposed || request !== this.request) return;
       this.change(() => {
         this.loading = false;
+        this.loadProgress = null;
         this.error = reason instanceof Error ? reason.message : String(reason);
       });
       throw reason;
@@ -390,6 +432,7 @@ export class RangePlayer extends AudioProcessor<{ volume: SchedulableParam }, {}
       this.looping = false;
       this.held = 0;
       this.loading = false;
+      this.loadProgress = null;
       this.original = null;
       this.current.value = null;
       this.player.destroy();

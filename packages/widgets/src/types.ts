@@ -33,6 +33,7 @@ export interface WaveformSelectorHandle {
   readonly output: AudioNode;
   /** Replace the source. Only the latest request may update the widget. */
   load(source: string | File): Promise<void>;
+  cancelLoad(): void;
   setSelection(selection: Selection | null): void;
   getState(): WaveformSelectorState;
   destroy(): void;

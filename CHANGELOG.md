@@ -15,6 +15,9 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Added
 
+- **blocks**: `RangePlayer.getState().loadProgress` snapshots via `getState()`/`subscribe()` (download/read bytes, decode, peaks), `cancelLoad()`, and `RangePlayerOptions.loadSource` for shared URL/decode caches. Built-in loading streams bytes, treats unknown/encoded totals as indeterminate, and rejects text or mismatched transfers. Cancelled/stale loads do not publish progress or errors.
+- **widgets**: selector loading phases/byte feedback, determinate or indeterminate progress, Cancel loading control and `handle.cancelLoad()`, all driven by the shared player.
+
 - **core:** `summarizePeaks`, `peakFrameRange`, `PCMData` and `PeakSummary` provide raw PCM min/max summaries with source-frame and time metadata. The pure `@audiorective/core/peaks` entry works without DOM or audio runtime imports. Widget reduction uses this shared implementation.
 - **effects:** `TimeStretch` renders pitch-preserving PCM in a Worker using a caller-supplied compatible Rubber Band WASM module. The package contains no WASM binary. Uniform duration ratios produce an exact rounded frame count; cancellation and destroy leave original PCM intact. The pure `@audiorective/effects/time-stretch` entry has no audio nodes or wet/dry insert semantics.
 - **blocks / widgets:** `RangePlayer(ctx, { stretch })`, `setStretch`, `version`, `sourceBuffer`, and source/output coordinate conversion support non-destructive render-then-commit editing. A committed version publishes audio and core peaks together, stops playback, and maps selection/position. Shared selectors consume committed peaks, expose processing/version state, preserve zoom on same-source edits, and map source beat grids; selection plugins can update their grid with `setGrid`.

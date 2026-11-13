@@ -118,7 +118,7 @@ processor methods for anything scheduled.
 | `@audiorective/clock`      | Timing/scheduling engine — transport, tempo, look-ahead tick windows, rulers (bars, cycles/loops, seconds).                                     | `references/clock.md`      |
 | `@audiorective/effects`    | DSP effects — Filter, Distortion, Phaser, FrequencyShifter, PingPongDelay, Convolver, Compressor, Limiter, PitchShift; Channel strip + SendBus. | `references/effects.md`    |
 | `@audiorective/widgets`    | DOM waveform selector and audition; audio-independent waveform view and visual plugins.                                                         | `references/widgets.md`    |
-| `@audiorective/blocks`     | Headless `RangePlayer`: loading, range audition and shared audio/selection ownership.                                                           | `references/blocks.md`     |
+| `@audiorective/blocks`     | Headless `RangePlayer`: loading progress/cancel, cached URL adapters, shared audition.                                                          | `references/blocks.md`     |
 | `@audiorective/react`      | React bindings (`useValue`, `createEngineContext` → `EngineProvider`, `useEngine`).                                                             | `references/react.md`      |
 | `@audiorective/threejs`    | three.js scene bindings (`attach`, `PannerAnchor`).                                                                                             | `references/threejs.md`    |
 | `@audiorective/playcanvas` | PlayCanvas scene bindings (`attach`, `bindPanner`).                                                                                             | `references/playcanvas.md` |
@@ -150,7 +150,7 @@ Then load only what the task needs:
 | Waveform drawing (`renderer`), range selection/audition, external playhead, visual plugins | `references/widgets.md`                          |
 | Stretching PCM, preserving pitch, cancelling a render                                      | `references/effects.md` → TimeStretch            |
 | PCM min/max summaries and source-frame/time metadata                                       | `references/core.md` → PCM peak summaries        |
-| Headless range audition or two waveform views sharing selection and playback               | `references/blocks.md` + `references/widgets.md` |
+| Loading phases/bytes/cancellation, cached sources, or shared range audition                | `references/blocks.md` + `references/widgets.md` |
 | React UI bound to an engine                                                                | `references/react.md`                            |
 | Next.js / Remix / Astro / any app that renders on a server                                 | `references/client-boundary.md`                  |
 | 3D scene with spatial audio (three.js)                                                     | `references/threejs.md` + `architecture.md`      |
@@ -233,24 +233,27 @@ type error on a documented API:
 
 ### Waveform errors
 
-| Symptom                                                                 | Cause                                              | Fix                                                                                 |
-| ----------------------------------------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `Waveform selector is destroyed.`                                       | Calling `load` or `setSelection` after cleanup     | Mount a new selector.                                                               |
-| `Range player is destroyed.`                                            | Mutating or subscribing after block cleanup        | Create a new RangePlayer; shared views must not destroy their caller's player.      |
-| `Position must be finite seconds.`                                      | Nonfinite seek position                            | Pass finite source seconds; the block clamps to duration.                           |
-| `Enter an audio URL.`                                                   | Empty URL passed to `load`                         | Supply a URL or File.                                                               |
-| `Audio request failed: HTTP 404.` (status varies)                       | URL response is unsuccessful                       | Check the URL, access, and server response; call `load` again to recover.           |
-| `Audio file has no playable duration.`                                  | Decoded audio has zero duration                    | Supply audio with a positive duration.                                              |
-| `Waveform is destroyed.`                                                | Mutating or attaching to a destroyed view          | Mount a new view.                                                                   |
-| `Waveform data needs finite peaks and a positive duration.`             | Invalid peaks or duration                          | Supply nonempty finite peaks, matching extrema arrays, and finite positive seconds. |
-| `Zoom must be finite and at least 1.`                                   | Invalid zoom factor                                | Use `1` to fit, or a larger finite factor.                                          |
-| `Playhead must be finite or null.`                                      | Invalid playhead                                   | Supply finite source seconds or `null` to hide it.                                  |
-| `Plugin is already attached to this waveform.`                          | Duplicate attachment of one instance               | Reuse its attachment or detach it before attaching again.                           |
-| `Plugin attachment is destroyed.`                                       | Mounting an overlay from a disposed attachment     | Stop asynchronous work during cleanup; use a live attachment context.               |
-| `Selection plugin is not attached.`                                     | Setting metadata before attachment or after detach | Call `view.attach(selection)` before `selection.setSelection`.                      |
-| `Selection plugin is already attached.`                                 | Reusing a selection plugin across live views       | Detach first, or create one plugin per view.                                        |
-| `Waveform already has a Selection owner.`                               | Multiple selection plugins on one view             | Keep one selection plugin per view.                                                 |
-| `Selection must satisfy 0 <= start < end <= duration (finite seconds).` | Invalid programmatic range                         | Await loading, then pass ordered finite endpoints within duration, or `null`.       |
+| Symptom                                                                                                       | Cause                                              | Fix                                                                                 |
+| ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `Waveform selector is destroyed.`                                                                             | Calling `load` or `setSelection` after cleanup     | Mount a new selector.                                                               |
+| `Range player is destroyed.`                                                                                  | Mutating or subscribing after block cleanup        | Create a new RangePlayer; shared views must not destroy their caller's player.      |
+| `Position must be finite seconds.`                                                                            | Nonfinite seek position                            | Pass finite source seconds; the block clamps to duration.                           |
+| `Enter an audio URL.`                                                                                         | Empty URL passed to `load`                         | Supply a URL or File.                                                               |
+| `Audio request failed: HTTP 404.` (status varies)                                                             | URL response is unsuccessful                       | Check the URL, access, and server response; call `load` again to recover.           |
+| `Audio request returned text instead of audio.`                                                               | URL served HTML/text                               | Fix routing/proxy to return audio, then retry load.                                 |
+| `Audio download size does not match Content-Length.`                                                          | Truncated or incorrect byte length                 | Fix the transfer/length, then retry load.                                           |
+| `Load progress needs non-negative byte counts and a null or matching total.` / `Unknown audio loading phase.` | Invalid cache adapter reports                      | Use download/read with safe byte counts or decode; total may be null.               |
+| `Audio file has no playable duration.`                                                                        | Decoded audio has zero duration                    | Supply audio with a positive duration.                                              |
+| `Waveform is destroyed.`                                                                                      | Mutating or attaching to a destroyed view          | Mount a new view.                                                                   |
+| `Waveform data needs finite peaks and a positive duration.`                                                   | Invalid peaks or duration                          | Supply nonempty finite peaks, matching extrema arrays, and finite positive seconds. |
+| `Zoom must be finite and at least 1.`                                                                         | Invalid zoom factor                                | Use `1` to fit, or a larger finite factor.                                          |
+| `Playhead must be finite or null.`                                                                            | Invalid playhead                                   | Supply finite source seconds or `null` to hide it.                                  |
+| `Plugin is already attached to this waveform.`                                                                | Duplicate attachment of one instance               | Reuse its attachment or detach it before attaching again.                           |
+| `Plugin attachment is destroyed.`                                                                             | Mounting an overlay from a disposed attachment     | Stop asynchronous work during cleanup; use a live attachment context.               |
+| `Selection plugin is not attached.`                                                                           | Setting metadata before attachment or after detach | Call `view.attach(selection)` before `selection.setSelection`.                      |
+| `Selection plugin is already attached.`                                                                       | Reusing a selection plugin across live views       | Detach first, or create one plugin per view.                                        |
+| `Waveform already has a Selection owner.`                                                                     | Multiple selection plugins on one view             | Keep one selection plugin per view.                                                 |
+| `Selection must satisfy 0 <= start < end <= duration (finite seconds).`                                       | Invalid programmatic range                         | Await loading, then pass ordered finite endpoints within duration, or `null`.       |
 
 ### PCM and stretch errors
 
@@ -285,8 +288,7 @@ type error on a documented API:
 ## References
 
 - [Installation](references/installation.md) — packages, peers, version alignment, environment
-- [Blocks](references/blocks.md) — headless range audition and shared-player ownership
-- [Widgets](references/widgets.md) — complete selector, audio-independent view, plugins, cleanup
+- [Blocks](references/blocks.md) · [Widgets](references/widgets.md) — shared range loading, playback, waveform views and ownership
 - [Core](references/core.md) — full API reference
 - [Architecture](references/architecture.md) — audio vs UI layer, Cell vs Param
 - [Designing Audio Apps](references/designing-audio-apps.md) — methodology for a whole app

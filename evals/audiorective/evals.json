@@ -139,6 +139,22 @@
         "Destroys views then player then borrowed TimeStretch, leaving context and caller gain chain alive",
         "Uses workspace/packed artifacts for Unreleased APIs and does not claim seamless live warp or sample-accurate dynamic stretch"
       ]
+    },
+    {
+      "id": 10,
+      "prompt": "Build a vanilla TypeScript waveform selector for a caller-owned AudioContext. Show download bytes and a progress bar only when the total is known, indeterminate feedback for decode/peaks, a cancel button, and retry after cancellation or failure. Two views must observe the same state. We already have a URL-to-AudioBuffer cache: integrate it without a second loading store or a second decode; cancelling this observer must not cancel other cache readers. Use Audiorective public APIs, provide cleanup and do not fake percentages.",
+      "expected_output": "A shared RangePlayer with loadSource URL cache adapter, state snapshots/subscriptions and cancelLoad, plus selectors or custom feedback observing the same player. The adapter detaches on abort/settle while the shared job can continue.",
+      "files": [],
+      "expectations": [
+        "Uses RangePlayer loading and loadProgress through getState()/subscribe(), rendering an initial snapshot because subscribe is not immediate.",
+        "Uses download/read loadedBytes and totalBytes; null or nonpositive totals and decode/peaks are indeterminate, with no fake percentage.",
+        "Both views share one player and see the same progress/cancellation; UI does not independently track audio loading.",
+        "Calls cancelLoad() and retries with load(); treats current errors separately from superseded/cancelled loads.",
+        "Provides a loadSource URL adapter using context, signal and onProgress with Promise<AudioBuffer>; reuses the decoded cache instead of decoding a second time.",
+        "The cache adapter removes progress/abort listeners when cancelled or settled while protecting other readers.",
+        "Loading another source or destroying the block cannot publish stale progress or decoded results.",
+        "Cleans up observers and views before destroying the app-owned player, and leaves the caller-owned context open."
+      ]
     }
   ]
 }
