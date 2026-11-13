@@ -118,7 +118,7 @@ processor methods for anything scheduled.
 | `@audiorective/clock`      | Timing/scheduling engine — transport, tempo, look-ahead tick windows, rulers (bars, cycles/loops, seconds).                                     | `references/clock.md`      |
 | `@audiorective/effects`    | DSP effects — Filter, Distortion, Phaser, FrequencyShifter, PingPongDelay, Convolver, Compressor, Limiter, PitchShift; Channel strip + SendBus. | `references/effects.md`    |
 | `@audiorective/widgets`    | DOM waveform selector and audition; audio-independent waveform view and visual plugins.                                                         | `references/widgets.md`    |
-| `@audiorective/blocks`     | Headless `RangePlayer`: loading progress/cancel, cached URL adapters, shared audition.                                                          | `references/blocks.md`     |
+| `@audiorective/blocks`     | Headless `WavePlayer`: loading progress/cancel, cached URL adapters, shared audition.                                                           | `references/blocks.md`     |
 | `@audiorective/react`      | React bindings (`useValue`, `createEngineContext` → `EngineProvider`, `useEngine`).                                                             | `references/react.md`      |
 | `@audiorective/threejs`    | three.js scene bindings (`attach`, `PannerAnchor`).                                                                                             | `references/threejs.md`    |
 | `@audiorective/playcanvas` | PlayCanvas scene bindings (`attach`, `bindPanner`).                                                                                             | `references/playcanvas.md` |
@@ -163,13 +163,13 @@ Then load only what the task needs:
 ## The one rule that always applies
 
 **Audio graphs and playback live as methods on `AudioProcessor` subclasses.** The complete
-waveform selector delegates to `RangePlayer`: pass a caller-owned shared `player`,
+waveform selector delegates to `WavePlayer`: pass a caller-owned shared `player`,
 or supply `context` to let the selector own a player; route its `output` once.
 Destroying a view leaves a supplied player alive. For metadata-only views, import from
 `@audiorective/widgets/waveform`; visual plugins own no audio transport. UI
 components call these methods — they never orchestrate audio logic themselves.
 Pure PCM computation uses ordinary functions/classes: core `summarizePeaks`, and
-effects `TimeStretch.process`. Use `RangePlayer(ctx, { stretch })` and
+effects `TimeStretch.process`. Use `WavePlayer(ctx, { stretch })` and
 `await player.setStretch(ratio)` to commit PCM/peaks/selection together while stopped.
 Every edit renders the original source; pending results never overwrite newer edits.
 
@@ -236,7 +236,7 @@ type error on a documented API:
 | Symptom                                                                                                       | Cause                                              | Fix                                                                                 |
 | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------- |
 | `Waveform selector is destroyed.`                                                                             | Calling `load` or `setSelection` after cleanup     | Mount a new selector.                                                               |
-| `Range player is destroyed.`                                                                                  | Mutating or subscribing after block cleanup        | Create a new RangePlayer; shared views must not destroy their caller's player.      |
+| `Range player is destroyed.`                                                                                  | Mutating or subscribing after block cleanup        | Create a new WavePlayer; shared views must not destroy their caller's player.       |
 | `Position must be finite seconds.`                                                                            | Nonfinite seek position                            | Pass finite source seconds; the block clamps to duration.                           |
 | `Enter an audio URL.`                                                                                         | Empty URL passed to `load`                         | Supply a URL or File.                                                               |
 | `Audio request failed: HTTP 404.` (status varies)                                                             | URL response is unsuccessful                       | Check the URL, access, and server response; call `load` again to recover.           |
@@ -281,7 +281,7 @@ type error on a documented API:
 | `TimeStretch worker failed.`                                                                        | Worker startup/execution failure | Check Worker/blob CSP and supplied module.                                       |
 | `Stretch ratio must be finite and positive.`                                                        | Invalid block edit               | Use a finite duration multiplier greater than zero.                              |
 | `No audio source is loaded.`                                                                        | Edit before load                 | Await player.load before setStretch.                                             |
-| `RangePlayer needs a stretch processor.`                                                            | No injected processor            | Construct RangePlayer(ctx, { stretch }); caller destroys stretch.                |
+| `WavePlayer needs a stretch processor.`                                                             | No injected processor            | Construct WavePlayer(ctx, { stretch }); caller destroys stretch.                 |
 | `Stretch processor returned incompatible PCM.`                                                      | Wrong rendered shape             | Keep original sample rate/channel count and round(originalFrames\*ratio) frames. |
 | `Time must be finite seconds.`                                                                      | Invalid coordinate conversion    | Pass finite source/output seconds.                                               |
 

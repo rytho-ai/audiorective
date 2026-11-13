@@ -1,7 +1,7 @@
 import { afterEach, expect, test, vi } from "vitest";
 import type { PCMData } from "@audiorective/core/peaks";
-import { RangePlayer } from "../src";
-import type { RangeStretchProcessor } from "../src";
+import { WavePlayer } from "../src";
+import type { WaveStretchProcessor } from "../src";
 
 // These fakes test version ownership and transactions, not pitch preservation.
 interface Job {
@@ -24,9 +24,9 @@ function deferredProcessor() {
 }
 
 const disposers: Array<() => void | Promise<unknown>> = [];
-function fixture(stretch?: RangeStretchProcessor) {
+function fixture(stretch?: WaveStretchProcessor) {
   const context = new AudioContext();
-  const player = new RangePlayer(context, { stretch });
+  const player = new WavePlayer(context, { stretch });
   disposers.push(
     () => context.close(),
     () => player.destroy(),
@@ -87,8 +87,7 @@ test("notifications publish coherent immutable metadata, buffer, duration and tr
   const initial = player.version!;
   expect(Array.from(initial.peaks.min)).toEqual([0.25, 0.25, 0.25]);
   expect(Array.from(initial.peaks.max)).toEqual([0.25, 0.25, 0.75]);
-  const snapshots: Array<{ version: NonNullable<RangePlayer["version"]>; buffer: AudioBuffer | null; state: ReturnType<RangePlayer["getState"]> }> =
-    [];
+  const snapshots: Array<{ version: NonNullable<WavePlayer["version"]>; buffer: AudioBuffer | null; state: ReturnType<WavePlayer["getState"]> }> = [];
   player.subscribe(() => {
     if (player.version) snapshots.push({ version: player.version, buffer: player.buffer, state: player.getState() });
   });
@@ -311,7 +310,7 @@ test("identity works without a processor while other edits require a loaded sour
   const original = source(context);
   await player.load(original);
   const version = player.version;
-  await expect(player.setStretch(1.5)).rejects.toThrow("RangePlayer needs a stretch processor.");
+  await expect(player.setStretch(1.5)).rejects.toThrow("WavePlayer needs a stretch processor.");
   expect(player.version).toBe(version);
   await player.setStretch(1);
   expect(player.buffer).toBe(original);

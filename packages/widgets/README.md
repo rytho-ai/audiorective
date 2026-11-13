@@ -23,7 +23,7 @@ The selector includes URL/File loading with shared phase/byte progress and cance
 
 `getState().loadProgress` comes from the block. `selector.cancelLoad()` or Cancel loading stops the current load; retry with `load()`. Known byte totals support a fraction; decode, peaks and unknown totals stay indeterminate.
 
-For headless control or multiple views, create a `RangePlayer` from `@audiorective/blocks` and pass `{ player }` instead of `{ context }`. Selectors read the same audio and selection owner; each retains its own renderer, zoom and snap settings. Route the shared output once. Destroying a view leaves a supplied player alive; the caller destroys it after all views are finished.
+For headless control or multiple views, create a `WavePlayer` from `@audiorective/blocks` and pass `{ player }` instead of `{ context }`. Selectors read the same audio and selection owner; each retains its own renderer, zoom and snap settings. Route the shared output once. Destroying a view leaves a supplied player alive; the caller destroys it after all views are finished.
 
 Selectors display the shared player's committed `version.peaks`, without scanning PCM for each view. A pending stretch keeps the previous waveform visible; successful edits preserve same-source zoom and map scrolling. `getState()` includes `processing`, `stretchRatio`, `revision`, and `sourceDuration`. Selection, position and renderer coordinates use committed output seconds. Selector beat grids are supplied in original source seconds and mapped to output after edits.
 
@@ -33,4 +33,4 @@ Both mount functions accept a `renderer` factory to replace waveform drawing wit
 
 See the [widget reference](../../docs/widgets.md) for public types, loading and cleanup behavior, plugin examples, and styling.
 
-For offline edits, pass a `RangePlayer` configured with a borrowed stretch processor and call `await player.setStretch(ratio)`. See the [complete composition example](../../docs/blocks.md#compose-offline-stretch-and-a-selector) for caller-hosted WASM, routing, URL/File errors and cleanup.
+For offline edits, pass a `WavePlayer` configured with a borrowed stretch processor and call `await player.setStretch(ratio)`. See the [complete composition example](../../docs/blocks.md#compose-offline-stretch-and-a-selector) for caller-hosted WASM, routing, URL/File errors and cleanup.

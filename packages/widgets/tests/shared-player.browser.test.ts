@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { RangePlayer } from "@audiorective/blocks";
+import { WavePlayer } from "@audiorective/blocks";
 import { mountWaveformSelector } from "../src";
 import { mountWaveform, createSelectionPlugin } from "../src/waveform";
 import { bandsFile, cleanup, host, own, element, drag, delay } from "./helpers";
@@ -9,7 +9,7 @@ afterEach(async () => {
 });
 async function fixture() {
   const context = new AudioContext();
-  const player = new RangePlayer(context);
+  const player = new WavePlayer(context);
   own(() => context.close());
   own(() => player.destroy());
   await player.load(bandsFile());

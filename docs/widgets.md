@@ -6,7 +6,7 @@ Try the [waveform showroom](/showroom/waveform) for a working selector.
 
 `@audiorective/widgets` provides browser DOM widgets that mount into an element and return an imperative handle. Use `mountWaveformSelector` for loading audio, selecting a range, and auditioning it. Use the audio-independent `@audiorective/widgets/waveform` entry for a waveform driven by your own data and playback position.
 
-The widgets implement their own waveform display and interaction. They require no UI framework or WaveSurfer dependency. The selector uses [RangePlayer](./blocks.md) for audio and selection. Pass a shared `player`, or supply `context` to let the selector own one. Its public audio connection is `handle.output`.
+The widgets implement their own waveform display and interaction. They require no UI framework or WaveSurfer dependency. The selector uses [WavePlayer](./blocks.md) for audio and selection. Pass a shared `player`, or supply `context` to let the selector own one. Its public audio connection is `handle.output`.
 
 ## Mount a selector
 
@@ -43,7 +43,7 @@ The caller owns the context and routing. The selector resumes the supplied conte
 
 ### Interaction
 
-To share audio and selection across views, call `mountWaveformSelector(root, { player })` with a `RangePlayer` from `@audiorective/blocks`. Supply either `context` or `player`. The view does not destroy a supplied player or cancel its loads when detached. Route the shared output once. Loading or changing selection through any view updates the player and all its views; renderer, zoom and snap remain local. See [Blocks](./blocks.md#share-a-block-between-widgets).
+To share audio and selection across views, call `mountWaveformSelector(root, { player })` with a `WavePlayer` from `@audiorective/blocks`. Supply either `context` or `player`. The view does not destroy a supplied player or cancel its loads when detached. Route the shared output once. Loading or changing selection through any view updates the player and all its views; renderer, zoom and snap remain local. See [Blocks](./blocks.md#share-a-block-between-widgets).
 
 - Load an audio URL or local file using the built-in controls. Loading does not start playback.
 - Drag in either direction to create a range and start looping its audition. The endpoints are normalized to increasing seconds.
@@ -58,7 +58,7 @@ To share audio and selection across views, call `mountWaveformSelector(root, { p
 type Selection = { start: number; end: number };
 
 type WaveformSelectorOptions = {
-  context: AudioContext; // alternatively supply player: RangePlayer, without context
+  context: AudioContext; // alternatively supply player: WavePlayer, without context
   source?: string | File;
   grid?: { beats: number[]; downbeats: number[] };
   onSelectionChange?: (selection: Selection | null) => void;
@@ -88,7 +88,7 @@ The complete selector renders the block's download/read byte counts, indetermina
 
 A selector reads `player.version.peaks` when the committed revision changes. The player summarizes PCM once per version; multiple selectors share that result without rescanning PCM for each view. The view copies the peak arrays for drawing. While `setStretch()` is pending, the old waveform stays visible and the processing indicator is active. A successful commit updates audio, peaks, duration and selection together; a failed render leaves the committed waveform in place.
 
-Same-source edits preserve each view's zoom factor and map its scroll position to the new duration. A new source resets the viewport. Selector `grid` values remain in **original source seconds** and are remapped through `player.sourceToOutput()` for snapping; selection callbacks, playhead, viewport coordinates, and renderer times use **current output seconds**. To initiate stretch, retain the supplied `RangePlayer` and call `await player.setStretch(ratio)`; the selector handle does not add a second editing API. See the [complete composition example](./blocks.md#compose-offline-stretch-and-a-selector).
+Same-source edits preserve each view's zoom factor and map its scroll position to the new duration. A new source resets the viewport. Selector `grid` values remain in **original source seconds** and are remapped through `player.sourceToOutput()` for snapping; selection callbacks, playhead, viewport coordinates, and renderer times use **current output seconds**. To initiate stretch, retain the supplied `WavePlayer` and call `await player.setStretch(ratio)`; the selector handle does not add a second editing API. See the [complete composition example](./blocks.md#compose-offline-stretch-and-a-selector).
 
 ## Use the waveform without audio
 
@@ -147,7 +147,7 @@ Peak values must be finite, and duration must be finite and positive. The view c
 
 Attach the plugin before calling `setSelection`. Its methods are `getSelection()`, `setSelection(selection | null)`, `setSnap(mode)`, and `setGrid({ beats, downbeats })`. Pure-plugin grids use **current-view seconds**, matching the displayed data. `setGrid` replaces and copies the arrays; it does not convert original source times. Convert those explicitly when using the pure plugin with edited audio. Each selection plugin attaches to one view at a time; each view has one selection owner. Destroy the attachment before reusing the plugin elsewhere. Without an external model, data replacement and detachment clear its selection.
 
-Pass `model: SelectionModel` to use an existing headless selection owner. The structural interface is `getSelection(): Selection | null`, `setSelection(selection: Selection | null): void`, and `subscribe(listener: () => void): () => void`. `RangePlayer` implements it. The plugin reads the model directly and writes gesture changes to it; detaching or replacing a view's display data leaves external selection intact. `onChange`/`onCommit` describe this plugin's edits; external model notifications redraw without inventing a gesture commit. Keep the model's timeline and duration consistent with the displayed data.
+Pass `model: SelectionModel` to use an existing headless selection owner. The structural interface is `getSelection(): Selection | null`, `setSelection(selection: Selection | null): void`, and `subscribe(listener: () => void): () => void`. `WavePlayer` implements it. The plugin reads the model directly and writes gesture changes to it; detaching or replacing a view's display data leaves external selection intact. `onChange`/`onCommit` describe this plugin's edits; external model notifications redraw without inventing a gesture commit. Keep the model's timeline and duration consistent with the displayed data.
 
 ## Replace waveform drawing
 

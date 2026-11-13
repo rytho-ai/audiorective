@@ -4,15 +4,15 @@ title: Blocks
 
 `@audiorective/blocks` provides headless audio functionality. A block owns audio behavior and state; widgets read that state and call its methods. Blocks need Web Audio for playback, but no document, elements, renderer, or UI framework.
 
-## RangePlayer
+## WavePlayer
 
-`RangePlayer` loads audio, selects a range in the committed output timeline, and auditions it. Pass an optional borrowed offline stretch processor to render another duration while preserving pitch. It extends `AudioProcessor`, reuses core's `BufferPlayer`, and exposes `params.volume` with the standard `.value`, `$`, and scheduling methods. The caller supplies an `AudioContext`, routes its output, and destroys it when finished.
+`WavePlayer` loads audio, selects a range in the committed output timeline, and auditions it. Pass an optional borrowed offline stretch processor to render another duration while preserving pitch. It extends `AudioProcessor`, reuses core's `BufferPlayer`, and exposes `params.volume` with the standard `.value`, `$`, and scheduling methods. The caller supplies an `AudioContext`, routes its output, and destroys it when finished.
 
 ```typescript
-import { RangePlayer } from "@audiorective/blocks";
+import { WavePlayer } from "@audiorective/blocks";
 
 const context = new AudioContext(); // or your existing context
-const player = new RangePlayer(context);
+const player = new WavePlayer(context);
 player.output.connect(context.destination); // or your effects chain
 
 try {
@@ -45,14 +45,14 @@ try {
 | `subscribe(listener: () => void): () => void`                | Change notifications for source, selection, loading and playback; returns unsubscribe. Does not call immediately or tick for clock-only position movement. Render once, subscribe for changes, and read `position` per animation frame when needed. A failing listener is logged without preventing other updates.                                                        |
 | `destroy()`                                                  | Idempotently cancels loads, edits and play requests, stops/disconnects owned audio and releases buffers/listeners. It never destroys the borrowed stretch processor. Leaves the caller context open. Mutating a destroyed player throws `Range player is destroyed.`                                                                                                      |
 
-`AudioRange` is `{ start: number; end: number }`. `RangePlayerSource`, `RangePlayerState`, `RangePlayerOptions`, `RangeStretchProcessor`, and `PlaybackVersion` are exported. Playback, selection, seek, and position use **committed output seconds**. Original source seconds remain available through `sourceDuration` and the mapping helpers below. With ratio 1 the timelines coincide.
+`AudioRange` is `{ start: number; end: number }`. `WavePlayerSource`, `WavePlayerState`, `WavePlayerOptions`, `WaveStretchProcessor`, and `PlaybackVersion` are exported. Playback, selection, seek, and position use **committed output seconds**. Original source seconds remain available through `sourceDuration` and the mapping helpers below. With ratio 1 the timelines coincide.
 
 ## Loading state, progress and cancellation
 
 `getState().loading` covers the whole source load. `loadProgress` is an immutable snapshot:
 
 ```typescript
-type RangeLoadProgress = { phase: "download" | "read"; loadedBytes: number; totalBytes: number | null } | { phase: "decode" } | { phase: "peaks" };
+type WaveLoadProgress = { phase: "download" | "read"; loadedBytes: number; totalBytes: number | null } | { phase: "decode" } | { phase: "peaks" };
 ```
 
 URL streams report `download`; File streams report `read`. `totalBytes: null` means the size is unknown, including encoded HTTP bodies whose Content-Length describes compressed bytes. Show the bytes received and an indeterminate indicator. A trustworthy positive total supports a download fraction; decode and peaks have no percentage. Peaks reduction is synchronous: subscribers observe its phase, but the browser need not paint it before completion. An AudioBuffer skips I/O and decode.
@@ -74,15 +74,15 @@ Cancellation or replacement prevents stale progress/results from updating the bl
 
 ### Reusing an existing URL/decode cache
 
-`RangePlayerOptions.loadSource?: RangeSourceLoader` replaces **URL** loading; File inputs use the built-in loader. The adapter receives `(url, { context, signal, onProgress })` and returns `Promise<AudioBuffer>`. It reports actual `download`/`read` or `decode` phases through `onProgress`; the block owns the `peaks` phase, loading/error state, version commit and stale-result guards. A decoded cache hit can return its buffer without reporting artificial I/O phases. The buffer is borrowed and must be treated as immutable.
+`WavePlayerOptions.loadSource?: WaveSourceLoader` replaces **URL** loading; File inputs use the built-in loader. The adapter receives `(url, { context, signal, onProgress })` and returns `Promise<AudioBuffer>`. It reports actual `download`/`read` or `decode` phases through `onProgress`; the block owns the `peaks` phase, loading/error state, version commit and stale-result guards. A decoded cache hit can return its buffer without reporting artificial I/O phases. The buffer is borrowed and must be treated as immutable.
 
-Detach this waiter's progress observers when `signal` aborts or the adapter settles. Shared cache work may continue for other readers; cancellation does not require aborting their request. Byte reports require non-negative safe integers, `totalBytes: null` or a total at least as large as `loadedBytes`. Invalid progress rejects the current load. `RangeLoadProgress` and `RangeSourceLoader` are exported from `@audiorective/blocks`.
+Detach this waiter's progress observers when `signal` aborts or the adapter settles. Shared cache work may continue for other readers; cancellation does not require aborting their request. Byte reports require non-negative safe integers, `totalBytes: null` or a total at least as large as `loadedBytes`. Invalid progress rejects the current load. `WaveLoadProgress` and `WaveSourceLoader` are exported from `@audiorective/blocks`.
 
 Built-in HTTP loading rejects unsuccessful responses, text/SPA fallback content, and known-length transfers whose actual bytes do not match Content-Length. These failures clear loading/progress and permit retry; decoding errors retain the browser's message.
 
 ## Committed versions and offline stretch
 
-Construct `new RangePlayer(context, { stretch })` with any structural `RangeStretchProcessor` exposing `process(input: PCMData, options: { ratio: number; signal?: AbortSignal }): Promise<PCMData>`. The player borrows that processor; the application owns its lifetime. A custom processor must leave the borrowed source PCM unchanged. [`TimeStretch`](./effects.md#timestretch) implements this interface and takes private copies before processing.
+Construct `new WavePlayer(context, { stretch })` with any structural `WaveStretchProcessor` exposing `process(input: PCMData, options: { ratio: number; signal?: AbortSignal }): Promise<PCMData>`. The player borrows that processor; the application owns its lifetime. A custom processor must leave the borrowed source PCM unchanged. [`TimeStretch`](./effects.md#timestretch) implements this interface and takes private copies before processing.
 
 `sourceBuffer: AudioBuffer | null` keeps the original loaded buffer. Treat its channel data as immutable while loaded. `version: PlaybackVersion | null` publishes one committed revision:
 
@@ -108,7 +108,7 @@ A successful edit commits audio and peaks together, stops playback, and scales s
 | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Stretch ratio must be finite and positive.`   | Supply a finite ratio greater than zero.                                                                                                                                                        |
 | `No audio source is loaded.`                   | Await a successful load before editing.                                                                                                                                                         |
-| `RangePlayer needs a stretch processor.`       | Supply `{ stretch }` at construction for a ratio other than 1.                                                                                                                                  |
+| `WavePlayer needs a stretch processor.`        | Supply `{ stretch }` at construction for a ratio other than 1.                                                                                                                                  |
 | `Stretch processor returned incompatible PCM.` | Return the original sample rate and channel count, with exactly the rounded target frames in every channel. Samples must also satisfy the [PCM summary contract](./core.md#pcm-peak-summaries). |
 | `Time must be finite seconds.`                 | Pass finite time to the mapping helpers.                                                                                                                                                        |
 
@@ -118,7 +118,7 @@ This browser example uses a WASM URL hosted by the application. The file must im
 
 ```typescript
 import { TimeStretch } from "@audiorective/effects/time-stretch";
-import { RangePlayer } from "@audiorective/blocks";
+import { WavePlayer } from "@audiorective/blocks";
 import { mountWaveformSelector } from "@audiorective/widgets";
 
 async function createEditor(context: AudioContext, root: HTMLElement, wasmURL: string) {
@@ -126,7 +126,7 @@ async function createEditor(context: AudioContext, root: HTMLElement, wasmURL: s
   if (!response.ok) throw new Error(`WASM request failed: HTTP ${response.status}`);
   const module = await WebAssembly.compile(await response.arrayBuffer());
   const stretch = new TimeStretch(module);
-  const player = new RangePlayer(context, { stretch });
+  const player = new WavePlayer(context, { stretch });
   const gain = new GainNode(context, { gain: 0.8 });
   player.output.connect(gain);
   gain.connect(context.destination);
@@ -182,11 +182,11 @@ URL loading follows browser CORS rules; URL fetch and File decode failures rejec
 ## Share a block between widgets
 
 ```typescript
-import { RangePlayer } from "@audiorective/blocks";
+import { WavePlayer } from "@audiorective/blocks";
 import { mountWaveformSelector } from "@audiorective/widgets";
 
 const context = new AudioContext();
-const player = new RangePlayer(context);
+const player = new WavePlayer(context);
 player.output.connect(context.destination); // route once, even with two views
 await player.load("/audio/loop.wav");
 

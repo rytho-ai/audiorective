@@ -11,7 +11,7 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
       <a href="/docs/widgets">Widget API and customization →</a>
     </header>
     <div id="waveform-demo" aria-label="Interactive waveform selector"></div>
-    <p class="caption">Both selectors share one RangePlayer. Select or load audio in either view; playback and selection follow in both. Each keeps its own drawing and zoom. The page routes audio once.</p>
+    <p class="caption">Both selectors share one WavePlayer. Select or load audio in either view; playback and selection follow in both. Each keeps its own drawing and zoom. The page routes audio once.</p>
     <section class="custom-drawing">
       <h2>Another view of the same audio</h2>
       <div id="waveform-shared" aria-label="Shared waveform selector"></div>
@@ -34,7 +34,7 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
 </BaseLayout>
 
 <script>
-  import { RangePlayer } from "@audiorective/blocks";
+  import { WavePlayer } from "@audiorective/blocks";
   import { TimeStretch } from "@audiorective/effects/time-stretch";
   import { mountWaveformSelector, type WaveformSelectorHandle } from "@audiorective/widgets";
   import { mountWaveform, createSelectionPlugin, type WaveformHandle } from "@audiorective/widgets/waveform";
@@ -44,10 +44,10 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
   let context: AudioContext | undefined;
   let widget: WaveformSelectorHandle | undefined;
   let shared: WaveformSelectorHandle | undefined;
-  let player: RangePlayer | undefined;
+  let player: WavePlayer | undefined;
   let custom: WaveformHandle | undefined;
   let stretch: TimeStretch | undefined;
-  let stretchPlayer: RangePlayer | undefined;
+  let stretchPlayer: WavePlayer | undefined;
   let stretchView: WaveformSelectorHandle | undefined;
   let unsubscribeStretch: (() => void) | undefined;
   let stretchGeneration = 0;
@@ -75,7 +75,7 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
       const source = player?.sourceBuffer;
       if (!source) throw new Error("Load audio before enabling stretch.");
       stretch = new TimeStretch(module);
-      stretchPlayer = new RangePlayer(ctx, { stretch });
+      stretchPlayer = new WavePlayer(ctx, { stretch });
       stretchPlayer.output.connect(ctx.destination);
       stretchView = mountWaveformSelector(document.getElementById("waveform-stretch")!, {
         player: stretchPlayer, renderer: roundedBars,
@@ -102,7 +102,7 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
   function mount() {
     if (widget) return;
     context = new AudioContext();
-    player = new RangePlayer(context);
+    player = new WavePlayer(context);
     player.output.connect(context.destination);
     widget = mountWaveformSelector(root, { player, source: "/stems/drums.mp3" });
     shared = mountWaveformSelector(document.getElementById("waveform-shared")!, { player, renderer: roundedBars });

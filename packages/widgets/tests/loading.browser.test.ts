@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { RangePlayer, type RangeSourceLoader } from "@audiorective/blocks";
+import { WavePlayer, type WaveSourceLoader } from "@audiorective/blocks";
 import { mountWaveformSelector } from "../src";
 import { cleanup, element, host, own, bandsFile } from "./helpers";
 
@@ -12,12 +12,12 @@ afterEach(async () => {
 test("shared views render bytes, indeterminate decode and cancellation from the same block", async () => {
   const context = new AudioContext();
   own(() => context.close());
-  let report!: Parameters<RangeSourceLoader>[1]["onProgress"];
+  let report!: Parameters<WaveSourceLoader>[1]["onProgress"];
   let finish!: (buffer: AudioBuffer) => void;
   const result = new Promise<AudioBuffer>((resolve) => {
     finish = resolve;
   });
-  const player = new RangePlayer(context, {
+  const player = new WavePlayer(context, {
     loadSource: (_source, options) => {
       report = options.onProgress;
       return result;

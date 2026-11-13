@@ -1,3 +1,3 @@
-export { RangePlayer } from "./RangePlayer";
-export type { RangeLoadProgress, RangeSourceLoader } from "./source";
-export type { AudioRange, RangePlayerSource, RangePlayerState, RangePlayerOptions, RangeStretchProcessor, PlaybackVersion } from "./RangePlayer";
+export { WavePlayer } from "./WavePlayer";
+export type { WaveLoadProgress, WaveSourceLoader } from "./source";
+export type { AudioRange, WavePlayerSource, WavePlayerState, WavePlayerOptions, WaveStretchProcessor, PlaybackVersion } from "./WavePlayer";

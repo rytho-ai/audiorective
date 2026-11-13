@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { RangePlayer, type RangePlayerOptions, type RangeSourceLoader } from "../src";
+import { WavePlayer, type WavePlayerOptions, type WaveSourceLoader } from "../src";
 
 const cleanups: Array<() => void | Promise<unknown>> = [];
 afterEach(async () => {
@@ -7,14 +7,14 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
-function fixture(options: RangePlayerOptions = {}) {
+function fixture(options: WavePlayerOptions = {}) {
   const context = new AudioContext();
-  const player = new RangePlayer(context, options);
+  const player = new WavePlayer(context, options);
   cleanups.push(
     () => context.close(),
     () => player.destroy(),
   );
-  const states: ReturnType<RangePlayer["getState"]>[] = [];
+  const states: ReturnType<WavePlayer["getState"]>[] = [];
   player.subscribe(() => states.push(player.getState()));
   return { context, player, states };
 }
@@ -178,8 +178,8 @@ for (const action of ["cancel", "replace", "destroy"] as const) {
 
 test("a shared cache adapter keeps peer loads alive and stale progress is ignored", async () => {
   const cached = deferred<AudioBuffer>();
-  const requests: Parameters<RangeSourceLoader>[1][] = [];
-  const loader: RangeSourceLoader = (_source, options) => {
+  const requests: Parameters<WaveSourceLoader>[1][] = [];
+  const loader: WaveSourceLoader = (_source, options) => {
     requests.push(options);
     return cached.promise;
   };
@@ -206,7 +206,7 @@ test("a shared cache adapter keeps peer loads alive and stale progress is ignore
 });
 
 test("invalid adapter progress rejects, while cancelled invalid callbacks are ignored", async () => {
-  let report!: Parameters<RangeSourceLoader>[1]["onProgress"];
+  let report!: Parameters<WaveSourceLoader>[1]["onProgress"];
   const { context, player } = fixture({
     loadSource: async (_source, options) => {
       report = options.onProgress;

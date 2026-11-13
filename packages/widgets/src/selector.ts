@@ -1,5 +1,5 @@
-/** Default waveform controls bound to a headless RangePlayer. */
-import { RangePlayer, type PlaybackVersion } from "@audiorective/blocks";
+/** Default waveform controls bound to a headless WavePlayer. */
+import { WavePlayer, type PlaybackVersion } from "@audiorective/blocks";
 import type { MountWaveformSelector, WaveformSelectorHandle, WaveformHandle, Selection } from "./types";
 import { mountWaveform } from "./waveform";
 import { createSelectionPlugin, type SnapMode } from "./selection";
@@ -21,12 +21,12 @@ export const mountWaveformSelector: MountWaveformSelector = (root, options) => {
   const url = query<HTMLInputElement>("source-url"),
     file = query<HTMLInputElement>("source-file");
   const ownsPlayer = !options.player;
-  let player: RangePlayer;
+  let player: WavePlayer;
   let waveform: WaveformHandle;
   try {
     waveform = mountWaveform(container.querySelector<HTMLElement>(".ar-wave-mount")!, { renderer: options.renderer });
     try {
-      player = options.player ?? new RangePlayer(options.context!);
+      player = options.player ?? new WavePlayer(options.context!);
     } catch (error) {
       waveform.destroy();
       throw error;

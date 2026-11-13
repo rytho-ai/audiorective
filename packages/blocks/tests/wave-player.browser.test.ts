@@ -1,11 +1,11 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { RangePlayer } from "../src";
+import { WavePlayer } from "../src";
 
 const disposers: Array<() => void | Promise<unknown>> = [];
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 function fixture() {
   const context = new AudioContext();
-  const player = new RangePlayer(context);
+  const player = new WavePlayer(context);
   disposers.push(
     () => context.close(),
     () => player.destroy(),
@@ -155,7 +155,7 @@ for (const command of ["pause", "stop", "seek", "load", "destroy"] as const) {
 
 test("notifications are coherent, unsubscribe works and shared ownership survives observer removal", async () => {
   const { context, player } = fixture();
-  const states: ReturnType<RangePlayer["getState"]>[] = [];
+  const states: ReturnType<WavePlayer["getState"]>[] = [];
   const off = player.subscribe(() => states.push(player.getState()));
   await player.load(bands(context));
   player.setSelection({ start: 1, end: 2 });

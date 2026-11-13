@@ -1,9 +1,9 @@
-import type { RangePlayer, RangePlayerState } from "@audiorective/blocks";
+import type { WavePlayer, WavePlayerState } from "@audiorective/blocks";
 
 /** Selection boundaries in the currently committed buffer's output seconds. */
 export type Selection = { start: number; end: number };
 
-export type WaveformSelectorState = RangePlayerState & {
+export type WaveformSelectorState = WavePlayerState & {
   pixelsPerSecond: number;
 };
 
@@ -15,7 +15,7 @@ export type WaveformSelectorOptions = (
     }
   | {
       /** Shared player belongs to the caller; destroying a view leaves it alive. */
-      player: RangePlayer;
+      player: WavePlayer;
       context?: never;
     }
 ) & {

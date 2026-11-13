@@ -1,17 +1,17 @@
-/** Source I/O behind RangePlayer's loading lifecycle; no playback or view state. */
-export type RangeLoadProgress =
+/** Source I/O behind WavePlayer's loading lifecycle; no playback or view state. */
+export type WaveLoadProgress =
   | Readonly<{ phase: "download" | "read"; loadedBytes: number; totalBytes: number | null }>
   | Readonly<{ phase: "decode" }>
   | Readonly<{ phase: "peaks" }>;
 
 /** A source adapter may borrow a shared decode cache. Respect the signal for this
  * consumer; shared work may continue. The block discards stale progress/results. */
-export type RangeSourceLoader = (
+export type WaveSourceLoader = (
   url: string,
   options: {
     context: AudioContext;
     signal: AbortSignal;
-    onProgress: (progress: Exclude<RangeLoadProgress, { phase: "peaks" }>) => void;
+    onProgress: (progress: Exclude<WaveLoadProgress, { phase: "peaks" }>) => void;
   },
 ) => Promise<AudioBuffer>;
 
@@ -60,7 +60,7 @@ async function readStream(
   }
 }
 
-export const loadSource = async (source: string | File, { context, signal, onProgress }: Parameters<RangeSourceLoader>[1]): Promise<AudioBuffer> => {
+export const loadSource = async (source: string | File, { context, signal, onProgress }: Parameters<WaveSourceLoader>[1]): Promise<AudioBuffer> => {
   let bytes: ArrayBuffer;
   if (typeof source === "string") {
     if (!source.trim()) throw new Error("Enter an audio URL.");

@@ -1,15 +1,15 @@
 import { AudioProcessor, BufferPlayer, cell, type SchedulableParam } from "@audiorective/core";
 import { summarizePeaks, type PCMData, type PeakSummary } from "@audiorective/core/peaks";
-import { loadSource, type RangeLoadProgress, type RangeSourceLoader } from "./source";
+import { loadSource, type WaveLoadProgress, type WaveSourceLoader } from "./source";
 
 /** A processor is borrowed; its lifetime belongs to the caller. */
-export interface RangeStretchProcessor {
+export interface WaveStretchProcessor {
   process(input: PCMData, options: { ratio: number; signal?: AbortSignal }): Promise<PCMData>;
 }
-export interface RangePlayerOptions {
-  stretch?: RangeStretchProcessor;
+export interface WavePlayerOptions {
+  stretch?: WaveStretchProcessor;
   /** Optional URL/cache adapter. Files use native loading; the player owns lifecycle and summary. */
-  loadSource?: RangeSourceLoader;
+  loadSource?: WaveSourceLoader;
 }
 export interface PlaybackVersion {
   readonly revision: number;
@@ -22,8 +22,8 @@ export interface PlaybackVersion {
 
 /** Seconds in the currently committed playback buffer, independent of any view. */
 export type AudioRange = { start: number; end: number };
-export type RangePlayerSource = string | File | AudioBuffer;
-export type RangePlayerState = {
+export type WavePlayerSource = string | File | AudioBuffer;
+export type WavePlayerState = {
   duration: number;
   selection: AudioRange | null;
   position: number;
@@ -31,7 +31,7 @@ export type RangePlayerState = {
   isLooping: boolean;
   loading: boolean;
   /** Null when idle or before a custom loader reports its first phase. */
-  loadProgress: RangeLoadProgress | null;
+  loadProgress: WaveLoadProgress | null;
   error: string | null;
   processing: boolean;
   stretchRatio: number;
@@ -39,8 +39,8 @@ export type RangePlayerState = {
   revision: number;
 };
 
-/** Headless, original-speed range audition. The caller owns context and routing. */
-export class RangePlayer extends AudioProcessor<{ volume: SchedulableParam }, {}> {
+/** Headless audio loading, range playback and non-destructive stretch. The caller owns context and routing. */
+export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, {}> {
   private readonly player: BufferPlayer;
   private readonly gain: GainNode;
   private readonly audioContext: AudioContext;
@@ -49,7 +49,7 @@ export class RangePlayer extends AudioProcessor<{ volume: SchedulableParam }, {}
   private held = 0;
   private anchor: { time: number; offset: number; start: number; end: number } | null = null;
   private loading = false;
-  private loadProgress: RangeLoadProgress | null = null;
+  private loadProgress: WaveLoadProgress | null = null;
   private error: string | null = null;
   private request = 0;
   private command = 0;
@@ -67,7 +67,7 @@ export class RangePlayer extends AudioProcessor<{ volume: SchedulableParam }, {}
 
   constructor(
     context: AudioContext,
-    private readonly options: RangePlayerOptions = {},
+    private readonly options: WavePlayerOptions = {},
   ) {
     const gain = new GainNode(context);
     super(context, ({ param }) => ({
@@ -127,7 +127,7 @@ export class RangePlayer extends AudioProcessor<{ volume: SchedulableParam }, {}
   getSelection(): AudioRange | null {
     return this.range ? { ...this.range } : null;
   }
-  getState(): RangePlayerState {
+  getState(): WavePlayerState {
     return {
       duration: this.duration,
       selection: this.getSelection(),
@@ -281,7 +281,7 @@ export class RangePlayer extends AudioProcessor<{ volume: SchedulableParam }, {}
     if (!Number.isFinite(ratio) || ratio <= 0) throw new RangeError("Stretch ratio must be finite and positive.");
     const original = this.original;
     if (!original) throw new Error("No audio source is loaded.");
-    if (ratio !== 1 && !this.options.stretch) throw new Error("RangePlayer needs a stretch processor.");
+    if (ratio !== 1 && !this.options.stretch) throw new Error("WavePlayer needs a stretch processor.");
     this.cancelStretch();
     const id = this.editRequest,
       sourceRevision = this.sourceRevision;
@@ -341,7 +341,7 @@ export class RangePlayer extends AudioProcessor<{ volume: SchedulableParam }, {}
       this.error = null;
     });
   }
-  private reportLoad(request: number, progress: RangeLoadProgress): void {
+  private reportLoad(request: number, progress: WaveLoadProgress): void {
     if (this.disposed || request !== this.request || !this.loading) return;
     if (progress.phase === "download" || progress.phase === "read") {
       const { loadedBytes, totalBytes } = progress;
@@ -360,7 +360,7 @@ export class RangePlayer extends AudioProcessor<{ volume: SchedulableParam }, {}
     });
   }
   /** Replacing the source cancels playback, selection, loop and any older load. */
-  async load(source: RangePlayerSource): Promise<void> {
+  async load(source: WavePlayerSource): Promise<void> {
     this.assertAlive();
     const request = ++this.request;
     this.abort?.abort();
@@ -388,7 +388,7 @@ export class RangePlayer extends AudioProcessor<{ volume: SchedulableParam }, {}
         const options = {
           context: this.audioContext,
           signal: controller.signal,
-          onProgress: (progress: Exclude<RangeLoadProgress, { phase: "peaks" }>) => this.reportLoad(request, progress),
+          onProgress: (progress: Exclude<WaveLoadProgress, { phase: "peaks" }>) => this.reportLoad(request, progress),
         };
         buffer = await (typeof source === "string" && this.options.loadSource
           ? this.options.loadSource(source, options)

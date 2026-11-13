@@ -109,27 +109,27 @@
     {
       "id": 8,
       "prompt": "Use the current Audiorective workspace build to load one audio File into a headless block, then attach two waveform selectors sharing selection and playback. Use one caller-owned AudioContext and output gain chain, distinct renderers and beat snapping, and allow either view to be unmounted while audition continues. Show headless selection/audition, source replacement, error handling and final cleanup. Do not run anything.",
-      "expected_output": "RangePlayer from @audiorective/blocks owns audio and selection; two mountWaveformSelector calls receive the same player; cleanup respects borrowed ownership.",
+      "expected_output": "WavePlayer from @audiorective/blocks owns audio and selection; two mountWaveformSelector calls receive the same player; cleanup respects borrowed ownership.",
       "files": [],
       "expectations": [
-        "Imports RangePlayer from @audiorective/blocks; awaits player.load and catches current load failures",
+        "Imports WavePlayer from @audiorective/blocks; awaits player.load and catches current load failures",
         "Routes player.output to the caller gain once; creates or closes no context inside the integration",
         "Passes the same player to both mountWaveformSelector calls, without context or a second player",
         "Uses player.setSelection and player.audition for headless operation instead of synthesizing DOM gestures",
         "Uses renderer and grid options per view without mirroring selection into a separate store",
         "Destroying one view leaves player and peer usable; final cleanup destroys both views then player",
         "Uses documented subscribe for non-clock changes and reads position on animation frames if a custom playhead is needed",
-        "Does not claim PCM editing or time-stretch is part of RangePlayer; APIs under Unreleased require a workspace build"
+        "Does not invent destructive PCM editing; optional stretch requires an injected processor; APIs under Unreleased require a workspace build"
       ]
     },
     {
       "id": 9,
       "prompt": "Build a full pitch-preserving time-stretch waveform selector with the current Audiorective workspace packages. Host supplies AudioContext, output gain and a compiled compatible Rubber Band WebAssembly.Module. Load a File, use two shared selectors with SVG/Canvas and source beat snapping, preserve original PCM, render from original for each ratio, show pending/errors, keep waveform/audio same revision, audition the output selection, handle stale jobs and cleanup without closing context. Do not run anything.",
-      "expected_output": "TimeStretch from pure effects/time-stretch is injected into RangePlayer; setStretch commits a complete buffer/peaks version consumed by both selectors.",
+      "expected_output": "TimeStretch from pure effects/time-stretch is injected into WavePlayer; setStretch commits a complete buffer/peaks version consumed by both selectors.",
       "files": [],
       "expectations": [
         "Uses new TimeStretch(module) from @audiorective/effects/time-stretch with caller-supplied WASM, without bundling a GPL binary or inventing a default WASM URL",
-        "Injects the processor via new RangePlayer(context, {stretch}) and connects player.output to the caller gain once",
+        "Injects the processor via new WavePlayer(context, {stretch}) and connects player.output to the caller gain once",
         "Mounts two selectors with the same player, separate renderers and source-coordinate grids",
         "Awaits player.load before editing and calls player.setStretch(ratio) rather than rebuilding transport or rewriting original PCM",
         "Uses committed stretchRatio/duration/revision and processing/error state; pending render keeps the previous version usable",
@@ -143,10 +143,10 @@
     {
       "id": 10,
       "prompt": "Build a vanilla TypeScript waveform selector for a caller-owned AudioContext. Show download bytes and a progress bar only when the total is known, indeterminate feedback for decode/peaks, a cancel button, and retry after cancellation or failure. Two views must observe the same state. We already have a URL-to-AudioBuffer cache: integrate it without a second loading store or a second decode; cancelling this observer must not cancel other cache readers. Use Audiorective public APIs, provide cleanup and do not fake percentages.",
-      "expected_output": "A shared RangePlayer with loadSource URL cache adapter, state snapshots/subscriptions and cancelLoad, plus selectors or custom feedback observing the same player. The adapter detaches on abort/settle while the shared job can continue.",
+      "expected_output": "A shared WavePlayer with loadSource URL cache adapter, state snapshots/subscriptions and cancelLoad, plus selectors or custom feedback observing the same player. The adapter detaches on abort/settle while the shared job can continue.",
       "files": [],
       "expectations": [
-        "Uses RangePlayer loading and loadProgress through getState()/subscribe(), rendering an initial snapshot because subscribe is not immediate.",
+        "Uses WavePlayer loading and loadProgress through getState()/subscribe(), rendering an initial snapshot because subscribe is not immediate.",
         "Uses download/read loadedBytes and totalBytes; null or nonpositive totals and decode/peaks are indeterminate, with no fake percentage.",
         "Both views share one player and see the same progress/cancellation; UI does not independently track audio loading.",
         "Calls cancelLoad() and retries with load(); treats current errors separately from superseded/cancelled loads.",

@@ -1,10 +1,10 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { RangePlayer, type RangeStretchProcessor } from "@audiorective/blocks";
+import { WavePlayer, type WaveStretchProcessor } from "@audiorective/blocks";
 import { mountWaveformSelector, type WaveformRenderer } from "../src";
 import { bandsFile, cleanup, drag, element, host, own } from "./helpers";
 
 // A deterministic shape adapter checks publication/interaction; pitch DSP has its own real-WASM suite.
-const stretch: RangeStretchProcessor = {
+const stretch: WaveStretchProcessor = {
   async process(input, { ratio }) {
     return {
       sampleRate: input.sampleRate,
@@ -16,7 +16,7 @@ const stretch: RangeStretchProcessor = {
 };
 async function fixture() {
   const context = new AudioContext(),
-    player = new RangePlayer(context, { stretch });
+    player = new WavePlayer(context, { stretch });
   own(() => context.close());
   own(() => player.destroy());
   await player.load(bandsFile());
@@ -90,7 +90,7 @@ test("selector maps source beat grid into committed output seconds before native
 test("failed render keeps coherent displayed data and exposes error; a new source resets both views", async () => {
   const context = new AudioContext();
   own(() => context.close());
-  const player = new RangePlayer(context, {
+  const player = new WavePlayer(context, {
     stretch: {
       async process() {
         throw Error("Render rejected");
