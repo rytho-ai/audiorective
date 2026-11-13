@@ -67,8 +67,10 @@ export const loadSource = async (source: string | File, { context, signal, onPro
     onProgress({ phase: "download", loadedBytes: 0, totalBytes: null });
     const response = await fetch(source, { signal });
     signal.throwIfAborted();
-    if (!response.ok) throw new Error(`Audio request failed: HTTP ${response.status}.`);
-    if (response.headers.get("content-type")?.startsWith("text/")) throw new Error("Audio request returned text instead of audio.");
+    if (!response.ok || response.headers.get("content-type")?.startsWith("text/")) {
+      void response.body?.cancel().catch(() => {});
+      throw new Error(!response.ok ? `Audio request failed: HTTP ${response.status}.` : "Audio request returned text instead of audio.");
+    }
     const length = response.headers.get("content-length");
     const encoded = response.headers.get("content-encoding");
     const parsed = length !== null && /^\d+$/.test(length) ? Number(length) : NaN;

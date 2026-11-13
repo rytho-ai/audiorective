@@ -134,9 +134,12 @@ for (const size of [10, 2000]) {
 test("text/SPA response fails clearly without decoding", async () => {
   const { context, player } = fixture();
   const decode = vi.spyOn(context, "decodeAudioData");
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("<html/>", { headers: { "Content-Type": "text/html" } })));
+  const cancel = vi.fn();
+  const body = new ReadableStream<Uint8Array>({ cancel });
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(body, { headers: { "Content-Type": "text/html" } })));
   await expect(player.load("/missing.wav")).rejects.toThrow("Audio request returned text instead of audio.");
   expect(decode).not.toHaveBeenCalled();
+  expect(cancel).toHaveBeenCalledOnce();
   expect(player.getState()).toMatchObject({ loading: false, loadProgress: null });
 });
 
