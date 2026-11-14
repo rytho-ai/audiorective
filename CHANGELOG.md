@@ -19,6 +19,10 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Added
 
+- **widgets:** `PianoRollOptions.layout` replaces the surrounding keyboard, toolbar and arrangement while retaining the supplied viewport and widget behavior. `onNoteEdit` enables widget-owned move/edge-resize previews, shared beat snap/Alt bypass and single-release model commands; custom note renderers forward `onNotePointerDown` instead of implementing gestures. Source/geometry changes, cancellation and cleanup discard previews. MIDI showroom demonstrates alternate layout/drawing with shared editing.
+
+- **widgets:** `PianoRollHandle.attach(plugin)` accepts the existing `WaveformPlugin` contract for public time coordinates, overlays, viewport/data notifications and attachment-scoped cleanup. Waveform and piano-roll share plugin disposal; detachment and failed attachment preserve peer views, borrowed models and caller audio.
+
 - **blocks:** Pure `@audiorective/blocks/midi` entry with `parseMidi`, `tickToSeconds`, `midiGrid`, `visibleMidiNotes`, immutable MIDI types and `MidiSequence` for source-time note/selection snapshots and atomic note edits. SMF format0/1 PPQ note projection follows tempo/signature maps without DOM, AudioContext or device permissions.
 - **widgets:** Audio-independent `mountPianoRoll` and renderer/model contracts from `@audiorective/widgets/piano-roll`; shared time selection, snap, keyboard handles, independent pitch/zoom/scroll, external playheads and custom note drawing. Views borrow note state and leave audio/synth ownership to the caller. MIDI docs and showroom demonstrate two views and caller-owned range audition.
 

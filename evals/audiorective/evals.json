@@ -59,7 +59,7 @@
     },
     {
       "id": 5,
-      "prompt": "Build a vanilla TypeScript clip selector with @audiorective/widgets. My app supplies an AudioContext and a gain node for the output; do not create or close a context inside the widget integration. Load /audio/loop.wav, support replacing it with a File, select 1\u20132 seconds programmatically, show loading errors, and clean up on unmount. Explain which interactions start audition. Use the current workspace package if this API is Unreleased. Do not run anything.",
+      "prompt": "Build a vanilla TypeScript clip selector with @audiorective/widgets. My app supplies an AudioContext and a gain node for the output; do not create or close a context inside the widget integration. Load /audio/loop.wav, support replacing it with a File, select 1–2 seconds programmatically, show loading errors, and clean up on unmount. Explain which interactions start audition. Use the current workspace package if this API is Unreleased. Do not run anything.",
       "expected_output": "A mountWaveformSelector integration using a caller-owned context and routed output, asynchronous readiness and recovery, and explicit lifecycle cleanup.",
       "files": [],
       "expectations": [
@@ -167,9 +167,40 @@
         "Uses source tempo/signature metadata via midiGrid rather than assuming a constant120 BPM.",
         "Both views borrow one sequence; note edits go through updateNote and selection through the shared model without mirrored audio/UI state.",
         "Renderer uses frame timeToX/pitchToY and visible spanning notes; view has no AudioContext, synth or device permissions.",
-        "Note inspection calls caller controls; this version does not promise note drag/resize, lossless SMF export, pedal/controller rendering or Web MIDI I/O.",
+        "Note inspection calls caller controls; read-only inspection omits onNoteEdit and does not promise lossless SMF export, pedal/controller rendering or Web MIDI I/O.",
         "Caller clips sustained notes to audition bounds, schedules its instrument and cancels active/future voices on pause/seek/source replacement/edit/destroy.",
         "Removing one view preserves peer/model/audio; final cleanup destroys views, caller audio and sequence independently."
+      ]
+    },
+    {
+      "id": 12,
+      "prompt": "Use current Audiorective workspace packages to add a custom cue marker and pointer interaction to two piano rolls that borrow one existing MIDI model. The same time-based plugin factory must work on a waveform too. Keep the default note renderer and caller audio. Follow zoom, horizontal scroll, resizing and source replacement. Support detaching one marker independently and final view cleanup. Use only public APIs; no internal DOM selectors or assumed keyboard offsets.",
+      "expected_output": "A WaveformPlugin mounted through PianoRollHandle.attach and WaveformHandle.attach, using the supplied shared context for source-second coordinates, overlays, subscriptions and cleanup.",
+      "files": [],
+      "expectations": [
+        "Imports mountPianoRoll and WaveformPlugin/WaveformPluginContext from the public piano-roll entry, with workspace/packed artifacts for Unreleased APIs.",
+        "Uses view.attach(plugin) and its returned PluginAttachment; keeps note drawing in the default renderer rather than replacing it to obtain coordinates.",
+        "Uses ctx.timeToX and ctx.clientXToTime, public surface/getViewport/getViewportRect, with no private DOM selectors or hard-coded keyboard offsets.",
+        "Mounts overlay through ctx.mountOverlay, draws initially, and updates through ctx.onViewportChange and ctx.onDataChange; observes borrowed model separately for selection-only changes.",
+        "An interactive overlay child opts into pointer-events and stops pointerdown propagation when appropriate to preserve native selection ownership.",
+        "Uses ctx.listen/onCleanup for owned resources; detaching one plugin removes its overlay/listeners/subscriptions while peer/model/audio remain alive.",
+        "Reuses a plugin factory for waveform and piano-roll without pretending the time context exposes pitch editing or a second selection owner.",
+        "Final cleanup destroys view attachments without destroying a borrowed model or caller audio; no extra AudioContext, player or mirrored note store."
+      ]
+    },
+    {
+      "id": 13,
+      "prompt": "Use current Audiorective workspace packages to build two piano rolls sharing our existing MidiSequence. Give the second one a custom right-side keyboard, bottom toolbar and SVG note shapes. Both must support widget-owned note move and edge-resize with beat snap/Alt bypass, local drag previews and one model commit on release. Preserve range selection, inspection, external audio ownership and cancel edits on Escape/source replacement/unmount. Provide cleanup; do not implement another drag engine in the renderer.",
+      "expected_output": "mountPianoRoll layout and renderer change appearance while forwarding pointerdown to widget editing; onNoteEdit invokes the existing model command.",
+      "files": [],
+      "expectations": [
+        "Uses layout(root, viewport, controls) and mounts the supplied viewport unchanged inside root, with public frame geometry and control methods.",
+        "Layouts/renderers return render and optional destroy, manage owned listeners/resources and responsive controls, without private DOM selectors.",
+        "Enables onNoteEdit and updates the borrowed sequence with edited note start/end/pitch; leaves audio scheduling/routing with the caller.",
+        "Custom note renderer forwards onNotePointerDown(note,event,optionalKind), retains onNoteClick/keyboard inspection, and does not implement capture/delta/snap itself.",
+        "Uses widget snap/grid controls and Alt bypass, retains local-only preview plus single synchronous pointer-release command, and does not mirror durable notes.",
+        "Documents cancellation on Escape, pointercancel, source/geometry replacement and destruction, preserving peer/model/audio lifetime.",
+        "Keeps background range selection separate from note editing and does not promise auto-scroll, multi-note editing or lossless SMF export."
       ]
     }
   ]

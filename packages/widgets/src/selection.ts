@@ -1,4 +1,5 @@
 /** Selection metadata and interaction only. No audio transport or context dependency. */
+import { prepareGrid, snapTime } from "./snap-time";
 import type { Selection, WaveformPluginContext, Unsubscribe, SnapMode, SelectionCommit, SelectionPluginOptions, SelectionPlugin } from "./types";
 export type { SnapMode, SelectionCommit, SelectionPluginOptions, SelectionPlugin } from "./types";
 // Shared symbol also guards independently loaded ESM copies (e.g. dev-server query URLs).
@@ -21,18 +22,7 @@ export function createSelectionPlugin(options: SelectionPluginOptions = {}): Sel
     context: WaveformPluginContext | null = null;
   let snap: SnapMode = options.snap ?? "off";
   let redraw = () => {};
-  const grid = {
-    beat:
-      options.grid?.beats
-        .filter(Number.isFinite)
-        .slice()
-        .sort((a, b) => a - b) ?? [],
-    downbeat:
-      options.grid?.downbeats
-        .filter(Number.isFinite)
-        .slice()
-        .sort((a, b) => a - b) ?? [],
-  };
+  const grid = prepareGrid(options.grid);
   const copy = (): Selection | null => {
     const value = options.model ? options.model.getSelection() : range;
     return value ? { ...value } : null;
@@ -68,14 +58,7 @@ export function createSelectionPlugin(options: SelectionPluginOptions = {}): Sel
       snap = mode;
     },
     setGrid(next) {
-      grid.beat = next.beats
-        .filter(Number.isFinite)
-        .slice()
-        .sort((a, b) => a - b);
-      grid.downbeat = next.downbeats
-        .filter(Number.isFinite)
-        .slice()
-        .sort((a, b) => a - b);
+      Object.assign(grid, prepareGrid(next));
     },
     attach(ctx) {
       if (context) throw new Error("Selection plugin is already attached.");
@@ -119,17 +102,7 @@ export function createSelectionPlugin(options: SelectionPluginOptions = {}): Sel
       };
       function snapped(time: number, alt: boolean): number {
         const points = !alt && snap !== "off" ? grid[snap] : null;
-        if (!points?.length) return time;
-        let lo = 0,
-          hi = points.length;
-        while (lo < hi) {
-          const mid = (lo + hi) >>> 1;
-          if (points[mid] < time) lo = mid + 1;
-          else hi = mid;
-        }
-        const a = points[Math.max(0, lo - 1)],
-          b = points[Math.min(points.length - 1, lo)];
-        return clamp(Math.abs(a - time) <= Math.abs(b - time) ? a : b, 0, ctx.duration);
+        return snapTime(time, points ?? undefined, ctx.duration);
       }
       const timeAt = (x: number, alt: boolean) => snapped(ctx.clientXToTime(x), alt);
       function cancel(revert = true): void {

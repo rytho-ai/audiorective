@@ -150,7 +150,7 @@ Then load only what the task needs:
 | Waveform drawing (`renderer`), range selection/audition, external playhead, visual plugins | `references/widgets.md`                          |
 | Stretching PCM, preserving pitch, cancelling a render                                      | `references/effects.md` → TimeStretch            |
 | PCM min/max summaries and source-frame/time metadata                                       | `references/core.md` → PCM peak summaries        |
-| MIDI files, note edits, source tempo maps, piano-roll views and caller-owned audition      | `references/midi.md`                             |
+| MIDI files, piano-roll layout/drawing/plugins, note drag/resize and caller-owned audition  | `references/midi.md`                             |
 | Loading phases/bytes/cancellation, cached sources, or shared range audition                | `references/blocks.md` + `references/widgets.md` |
 | React UI bound to an engine                                                                | `references/react.md`                            |
 | Next.js / Remix / Astro / any app that renders on a server                                 | `references/client-boundary.md`                  |
@@ -236,6 +236,9 @@ type error on a documented API:
 
 | Symptom                                                                                                                                                        | Cause                                              | Fix                                                                                 |
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `Piano roll layout must mount its viewport inside the supplied root.`                                                                                          | Layout omitted/cloned the supplied viewport        | Append the supplied viewport inside the layout root; retain its identity.           |
+| `Piano roll is destroyed.`                                                                                                                                     | Attaching after view cleanup                       | Mount another view; keep the borrowed model if still needed.                        |
+| `Plugin is already attached to this piano roll.`                                                                                                               | Same object attached twice to one view             | Destroy its attachment first, or create another plugin instance.                    |
 | `Waveform selector is destroyed.`                                                                                                                              | Calling `load` or `setSelection` after cleanup     | Mount a new selector.                                                               |
 | `Range player is destroyed.`                                                                                                                                   | Mutating or subscribing after block cleanup        | Create a new WavePlayer; shared views must not destroy their caller's player.       |
 | `Position must be finite seconds.`                                                                                                                             | Nonfinite seek position                            | Pass finite source seconds; the block clamps to duration.                           |
@@ -293,7 +296,4 @@ type error on a documented API:
 
 ## References
 
-- [Installation](references/installation.md) · [Blocks](references/blocks.md) · [Widgets](references/widgets.md) · [MIDI/Piano Roll](references/midi.md)
-- [Core](references/core.md) · [Architecture](references/architecture.md) · [Designing Audio Apps](references/designing-audio-apps.md) · [Choosing Playback](references/choosing-playback.md)
-- [Clock](references/clock.md) · [Effects](references/effects.md) · [React](references/react.md) · [three.js](references/threejs.md) · [PlayCanvas](references/playcanvas.md) · [PixiJS](references/pixijs.md)
-- [Server-rendered frameworks](references/client-boundary.md) · [Overview](references/overview.md) · [Changelog](references/changelog.md)
+- [Installation](references/installation.md) · [Blocks](references/blocks.md) · [Widgets](references/widgets.md) · [MIDI/Piano Roll](references/midi.md) · [Core](references/core.md) · [Architecture](references/architecture.md) · [Designing Audio Apps](references/designing-audio-apps.md) · [Choosing Playback](references/choosing-playback.md) · [Clock](references/clock.md) · [Effects](references/effects.md) · [React](references/react.md) · [three.js](references/threejs.md) · [PlayCanvas](references/playcanvas.md) · [PixiJS](references/pixijs.md) · [Server-rendered frameworks](references/client-boundary.md) · [Overview](references/overview.md) · [Changelog](references/changelog.md)

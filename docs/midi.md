@@ -71,11 +71,11 @@ Note fields require unique nonempty IDs, finite `0 <= start <= end <= duration`,
 
 ## Piano-roll view
 
-`mountPianoRoll(root, options): PianoRollHandle` borrows a structural `model` implementing `getState`, `getSelection`, `setSelection`, and `subscribe`. `MidiSequence` satisfies it; other application-owned models can too. It reads state directly rather than copying notes/selection into a UI store.
+`mountPianoRoll(root, options): PianoRollHandle` borrows a structural `model` implementing `getState`, `getSelection`, `setSelection`, and `subscribe`. `MidiSequence` satisfies it; other application-owned models can too. It reads state directly rather than copying notes/selection into a UI store. `onNoteEdit` can call your application's existing edit command; models do not need to inherit `MidiSequence` or expose an `updateNote` method.
 
-Options include `label`, inclusive integer `pitches: {low, high}`, `grid: {beats, downbeats}`, `snap: "off" | "beat" | "downbeat"`, `renderer`, `onNoteClick(note)` and `onCommit(event)`. Each view retains independent zoom/pitch presentation. Grid values use the same source seconds as notes.
+Options include `label`, inclusive integer `pitches: {low, high}`, `grid: {beats, downbeats}`, `snap: "off" | "beat" | "downbeat"`, `renderer`, `layout`, `onNoteEdit(edit)`, `onNoteClick(note)` and `onCommit(event)`. Each view retains independent zoom/pitch presentation. Grid values use the same source seconds as notes.
 
-Drag on the background to select a time range. Selection handles support arrow keys (0.01 seconds) and Shift (0.1 seconds); Alt bypasses pointer snap. Clicking or keyboard-activating a note calls `onNoteClick` for a caller-owned inspector. Notes intercept pointer presses for inspection; this version does not drag/resize individual notes. Update notes through the model or your controls. At compressed pitch scales, key labels show octave Cs to avoid overlapping text.
+Drag on the background to select a time range. Selection handles support arrow keys (0.01 seconds) and Shift (0.1 seconds); Alt bypasses pointer snap. Clicking or keyboard-activating a note calls `onNoteClick` for a caller-owned inspector. Omitting `onNoteEdit` keeps notes read-only for inspection. Providing it enables widget-owned note move and edge-resize gestures; apply the committed edit to your model. At compressed pitch scales, key labels show octave Cs to avoid overlapping text.
 
 | Handle                            | Contract                                                                                       |
 | --------------------------------- | ---------------------------------------------------------------------------------------------- |
@@ -83,6 +83,7 @@ Drag on the background to select a time range. Selection handles support arrow k
 | `setZoom(factor)`                 | Finite factor 1..64; 1 fits the source, changes retain the viewport center.                    |
 | `scrollTo(seconds)`               | Moves the horizontal viewport using finite source seconds.                                     |
 | `setPitchRange({low, high})`      | Integer `0 <= low <= high <= 127`, inclusive.                                                  |
+| `attach(plugin)`                  | Attaches a `WaveformPlugin`; returns an independently destroyable `PluginAttachment`.          |
 | `getViewport()`                   | `{duration, pixelsPerSecond, scrollLeft, width, height}` in content/viewport pixels.           |
 | `setSnap(mode)` / `setGrid(grid)` | Changes this view's snapping/grid; selection remains in the borrowed model.                    |
 | `destroy()`                       | Detaches observers, listeners, selection and renderer; preserves model, other views and audio. |
@@ -91,9 +92,101 @@ Drag on the background to select a time range. Selection handles support arrow k
 
 A `PianoRollRenderer` is `(root) => { render(frame), destroy?() }`. Allocate SVG/Canvas/DOM once, then update it from frames. The supplied root spans the full scrolling content.
 
-A frame contains viewport/pitch-filtered `notes` (including spanning notes), content `width`/`height`, `duration`, `pitches`, `viewport`, `timeToX(seconds)`, `pitchToY(pitch)` and `onNoteClick(note)`. `pitchToY` returns the row's top; row height is `height / (high - low + 1)`. Use these coordinates rather than a separate time-to-pixel mapping. Drawings live under the selection handles and external playhead. For custom note controls, stop pointerdown propagation to keep inspection separate from background range dragging, and support keyboard activation.
+A frame contains viewport/pitch-filtered `notes` (including spanning notes), content `width`/`height`, `duration`, `pitches`, `viewport`, `timeToX(seconds)`, `pitchToY(pitch)`, `editable`, `onNotePointerDown(note, event, kind?)` and `onNoteClick(note)`. `pitchToY` returns the row's top; row height is `height / (high - low + 1)`. Use these coordinates rather than a separate time-to-pixel mapping. Drawings live under the selection handles and external playhead. Forward note pointer presses to `frame.onNotePointerDown(note, event)` to keep inspection and editing separate from background range dragging. The widget infers move/start-edge/end-edge from source-time geometry; a renderer can explicitly pass `"move"`, `"resize-start"` or `"resize-end"`. Keep click/keyboard inspection connected to `frame.onNoteClick`.
 
-Theme with the shared `--waveform-*` appearance variables, `--piano-roll-height` and `--piano-roll-note-text`. The [showroom](/showroom/piano-roll) demonstrates default note buttons and a custom SVG renderer sharing one sequence. No additional preset/plugin system is required.
+Theme with the shared `--waveform-*` appearance variables, `--piano-roll-height` and `--piano-roll-note-text`. The [showroom](/showroom/piano-roll) demonstrates default note buttons and a custom SVG renderer sharing one sequence. Use `renderer` for note drawing and `attach(plugin)` for time-based overlays and interactions.
+
+## Replace keyboard, toolbar and layout
+
+`layout` has the same mount/render/destroy lifecycle as `renderer`. The factory receives `(root, viewport, controls)`. Mount the **supplied viewport** inside root; the widget retains its content, scrolling, selection, plugins and note gestures. The layout owns the surrounding DOM, keyboard drawing and controls. Use your own classes and elements instead of internal widget selectors.
+
+```typescript
+import { mountPianoRoll, type PianoRollLayout } from "@audiorective/widgets/piano-roll";
+
+const compact: PianoRollLayout = (root, viewport, controls) => {
+  const zoom = document.createElement("button");
+  zoom.type = "button";
+  zoom.textContent = "Zoom in";
+  let factor = 1;
+  zoom.onclick = () => controls.setZoom(Math.min(64, factor * 2));
+  root.append(viewport, zoom); // No keyboard; controls below the plot.
+  return {
+    render(frame) {
+      factor = frame.zoom;
+      zoom.disabled = factor >= 64;
+    },
+    destroy() {
+      zoom.onclick = null;
+      root.replaceChildren();
+    },
+  };
+};
+const view = mountPianoRoll(root, { model: sequence, layout: compact });
+```
+
+`controls` exposes `setZoom`, `scrollTo`, `setPitchRange`, `setSnap` and `setGrid`. Layout frames contain `duration`, `height`, inclusive `pitches`, `viewport`, `pitchToY` and `zoom`. Use `pitchToY` and `height / (high-low+1)` to draw your keyboard aligned with the content. Viewport frames follow scroll/zoom/resize/pitch/data changes; render updates presentation without calling control mutations recursively. `root` excludes the widget's base style element, so a layout may replace its own children. Keep the supplied viewport identity and mount it once; cloning/removing it breaks the interaction owner. A missing viewport throws `Piano roll layout must mount its viewport inside the supplied root.`
+
+Layouts can set public viewport styles and inherited CSS variables. Preserve finite dimensions, horizontal overflow scrolling and an accessible keyboard-focusable viewport. Interactive controls need labels, focus styles and responsive wrapping. Destroy removes layout resources even if another cleanup fails. The showroom's second view draws its numeric keyboard on the right and its wrapping toolbar below, without implementing any drag logic.
+
+## Widget-owned note moves and resizes
+
+```typescript
+const editable = mountPianoRoll(root, {
+  model: sequence,
+  onNoteEdit({ note }) {
+    // Pause/cancel caller-owned voices here if needed, before changing note data.
+    sequence.updateNote(note.id, { start: note.start, end: note.end, pitch: note.pitch });
+  },
+});
+```
+
+`onNoteEdit` enables pointer editing and receives frozen `{kind, previous, note}` (`PianoRollNoteEdit`). `kind` is `"move"`, `"resize-start"` or `"resize-end"`. Moving changes time/pitch while preserving duration and metadata; resizing changes one time endpoint. The widget previews locally after a 3px movement threshold and commits **once on pointer release** through the synchronous callback. Peers observe the authoritative model after that callback updates it. Returning without writing leaves the model and final drawing unchanged; a thrown callback is logged as `Piano roll note edit failed:` and the preview is discarded. This callback is a model command, not another persistent store or an audio transport.
+
+The default renderer uses the first/last up-to-6px (at most one quarter of note width) for edge resizing. Other presses move the note. Time edits use the same nearest-beat/downbeat rule as selection; Alt bypasses snapping, and setters update both. A vertical-only move retains its original onset rather than quantizing time. Moves stay within the current source duration and visible pitch range. Resizes stay ordered within source bounds and retain at least the smaller of 0.01s and the original duration. These gestures do not extend the source timeline.
+
+Escape, pointer cancellation, lost capture, window blur/scroll, viewport/pitch geometry changes, source/note replacement and destruction cancel previews without committing. Capture belongs to the stable content surface, so SVG/Canvas/DOM redraws do not lose the gesture. Renderers forward pointerdown and may provide explicit resize modes; they do not implement delta conversion, snapping, cancellation or model mutation. For Canvas, hit-test the note and forward it to the same handler.
+
+A click without a drag and keyboard activation still inspect the note. Background range dragging and its keyboard handles remain separate. This interface does not add note insertion/deletion, multi-note editing, auto-scroll, keyboard note movement or touch navigation gestures.
+
+## Add a time-based overlay or interaction
+
+`view.attach(plugin)` uses the same `WaveformPlugin` / `WaveformPluginContext` contract as `mountWaveform`. Both types and `PluginAttachment` are exported from the piano-roll entry. A marker plugin can be reused in either widget without a second coordinate mapping.
+
+```typescript
+import { mountPianoRoll, type WaveformPlugin } from "@audiorective/widgets/piano-roll";
+
+function markerAt(seconds: number): WaveformPlugin {
+  return {
+    attach(ctx) {
+      const layer = document.createElement("div");
+      const marker = document.createElement("span");
+      marker.textContent = "Cue";
+      marker.style.cssText = "position:absolute;top:4px;border-left:2px solid currentColor";
+      layer.append(marker);
+      ctx.mountOverlay(layer);
+      const draw = () => {
+        marker.style.left = `${ctx.timeToX(seconds)}px`;
+      };
+      ctx.onViewportChange(draw);
+      ctx.onDataChange(draw);
+      draw(); // Subscriptions do not call back immediately.
+    },
+  };
+}
+
+const view = mountPianoRoll(root, { model: sequence });
+const marker = view.attach(markerAt(1));
+// marker.destroy() removes just this overlay and its subscriptions.
+// view.destroy() removes every attachment, preserving the borrowed sequence/audio.
+```
+
+The context provides `surface`, live `duration`, `getViewport()`, `getViewportRect()`, `timeToX(seconds)`, `clientXToTime(clientX)`, `scrollBy(pixels)`, `mountOverlay(element)`, `onViewportChange`, `onDataChange`, `listen` and `onCleanup`. Times are source seconds; `timeToX` returns pixels in the full scrolling note surface. `clientXToTime` accounts for the actual content origin and current scroll. `getViewportRect` is the visible viewport's browser rectangle, including its border; `surface.getBoundingClientRect()` gives the scrolling content origin. Keyboard width is internal: callers do not calculate or inspect it.
+
+Overlay layers fill the note surface and default to `pointer-events: none`. Interactive children can set `pointer-events: auto`; stop their `pointerdown` propagation when they should not start native background range selection. Use `ctx.listen` for events and `ctx.onCleanup` for caller resources such as observers or animation frames. Data notifications occur on note-array or duration replacement, before layout; viewport notifications follow layout, horizontal scroll, zoom and pitch-range changes. Selection-only changes are observed through the borrowed model's subscription.
+
+Each attachment owns its overlays, listeners and subscriptions. `attachment.destroy()` is idempotent and leaves peer plugins, the view, model and audio alive. A failed attach rolls back registered resources. Registrations made after detachment are cleaned up immediately; `mountOverlay` then throws. A plugin can return a disposer or `{destroy()}`. Throwing cleanup is logged while other resources continue to clean up. The same plugin object cannot be attached twice to one view simultaneously; create an instance per view if the plugin holds mutable state. The built-in selection plugin remains the single selection owner; added plugins extend visualization/interaction rather than attaching a second selection owner.
+
+This context covers the time axis. Custom note drawing uses the renderer frame's `pitchToY`; plugins do not expose a pitch-editing contract.
 
 ## Audio integration
 

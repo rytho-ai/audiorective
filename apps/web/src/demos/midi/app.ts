@@ -1,6 +1,7 @@
-/** Standalone MIDI inspector: shared data/views, caller-owned audition and controls. */
+/** MIDI inspector: contrasting layouts/drawing share widget-owned gestures, data and caller audition. */
 import { MidiSequence, midiGrid } from "@audiorective/blocks/midi";
 import { mountPianoRoll, type PianoRollRenderer, type PianoRollHandle } from "@audiorective/widgets/piano-roll";
+import { rightKeyboardLayout } from "./layout";
 import type { Dependencies, MidiApp, Note, Range } from "./audition";
 
 /** The custom view draws a velocity-colored ribbon with an onset diamond. */
@@ -36,7 +37,7 @@ const ribbonRenderer: PianoRollRenderer = (root) => {
           `Pitch ${note.pitch}, velocity ${note.velocity}, ${note.start.toFixed(3)} to ${note.end.toFixed(3)} seconds`,
         );
         ribbon.style.cssText = "pointer-events:auto;cursor:pointer";
-        ribbon.onpointerdown = (event) => event.stopPropagation();
+        ribbon.onpointerdown = (event) => frame.onNotePointerDown(note, event);
         ribbon.onclick = () => frame.onNoteClick(note);
         ribbon.onkeydown = (event) => {
           if (event.key === "Enter" || event.key === " ") {
@@ -91,12 +92,16 @@ export function mountMidiApp(root: HTMLElement, deps: Dependencies): MidiApp {
     inspectedId = note.id;
     updateSummary();
   };
-  const first = mountPianoRoll(firstRoot, { model, snap: "beat", label: "Note buttons", onNoteClick: inspect });
+  const onNoteEdit: NonNullable<Parameters<typeof mountPianoRoll>[1]["onNoteEdit"]> = ({ note }) =>
+    editNote(note.id, { start: note.start, end: note.end, pitch: note.pitch });
+  const first = mountPianoRoll(firstRoot, { model, snap: "beat", label: "Note buttons", onNoteClick: inspect, onNoteEdit });
   let second: PianoRollHandle | null = mountPianoRoll(secondRoot, {
     model,
     snap: "beat",
     label: "Velocity ribbons",
     renderer: ribbonRenderer,
+    layout: rightKeyboardLayout,
+    onNoteEdit,
     onNoteClick: inspect,
   });
   const views = () => (second ? [first, second] : [first]);

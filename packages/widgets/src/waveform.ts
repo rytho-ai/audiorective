@@ -1,18 +1,10 @@
-/** Audio-independent waveform: cached PCM extrema, viewport and disposal-safe plugin mounts. */
+/** Audio-independent waveform: cached PCM extrema, viewport and shared disposal-safe plugin mounts. */
 import { cachePeaks, type Peaks } from "./peaks";
 import { defaultRenderer } from "./renderer";
 import { styles } from "./style";
+import { createPluginHost } from "./plugin-host";
 
-import type {
-  WaveformViewport,
-  WaveformPluginContext,
-  WaveformPlugin,
-  WaveformOptions,
-  WaveformHandle,
-  PluginAttachment,
-  Unsubscribe,
-  WaveformRendererInstance,
-} from "./types";
+import type { WaveformViewport, WaveformOptions, WaveformHandle, WaveformRendererInstance } from "./types";
 export { createSelectionPlugin } from "./selection";
 export type {
   WaveformData,
@@ -59,7 +51,6 @@ export function mountWaveform(root: HTMLElement, options: WaveformOptions = {}):
   const zoomOut = query<HTMLButtonElement>("[data-testid=zoom-out]");
   const viewportListeners = new Set<(v: WaveformViewport) => void>();
   const dataListeners = new Set<(duration: number) => void>();
-  const attachments = new Map<WaveformPlugin, PluginAttachment>();
   let renderer: WaveformRendererInstance | undefined;
   let peaks: Peaks | null = null,
     duration = 0,
@@ -119,6 +110,41 @@ export function mountWaveform(root: HTMLElement, options: WaveformOptions = {}):
   viewport.addEventListener("scroll", emitViewport);
   const resize = new ResizeObserver(layout);
   resize.observe(viewport);
+  const plugins = createPluginHost("waveform", ({ isActive, own }) => ({
+    surface,
+    get duration() {
+      return duration;
+    },
+    getViewport: snapshot,
+    timeToX: (seconds) => clamp(seconds, 0, duration) * scale,
+    clientXToTime: (x) => clamp((x - surface.getBoundingClientRect().left) / scale, 0, duration),
+    scrollBy(pixels) {
+      if (isActive()) {
+        viewport.scrollLeft += pixels;
+        emitViewport();
+      }
+    },
+    getViewportRect: () => viewport.getBoundingClientRect(),
+    mountOverlay(element) {
+      if (!isActive()) throw new Error("Plugin attachment is destroyed.");
+      Object.assign(element.style, { position: "absolute", inset: "0", pointerEvents: "none" });
+      surface.append(element);
+      return own(() => element.remove());
+    },
+    onViewportChange(listener) {
+      viewportListeners.add(listener);
+      return own(() => viewportListeners.delete(listener));
+    },
+    onDataChange(listener) {
+      dataListeners.add(listener);
+      return own(() => dataListeners.delete(listener));
+    },
+    listen(target, type, listener) {
+      target.addEventListener(type, listener);
+      return own(() => target.removeEventListener(type, listener));
+    },
+    onCleanup: own,
+  }));
   const handle: WaveformHandle = {
     setData(data) {
       if (destroyed) throw new Error("Waveform is destroyed.");
@@ -160,95 +186,11 @@ export function mountWaveform(root: HTMLElement, options: WaveformOptions = {}):
       viewport.scrollLeft = clamp(seconds, 0, duration) * scale;
       emitViewport();
     },
-    attach(plugin) {
-      if (destroyed) throw new Error("Waveform is destroyed.");
-      if (attachments.has(plugin)) throw new Error("Plugin is already attached to this waveform.");
-      let active = true;
-      const cleanups = new Set<Unsubscribe>();
-      const runCleanup = (dispose: Unsubscribe): void => {
-        try {
-          dispose();
-        } catch (error) {
-          console.error("Waveform plugin cleanup failed:", error);
-        }
-      };
-      const own = (dispose: Unsubscribe): Unsubscribe => {
-        if (!active) {
-          runCleanup(dispose);
-          return () => {};
-        }
-        let live = true;
-        const wrapped = () => {
-          if (!live) return;
-          live = false;
-          cleanups.delete(wrapped);
-          runCleanup(dispose);
-        };
-        cleanups.add(wrapped);
-        return wrapped;
-      };
-      let pluginDispose: Unsubscribe | undefined;
-      const attachment: PluginAttachment = {
-        destroy() {
-          if (!active) return;
-          active = false;
-          attachments.delete(plugin);
-          if (pluginDispose) runCleanup(pluginDispose);
-          for (const dispose of [...cleanups]) dispose();
-        },
-      };
-      const context: WaveformPluginContext = {
-        surface,
-        get duration() {
-          return duration;
-        },
-        getViewport: snapshot,
-        timeToX: (seconds) => clamp(seconds, 0, duration) * scale,
-        clientXToTime: (x) => clamp((x - surface.getBoundingClientRect().left) / scale, 0, duration),
-        scrollBy(pixels) {
-          if (active) {
-            viewport.scrollLeft += pixels;
-            emitViewport();
-          }
-        },
-        getViewportRect: () => viewport.getBoundingClientRect(),
-        mountOverlay(element) {
-          if (!active) throw new Error("Plugin attachment is destroyed.");
-          Object.assign(element.style, { position: "absolute", inset: "0", pointerEvents: "none" });
-          surface.append(element);
-          return own(() => element.remove());
-        },
-        onViewportChange(listener) {
-          viewportListeners.add(listener);
-          return own(() => viewportListeners.delete(listener));
-        },
-        onDataChange(listener) {
-          dataListeners.add(listener);
-          return own(() => dataListeners.delete(listener));
-        },
-        listen(target, type, listener) {
-          target.addEventListener(type, listener);
-          return own(() => target.removeEventListener(type, listener));
-        },
-        onCleanup: own,
-      };
-      attachments.set(plugin, attachment);
-      try {
-        const result = plugin.attach(context);
-        const dispose = typeof result === "function" ? result : result ? () => result.destroy() : undefined;
-        // attach() may synchronously destroy this waveform before returning.
-        if (active) pluginDispose = dispose;
-        else if (dispose) runCleanup(dispose);
-      } catch (error) {
-        attachment.destroy();
-        throw error;
-      }
-      return attachment;
-    },
+    attach: (plugin) => plugins.attach(plugin),
     destroy() {
       if (destroyed) return;
       destroyed = true;
-      for (const attachment of [...attachments.values()]) attachment.destroy();
+      plugins.destroy();
       try {
         renderer?.destroy?.();
       } catch (error) {

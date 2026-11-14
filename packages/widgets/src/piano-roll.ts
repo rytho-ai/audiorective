@@ -1,46 +1,19 @@
 /** Piano-roll view of borrowed MIDI state. Owns DOM/viewport only, never audio or note data.
- * Reuses the existing selection plugin's linear time coordinates and cleanup contract.
- * Reads: ./piano-roll-types, ./midi interval query, existing widgets selection/styles.
+ * Layout/renderer own appearance; this widget owns selection, note gestures and plugin lifetime.
+ * Reads: ./piano-roll-types, default view, note editor, MIDI interval query, selection/styles.
  */
+import { defaultPianoRollLayout, defaultPianoRollRenderer } from "./piano-roll-view";
+import { createNoteEditor } from "./piano-roll-edit";
+import { prepareGrid, snapTime } from "./snap-time";
 import { createSelectionPlugin } from "./selection";
-import type { WaveformPluginContext, Unsubscribe } from "./types";
+import type { Unsubscribe } from "./types";
+import { createPluginHost } from "./plugin-host";
 import { styles } from "./style";
 import { visibleMidiNotes, type MidiNote } from "@audiorective/blocks/midi";
-import type { PianoRollOptions, PianoRollHandle, PianoRollRenderer, PitchRange } from "./piano-roll-types";
+import type { PianoRollOptions, PianoRollHandle, PianoRollRenderer, PianoRollLayout, PitchRange } from "./piano-roll-types";
 export type * from "./piano-roll-types";
-const black = (pitch: number) => [1, 3, 6, 8, 10].includes(pitch % 12);
-const name = (pitch: number) => `${["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"][pitch % 12]}${Math.floor(pitch / 12) - 1}`;
+export type { WaveformPlugin, WaveformPluginContext, PluginAttachment } from "./types";
 const clamp = (n: number, low: number, high: number) => Math.max(low, Math.min(high, n));
-const defaultRenderer: PianoRollRenderer = (root) => ({
-  render(frame) {
-    const nodes = frame.notes.map((note) => {
-      const el = document.createElement("button");
-      el.type = "button";
-      el.dataset.noteId = note.id;
-      el.className = "ar-pr-note";
-      const x = frame.timeToX(note.start),
-        end = frame.timeToX(note.end),
-        h = frame.height / (frame.pitches.high - frame.pitches.low + 1);
-      Object.assign(el.style, {
-        left: `${x}px`,
-        top: `${frame.pitchToY(note.pitch)}px`,
-        width: `${Math.max(2, end - x)}px`,
-        height: `${Math.max(2, h - 1)}px`,
-        opacity: String(0.3 + (0.7 * note.velocity) / 127),
-      });
-      el.textContent = name(note.pitch);
-      el.setAttribute("aria-label", `${name(note.pitch)}, ${note.start.toFixed(3)} to ${note.end.toFixed(3)} seconds, velocity ${note.velocity}`);
-      // Note inspection is separate from background time-range dragging.
-      el.onpointerdown = (e) => e.stopPropagation();
-      el.onclick = () => frame.onNoteClick(note);
-      return el;
-    });
-    root.replaceChildren(...nodes);
-  },
-  destroy() {
-    root.replaceChildren();
-  },
-});
 export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): PianoRollHandle {
   const container = document.createElement("section");
   container.className = "ar-widget ar-piano-roll";
@@ -53,17 +26,20 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
  .ar-pr-surface{position:relative;touch-action:none;height:var(--piano-roll-height,240px);min-height:64px;overflow:hidden}
  .ar-pr-notes{position:absolute;inset:0}.ar-pr-note{position:absolute!important;min-height:0!important;padding:0 3px!important;border-radius:3px!important;overflow:hidden;white-space:nowrap;text-align:left;font-size:10px!important;background:var(--ar-accent)!important;color:var(--piano-roll-note-text,#08111d)!important}
  .ar-pr-grid{position:absolute;inset:0;pointer-events:none}.ar-pr-beat{position:absolute;top:0;height:100%;border-left:1px solid var(--waveform-border,#344154)}
- </style><div class="ar-toolbar"><button data-testid="piano-zoom-out" type="button" aria-label="Zoom piano roll out">−</button><button data-testid="piano-zoom-in" type="button" aria-label="Zoom piano roll in">＋</button></div><div class="ar-pr-layout"><div class="ar-pr-keys" aria-hidden="true"></div><div class="ar-viewport" data-testid="piano-viewport" tabindex="0" aria-label="Piano roll horizontal scroll"><div class="ar-pr-surface" data-testid="piano-roll"><div class="ar-pr-grid"></div><div class="ar-pr-notes"></div><div class="ar-playhead" data-testid="piano-playhead" hidden></div></div></div></div>`;
+ </style><div data-piano-layout></div>`;
   root.append(container);
-  const find = <T extends HTMLElement = HTMLElement>(s: string) => container.querySelector<T>(s)!;
-  const viewport = find("[data-testid=piano-viewport]"),
-    surface = find("[data-testid=piano-roll]"),
-    keys = find(".ar-pr-keys"),
-    drawing = find(".ar-pr-notes"),
-    lines = find(".ar-pr-grid"),
-    playhead = find("[data-testid=piano-playhead]");
-  const zoomIn = find<HTMLButtonElement>("[data-testid=piano-zoom-in]"),
-    zoomOut = find<HTMLButtonElement>("[data-testid=piano-zoom-out]");
+  const shellRoot = container.querySelector<HTMLElement>("[data-piano-layout]")!;
+  const viewport = document.createElement("div");
+  viewport.className = "ar-viewport";
+  viewport.dataset.testid = "piano-viewport";
+  viewport.tabIndex = 0;
+  viewport.setAttribute("aria-label", "Piano roll horizontal scroll");
+  viewport.innerHTML =
+    '<div class="ar-pr-surface" data-testid="piano-roll"><div class="ar-pr-grid"></div><div class="ar-pr-notes"></div><div class="ar-playhead" data-testid="piano-playhead" hidden></div></div>';
+  const surface = viewport.querySelector<HTMLElement>("[data-testid=piano-roll]")!,
+    drawing = viewport.querySelector<HTMLElement>(".ar-pr-notes")!,
+    lines = viewport.querySelector<HTMLElement>(".ar-pr-grid")!,
+    playhead = viewport.querySelector<HTMLElement>("[data-testid=piano-playhead]")!;
   let state = options.model.getState(),
     zoom = 1,
     scale = 0,
@@ -71,7 +47,9 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
     height = 240,
     position: number | null = null,
     destroyed = false;
-  let grid = options.grid ?? { beats: [], downbeats: [] };
+  let grid = { beats: [...(options.grid?.beats ?? [])], downbeats: [...(options.grid?.downbeats ?? [])] };
+  let snap = options.snap ?? "off",
+    snapGrid = prepareGrid(grid);
   let low = 48,
     high = 72;
   for (const note of state.notes) {
@@ -102,13 +80,22 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
   const snapshot = () =>
     Object.freeze({ duration: state.duration, pixelsPerSecond: scale, scrollLeft: viewport.scrollLeft, width: viewport.clientWidth, height });
   let renderer: ReturnType<PianoRollRenderer> | undefined;
+  let presentation: ReturnType<PianoRollLayout> | undefined;
+  const pitchToY = (pitch: number) => ((pitches.high - pitch) * height) / (pitches.high - pitches.low + 1);
+  const editor = createNoteEditor({
+    read: () => state,
+    pitches: () => pitches,
+    redraw: render,
+    snap: (time, alt) => snapTime(time, alt || snap === "off" ? undefined : snapGrid[snap], state.duration),
+    inspect: (note) => options.onNoteClick?.(note),
+    commit: options.onNoteEdit,
+  });
   const plugin = createSelectionPlugin({
     model: options.model,
     grid: { beats: [...grid.beats], downbeats: [...grid.downbeats] },
     snap: options.snap,
     onCommit: options.onCommit,
   });
-  let pluginHandle: { destroy(): void } | Unsubscribe | void;
   function drawPlayhead() {
     playhead.hidden = position === null || !state.duration;
     if (position !== null) playhead.style.left = `${timeToX(position)}px`;
@@ -118,16 +105,21 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
     const range = { start: scale ? viewport.scrollLeft / scale : 0, end: scale ? (viewport.scrollLeft + viewport.clientWidth) / scale : 0 };
     renderer?.render(
       Object.freeze({
-        notes: visibleMidiNotes(state.notes, range, pitches),
+        notes: visibleMidiNotes(editor.notes(), range, pitches),
         duration: state.duration,
         width,
         height,
         pitches: Object.freeze({ ...pitches }),
         viewport: snapshot(),
         timeToX,
-        pitchToY: (pitch) => ((pitches.high - pitch) * height) / (pitches.high - pitches.low + 1),
+        pitchToY,
+        editable: !!options.onNoteEdit,
+        onNotePointerDown: editor.pointerDown,
         onNoteClick: (note: MidiNote) => options.onNoteClick?.(note),
       }),
+    );
+    presentation?.render(
+      Object.freeze({ duration: state.duration, height, pitches: Object.freeze({ ...pitches }), viewport: snapshot(), pitchToY, zoom }),
     );
     drawPlayhead();
     for (const fn of [...viewListeners]) fn();
@@ -138,25 +130,8 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
     scale = state.duration ? width / state.duration : 0;
     surface.style.width = `${width}px`;
     height = surface.clientHeight;
-    keys.style.height = `${height}px`;
-    const rowHeight = height / (pitches.high - pitches.low + 1),
-      keyNodes = [];
+    const rowHeight = height / (pitches.high - pitches.low + 1);
     surface.style.backgroundImage = `repeating-linear-gradient(to bottom, var(--waveform-border,#344154) 0px, var(--waveform-border,#344154) 1px, transparent 1px, transparent ${rowHeight}px)`;
-    for (let pitch = pitches.high; pitch >= pitches.low; pitch--) {
-      const el = document.createElement("div");
-      el.className = "ar-pr-key";
-      el.dataset.black = String(black(pitch));
-      el.textContent = rowHeight >= 14 || pitch % 12 === 0 ? name(pitch) : "";
-      Object.assign(el.style, {
-        lineHeight: `${rowHeight}px`,
-        fontSize: `${Math.max(1, Math.min(11, rowHeight - 1))}px`,
-        overflow: "hidden",
-        top: `${(pitches.high - pitch) * rowHeight}px`,
-        height: `${rowHeight}px`,
-      });
-      keyNodes.push(el);
-    }
-    keys.replaceChildren(...keyNodes);
     lines.replaceChildren(
       ...grid.beats
         .filter((t) => Number.isFinite(t) && t >= 0 && t <= state.duration)
@@ -168,11 +143,9 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
           return el;
         }),
     );
-    zoomOut.disabled = zoom <= 1;
-    zoomIn.disabled = zoom >= 64;
     render();
   }
-  const context: WaveformPluginContext = {
+  const plugins = createPluginHost("piano roll", ({ isActive, own }) => ({
     surface,
     get duration() {
       return state.duration;
@@ -181,12 +154,14 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
     timeToX,
     clientXToTime: (x) => (scale ? clamp((x - surface.getBoundingClientRect().left) / scale, 0, state.duration) : 0),
     scrollBy(pixels) {
-      viewport.scrollLeft += pixels;
-      render();
+      if (isActive()) {
+        viewport.scrollLeft += pixels;
+        render();
+      }
     },
     getViewportRect: () => viewport.getBoundingClientRect(),
     mountOverlay(el) {
-      if (destroyed) throw new Error("Plugin attachment is destroyed.");
+      if (!isActive()) throw new Error("Plugin attachment is destroyed.");
       Object.assign(el.style, { position: "absolute", inset: "0", pointerEvents: "none" });
       surface.append(el);
       return own(() => el.remove());
@@ -201,9 +176,12 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
       dataListeners.add(cb);
       return own(() => dataListeners.delete(cb));
     },
-    listen,
+    listen(target, type, fn) {
+      target.addEventListener(type, fn);
+      return own(() => target.removeEventListener(type, fn));
+    },
     onCleanup: own,
-  };
+  }));
   const handle: PianoRollHandle = {
     setPlayhead(seconds) {
       if (seconds !== null && !Number.isFinite(seconds)) throw new RangeError("Playhead must be finite or null.");
@@ -213,6 +191,7 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
     setZoom(factor) {
       if (!Number.isFinite(factor) || factor < 1 || factor > 64) throw new RangeError("Piano roll zoom must be between 1 and 64.");
       const center = scale ? (viewport.scrollLeft + viewport.clientWidth / 2) / scale : 0;
+      editor.cancel();
       zoom = factor;
       layout();
       viewport.scrollLeft = timeToX(center) - viewport.clientWidth / 2;
@@ -230,9 +209,16 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
       layout();
     },
     getViewport: snapshot,
-    setSnap: (mode) => plugin.setSnap(mode),
+    attach: (extension) => plugins.attach(extension),
+    setSnap(mode) {
+      editor.cancel();
+      snap = mode;
+      plugin.setSnap(mode);
+    },
     setGrid(next) {
-      grid = next;
+      editor.cancel();
+      grid = { beats: [...next.beats], downbeats: [...next.downbeats] };
+      snapGrid = prepareGrid(grid);
       plugin.setGrid({ beats: [...next.beats], downbeats: [...next.downbeats] });
       layout();
     },
@@ -240,10 +226,23 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
       if (destroyed) return;
       destroyed = true;
       observer.disconnect();
-      if (typeof pluginHandle === "function") pluginHandle();
-      else pluginHandle?.destroy();
-      for (const fn of [...cleanups]) fn();
-      renderer?.destroy?.();
+      plugins.destroy();
+      for (const fn of [...cleanups]) {
+        try {
+          fn();
+        } catch (error) {
+          console.error("Piano roll cleanup failed:", error);
+        }
+      }
+      for (const part of [renderer, presentation]) {
+        try {
+          part?.destroy?.();
+        } catch (error) {
+          console.error("Piano roll view cleanup failed:", error);
+        }
+      }
+      renderer = undefined;
+      presentation = undefined;
       viewListeners.clear();
       dataListeners.clear();
       container.remove();
@@ -251,12 +250,19 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
   };
   const observer = new ResizeObserver(layout);
   try {
-    renderer = (options.renderer ?? defaultRenderer)(drawing);
-    pluginHandle = plugin.attach(context);
+    renderer = (options.renderer ?? defaultPianoRollRenderer)(drawing);
+    presentation = (options.layout ?? defaultPianoRollLayout)(shellRoot, viewport, {
+      setZoom: handle.setZoom,
+      scrollTo: handle.scrollTo,
+      setPitchRange: handle.setPitchRange,
+      setSnap: handle.setSnap,
+      setGrid: handle.setGrid,
+    });
+    if (!shellRoot.contains(viewport)) throw new Error("Piano roll layout must mount its viewport inside the supplied root.");
+    plugins.attach(plugin);
+    plugins.attach(editor.plugin);
     handle.setPitchRange(pitches);
     listen(viewport, "scroll", render);
-    listen(zoomIn, "click", () => handle.setZoom(Math.min(64, zoom * 2)));
-    listen(zoomOut, "click", () => handle.setZoom(Math.max(1, zoom / 2)));
     own(
       options.model.subscribe(() => {
         const next = options.model.getState(),
