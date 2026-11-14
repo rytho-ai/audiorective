@@ -26,7 +26,7 @@ export type PianoRollRenderFrame = Readonly<{
 }>;
 export type PianoRollRenderer = (root: HTMLElement) => { render(frame: PianoRollRenderFrame): void; destroy?(): void };
 export type PianoRollLayoutFrame = Readonly<
-  Pick<PianoRollRenderFrame, "duration" | "height" | "pitches" | "viewport" | "pitchToY"> & { zoom: number }
+  Pick<PianoRollRenderFrame, "duration" | "height" | "pitches" | "viewport" | "pitchToY"> & { zoom: number; snap: SnapMode }
 >;
 export type PianoRollControls = Pick<PianoRollHandle, "setZoom" | "scrollTo" | "setPitchRange" | "setSnap" | "setGrid">;
 /** Mount the supplied widget viewport inside root; own the surrounding keyboard/controls. */

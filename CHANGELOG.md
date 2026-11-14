@@ -15,6 +15,8 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Changed
 
+- **widgets:** Piano-roll layout frames expose the current `snap` mode. Calling `setSnap` refreshes custom controls synchronously, so externally changed snapping stays visible without duplicating widget state.
+
 - **blocks / widgets:** Rename the unreleased `RangePlayer` to `WavePlayer`, including `WavePlayerOptions`, `WavePlayerSource`, `WavePlayerState`, `WaveStretchProcessor`, `WaveLoadProgress`, and `WaveSourceLoader`. Consumers use the new names; loading, range playback, stretch and ownership behavior are unchanged.
 
 ### Added
