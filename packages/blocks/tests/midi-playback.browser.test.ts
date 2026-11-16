@@ -115,6 +115,25 @@ test("an edit-created tie follows the original event order", () => {
   sequence.destroy();
 });
 
+test("floating-point subtraction does not break a recorded tie", () => {
+  const events = compileMidiPlaybackEvents(
+    {
+      startTime: 10,
+      events: [
+        { audioTime: 10, data: new Uint8Array([0x90, 60, 90]), noteId: "a" },
+        { audioTime: 10.3, data: new Uint8Array([0xb0, 64, 127]) },
+        { audioTime: 10.3, data: new Uint8Array([0x80, 60, 0]), noteId: "a" },
+      ],
+    },
+    { notes: [{ id: "a", start: 0, end: 0.3, pitch: 62, velocity: 90, channel: 0, track: 0 }], duration: 1 },
+  );
+  expect(at(events, 0.3).map(({ data }) => data)).toEqual([
+    [0xb0, 64, 127],
+    [0x80, 62, 0],
+  ]);
+  expect(events[1].time).toBe(events[2].time);
+});
+
 test("deleted notes stay deleted; new notes follow surviving source events at an edited tie", () => {
   const take = record([
     { data: [0x90, 60, 90], at: 0 },

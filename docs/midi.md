@@ -45,6 +45,7 @@ const events = compileMidiPlaybackEvents(take, sequence.getState());
 ```
 
 At equal times, surviving recorded note endpoints and control messages retain their original delivery order, even when an edit moves an endpoint to that time. New note endpoints follow all recorded events at that time, in current note-array order. Zero-length and velocity-zero notes emit no note messages. An unmatched raw note-off is not replayed. Recompile after a note edit; do not replay `take.events` alongside the compiled result. The original event array is needed to preserve the ordering of note release versus pedal messages; `MidiSequence` alone does not contain that information. Events after an edited sequence's duration remain in the result, so a clip owner decides whether to trim them.
+Compiled event times are rounded to the nearest nanosecond so equivalent recorded and edited timestamps stay tied despite floating-point subtraction. Process the returned array in order when scheduling messages at the same time.
 
 Recorded note-ons without `noteId` are rejected because their original order cannot be reconstructed reliably; re-record with a version that tags note messages. A source with no recorded events can still compile a note-only sequence.
 

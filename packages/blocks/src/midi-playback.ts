@@ -12,6 +12,8 @@ export type MidiPlaybackEvent = Readonly<{
 }>;
 
 type RankedEvent = MidiPlaybackEvent & { order: number };
+/** A nanosecond is below Web MIDI timestamp precision and removes subtraction round-off at ties. */
+const playbackTime = (seconds: number) => Math.round(seconds * 1e9) / 1e9;
 
 function isNoteMessage(data: Uint8Array): boolean {
   if (data.length < 3 || data[0] < 0x80 || data[0] >= 0xf0) return false;
@@ -44,7 +46,7 @@ export function compileMidiPlaybackEvents(source: MidiPlaybackSource, sequence: 
       }
       return; // The current sequence is the sole source of notes, including deletes and edits.
     }
-    result.push({ time: event.audioTime - source.startTime, data: new Uint8Array(event.data), order });
+    result.push({ time: playbackTime(event.audioTime - source.startTime), data: new Uint8Array(event.data), order });
   });
 
   const ids = new Set<string>();
@@ -75,13 +77,13 @@ export function compileMidiPlaybackEvents(source: MidiPlaybackSource, sequence: 
     if (note.start === note.end || note.velocity === 0) return;
     const rank = ranks.get(note.id);
     result.push({
-      time: note.start,
+      time: playbackTime(note.start),
       data: new Uint8Array([0x90 | note.channel, note.pitch, note.velocity]),
       noteId: note.id,
       order: rank?.on ?? source.events.length + index * 2,
     });
     result.push({
-      time: note.end,
+      time: playbackTime(note.end),
       data: new Uint8Array([0x80 | note.channel, note.pitch, 0]),
       noteId: note.id,
       order: rank?.off ?? source.events.length + index * 2 + 1,

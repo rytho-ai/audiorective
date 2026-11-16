@@ -1,4 +1,5 @@
 /** MIDI inspector: contrasting layouts/drawing share widget-owned gestures, data and caller audition. */
+import { MidiRecorder, type RecordedMidi } from "@audiorective/blocks";
 import { MidiSequence, midiGrid } from "@audiorective/blocks/midi";
 import { mountPianoRoll, type PianoRollRenderer, type PianoRollHandle } from "@audiorective/widgets/piano-roll";
 import { rightKeyboardLayout } from "./layout";
@@ -57,8 +58,15 @@ const ribbonRenderer: PianoRollRenderer = (root) => {
 
 export function mountMidiApp(root: HTMLElement, deps: Dependencies): MidiApp {
   const model = new MidiSequence();
-  const sound = deps.makeAuditioner(() => model.getState());
+  let recordedSource: RecordedMidi | null = null;
+  const sound = deps.makeAuditioner(() => ({ ...model.getState(), source: recordedSource }));
   const events = new AbortController();
+  let midiAccess: MIDIAccess | null = null;
+  let accessPromise: Promise<MIDIAccess> | null = null;
+  let recorder: MidiRecorder | null = null;
+  const openedInputs = new Set<MIDIInput>();
+  let startingRecord = false;
+  let recordRequest = 0;
   let dead = false,
     fileRequest = 0,
     inspectedId: string | null = null;
@@ -73,6 +81,13 @@ export function mountMidiApp(root: HTMLElement, deps: Dependencies): MidiApp {
       <label>Seek seconds <input data-control="seek" type="number" min="0" value="0" step="0.1" style="width:80px"></label>
       <button data-control="remove" type="button">Remove second view</button>
     </div>
+    <fieldset><legend>Record MIDI take</legend><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <button data-control="midi-access" type="button">Connect MIDI keyboard</button>
+      <label>Input <select data-control="midi-input" disabled><option value="">No MIDI input</option></select></label>
+      <button data-control="record" type="button" disabled>Record</button>
+      <button data-control="stop-record" type="button" disabled>Stop recording</button>
+      <button data-control="cancel-record" type="button" disabled>Discard take</button>
+    </div></fieldset>
     <output data-control="summary"></output><output data-control="status" aria-live="polite"></output>
     <fieldset><legend>Inspected note</legend><output data-control="inspection">Click a note in either view.</output>
       <label>Pitch <input data-control="pitch" type="number" min="0" max="127" step="1" disabled></label>
@@ -86,6 +101,7 @@ export function mountMidiApp(root: HTMLElement, deps: Dependencies): MidiApp {
   const inspection = control<HTMLOutputElement>("inspection");
   const pitch = control<HTMLInputElement>("pitch"),
     velocity = control<HTMLInputElement>("velocity");
+  const midiInput = control<HTMLSelectElement>("midi-input");
   const firstRoot = host.querySelector<HTMLElement>('[data-app-view="0"]')!;
   const secondRoot = host.querySelector<HTMLElement>('[data-app-view="1"]')!;
   const inspect = (note: Note) => {
@@ -108,7 +124,7 @@ export function mountMidiApp(root: HTMLElement, deps: Dependencies): MidiApp {
   function updateSummary() {
     const state = model.getState(),
       range = state.selection;
-    summary.textContent = `${state.notes.length} notes · ${state.duration.toFixed(3)} seconds · ${range ? `Selection ${range.start.toFixed(3)}–${range.end.toFixed(3)} seconds` : "Full file"}`;
+    summary.textContent = `${state.notes.length} notes · ${state.duration.toFixed(3)} seconds · ${range ? `Selection ${range.start.toFixed(3)}–${range.end.toFixed(3)} seconds` : recordedSource ? "Full take" : "Full file"}`;
     const note = state.notes.find((value) => value.id === inspectedId);
     pitch.disabled = velocity.disabled = !note;
     if (note) {
@@ -140,8 +156,10 @@ export function mountMidiApp(root: HTMLElement, deps: Dependencies): MidiApp {
   }
   function load(bytes: ArrayBuffer | Uint8Array) {
     alive();
+    cancelRecording();
     sound.pause();
     const parsed = model.load(bytes);
+    recordedSource = null;
     sound.seek(0);
     inspectedId = null;
     const grid = midiGrid(parsed);
@@ -156,6 +174,7 @@ export function mountMidiApp(root: HTMLElement, deps: Dependencies): MidiApp {
   }
   async function play() {
     alive();
+    if (recorder || startingRecord) throw new Error("Stop MIDI recording before playback.");
     await sound.play();
   }
   function report(error: unknown) {
@@ -164,6 +183,129 @@ export function mountMidiApp(root: HTMLElement, deps: Dependencies): MidiApp {
   function listen(name: string, type: string, callback: (event: Event) => void) {
     control(name).addEventListener(type, callback, { signal: events.signal });
   }
+  function refreshInputs() {
+    if (dead) return;
+    const previous = midiInput.value;
+    const inputs = [...(midiAccess?.inputs.values() ?? [])].filter((input) => input.state === "connected");
+    midiInput.replaceChildren(
+      ...inputs.map((input) => {
+        const option = document.createElement("option");
+        option.value = input.id;
+        option.textContent = input.name || input.id;
+        return option;
+      }),
+    );
+    if (inputs.some((input) => input.id === previous)) midiInput.value = previous;
+    if (recorder && !inputs.some((input) => input.id === recorder?.input.id)) {
+      cancelRecording();
+      status.textContent = "MIDI input disconnected; take discarded.";
+    }
+    midiInput.disabled = !!recorder || startingRecord || inputs.length === 0;
+    control<HTMLButtonElement>("record").disabled = !!recorder || startingRecord || inputs.length === 0;
+    control<HTMLButtonElement>("stop-record").disabled = !recorder;
+    control<HTMLButtonElement>("cancel-record").disabled = !recorder;
+    control<HTMLButtonElement>("play").disabled = !!recorder || startingRecord;
+  }
+  async function connectMidi() {
+    if (!navigator.requestMIDIAccess) throw new Error("Web MIDI is unavailable in this browser or context.");
+    if (!midiAccess) {
+      let access: MIDIAccess;
+      try {
+        access = await (accessPromise ??= navigator.requestMIDIAccess());
+      } catch (error) {
+        accessPromise = null;
+        throw error;
+      }
+      if (dead) return;
+      if (!midiAccess) {
+        midiAccess = access;
+        access.addEventListener("statechange", refreshInputs, { signal: events.signal });
+      }
+    }
+    refreshInputs();
+    status.textContent = midiInput.options.length ? "Choose a MIDI input, then record." : "No connected MIDI input.";
+  }
+  function cancelRecording() {
+    ++recordRequest;
+    if (!recorder) return;
+    recorder.cancel();
+    recorder.destroy();
+    recorder = null;
+    refreshInputs();
+  }
+  async function startRecording() {
+    alive();
+    if (recorder || startingRecord) return;
+    const input = midiAccess?.inputs.get(midiInput.value);
+    if (!input || input.state !== "connected") throw new Error("Choose a connected MIDI input.");
+    const token = ++recordRequest;
+    startingRecord = true;
+    refreshInputs();
+    try {
+      await deps.context.resume();
+      await input.open();
+      if (dead || token !== recordRequest) {
+        void input.close().catch(() => {});
+        return;
+      }
+      openedInputs.add(input);
+      if (input.state !== "connected") throw new Error("MIDI input disconnected before recording.");
+      sound.pause();
+      const next = new MidiRecorder(deps.context, input);
+      try {
+        next.start();
+        recorder = next;
+      } catch (error) {
+        next.destroy();
+        throw error;
+      }
+      status.textContent = "Recording MIDI take…";
+    } finally {
+      startingRecord = false;
+      refreshInputs();
+    }
+  }
+  function stopRecording() {
+    alive();
+    if (!recorder) return;
+    const take = recorder.stop();
+    recorder.destroy();
+    recorder = null;
+    sound.pause();
+    recordedSource = take;
+    model.setData(take);
+    sound.seek(0);
+    inspectedId = null;
+    const emptyGrid = { beats: [], downbeats: [] };
+    for (const view of views()) {
+      view.setGrid(emptyGrid);
+      view.setSnap("off");
+      view.setPlayhead(0);
+      view.scrollTo(0);
+    }
+    control<HTMLSelectElement>("snap").value = "off";
+    fitPitches();
+    updateSummary();
+    refreshInputs();
+    status.textContent = `Recorded ${take.notes.length} notes and ${take.events.length} messages. Edit, then Play to audition.`;
+  }
+  listen("midi-access", "click", () => {
+    void connectMidi().catch(report);
+  });
+  listen("record", "click", () => {
+    void startRecording().catch(report);
+  });
+  listen("stop-record", "click", () => {
+    try {
+      stopRecording();
+    } catch (error) {
+      report(error);
+    }
+  });
+  listen("cancel-record", "click", () => {
+    cancelRecording();
+    status.textContent = "MIDI take discarded.";
+  });
   listen("source", "change", () => {
     const file = control<HTMLInputElement>("source").files?.[0],
       token = ++fileRequest;
@@ -255,6 +397,9 @@ export function mountMidiApp(root: HTMLElement, deps: Dependencies): MidiApp {
       fileRequest++;
       cancelAnimationFrame(animation);
       events.abort();
+      cancelRecording();
+      for (const input of openedInputs) void input.close().catch(() => {});
+      openedInputs.clear();
       sound.destroy();
       first.destroy();
       second?.destroy();

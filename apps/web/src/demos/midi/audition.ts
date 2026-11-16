@@ -2,10 +2,11 @@
  * Reads: core AudioProcessor for graph/lifecycle; pure MIDI types for caller data.
  */
 import { AudioProcessor, type SchedulableParam } from "@audiorective/core";
-import type { MidiNote, MidiRange, MidiData } from "@audiorective/blocks/midi";
+import { compileMidiPlaybackEvents, type MidiNote, type MidiRange, type MidiData, type MidiPlaybackSource } from "@audiorective/blocks/midi";
+import { planMidiVoices } from "./voice-plan";
 export type Note = MidiNote;
 export type Range = MidiRange;
-export type State = MidiData & Readonly<{ selection: MidiRange | null }>;
+export type State = MidiData & Readonly<{ selection: MidiRange | null; source?: MidiPlaybackSource | null }>;
 class DemoMidiAuditioner extends AudioProcessor<{ volume: SchedulableParam }, {}> {
   private voices = new Set<{ osc: OscillatorNode; gain: GainNode }>();
   private command = 0;
@@ -58,8 +59,10 @@ class DemoMidiAuditioner extends AudioProcessor<{ volume: SchedulableParam }, {}
     if (range.end <= range.start) return;
     const offset = this.held >= range.start && this.held < range.end ? this.held : range.start,
       time = this.context.currentTime + 0.03;
+    const messages = compileMidiPlaybackEvents(state.source ?? { startTime: 0, events: [] }, state);
+    const planned = planMidiVoices(messages, state.duration);
     this.anchor = { time, offset, end: range.end };
-    for (const note of state.notes) {
+    for (const note of planned) {
       const start = Math.max(note.start, offset),
         end = Math.min(note.end, range.end);
       if (end <= start) continue;
