@@ -28,7 +28,25 @@ recorder.destroy();
 
 `start({ when? })` accepts absolute AudioContext seconds; omitted means the current audible output position. It filters messages whose mapped time precedes the start. `stop()` ends at the current output position and returns immediately; call it when the desired end arrives. Stopping before a future start throws and leaves that take active. `cancel()` discards an active take. A recorder can make repeated takes, while `destroy()` only removes its own listener. `cells.state` is a read-only reactive `"idle" | "recording" | "destroyed"` value; `recording` means a take is active even if its future start has not arrived.
 
-The returned `RecordedMidi` has absolute `startTime`/`endTime`, `duration`, an immutable `notes` array in **take-relative seconds**, and `events` in delivery order. Each event has an absolute `audioTime` and a copied `Uint8Array` of the MIDI bytes. Notes use track 0 and retain channel, pitch and attack velocity. Same-channel, same-pitch overlapping note-ons pair with note-offs FIFO; a velocity-zero note-on is an off. Unreleased notes end at the take's end. Unmatched note-offs have no projected note. Controller, program-change and other messages remain in `events`, but sustain pedal does not extend the projected notes. A caller may use `MidiSequence.setData({ notes: take.notes, duration: take.duration })` to show one take; merging takes and clip placement belong to a higher owner.
+The returned `RecordedMidi` has absolute `startTime`/`endTime`, `duration`, an immutable `notes` array in **take-relative seconds**, and `events` in delivery order. Each event has an absolute `audioTime` and a copied `Uint8Array` of the MIDI bytes. Matched note-on/off events also carry the projected note's `noteId`; this links later edits to their original event order. The byte arrays themselves remain mutable. Notes use track 0 and retain channel, pitch and attack velocity. Same-channel, same-pitch overlapping note-ons pair with note-offs FIFO; a velocity-zero note-on is an off. Unreleased notes end at the take's end. Unmatched note-offs have no projected note. Controller, program-change and other messages remain in `events`, but sustain pedal does not extend the projected notes. A caller may use `MidiSequence.setData({ notes: take.notes, duration: take.duration })` to show one take; merging takes and clip placement belong to a higher owner.
+
+### Play the edited take
+
+`compileMidiPlaybackEvents(take, sequence.getState())` from `@audiorective/blocks/midi` returns an ordered list of MIDI messages in **take-relative seconds**. It regenerates note-on/off from the current `MidiSequence` notes and retains the recorded non-note messages, including sustain, program changes and pitch bend. This avoids playing stale raw notes after a pitch or timing edit. The function is pure: the app still chooses a synth or MIDI output, maps take-relative seconds to its clip/transport time, schedules messages and cancels obsolete voices after edits or transport changes.
+
+```typescript
+import { compileMidiPlaybackEvents, MidiSequence } from "@audiorective/blocks/midi";
+
+const sequence = new MidiSequence(take);
+sequence.updateNote(take.notes[0].id, { pitch: 62 });
+const events = compileMidiPlaybackEvents(take, sequence.getState());
+// The clip owner places each event.time on its timeline and sends event.data.
+// event.noteId lets a voice-aware synth distinguish overlapping same-pitch notes.
+```
+
+At equal times, surviving recorded note endpoints and control messages retain their original delivery order, even when an edit moves an endpoint to that time. New note endpoints follow all recorded events at that time, in current note-array order. Zero-length and velocity-zero notes emit no note messages. An unmatched raw note-off is not replayed. Recompile after a note edit; do not replay `take.events` alongside the compiled result. The original event array is needed to preserve the ordering of note release versus pedal messages; `MidiSequence` alone does not contain that information. Events after an edited sequence's duration remain in the result, so a clip owner decides whether to trim them.
+
+Recorded note-ons without `noteId` are rejected because their original order cannot be reconstructed reliably; re-record with a version that tags note messages. A source with no recorded events can still compile a note-only sequence.
 
 Web MIDI `Event.timeStamp` uses the performance clock; `MidiRecorder` maps it to the AudioContext's **output timeline** with `getOutputTimestamp()`. Before the first audio block produces that correlation, it falls back to a sampled `performance.now()`/`currentTime` pair. This mapping is an estimate, not sample-accurate MIDI input timing or a device latency correction. The app should calibrate any desired performance/monitor offset when placing the take. See the [Web MIDI event timestamp](https://www.w3.org/TR/webmidi/#midimessageevent-interface) and [Web Audio output timestamp](https://www.w3.org/TR/webaudio/#dom-audiocontext-getoutputtimestamp) definitions.
 
@@ -253,6 +271,8 @@ This split supports both a silent MIDI inspector and an audible application with
 | `MidiRecorder needs a running AudioContext.`                                                 | Resume the caller-owned context from a user gesture before recording.                                                  |
 | `MidiRecorder time must be finite, non-negative seconds.`                                    | Pass an absolute finite AudioContext start time.                                                                       |
 | `MidiRecorder stop must follow its start time.`                                              | Stop after the requested start time, or cancel the armed take.                                                         |
+| `MIDI playback needs finite, non-negative times and valid MIDI notes.`                       | Supply a valid take and current `MidiSequence` snapshot; do not pass corrupt times or note fields.                     |
+| `MIDI playback needs note IDs on recorded note-ons.`                                         | The raw take predates note-ID capture or was assembled without IDs; capture a tagged take.                             |
 | `MIDI note was not found.`                                                                   | Use an ID from the current source snapshot.                                                                            |
 | `Selection must satisfy 0 <= start < end <= duration (finite seconds).`                      | Use ordered endpoints within the loaded duration.                                                                      |
 | `Piano roll zoom must be between 1 and 64.`                                                  | Pass a finite zoom factor in that interval.                                                                            |

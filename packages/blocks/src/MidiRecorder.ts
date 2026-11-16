@@ -1,13 +1,9 @@
 import { cell, readonlyCell, type ReadonlyCell } from "@audiorective/core";
-import type { MidiData, MidiNote } from "./midi-data";
+import type { MidiData, MidiNote, RecordedMidiEvent } from "./midi-data";
+
+export type { RecordedMidiEvent } from "./midi-data";
 
 export type MidiRecorderState = "idle" | "recording" | "destroyed";
-
-export interface RecordedMidiEvent {
-  /** AudioContext output-timeline seconds, before application latency correction. */
-  readonly audioTime: number;
-  readonly data: Uint8Array;
-}
 
 export interface RecordedMidi extends MidiData {
   /** Absolute positions on the borrowed AudioContext's output timeline. */
@@ -58,25 +54,32 @@ export class MidiRecorder {
     const time = this.audioTime(event.timeStamp);
     if (time < session.startTime) return;
     const data = new Uint8Array(event.data);
-    session.events.push(Object.freeze({ audioTime: time, data }));
-    if (data.length < 3 || data[1] > 127 || data[2] > 127) return;
-    const status = data[0];
-    const kind = status & 0xf0;
-    if (status < 0x80 || status >= 0xf0 || (kind !== 0x80 && kind !== 0x90)) return;
-    const channel = status & 0x0f;
-    const pitch = data[1];
-    const key = channel * 128 + pitch;
-    const relative = time - session.startTime;
-    if (kind === 0x90 && data[2] > 0) {
-      const held = session.held.get(key) ?? [];
-      held.push({ start: relative, pitch, velocity: data[2], channel, id: `${this.recorderId}:${this.takeNumber}:${++this.noteNumber}` });
-      session.held.set(key, held);
-    } else {
-      const held = session.held.get(key);
-      const note = held?.shift();
-      if (note) session.notes.push(Object.freeze({ ...note, end: Math.max(note.start, relative), track: 0 }));
-      if (held?.length === 0) session.held.delete(key);
+    let noteId: string | undefined;
+    if (data.length >= 3 && data[1] <= 127 && data[2] <= 127) {
+      const status = data[0];
+      const kind = status & 0xf0;
+      if (status >= 0x80 && status < 0xf0 && (kind === 0x80 || kind === 0x90)) {
+        const channel = status & 0x0f;
+        const pitch = data[1];
+        const key = channel * 128 + pitch;
+        const relative = time - session.startTime;
+        if (kind === 0x90 && data[2] > 0) {
+          const held = session.held.get(key) ?? [];
+          noteId = `${this.recorderId}:${this.takeNumber}:${++this.noteNumber}`;
+          held.push({ start: relative, pitch, velocity: data[2], channel, id: noteId });
+          session.held.set(key, held);
+        } else {
+          const held = session.held.get(key);
+          const note = held?.shift();
+          if (note) {
+            noteId = note.id;
+            session.notes.push(Object.freeze({ ...note, end: Math.max(note.start, relative), track: 0 }));
+          }
+          if (held?.length === 0) session.held.delete(key);
+        }
+      }
     }
+    session.events.push(Object.freeze({ audioTime: time, data, ...(noteId ? { noteId } : {}) }));
   };
 
   /** Arm one take. `when` is an absolute AudioContext time; omitted means the current audible output position. */

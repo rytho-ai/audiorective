@@ -156,7 +156,9 @@ resumes its AudioContext. Use `new MidiRecorder(context, input)` from
 recorder.stop()` when the take ends. The synchronous result has absolute
 `startTime`/`endTime`, raw timestamped `events`, and take-relative `notes` plus
 `duration` for `MidiSequence`. `cancel()` discards; `destroy()` leaves the input
-and context alive. See `references/midi.md` → Record a MIDI take. For live
+and context alive. For edited playback, use `compileMidiPlaybackEvents` with
+the take and current sequence to retain controls and original same-time order. See
+`references/midi.md` → Record a MIDI take. For live
 keyboard-to-synth playing without recording, handle input in the app's audio
 layer; the recorder does not play notes.
 

@@ -391,6 +391,20 @@
         "Uses recorder.cancel() to discard, recorder.destroy() for listener cleanup, and leaves the borrowed MIDI input and AudioContext owned by the app",
         "Does not invent a Track/Clip owner, apply unmeasured latency correction, or treat mapped MIDI event times as sample accurate"
       ]
+    },
+    {
+      "id": 27,
+      "prompt": "We recorded a MIDI keyboard take with the audiorective MidiRecorder, including overlapping same-pitch notes and sustain pedal messages. The user changes one note's pitch in the piano roll and wants to hear the edited take. Show how to prepare the events for our existing synth scheduler. At the same timestamp, a note release and pedal-down arrived in a particular order; preserve it. Do not run anything.",
+      "expected_output": "Compiles the current MidiSequence notes with the recorded take's non-note messages using compileMidiPlaybackEvents, preserving recorded ties and note identity while leaving playback scheduling to the app.",
+      "files": [],
+      "expectations": [
+        "Imports compileMidiPlaybackEvents and MidiSequence from @audiorective/blocks/midi, and constructs or updates a sequence from the recorded take",
+        "Calls compileMidiPlaybackEvents(take, sequence.getState()) after the note edit, rather than sending raw take.events alongside edited notes",
+        "Explains that matched raw note messages carry noteId, so edited pitch/timing regenerates note bytes while overlapping notes retain distinct identities",
+        "Explains that non-note messages including sustain remain and same-time original delivery order is retained; new note endpoints use the documented deterministic order",
+        "Treats returned event.time as take-relative seconds and leaves clip placement, synth scheduling, transport cancellation and live keyboard routing with the application",
+        "Does not invent a public MidiPlayer, claim MidiSequence itself stores controllers, or claim the compiler implements pedal sound behavior"
+      ]
     }
   ]
 }
