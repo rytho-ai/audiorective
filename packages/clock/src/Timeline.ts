@@ -174,11 +174,10 @@ export class Timeline<TRulers extends Record<string, Ruler<unknown, unknown>> = 
     this._generation++;
   }
 
-  /** @internal Reissue the current horizon after an edit without moving the heard position. */
-  _invalidate(): number {
-    const now = this._now();
+  /** @internal Reissue from Clock's captured audio boundary without moving the heard position. */
+  _invalidate(now: number): number {
     const beat = this.timeToBeat(now);
-    const position = this.position;
+    const position = this._state === "playing" ? this._positionAtAnchor + (now - this._timeAtAnchor) : this._positionAtAnchor;
     this._beatAtAnchor = beat;
     this._timeAtAnchor = now;
     this._positionAtAnchor = position;

@@ -336,15 +336,15 @@
     },
     {
       "id": 23,
-      "prompt": "Our audiorective step sequencer schedules open and closed hi-hats ahead through Clock. If I delete a future closed-hat step, its voice stops but the previously scheduled choke still mutes the open hat. A manually pressed open hat must survive sequencer pause and edits. Show the audio owner and Clock callback, plus what happens on edit, stop and cleanup. Don't run anything.",
-      "expected_output": "InstrumentEvents owns reversible grouped choke; Clock owns only sequenced event handles registered with window.own(hit, when), and refreshes the future horizon after edits while manual hits stay unregistered.",
+      "prompt": "Our audiorective step sequencer schedules open and closed hi-hats ahead through Clock. If I delete a future closed-hat step, its voice stops but the previously scheduled choke still mutes the open hat. An edit may also land exactly at a hit's AudioContext start time. A manually pressed open hat must survive sequencer pause and edits. Show the audio owner and Clock callback, plus what happens on edit, stop and cleanup. Don't run anything.",
+      "expected_output": "InstrumentEvents owns reversible grouped choke; Clock owns only sequenced event handles registered with window.own(hit, when), and refreshes owned hits at or after the captured audio time while manual hits stay unregistered.",
       "files": [],
       "expectations": [
         "Chooses InstrumentEvents from @audiorective/blocks for grouped sample hits instead of scheduling an irreversible Voice.stop(when) on the open hat",
         "Creates open and closed pads with different IDs in one group; routes the block output once and keeps context ownership with the caller",
         "Schedules a hit in a Clock tick window using absolute point.time and registers its returned handle with window.own(hit, point.time)",
         "Leaves a manually triggered pad event unregistered with Clock so sequencer transport changes do not cancel it",
-        "After a pattern edit, calls clock.refresh() to retract future owned hits and refill the horizon; does not duplicate the pattern or playback state in the UI",
+        "After a pattern edit, calls clock.refresh() to retract owned hits at or after the captured audio time and refill the horizon; explains that a hit exactly at now is reissued once while earlier hits remain active",
         "Explains that pause, stop, seek, start and destroy cancel owned events, while unowned events retain Clock's prior tail behavior",
         "Destroys Clock and InstrumentEvents separately; the caller closes its AudioContext"
       ]

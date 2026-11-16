@@ -106,6 +106,62 @@ test("refresh cancels and refills the present horizon without moving transport p
   clock.destroy();
 });
 
+test("refresh gives a hit exactly at now to the refill instead of keeping both copies", () => {
+  const timeline = new Timeline({ audioContext: { currentTime: 0 }, bpm: 120 });
+  const ticks = new ManualTickSource();
+  const hits: ReturnType<typeof event>[] = [];
+  const clock = new Clock({
+    timeline,
+    tickSource: ticks,
+    onTick(window) {
+      const hit = event();
+      hits.push(hit);
+      window.own(hit.value, window.time.current);
+    },
+  });
+  clock.start();
+  ticks.tick();
+  clock.refresh();
+  expect(hits).toHaveLength(2);
+  expect(hits[0]!.cancel).toHaveBeenCalledTimes(1);
+  expect(hits[1]!.cancel).not.toHaveBeenCalled();
+  clock.destroy();
+});
+
+test("refresh uses one captured boundary even if cancellation advances the audio clock", () => {
+  let now = 0;
+  const timeline = new Timeline({
+    audioContext: {
+      get currentTime() {
+        return now;
+      },
+    },
+    bpm: 120,
+  });
+  const ticks = new ManualTickSource();
+  const first = event();
+  first.value.cancel = () => {
+    first.cancel();
+    now = 0.02;
+  };
+  const starts: number[] = [];
+  const clock = new Clock({
+    timeline,
+    tickSource: ticks,
+    onTick(window) {
+      starts.push(window.beat.start);
+      if (starts.length === 1) window.own(first.value, 0.01);
+    },
+  });
+  clock.start();
+  ticks.tick();
+  clock.refresh();
+  expect(first.cancel).toHaveBeenCalledTimes(1);
+  expect(starts[1]).toBe(0); // the cancelled interval remains in the refill window
+  expect(timeline.position).toBeCloseTo(0.02, 9);
+  clock.destroy();
+});
+
 test("a late registration from an invalidated window is cancelled instead of escaping ownership", () => {
   const timeline = new Timeline({ audioContext: { currentTime: 0 } });
   const ticks = new ManualTickSource();
