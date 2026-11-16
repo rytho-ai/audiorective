@@ -1,7 +1,7 @@
 {
   "name": "@audiorective/blocks",
   "version": "2.3.2",
-  "description": "Headless audio range playback and pure MIDI note data with shared selection",
+  "description": "Headless audio recording, range playback, instrument events and pure MIDI note data",
   "type": "module",
   "license": "MIT",
   "homepage": "https://github.com/audiorective/audiorective/tree/main/packages/blocks#readme",

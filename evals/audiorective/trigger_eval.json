@@ -20,6 +20,10 @@
     "should_trigger": true
   },
   {
+    "query": "Build a browser voice track: record the microphone while a metronome plays, then line the take up with the song's audio clock. The UI is vanilla TypeScript.",
+    "should_trigger": true
+  },
+  {
     "query": "I'm adding a synth pad to our Next.js app (app router). The oscillator + filter code is in lib/audio/pad.ts and the knobs are React components. how should I wire the state so the UI stays in sync with the AudioParams?",
     "should_trigger": true
   },

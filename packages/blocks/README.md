@@ -2,6 +2,8 @@
 
 Headless audio blocks for Audiorective. `WavePlayer` loads audio, selects ranges in the committed output timeline, and handles play/pause/seek/loop audition without DOM dependencies. It reuses core's `BufferPlayer` and works alone or with waveform widgets.
 
+`AudioRecorder` captures short PCM takes from a caller-connected input through an AudioWorklet. It returns actual AudioContext start/end sample frames; the caller owns microphone permission, monitor routing, latency calibration and take placement. See [Record an audio take](../../docs/blocks.md#record-an-audio-take).
+
 `getState().loadProgress` reports download/read bytes, decode and peaks; `subscribe` observes changes and `cancelLoad()` cancels the active load. Unknown totals remain indeterminate. `options.loadSource` can reuse a URL/decode cache while the block owns loading, errors and stale-result guards.
 
 Pass `new WavePlayer(context, { stretch })` to borrow an offline processor such as `TimeStretch` from `@audiorective/effects/time-stretch`. `await player.setStretch(ratio)` always renders the original `sourceBuffer`, then stops playback and commits one `version` containing matching buffer, peaks and revision metadata. Pending or failed edits retain the old playable version; the latest edit wins. Ratio 1 restores the original without a processor.

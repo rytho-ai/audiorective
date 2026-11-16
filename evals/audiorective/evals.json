@@ -361,6 +361,21 @@
         "Routes the sampler output once and starts the AudioContext from a user gesture",
         "Keeps soundboard button callbacks thin; audio scheduling and voice lifetime stay with the audio owner"
       ]
+    },
+    {
+      "id": 25,
+      "prompt": "Build a browser voice-track capture flow with the workspace audiorective packages. A metronome is already playing from our AudioContext. Record a short microphone take beginning at a scheduled audio-clock time, stop it from a button, then hand the PCM and its raw position to our future clip owner. The microphone and monitoring belong to the app. Show cancellation and cleanup; do not run anything.",
+      "expected_output": "AudioRecorder borrows the app's AudioContext and microphone input, captures PCM through a scheduled AudioWorklet take, and returns actual sample-frame timing without inventing a Track or applying an unmeasured latency correction.",
+      "files": [],
+      "expectations": [
+        "Imports AudioRecorder from @audiorective/blocks and constructs it with the existing AudioContext",
+        "Obtains microphone permission in the app, connects its MediaStreamAudioSourceNode to recorder.input, and does not expect an audible recorder output",
+        "Awaits recorder.ready before a precise scheduled start, then awaits recorder.start({ when }) with absolute AudioContext seconds",
+        "Uses recorder.stop() to obtain channels, sampleRate, startFrame/endFrame or startTime/endTime; the stop button handles rejection",
+        "Treats returned frame positions as actual raw capture times and leaves latency calibration and take placement to the future clip/track owner",
+        "Uses recorder.cancel() for discard and destroys the recorder separately from the borrowed stream and AudioContext",
+        "Does not use MediaRecorder timeslice count as a sample-accurate timeline or invent a project-wide recording/track model"
+      ]
     }
   ]
 }
