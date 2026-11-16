@@ -157,3 +157,14 @@ test("untagged recorded note-ons fail instead of silently losing their order", (
     compileMidiPlaybackEvents({ startTime: 10, events: [{ audioTime: 10, data: new Uint8Array([0x90, 60, 80]) }] }, { notes: [], duration: 1 }),
   ).toThrow("MIDI playback needs note IDs on recorded note-ons.");
 });
+
+test("playback rejects invalid notes and duplicate IDs with its public error", () => {
+  const note = { id: "a", start: 0, end: 0.5, pitch: 60, velocity: 90, channel: 0, track: 0 };
+  const source = { startTime: 0, events: [] };
+  expect(() => compileMidiPlaybackEvents(source, { duration: 1, notes: [{ ...note, pitch: 128 }] })).toThrow(
+    "MIDI playback needs finite, non-negative times and valid MIDI notes.",
+  );
+  expect(() => compileMidiPlaybackEvents(source, { duration: 1, notes: [note, { ...note }] })).toThrow(
+    "MIDI playback needs finite, non-negative times and valid MIDI notes.",
+  );
+});

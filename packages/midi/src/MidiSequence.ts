@@ -1,8 +1,9 @@
 /** Authoritative immutable MIDI note/selection snapshots, independent of DOM and audio.
- * Reads: ./midi-data for parsing and interval query. Views borrow this owner.
+ * Reads: ./midi-file for parsing and ./midi-data for note validation/query. Views borrow this owner.
  */
 import { batch, cell, readonlyCell, untracked, type ReadonlyCell } from "@audiorective/core";
-import { parseMidi, visibleMidiNotes, type MidiData, type MidiNote, type MidiRange, type ParsedMidi } from "./midi-data";
+import { isValidMidiNote, visibleMidiNotes, type MidiData, type MidiNote, type MidiRange, type ParsedMidi } from "./midi-data";
+import { parseMidi } from "./midi-file";
 export type MidiSequenceState = MidiData & Readonly<{ selection: MidiRange | null; revision: number }>;
 /** Observable state, read-only. Each cell tracks only its own slice: a selection change does not re-run an effect reading `notes`. */
 export type MidiSequenceCells = Readonly<{
@@ -64,27 +65,7 @@ export class MidiSequence {
     const ids = new Set<string>();
     const notes = data.notes
       .map((n) => {
-        if (
-          typeof n.id !== "string" ||
-          !n.id ||
-          ids.has(n.id) ||
-          !Number.isFinite(n.start) ||
-          !Number.isFinite(n.end) ||
-          n.start < 0 ||
-          n.end < n.start ||
-          n.end > data.duration ||
-          !Number.isInteger(n.pitch) ||
-          n.pitch < 0 ||
-          n.pitch > 127 ||
-          !Number.isInteger(n.velocity) ||
-          n.velocity < 0 ||
-          n.velocity > 127 ||
-          !Number.isInteger(n.channel) ||
-          n.channel < 0 ||
-          n.channel > 15 ||
-          !Number.isInteger(n.track) ||
-          n.track < 0
-        )
+        if (!isValidMidiNote(n, data.duration) || ids.has(n.id))
           throw new RangeError("MIDI notes need unique ids, valid source seconds and integer pitch/velocity/channel/track.");
         ids.add(n.id);
         return Object.freeze({ ...n });

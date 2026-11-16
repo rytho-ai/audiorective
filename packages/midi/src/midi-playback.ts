@@ -1,5 +1,5 @@
 /** Pure projection of an edited MIDI take into ordered, take-relative playback messages. */
-import type { MidiData, RecordedMidiEvent } from "./midi-data";
+import { isValidMidiNote, type MidiData, type RecordedMidiEvent } from "./midi-data";
 
 export type MidiPlaybackSource = Readonly<{ startTime: number; events: readonly RecordedMidiEvent[] }>;
 export type MidiPlaybackEvent = Readonly<{
@@ -51,27 +51,7 @@ export function compileMidiPlaybackEvents(source: MidiPlaybackSource, sequence: 
 
   const ids = new Set<string>();
   sequence.notes.forEach((note, index) => {
-    if (
-      typeof note.id !== "string" ||
-      !note.id ||
-      ids.has(note.id) ||
-      !Number.isFinite(note.start) ||
-      !Number.isFinite(note.end) ||
-      note.start < 0 ||
-      note.end < note.start ||
-      note.end > sequence.duration ||
-      !Number.isInteger(note.pitch) ||
-      note.pitch < 0 ||
-      note.pitch > 127 ||
-      !Number.isInteger(note.velocity) ||
-      note.velocity < 0 ||
-      note.velocity > 127 ||
-      !Number.isInteger(note.channel) ||
-      note.channel < 0 ||
-      note.channel > 15 ||
-      !Number.isInteger(note.track) ||
-      note.track < 0
-    )
+    if (!isValidMidiNote(note, sequence.duration) || ids.has(note.id))
       throw new RangeError("MIDI playback needs finite, non-negative times and valid MIDI notes.");
     ids.add(note.id);
     if (note.start === note.end || note.velocity === 0) return;
