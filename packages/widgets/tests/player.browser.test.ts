@@ -197,6 +197,19 @@ test("(a) logic: hold freezes, scrub previews, commit seeks, cancel and a press 
   expect(f.seek).toHaveBeenCalledTimes(1);
 });
 
+test("a drag commits within the latest duration when the track becomes shorter", () => {
+  const f = fake();
+  const r = recorder();
+  const view = mountPlayer(host(), { player: f.player, renderer: r.renderer });
+  disposers.push(() => view.destroy());
+
+  r.actions().scrub(90);
+  f.duration.value = 10;
+  expect(r.last()).toMatchObject({ position: 10, duration: 10, scrubbing: true });
+  r.actions().commit();
+  expect(f.seek).toHaveBeenCalledExactlyOnceWith(10);
+});
+
 test("(b) unknown length: before metadata, live stream, track switch; never renders NaN", async () => {
   const ctx = context();
   const player = new FilePlayer(ctx);
@@ -603,4 +616,25 @@ test("a player with only isPlaying/play/pause mounts; a throwing renderer leaves
     }),
   ).toThrow("boom");
   expect(root.childElementCount).toBe(0);
+});
+
+test("an initial render failure releases its observer and the borrowed player", () => {
+  const isPlaying = cell(false);
+  const root = host();
+  const render = vi.fn(() => {
+    throw new Error("first render failed");
+  });
+  const destroy = vi.fn();
+
+  expect(() =>
+    mountPlayer(root, {
+      player: { isPlaying, play() {}, pause() {} },
+      renderer: () => ({ render, destroy }),
+    }),
+  ).toThrow("first render failed");
+  expect(root.childElementCount).toBe(0);
+  expect(destroy).toHaveBeenCalledTimes(1);
+
+  isPlaying.value = true;
+  expect(render).toHaveBeenCalledTimes(1);
 });

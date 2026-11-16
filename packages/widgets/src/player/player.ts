@@ -117,7 +117,7 @@ export function mountPlayer(root: HTMLElement, options: PlayerOptions): PlayerHa
       const to = target;
       const frame = untracked(read); // also drops the gesture if seeking stopped being possible
       held = target = null;
-      if (to !== null && frame.canSeek) timeline!.seek!(to);
+      if (to !== null && frame.canSeek && frame.duration !== null) timeline!.seek!(clamp(to, 0, frame.duration));
       draw();
     },
     cancel() {
@@ -153,11 +153,21 @@ export function mountPlayer(root: HTMLElement, options: PlayerOptions): PlayerHa
   try {
     renderer = (options.renderer ?? defaultRenderer)(container, actions);
     const instance = renderer;
+    let initializing = true;
+    let initialError: { reason: unknown } | undefined;
     stopEffect = effect(() => {
-      const frame = read();
-      untracked(() => instance.render(frame));
-      if (timeline?.clock && frame.isPlaying && !frameRequest) frameRequest = requestAnimationFrame(tick);
+      try {
+        const frame = read();
+        untracked(() => instance.render(frame));
+        if (timeline?.clock && frame.isPlaying && !frameRequest) frameRequest = requestAnimationFrame(tick);
+      } catch (reason) {
+        // The first effect run precedes its disposer. Defer the error until the disposer exists.
+        if (!initializing) throw reason;
+        initialError = { reason };
+      }
     });
+    initializing = false;
+    if (initialError) throw initialError.reason;
     unsubscribe = player.subscribe?.(draw);
   } catch (error) {
     handle.destroy();
