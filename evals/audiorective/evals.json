@@ -190,11 +190,12 @@
     },
     {
       "id": 13,
-      "prompt": "Use current Audiorective workspace packages to build two piano rolls sharing our existing MidiSequence. Give the second one a custom right-side keyboard, bottom toolbar and SVG note shapes. Both must support widget-owned note move and edge-resize with beat snap/Alt bypass, local drag previews and one model commit on release. Preserve range selection, inspection, external audio ownership and cancel edits on Escape/source replacement/unmount. Provide cleanup; do not implement another drag engine in the renderer.",
+      "prompt": "Use current Audiorective workspace packages to build two piano rolls sharing our existing MidiSequence. Give the second one a custom right-side keyboard, bottom toolbar and SVG note shapes. Its snap control must reflect the initial option and later handle.setSnap calls from outside the layout. Both must support widget-owned note move and edge-resize with beat snap/Alt bypass, local drag previews and one model commit on release. Preserve range selection, inspection, external audio ownership and cancel edits on Escape/source replacement/unmount. Provide cleanup; do not implement another drag engine in the renderer.",
       "expected_output": "mountPianoRoll layout and renderer change appearance while forwarding pointerdown to widget editing; onNoteEdit invokes the existing model command.",
       "files": [],
       "expectations": [
         "Uses layout(root, viewport, controls) and mounts the supplied viewport unchanged inside root, with public frame geometry and control methods.",
+        "Reads layout frame.snap to initialize and refresh the custom snap control, writes changes through controls.setSnap, and relies on synchronous layout updates for external handle.setSnap calls without another snap store.",
         "Layouts/renderers return render and optional destroy, manage owned listeners/resources and responsive controls, without private DOM selectors.",
         "Enables onNoteEdit and updates the borrowed sequence with edited note start/end/pitch; leaves audio scheduling/routing with the caller.",
         "Custom note renderer forwards onNotePointerDown(note,event,optionalKind), retains onNoteClick/keyboard inspection, and does not implement capture/delta/snap itself.",

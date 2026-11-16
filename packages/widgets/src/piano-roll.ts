@@ -119,7 +119,7 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
       }),
     );
     presentation?.render(
-      Object.freeze({ duration: state.duration, height, pitches: Object.freeze({ ...pitches }), viewport: snapshot(), pitchToY, zoom }),
+      Object.freeze({ duration: state.duration, height, pitches: Object.freeze({ ...pitches }), viewport: snapshot(), pitchToY, zoom, snap }),
     );
     drawPlayhead();
     for (const fn of [...viewListeners]) fn();
@@ -211,9 +211,11 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
     getViewport: snapshot,
     attach: (extension) => plugins.attach(extension),
     setSnap(mode) {
+      if (destroyed) return;
       editor.cancel();
       snap = mode;
       plugin.setSnap(mode);
+      render();
     },
     setGrid(next) {
       editor.cancel();
