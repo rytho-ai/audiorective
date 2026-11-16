@@ -234,6 +234,104 @@
         "Reads position per animation frame from the player.position getter rather than trying to observe it as a reactive value",
         "Does not call subscribe in the components for state that player.cells exposes"
       ]
+    },
+    {
+      "id": 16,
+      "prompt": "build me a 16-step drum machine in react with a bpm slider, swing, and per-step velocity. the kit is 4 wav files in public/kit/. don't run anything.",
+      "expected_output": "An audio-layer class schedules one-shot hits from the clock's look-ahead windows; the pattern and velocities are reactive state the React UI reads and edits directly. Any equivalent wiring of the same primitives is acceptable.",
+      "files": [],
+      "expectations": [
+        "Chooses the timing primitive from @audiorective/clock (Clock/Timeline tick windows or rulers) for transport, tempo and swing, rather than setInterval, setTimeout or requestAnimationFrame scheduling",
+        "Chooses a one-shot playback primitive from @audiorective/core (Sampler/Voice, or an equivalent buffer source scheduled with audio-clock times) for the hits, with per-step velocity applied as gain at trigger time",
+        "Does not import a step-sequencer, drum-machine or sample-bank class from @audiorective/blocks or @audiorective/widgets; none exists, so the sequencing logic is written in the app's audio layer",
+        "Keeps pattern and velocity in reactive state owned by the audio layer (a Cell, or a plain class holding Cells) and reads it in React with useValue; no second copy of the pattern in useState, a context or an external store",
+        "Scheduling lives in an audio-layer class or method; React handlers only write params/cells or call methods",
+        "Adds no wrapper layer around the library's primitives that only forwards calls (no re-implemented transport, event bus or subscription system)"
+      ]
+    },
+    {
+      "id": 17,
+      "prompt": "sampler pad grid: 8 pads, each plays a one-shot, polyphonic, with a fade out on release. vanilla TS, no framework. don't run anything.",
+      "expected_output": "Pads trigger polyphonic voices from core's Sampler (or an equivalent per-pad voice primitive); releasing a pad fades that pad's own voice. Equivalent wiring is acceptable.",
+      "files": [],
+      "expectations": [
+        "Chooses core's Sampler/Voice (or an equivalent polyphonic one-shot primitive from @audiorective/core) for playback, one voice per press",
+        "Does not use WavePlayer, mountWaveformSelector or BufferPlayer as the pad voice: they are single-playhead players and cannot overlap hits of the same pad",
+        "Release fades the voice that this press started, using the voice's own fade/stop with a release time (or an equivalent scheduled gain ramp), so overlapping presses release independently",
+        "Does not import a pad-grid or sample-bank class from @audiorective/blocks or @audiorective/widgets; none exists",
+        "Triggering goes through a method on the audio-layer object; pointer and keyboard handlers do not create audio nodes themselves",
+        "Starts or resumes the AudioContext from a user gesture"
+      ]
+    },
+    {
+      "id": 18,
+      "prompt": "replace tone.js in our looper — we only use Tone.Transport, Tone.Player and a PingPongDelay and the bundle is huge. show me the audiorective equivalent of each and how they connect. don't run anything.",
+      "expected_output": "Transport maps to @audiorective/clock, the loop player to a core playback primitive with a scheduled start, and the delay to @audiorective/effects PingPongDelay, wired with defineGraph or plain connections.",
+      "files": [],
+      "expectations": [
+        "Maps Tone.Transport to @audiorective/clock (transport, tempo, look-ahead scheduling) rather than a hand-rolled timer",
+        "Maps Tone.Player to a playback primitive whose start can be scheduled on the audio clock (BufferPlayer, or WavePlayer/Sampler with a stated reason), and says why that one fits a tempo-locked loop",
+        "Uses PingPongDelay from @audiorective/effects instead of rebuilding it from DelayNodes",
+        "Connects source to effect to destination through defineGraph or the processors' input/output nodes",
+        "Does not introduce a compatibility wrapper that re-creates Tone's API on top of audiorective",
+        "Starts loops from clock tick windows or an explicit audio-clock time, not from the main thread at playback time"
+      ]
+    },
+    {
+      "id": 19,
+      "prompt": "I need a browser waveform editor in vanilla TypeScript: load a local audio file, drag a time range, and loop audition that selection. I already have an AudioContext and an effects chain it should play through. don't run anything.",
+      "expected_output": "Uses the waveform selector widget (or the waveform view plus a WavePlayer) with the caller's AudioContext, routing the player's output into the existing chain.",
+      "files": [],
+      "expectations": [
+        "Chooses the existing waveform capability: mountWaveformSelector from @audiorective/widgets, or mountWaveform with a WavePlayer from @audiorective/blocks; does not hand-draw peaks on a canvas or write its own range-drag logic",
+        "Passes the caller's AudioContext (or a caller-owned WavePlayer) rather than creating a second AudioContext",
+        "Routes the player/selector output into the existing effects chain once, instead of connecting straight to the destination",
+        "Loads the File through the widget or player's load, and handles a failed load",
+        "Loop audition of the selection uses the player's own selection/looping/audition methods, not a re-implemented loop with AudioBufferSourceNode",
+        "Cleans up on unmount without closing the caller's AudioContext"
+      ]
+    },
+    {
+      "id": 20,
+      "prompt": "I want a granular texture player on top of our audiorective setup: load one sample, then continuously scatter 30–80 ms grains from random positions in it, heavily overlapping, each grain with its own pan and pitch jitter, plus a density slider and a position-spread slider. don't run anything.",
+      "expected_output": "A custom AudioProcessor that schedules many short overlapping grain sources on the audio clock, with density and spread as params. The single-playhead blocks are not a fit and are not used for the grains.",
+      "files": [],
+      "expectations": [
+        "Does not use WavePlayer (or mountWaveformSelector) to play grains: it has one playhead and one selection, so it cannot overlap dozens of grains",
+        "Builds the grain engine as an AudioProcessor subclass (or an equivalent audio-layer class) that owns its nodes and exposes an output",
+        "Each grain is its own short-lived source (Sampler/Voice triggers with offset, rate and duration, or raw AudioBufferSourceNode + gain envelope + panner) started with audio-clock times, so grains overlap",
+        "Grain start times are scheduled ahead on the audio clock (a clock tick window or an equivalent look-ahead loop), not fired from the main thread at playback time",
+        "Density and spread are reactive params/cells on the processor that the UI writes directly",
+        "May use loadAudioBuffer, Param/Cell and effects from the library; reaching below the blocks to core is the expected choice here and is not treated as a failure to use the library"
+      ]
+    },
+    {
+      "id": 21,
+      "prompt": "Hook up live Web MIDI input in our audiorective app: a keyboard plays our polyphonic synth with note on/off and velocity, the sustain pedal holds notes, and the UI lights up the keys that are currently held. don't run anything.",
+      "expected_output": "Web MIDI messages are handled directly and call methods on the synth's audio-layer object; held notes are reactive state. MidiSequence and the SMF parser are not used for live input.",
+      "files": [],
+      "expectations": [
+        "Does not route live note-on/note-off through MidiSequence or parseMidi: they hold and edit note data from MIDI files in source seconds, not a live input stream",
+        "Does not mount the piano-roll widget as the live keyboard display unless it is fed by state the app owns for that purpose and the answer says why",
+        "Handles navigator.requestMIDIAccess and message parsing in app code, calling noteOn/noteOff-style methods on an AudioProcessor synth",
+        "Sustain pedal logic (deferring releases while the pedal is down) lives in the audio-layer object, not in UI handlers",
+        "Held notes are a Cell (or equivalent reactive state on the audio-layer object) that the UI observes; no duplicate copy in a UI store",
+        "Says plainly that the library has no live-MIDI-input block and that core primitives are the right level here"
+      ]
+    },
+    {
+      "id": 22,
+      "prompt": "Add a simple podcast player bar to our audiorective app: play/pause, a seek slider, elapsed and total time, and a 1x/1.5x/2x speed toggle. Episodes are 60–90 minute mp3s on our CDN. No waveform. vanilla TS. don't run anything.",
+      "expected_output": "Uses core's streaming FilePlayer and a small hand-written DOM bar bound to its reactive cells. The waveform selector and WavePlayer are not used because they decode the whole file.",
+      "files": [],
+      "expectations": [
+        "Chooses FilePlayer from @audiorective/core for the episode, because it streams instead of decoding the whole file",
+        "Does not use WavePlayer, mountWaveformSelector or BufferPlayer for a 60–90 minute file, and if it mentions them says they decode the entire file into memory",
+        "Binds the bar to the player's reactive state (cells for playing/current time/duration, params.volume if used) with effect or a framework binding; no polling timer for state",
+        "Handles duration being NaN before metadata loads instead of rendering NaN or enabling the slider",
+        "Does not let incoming time updates move the slider while the user is dragging it, and seeks on release (or continuously) through the player's seek method",
+        "Speed changes go through the player's playbackRate; play is started from a user gesture"
+      ]
     }
   ]
 }
