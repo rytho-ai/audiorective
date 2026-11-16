@@ -27,11 +27,12 @@ export type SignalAccessor<T> = {
 export type ComputedAccessor<T> = () => T;
 
 /**
- * Shared interface for any reactive container exposing a signal.
- * Both Param<T> and Cell<T> satisfy this.
+ * Shared interface for any reactive container that can be read and tracked.
+ * Param<T>, Cell<T> and ReadonlyCell<T> satisfy this.
  */
 export interface Readable<T> {
-  readonly $: SignalAccessor<T>;
+  // NoInfer: T comes from `value`. A writable `$` is overloaded, and inferring from it would pick its setter signature.
+  readonly $: ComputedAccessor<NoInfer<T>>;
   readonly value: T;
 }
 

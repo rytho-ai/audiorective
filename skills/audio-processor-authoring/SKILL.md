@@ -84,6 +84,10 @@ class Tremolo extends AudioProcessor<{ rate: SchedulableParam; depth: Schedulabl
 An instrument is the same minus `input`. A class with no audio nodes at all
 (a pattern, a preset list) is a plain class holding `Cell`s, not a processor.
 
+State that may only change through a method (it needs validation, or has to start,
+stop or cancel something) is a `readonlyCell(...)` in `cells` over a private `Cell` —
+see `references/core.md` → ReadonlyCell.
+
 ## Checklist
 
 - **Skeleton** — nodes built as locals before `super()`; build callback

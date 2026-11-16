@@ -1,4 +1,14 @@
-import { AudioProcessor, BufferPlayer, cell, type SchedulableParam } from "@audiorective/core";
+import {
+  AudioProcessor,
+  BufferPlayer,
+  batch,
+  cell,
+  readonlyCell,
+  untracked,
+  type Cell,
+  type ReadonlyCell,
+  type SchedulableParam,
+} from "@audiorective/core";
 import { summarizePeaks, type PCMData, type PeakSummary } from "@audiorective/core/peaks";
 import { loadSource, type WaveLoadProgress, type WaveSourceLoader } from "./source";
 
@@ -39,49 +49,125 @@ export type WavePlayerState = {
   revision: number;
 };
 
+/** Observable state. Effects and `useValue` track these; they are read-only, and change through the player's methods. */
+export type WavePlayerCells = {
+  /** Committed selection in output seconds; the object is frozen. */
+  selection: ReadonlyCell<Readonly<AudioRange> | null>;
+  isLooping: ReadonlyCell<boolean>;
+  /** Transport flag: flips when playback starts or stops. */
+  isPlaying: ReadonlyCell<boolean>;
+  loading: ReadonlyCell<boolean>;
+  loadProgress: ReadonlyCell<WaveLoadProgress | null>;
+  error: ReadonlyCell<string | null>;
+  processing: ReadonlyCell<boolean>;
+  /** The committed audio/peaks revision; null while empty or loading. */
+  version: ReadonlyCell<PlaybackVersion | null>;
+};
+type Store = {
+  selection: Cell<Readonly<AudioRange> | null>;
+  isLooping: Cell<boolean>;
+  loading: Cell<boolean>;
+  loadProgress: Cell<WaveLoadProgress | null>;
+  error: Cell<string | null>;
+  processing: Cell<boolean>;
+  version: Cell<PlaybackVersion | null>;
+};
+
 /** Headless audio loading, range playback and non-destructive stretch. The caller owns context and routing. */
-export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, {}> {
+export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, WavePlayerCells> {
   private readonly player: BufferPlayer;
   private readonly gain: GainNode;
   private readonly audioContext: AudioContext;
-  private range: AudioRange | null = null;
-  private looping = false;
+  /** The only store. Writable here, read-only on `cells`. */
+  private readonly store: Store;
   private held = 0;
   private anchor: { time: number; offset: number; start: number; end: number } | null = null;
-  private loading = false;
-  private loadProgress: WaveLoadProgress | null = null;
-  private error: string | null = null;
   private request = 0;
   private command = 0;
   private abort: AbortController | null = null;
   private disposed = false;
   private depth = 0;
   private readonly listeners = new Set<() => void>();
-  private readonly current = cell<PlaybackVersion | null>(null);
   private original: AudioBuffer | null = null;
   private sourceRevision = 0;
   private revision = 0;
-  private processing = false;
   private editRequest = 0;
   private editAbort: AbortController | null = null;
-
   constructor(
     context: AudioContext,
     private readonly options: WavePlayerOptions = {},
   ) {
     const gain = new GainNode(context);
+    const player = new BufferPlayer(context);
+    const store: Store = {
+      selection: cell<Readonly<AudioRange> | null>(null),
+      isLooping: cell(false),
+      loading: cell(false),
+      loadProgress: cell<WaveLoadProgress | null>(null),
+      error: cell<string | null>(null),
+      processing: cell(false),
+      version: cell<PlaybackVersion | null>(null),
+    };
     super(context, ({ param }) => ({
       params: { volume: param({ default: 1, bind: gain.gain, min: 0, max: 1 }) },
-      cells: {},
+      cells: {
+        selection: readonlyCell(store.selection),
+        isLooping: readonlyCell(store.isLooping),
+        isPlaying: readonlyCell(() => player.cells.isPlaying.value),
+        loading: readonlyCell(store.loading),
+        loadProgress: readonlyCell(store.loadProgress),
+        error: readonlyCell(store.error),
+        processing: readonlyCell(store.processing),
+        version: readonlyCell(store.version),
+      },
     }));
     this.gain = gain;
     this.audioContext = context;
-    this.player = new BufferPlayer(context);
+    this.player = player;
+    this.store = store;
     this.defineGraph(() => [[this.player, gain]]);
     this.effect(() => {
       void this.player.cells.isPlaying.value;
       this.notify();
     });
+  }
+
+  // Internal reads never subscribe a caller's effect. Public readers below are tracked.
+  private get range(): Readonly<AudioRange> | null {
+    return untracked(() => this.store.selection.value);
+  }
+  private set range(value: Readonly<AudioRange> | null) {
+    this.store.selection.value = value ? Object.freeze({ start: value.start, end: value.end }) : null;
+  }
+  private get looping(): boolean {
+    return untracked(() => this.store.isLooping.value);
+  }
+  private set looping(value: boolean) {
+    this.store.isLooping.value = value;
+  }
+  private get loading(): boolean {
+    return untracked(() => this.store.loading.value);
+  }
+  private set loading(value: boolean) {
+    this.store.loading.value = value;
+  }
+  private get loadProgress(): WaveLoadProgress | null {
+    return untracked(() => this.store.loadProgress.value);
+  }
+  private set loadProgress(value: WaveLoadProgress | null) {
+    this.store.loadProgress.value = value;
+  }
+  private get error(): string | null {
+    return untracked(() => this.store.error.value);
+  }
+  private set error(value: string | null) {
+    this.store.error.value = value;
+  }
+  private get processing(): boolean {
+    return untracked(() => this.store.processing.value);
+  }
+  private set processing(value: boolean) {
+    this.store.processing.value = value;
   }
 
   get output(): AudioNode {
@@ -96,7 +182,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, {}>
   }
   /** One coherent audio/peaks revision. Treat its borrowed data as read-only. */
   get version(): PlaybackVersion | null {
-    return this.current.value;
+    return this.cells.version.value;
   }
   get sourceBuffer(): AudioBuffer | null {
     return this.original;
@@ -119,13 +205,14 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, {}>
     return this.looping ? a.start + ((((time - a.start) % (a.end - a.start)) + a.end - a.start) % (a.end - a.start)) : Math.min(a.end, time);
   }
   get isPlaying(): boolean {
-    return this.player.cells.isPlaying.value && (this.looping || this.position < (this.anchor?.end ?? this.duration));
+    return this.cells.isPlaying.value && (this.cells.isLooping.value || this.position < (this.anchor?.end ?? this.duration));
   }
   get isLooping(): boolean {
-    return this.looping;
+    return this.cells.isLooping.value;
   }
   getSelection(): AudioRange | null {
-    return this.range ? { ...this.range } : null;
+    const range = this.cells.selection.value;
+    return range ? { ...range } : null;
   }
   getState(): WavePlayerState {
     return {
@@ -133,11 +220,11 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, {}>
       selection: this.getSelection(),
       position: this.position,
       isPlaying: this.isPlaying,
-      isLooping: this.looping,
-      loading: this.loading,
-      loadProgress: this.loadProgress,
-      error: this.error,
-      processing: this.processing,
+      isLooping: this.isLooping,
+      loading: this.cells.loading.value,
+      loadProgress: this.cells.loadProgress.value,
+      error: this.cells.error.value,
+      processing: this.cells.processing.value,
       stretchRatio: this.version?.ratio ?? 1,
       sourceDuration: this.original?.duration ?? 0,
       revision: this.version?.revision ?? 0,
@@ -157,7 +244,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, {}>
     for (const listener of [...this.listeners]) {
       if (!this.listeners.has(listener)) continue;
       try {
-        listener();
+        untracked(listener);
       } catch (error) {
         console.error("Range player listener failed.", error);
       }
@@ -166,7 +253,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, {}>
   private change(action: () => void): void {
     this.depth++;
     try {
-      action();
+      batch(() => untracked(action));
     } finally {
       if (--this.depth === 0) this.notify();
     }
@@ -196,7 +283,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, {}>
   }
   async play(): Promise<void> {
     this.assertAlive();
-    if (!this.buffer || this.isPlaying) return;
+    if (!this.buffer || untracked(() => this.isPlaying)) return;
     const command = ++this.command;
     await this.audioContext.resume();
     if (this.disposed || command !== this.command || !this.buffer) return;
@@ -282,12 +369,16 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, {}>
     const original = this.original;
     if (!original) throw new Error("No audio source is loaded.");
     if (ratio !== 1 && !this.options.stretch) throw new Error("WavePlayer needs a stretch processor.");
-    this.cancelStretch();
-    const id = this.editRequest,
-      sourceRevision = this.sourceRevision;
     const controller = new AbortController();
-    this.editAbort = controller;
+    // Fix this request's identity before observers run: `change` notifies effects and listeners,
+    // and one of them may start a newer stretch re-entrantly.
+    let id = 0,
+      sourceRevision = 0;
     this.change(() => {
+      this.cancelStretch();
+      id = this.editRequest;
+      sourceRevision = this.sourceRevision;
+      this.editAbort = controller;
       this.processing = true;
       this.error = null;
     });
@@ -315,7 +406,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, {}>
         this.held = Math.min(buffer.duration, position * scale);
         this.range = selection ? { start: selection.start * scale, end: Math.min(buffer.duration, selection.end * scale) } : null;
         this.processing = false;
-        this.current.value = Object.freeze({ revision: ++this.revision, sourceRevision, buffer, peaks, ratio });
+        this.store.version.value = Object.freeze({ revision: ++this.revision, sourceRevision, buffer, peaks, ratio });
       });
     } catch (reason) {
       if (this.disposed || id !== this.editRequest || sourceRevision !== this.sourceRevision) return;
@@ -378,7 +469,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, {}>
       this.loadProgress = null;
       this.error = null;
       this.original = null;
-      this.current.value = null;
+      this.store.version.value = null;
     });
     if (this.disposed || request !== this.request) return;
     try {
@@ -404,7 +495,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, {}>
         this.original = buffer;
         this.loading = false;
         this.loadProgress = null;
-        this.current.value = Object.freeze({ revision: ++this.revision, sourceRevision: this.sourceRevision, buffer, peaks, ratio: 1 });
+        this.store.version.value = Object.freeze({ revision: ++this.revision, sourceRevision: this.sourceRevision, buffer, peaks, ratio: 1 });
       });
     } catch (reason) {
       if (this.disposed || request !== this.request) return;
@@ -434,7 +525,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, {}>
       this.loading = false;
       this.loadProgress = null;
       this.original = null;
-      this.current.value = null;
+      this.store.version.value = null;
       this.player.destroy();
       super.destroy();
       this.gain.disconnect();

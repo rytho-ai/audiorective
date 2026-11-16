@@ -58,6 +58,11 @@ Three primitives cover a processor's reactive surface:
   a phantom `ConstantSourceNode`).
 - **`cell`** — structured/complex data (step patterns, presets) via Immer `.update()`. Lives in
   `processor.cells`, not `processor.params`.
+- **`readonlyCell(source)`** (imported from core, not a build helper) — a `cells` entry that outside
+  code can read and track but not write. Use it when a value may only change through a method
+  that validates it or has to start, stop or cancel something. Create the writable `cell` as a
+  local before `super()`, register `readonlyCell(local)`, and keep the local on a private field.
+  See `core.md` → ReadonlyCell.
 
 | Shape          | When to use                     | Result                                       |
 | -------------- | ------------------------------- | -------------------------------------------- |

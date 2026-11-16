@@ -19,6 +19,9 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Added
 
+- **core:** `ReadonlyCell<T>` and `readonlyCell(source)` — a tracked view with no setter, for state only its owner's methods may change. A processor's `cells` registry accepts `Cell` or `ReadonlyCell`. `batch(fn)` applies several writes as one change; `untracked(fn)` reads without subscribing. `effect` and `computed` are exported from core, so observing state outside a framework binding needs no direct `alien-signals` import. `Readable<T>.$` is typed as a read-only accessor, so `useValue` accepts `ReadonlyCell`.
+- **blocks:** `WavePlayer.cells` (`selection`, `isLooping`, `isPlaying`, `loading`, `loadProgress`, `error`, `processing`, `version`) and `MidiSequence.cells` (`state`, `notes`, `duration`, `selection`, `revision`) expose observable state as read-only cells that effects and `useValue` track. `getState()`, `getSelection()`, `isLooping`, `isPlaying` and MIDI `query()` are tracked reads. Multi-field operations commit as one batch. `subscribe()` is unchanged.
+
 - **core:** Optional `@audiorective/core/automation` entry with immutable reactive `AutomationCurve`, finite audio-clock `AutomationBinding`, and explicit `audioParamTarget`. Supports linear/hold curves, range/time scaling, live reprogramming, native hold/cancel and borrowed-target cleanup without importing blocks or effects.
 
 - **widgets:** `PianoRollOptions.layout` replaces the surrounding keyboard, toolbar and arrangement while retaining the supplied viewport and widget behavior. `onNoteEdit` enables widget-owned move/edge-resize previews, shared beat snap/Alt bypass and single-release model commands; custom note renderers forward `onNotePointerDown` instead of implementing gestures. Source/geometry changes, cancellation and cleanup discard previews. MIDI showroom demonstrates alternate layout/drawing with shared editing.

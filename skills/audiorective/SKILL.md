@@ -146,7 +146,7 @@ Then load only what the task needs:
 | Stretching PCM, preserving pitch, cancelling a render                                      | `references/effects.md` → TimeStretch            |
 | PCM min/max summaries and source-frame/time metadata                                       | `references/core.md` → PCM peak summaries        |
 | MIDI files, piano-roll layout/drawing/plugins, note drag/resize and caller-owned audition  | `references/midi.md`                             |
-| Loading phases/bytes/cancellation, cached sources, or shared range audition                | `references/blocks.md` + `references/widgets.md` |
+| Observing block state (`cells`), loading phases, cancel, cached sources, audition          | `references/blocks.md` + `references/widgets.md` |
 | React UI bound to an engine                                                                | `references/react.md`                            |
 | Next.js / Remix / Astro / any app that renders on a server                                 | `references/client-boundary.md`                  |
 | 3D scene with spatial audio (three.js)                                                     | `references/threejs.md` + `architecture.md`      |

@@ -221,6 +221,19 @@
         "Distinguishes planned curve sampling from existing native ParamSync readback, including disconnected-node limitations",
         "Guards pending asynchronous playback from selection or stretch changes by invalidating the operation token and queued player start, not only an active binding"
       ]
+    },
+    {
+      "id": 15,
+      "prompt": "In a React app that already has a shared WavePlayer and a MidiSequence, build a small status bar that shows 'Loading...' with the byte progress while the player loads, the current selection in seconds, the stretch 'Rendering...' flag and any error, plus the number of MIDI notes. It must update live with no polling and no copying of player state into a store. Also add a button that clears the selection. Do not run anything.",
+      "expected_output": "React components that read player.cells.* and sequence.cells.* with useValue, and call owner methods for writes",
+      "files": [],
+      "expectations": [
+        "Reads WavePlayer state through player.cells (selection, loading, loadProgress, processing, error) with useValue, not by copying getState() into useState or a store, and not by polling",
+        "Reads the MIDI note count through sequence.cells.notes (or cells.state) with useValue",
+        "Clears the selection by calling player.setSelection(null); does not assign to player.cells.selection.value or call its $ with a value",
+        "Reads position per animation frame from the player.position getter rather than trying to observe it as a reactive value",
+        "Does not call subscribe in the components for state that player.cells exposes"
+      ]
     }
   ]
 }

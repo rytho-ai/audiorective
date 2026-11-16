@@ -90,3 +90,23 @@ describe("useValue with ComputedAccessor", () => {
     expect(result.current).toBe(50);
   });
 });
+
+describe("useValue with ReadonlyCell", () => {
+  test("re-renders when the owner changes the viewed cell", async () => {
+    const { cell, readonlyCell } = await import("@audiorective/core");
+    const source = cell({ start: 0, end: 1 });
+    const view = readonlyCell(source);
+    const { result } = renderHook(() => useValue(view));
+    expect(result.current).toEqual({ start: 0, end: 1 });
+    act(() => {
+      source.value = { start: 1, end: 2 };
+    });
+    expect(result.current).toEqual({ start: 1, end: 2 });
+  });
+
+  test("value types come from `.value`, for writable and read-only sources", () => {
+    const fromParam: number = renderHook(() => useValue(new Param({ default: 1 }))).result.current;
+    const fromCell: string = renderHook(() => useValue(new Cell("a"))).result.current;
+    expect([fromParam, fromCell]).toEqual([1, "a"]);
+  });
+});

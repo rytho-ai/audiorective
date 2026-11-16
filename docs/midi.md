@@ -67,6 +67,19 @@ Velocity-zero note-on is treated as note-off. Overlapping notes of the same trac
 | `query(range, pitches?)`                         | Same interval query against the owned sorted notes.                                                                                             |
 | `destroy()`                                      | Clears model listeners; idempotent. Mutations/subscriptions after destroy throw. Views and caller audio have separate lifetimes.                |
 
+### Observing state reactively
+
+`sequence.cells` holds `ReadonlyCell<T>` values: `state` (the whole frozen snapshot, the same object `getState()` returns), and the slices `notes`, `duration`, `selection` and `revision`. The snapshot is the only store; `getState()` and `subscribe()` are thin wrappers over it, and `getState()`, `getSelection()` and `query()` are tracked reads. Read `.value` (or call `$()`) inside an `effect`, a `computed`, or `useValue`, and the reader re-runs when that value changes. Each slice tracks only itself: an effect reading `notes` does not re-run for a selection change. Every commit replaces the snapshot in one write, so an effect never observes new notes with an old selection or revision.
+
+```typescript
+import { effect } from "@audiorective/core";
+
+effect(() => console.log(sequence.cells.notes.value.length, sequence.cells.selection.value));
+sequence.setSelection({ start: 1, end: 2 }); // logs once
+```
+
+Assigning `.value` is a type error and writing through `$` throws a `TypeError`; change state with `load`, `setData`, `setSelection` and `updateNote`. `import "@audiorective/blocks/midi"` stays free of DOM and AudioContext; it needs only `@audiorective/core` and `alien-signals`, both plain JavaScript.
+
 Note fields require unique nonempty IDs, finite `0 <= start <= end <= duration`, integer pitch/velocity 0..127, channel 0..15 and a non-negative integer track. Zero-duration notes may be shown as a minimum-width mark. A duration extension does not invent new tempo/grid metadata; the caller decides which grid to supply.
 
 ## Piano-roll view

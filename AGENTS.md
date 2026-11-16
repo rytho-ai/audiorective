@@ -102,6 +102,7 @@ The `schedulableParam` helper (without `bind`) creates a `SchedulableParam` back
 7. **Framework agnostic** — core works in Node.js, React, Vue, Svelte, vanilla
 8. **No state duplication** — AudioProcessor owns all state. UI frameworks observe/mutate directly. No separate store.
 9. **Unified SchedulableParam** — one type regardless of backing. `bind` with AudioParam is an internal optimization, not a type distinction.
+10. **Observable state lives in `cells` or `params`** — for blocks as for core processors. A cell is the only store: no private field mirrored by `subscribe`. State whose change involves validation, playback or cancellation is registered as `readonlyCell(...)` over a private `Cell` and written only through the owner's methods; multi-field operations commit in one `batch`. Public readers are tracked, the owner's internal reads are `untracked`. Clock-derived values such as `position` stay plain getters. `getState()`/`subscribe()`, where a block has them, are thin wrappers over the cells.
 
 ## AudioProcessor Base Class
 
@@ -109,7 +110,7 @@ All processors extend `AudioProcessor<P, C>` with explicit registry generics:
 
 - Must implement `get output(): AudioNode | undefined`
 - Constructor passes a build callback to `super()` that returns `{ params, cells? }`
-- Exposes typed `processor.params` (frozen) and `processor.cells` (frozen) registries
+- Exposes typed `processor.params` (frozen) and `processor.cells` (frozen) registries; `cells` entries are `Cell` or `ReadonlyCell`
 - Instance methods `computed()` and `effect()` for derived values declared after `super()`
 - `destroy()` cleans up effects, params, and ConstantSources
 

@@ -189,11 +189,11 @@ class ParamSync {
 
 ### Readable\<T\>
 
-Shared interface satisfied by both `Param<T>` and `Cell<T>`. Used by React hooks (`useValue`) to accept either.
+Shared interface for anything that can be read and tracked: `Param<T>`, `Cell<T>` and `ReadonlyCell<T>` satisfy it. React's `useValue` accepts any of them.
 
 ```typescript
 interface Readable<T> {
-  readonly $: SignalAccessor<T>;
+  readonly $: () => T;
   readonly value: T;
 }
 ```
@@ -237,6 +237,54 @@ pattern.update((draft) => {
 pattern.value; // { steps: [true, false, false, false, true, ...], velocity: [...] }
 ```
 
+### ReadonlyCell\<T\>
+
+A tracked view that cannot be written: `.value` has no setter, `$` takes no argument, and there is no `.update()`. Use it for state that may only change through its owner's methods, because the change needs validation, playback, or cancellation. The owner keeps the writable `Cell` private and registers the view.
+
+```typescript
+class ReadonlyCell<T> implements Readable<T> {
+  readonly $: () => T;
+  get value(): T;
+}
+
+function readonlyCell<T>(source: Cell<T> | (() => T)): ReadonlyCell<T>;
+```
+
+Pass a `Cell` to view it, or a function to view a value derived from other cells and params. A derived view re-runs its readers only when its own value changes. A writable `Cell` is not assignable where a `ReadonlyCell` is declared, so the owner has to opt in with `readonlyCell(...)`.
+
+```typescript
+class Looper extends AudioProcessor<{}, { region: ReadonlyCell<Region | null> }> {
+  private readonly _region: Cell<Region | null>;
+
+  constructor(ctx: AudioContext) {
+    const region = cell<Region | null>(null); // a local, like audio nodes, so the build callback can close over it
+    super(ctx, () => ({ params: {}, cells: { region: readonlyCell(region) } }));
+    this._region = region;
+  }
+
+  setRegion(next: Region | null) {
+    if (next && next.start >= next.end) throw new RangeError("Region must satisfy start < end.");
+    this._region.value = next;
+  }
+}
+
+looper.cells.region.value; // tracked read
+looper.cells.region.value = r; // type error, and throws: use looper.setRegion(r)
+```
+
+### effect, computed, batch and untracked
+
+```typescript
+function effect(fn: () => void): () => void; // runs now and on every change; returns stop
+function computed<T>(fn: () => T): () => T; // cached derived value; call it to read
+function batch<T>(fn: () => T): T;
+function untracked<T>(fn: () => T): T;
+```
+
+`effect` and `computed` are the alien-signals observers, exported from core so an app that is not using a framework binding can observe params and cells without depending on `alien-signals` itself. Call the function `effect` returns to stop it.
+
+`batch` applies several writes as one change: effects run once, after `fn` returns, and never observe a state in between. Use it in an owner method that updates more than one cell. `untracked` runs `fn` without subscribing the surrounding effect to what it reads. Use it for an owner's internal reads, so that calling one of its methods inside an effect does not subscribe that effect to the owner's state.
+
 ### Cell vs Param
 
 | Use case                                         | Primitive                                   | Why                                                |
@@ -245,6 +293,7 @@ pattern.value; // { steps: [true, false, false, false, true, ...], velocity: [..
 | Simple reactive value (BPM, boolean, enum)       | `Param` (`param` helper)                    | Lightweight; lives in `processor.params`           |
 | Structured data (step patterns, presets, config) | `Cell` (`cell` helper or standalone)        | Immer-based `.update()`                            |
 | State that doesn't belong to an AudioProcessor   | `Cell` (standalone)                         | Usable anywhere                                    |
+| State only the owner's methods may change        | `ReadonlyCell` over a private `Cell`        | Tracked reads; writes go through validation        |
 
 ### AudioProcessor (abstract)
 
@@ -253,7 +302,7 @@ Base class for audio processing units. Generic over the param and cell registrie
 ```typescript
 abstract class AudioProcessor<
   P extends Record<string, Param<any>> = Record<string, Param<any>>,
-  C extends Record<string, Cell<any>> = Record<string, Cell<any>>,
+  C extends Record<string, Cell<any> | ReadonlyCell<any>> = Record<string, Cell<any> | ReadonlyCell<any>>,
 > {
   readonly context: BaseAudioContext; // processors also build against an OfflineAudioContext
   readonly params: Readonly<P>; // frozen, fully typed

@@ -2,7 +2,7 @@ import { computed as alienComputed, effect as alienEffect } from "alien-signals"
 import type { ParamBind, ParamOptions, ComputedAccessor } from "./types";
 import { Param } from "./Param";
 import { SchedulableParam } from "./SchedulableParam";
-import { Cell } from "./Cell";
+import { Cell, type ReadonlyCell } from "./Cell";
 import { defineGraph as defineGraphFn } from "./graph";
 import type { EdgeList, GraphHandle, ValidateEdges } from "./graph";
 
@@ -12,7 +12,7 @@ import type { EdgeList, GraphHandle, ValidateEdges } from "./graph";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type ParamRegistry = Record<string, Param<any>>;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type CellRegistry = Record<string, Cell<any>>;
+export type CellRegistry = Record<string, Cell<any> | ReadonlyCell<any>>;
 
 export interface BuildHelpers {
   param<T extends number>(options: Omit<ParamOptions<T>, "bind"> & { bind: AudioParam }): SchedulableParam;

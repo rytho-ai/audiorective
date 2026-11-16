@@ -1,10 +1,32 @@
 /** Authoritative immutable MIDI note/selection snapshots, independent of DOM and audio.
  * Reads: ./midi-data for parsing and interval query. Views borrow this owner.
  */
+import { batch, cell, readonlyCell, untracked, type ReadonlyCell } from "@audiorective/core";
 import { parseMidi, visibleMidiNotes, type MidiData, type MidiNote, type MidiRange, type ParsedMidi } from "./midi-data";
 export type MidiSequenceState = MidiData & Readonly<{ selection: MidiRange | null; revision: number }>;
+/** Observable state, read-only. Each cell tracks only its own slice: a selection change does not re-run an effect reading `notes`. */
+export type MidiSequenceCells = Readonly<{
+  /** The whole frozen snapshot; the same object `getState()` returns. */
+  state: ReadonlyCell<MidiSequenceState>;
+  notes: ReadonlyCell<readonly MidiNote[]>;
+  duration: ReadonlyCell<number>;
+  selection: ReadonlyCell<MidiRange | null>;
+  revision: ReadonlyCell<number>;
+}>;
 export class MidiSequence {
-  private state: MidiSequenceState = Object.freeze({ notes: Object.freeze([]), duration: 0, selection: null, revision: 0 });
+  /** The only store. Every commit replaces the whole snapshot in one write, so observers never see a partial change. */
+  private readonly store = cell<MidiSequenceState>(Object.freeze({ notes: Object.freeze([]), duration: 0, selection: null, revision: 0 }));
+  readonly cells: MidiSequenceCells = Object.freeze({
+    state: readonlyCell(this.store),
+    notes: readonlyCell(() => this.store.value.notes),
+    duration: readonlyCell(() => this.store.value.duration),
+    selection: readonlyCell(() => this.store.value.selection),
+    revision: readonlyCell(() => this.store.value.revision),
+  });
+  /** Internal read: never subscribes a caller's effect. Public readers are tracked. */
+  private get state(): MidiSequenceState {
+    return untracked(() => this.store.value);
+  }
   private listeners = new Set<() => void>();
   private disposed = false;
   constructor(data?: MidiData) {
@@ -14,7 +36,7 @@ export class MidiSequence {
     if (this.disposed) throw new Error("MidiSequence is destroyed.");
   }
   getState(): MidiSequenceState {
-    return this.state;
+    return this.cells.state.value;
   }
   subscribe(fn: () => void): () => void {
     this.alive();
@@ -22,10 +44,10 @@ export class MidiSequence {
     return () => this.listeners.delete(fn);
   }
   private commit(next: Omit<MidiSequenceState, "revision">) {
-    this.state = Object.freeze({ ...next, revision: this.state.revision + 1 });
+    batch(() => (this.store.value = Object.freeze({ ...next, revision: this.state.revision + 1 })));
     for (const fn of [...this.listeners]) {
       try {
-        fn();
+        untracked(fn);
       } catch (error) {
         console.error("MidiSequence listener failed.", error);
       }
@@ -75,7 +97,7 @@ export class MidiSequence {
     this.commit({ duration: data.duration, notes: this.validated(data), selection: null });
   }
   getSelection(): MidiRange | null {
-    return this.state.selection;
+    return this.cells.selection.value;
   }
   setSelection(selection: MidiRange | null): void {
     this.alive();
@@ -101,7 +123,7 @@ export class MidiSequence {
     this.commit({ duration, notes, selection });
   }
   query(range: MidiRange, pitches?: Readonly<{ low: number; high: number }>): readonly MidiNote[] {
-    return visibleMidiNotes(this.state.notes, range, pitches);
+    return visibleMidiNotes(this.cells.notes.value, range, pitches);
   }
   destroy(): void {
     this.disposed = true;
