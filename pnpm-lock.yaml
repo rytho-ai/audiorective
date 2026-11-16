@@ -44,6 +44,9 @@ importers:
       '@audiorective/effects':
         specifier: workspace:*
         version: link:../../packages/effects
+      '@audiorective/midi':
+        specifier: workspace:*
+        version: link:../../packages/midi
       '@audiorective/playcanvas':
         specifier: workspace:*
         version: link:../../packages/playcanvas
@@ -267,6 +270,34 @@ importers:
         specifier: ^4.0.18
         version: 4.0.18(@types/node@24.10.0)(@vitest/browser-playwright@4.0.18)(jiti@2.6.1)(jsdom@28.1.0(canvas@3.2.1))(lightningcss@1.32.0)(yaml@2.8.1)
 
+  packages/midi:
+    dependencies:
+      '@audiorective/core':
+        specifier: workspace:^
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^24.9.1
+        version: 24.10.0
+      '@vitest/browser':
+        specifier: ^4.0.18
+        version: 4.0.18(vite@6.4.1(@types/node@24.10.0)(jiti@2.6.1)(lightningcss@1.32.0)(yaml@2.8.1))(vitest@4.0.18)
+      '@vitest/browser-playwright':
+        specifier: ^4.0.18
+        version: 4.0.18(playwright@1.58.2)(vite@6.4.1(@types/node@24.10.0)(jiti@2.6.1)(lightningcss@1.32.0)(yaml@2.8.1))(vitest@4.0.18)
+      playwright:
+        specifier: ^1.58.2
+        version: 1.58.2
+      tsdown:
+        specifier: ^0.15.9
+        version: 0.15.12(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.2)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.0.18
+        version: 4.0.18(@types/node@24.10.0)(@vitest/browser-playwright@4.0.18)(jiti@2.6.1)(jsdom@28.1.0(canvas@3.2.1))(lightningcss@1.32.0)(yaml@2.8.1)
+
   packages/playcanvas:
     dependencies:
       '@audiorective/core':
@@ -377,6 +408,9 @@ importers:
       '@audiorective/core':
         specifier: workspace:^
         version: link:../core
+      '@audiorective/midi':
+        specifier: workspace:^
+        version: link:../midi
     devDependencies:
       '@types/node':
         specifier: ^24.9.1
@@ -6989,7 +7023,7 @@ snapshots:
       consola: 3.4.2
       pathe: 2.0.3
       pkg-types: 2.3.0
-      tinyexec: 1.0.2
+      tinyexec: 1.2.4
 
   obug@2.1.1: {}
 
@@ -7935,11 +7969,11 @@ snapshots:
       magic-string: 0.30.21
       obug: 2.1.1
       pathe: 2.0.3
-      picomatch: 4.0.3
+      picomatch: 4.0.5
       std-env: 3.10.0
       tinybench: 2.9.0
-      tinyexec: 1.0.2
-      tinyglobby: 0.2.15
+      tinyexec: 1.2.4
+      tinyglobby: 0.2.17
       tinyrainbow: 3.0.3
       vite: 6.4.1(@types/node@24.10.0)(jiti@2.6.1)(lightningcss@1.32.0)(yaml@2.8.1)
       why-is-node-running: 2.3.0

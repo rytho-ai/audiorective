@@ -1,7 +1,7 @@
 {
   "name": "@audiorective/blocks",
   "version": "2.3.2",
-  "description": "Headless audio and MIDI recording, range playback, instrument events and MIDI note data",
+  "description": "Headless audio capture, range playback and cancellable instrument events",
   "type": "module",
   "license": "MIT",
   "homepage": "https://github.com/audiorective/audiorective/tree/main/packages/blocks#readme",
@@ -25,11 +25,7 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./package.json": "./package.json",
-    "./midi": {
-      "types": "./dist/midi.d.ts",
-      "import": "./dist/midi.js"
-    }
+    "./package.json": "./package.json"
   },
   "scripts": {
     "build": "tsdown",

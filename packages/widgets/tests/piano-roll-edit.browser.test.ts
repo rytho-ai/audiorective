@@ -1,7 +1,7 @@
 /** Note gestures stay in the widget across replaceable layout and SVG/default drawing. */
 import { afterEach, expect, test, vi } from "vitest";
 import { userEvent } from "vitest/browser";
-import { MidiSequence } from "@audiorective/blocks/midi";
+import { MidiSequence } from "@audiorective/midi";
 import { mountPianoRoll, type PianoRollLayout, type PianoRollOptions, type PianoRollRenderer, type WaveformPluginContext } from "../src/piano-roll";
 import { cleanup, host, own, pointer } from "./helpers";
 afterEach(async () => {

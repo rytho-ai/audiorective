@@ -47,7 +47,8 @@
   },
   "dependencies": {
     "@audiorective/core": "workspace:^",
-    "@audiorective/blocks": "workspace:^"
+    "@audiorective/blocks": "workspace:^",
+    "@audiorective/midi": "workspace:^"
   },
   "devDependencies": {
     "@types/node": "^24.9.1",

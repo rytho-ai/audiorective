@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { MidiRecorder } from "../src";
-import { MidiSequence } from "../src/midi";
+import { MidiRecorder } from "../src/web";
+import { MidiSequence } from "../src";
 
 function setup() {
   const input = new EventTarget();

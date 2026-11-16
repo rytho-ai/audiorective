@@ -1,7 +1,7 @@
 /** Public integration/lifecycle contract for plugins shared by both time-based views. */
 import { afterEach, expect, test, vi } from "vitest";
 import { userEvent } from "vitest/browser";
-import { MidiSequence } from "@audiorective/blocks/midi";
+import { MidiSequence } from "@audiorective/midi";
 import { mountPianoRoll, type WaveformPlugin, type WaveformPluginContext } from "../src/piano-roll";
 import { mountWaveform } from "../src/waveform";
 import { cleanup, host, own, pointer } from "./helpers";

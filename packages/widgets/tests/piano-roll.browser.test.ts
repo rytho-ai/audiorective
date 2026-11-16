@@ -1,9 +1,9 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { userEvent } from "vitest/browser";
-import { parseMidi, midiGrid } from "@audiorective/blocks/midi";
-import { MidiSequence } from "@audiorective/blocks/midi";
+import { parseMidi, midiGrid } from "@audiorective/midi";
+import { MidiSequence } from "@audiorective/midi";
 import { mountPianoRoll } from "../src/piano-roll";
-import { end, file, off, on, sig, tempo, track } from "../../blocks/tests/midi-fixture";
+import { end, file, off, on, sig, tempo, track } from "../../midi/tests/midi-fixture";
 import { drag } from "./helpers";
 const disposers: Array<() => void> = [];
 afterEach(() => {

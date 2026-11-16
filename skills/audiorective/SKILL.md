@@ -112,7 +112,8 @@ export function App() {
 | `@audiorective/clock`      | Timing/scheduling engine — transport, tempo, look-ahead tick windows, rulers (bars, cycles/loops, seconds).                                     | `references/clock.md`      |
 | `@audiorective/effects`    | DSP effects — Filter, Distortion, Phaser, FrequencyShifter, PingPongDelay, Convolver, Compressor, Limiter, PitchShift; Channel strip + SendBus. | `references/effects.md`    |
 | `@audiorective/widgets`    | Plain player controls; DOM waveform selector and audition; audio-independent waveform view and visual plugins.                                  | `references/widgets.md`    |
-| `@audiorective/blocks`     | Headless `AudioRecorder`, `MidiRecorder`, `WavePlayer`, cancellable grouped sample hits, and MIDI note data.                                    | `references/blocks.md`     |
+| `@audiorective/blocks`     | Headless `AudioRecorder`, `WavePlayer` and cancellable grouped sample hits.                                                                     | `references/blocks.md`     |
+| `@audiorective/midi`       | Pure MIDI notes, sequence and playback projection; `/web` records a selected input.                                                             | `references/midi.md`       |
 | `@audiorective/react`      | React bindings (`useValue`, `createEngineContext` → `EngineProvider`, `useEngine`).                                                             | `references/react.md`      |
 | `@audiorective/threejs`    | three.js scene bindings (`attach`, `PannerAnchor`).                                                                                             | `references/threejs.md`    |
 | `@audiorective/playcanvas` | PlayCanvas scene bindings (`attach`, `bindPanner`).                                                                                             | `references/playcanvas.md` |
@@ -123,21 +124,21 @@ export function App() {
 Blocks and widgets cover specific workflows. When a request does not match one, build on
 core with your own `AudioProcessor`; that is the intended path, not a fallback.
 
-| You are building…                                           | Use                                                               | Not                                                  |
-| ----------------------------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------- |
-| One-shot hits, pads, SFX; overlapping voices                | core `Sampler` / `Voice`                                          | `WavePlayer` (one playhead)                          |
-| Editable sequenced hits with future choke groups            | blocks `InstrumentEvents` + clock window `own(hit, when)`         | irreversible future `Voice.stop(when)`               |
-| Record a short audio take against the audio clock           | blocks `AudioRecorder` with a caller-connected input              | `MediaRecorder` chunk intervals as sample positions  |
-| Record MIDI notes from a keyboard into a take               | blocks `MidiRecorder` with a caller-owned input/context           | `MidiSequence` as a live event listener              |
-| A tempo-locked loop or stem with a scheduled start          | core `BufferPlayer` + `clock`                                     | `FilePlayer` (runs on the media clock)               |
-| A long track, podcast or stream                             | core `FilePlayer`; `widgets/player` for a plain control bar       | `WavePlayer` / waveform selector (decode whole file) |
-| Load a clip, select a range, audition, loop or stretch it   | blocks `WavePlayer`; widgets waveform selector for the UI         | a hand-drawn canvas and range logic                  |
-| Automate a non-looping waveform selection in source seconds | `WavePlayer.attachSourceAutomation(binding)` with core automation | app-owned play token and duplicated time mapping     |
-| A waveform picture from peaks, no audio                     | `@audiorective/widgets/waveform`                                  | the complete selector                                |
-| MIDI file notes: parse, edit, select, piano roll            | `@audiorective/blocks/midi` + `@audiorective/widgets/piano-roll`  | live MIDI input (app code calling your synth)        |
-| A step sequencer, drum machine or transport                 | `clock` + your own audio-layer class with a `Cell` pattern        | a sequencer block (there is none)                    |
-| An editable curve driving a parameter over time             | `@audiorective/core/automation`                                   | hand-scheduled ramps                                 |
-| A synth, custom effect, grains, anything else               | your own `AudioProcessor` on core                                 | forcing a block to fit                               |
+| You are building…                                           | Use                                                                       | Not                                                  |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------- |
+| One-shot hits, pads, SFX; overlapping voices                | core `Sampler` / `Voice`                                                  | `WavePlayer` (one playhead)                          |
+| Editable sequenced hits with future choke groups            | blocks `InstrumentEvents` + clock window `own(hit, when)`                 | irreversible future `Voice.stop(when)`               |
+| Record a short audio take against the audio clock           | blocks `AudioRecorder` with a caller-connected input                      | `MediaRecorder` chunk intervals as sample positions  |
+| Record MIDI notes from a keyboard into a take               | `@audiorective/midi/web` `MidiRecorder` with a caller-owned input/context | `MidiSequence` as a live event listener              |
+| A tempo-locked loop or stem with a scheduled start          | core `BufferPlayer` + `clock`                                             | `FilePlayer` (runs on the media clock)               |
+| A long track, podcast or stream                             | core `FilePlayer`; `widgets/player` for a plain control bar               | `WavePlayer` / waveform selector (decode whole file) |
+| Load a clip, select a range, audition, loop or stretch it   | blocks `WavePlayer`; widgets waveform selector for the UI                 | a hand-drawn canvas and range logic                  |
+| Automate a non-looping waveform selection in source seconds | `WavePlayer.attachSourceAutomation(binding)` with core automation         | app-owned play token and duplicated time mapping     |
+| A waveform picture from peaks, no audio                     | `@audiorective/widgets/waveform`                                          | the complete selector                                |
+| MIDI file notes: parse, edit, select, piano roll            | `@audiorective/midi` + `@audiorective/widgets/piano-roll`                 | live MIDI input (app code calling your synth)        |
+| A step sequencer, drum machine or transport                 | `clock` + your own audio-layer class with a `Cell` pattern                | a sequencer block (there is none)                    |
+| An editable curve driving a parameter over time             | `@audiorective/core/automation`                                           | hand-scheduled ramps                                 |
+| A synth, custom effect, grains, anything else               | your own `AudioProcessor` on core                                         | forcing a block to fit                               |
 
 For short audio takes, the app owns microphone permission and monitoring. Connect
 its source to `new AudioRecorder(context).input`, await `recorder.ready` before a
@@ -152,7 +153,7 @@ continuous file recorder.
 
 For a MIDI take, the app obtains `MIDIInput`, owns live synth playback and
 resumes its AudioContext. Use `new MidiRecorder(context, input)` from
-`@audiorective/blocks`, `recorder.start({ when })`, then `const take =
+`@audiorective/midi/web`, `recorder.start({ when })`, then `const take =
 recorder.stop()` when the take ends. The synchronous result has absolute
 `startTime`/`endTime`, raw timestamped `events`, and take-relative `notes` plus
 `duration` for `MidiSequence`. `cancel()` discards; `destroy()` leaves the input
@@ -228,7 +229,7 @@ sharing state with imperative views.
 
 ## Audio runtime is client-only
 
-Pure entries (`core/peaks`, `core/automation` curves, `blocks/midi`) import no audio
+Pure entries (`core/peaks`, `core/automation` curves, `@audiorective/midi`) import no audio
 runtime and work in Node. Everything that touches an `AudioContext` is client-only.
 
 `createEngine` builds a real `AudioContext`; there is none on a server, and

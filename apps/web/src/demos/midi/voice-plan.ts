@@ -1,5 +1,5 @@
 /** Demo synth policy: interpret ordered MIDI messages, including channel sustain, into voice intervals. */
-import type { MidiPlaybackEvent } from "@audiorective/blocks/midi";
+import type { MidiPlaybackEvent } from "@audiorective/midi";
 
 export type PlannedVoice = Readonly<{ noteId: string; start: number; end: number; pitch: number; velocity: number; channel: number }>;
 type ActiveVoice = Omit<PlannedVoice, "end">;

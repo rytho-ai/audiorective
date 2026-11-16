@@ -1,6 +1,7 @@
 /** MIDI inspector: contrasting layouts/drawing share widget-owned gestures, data and caller audition. */
-import { MidiRecorder, type RecordedMidi } from "@audiorective/blocks";
-import { MidiSequence, midiGrid } from "@audiorective/blocks/midi";
+import { MidiRecorder } from "@audiorective/midi/web";
+import type { RecordedMidi } from "@audiorective/midi";
+import { MidiSequence, midiGrid } from "@audiorective/midi";
 import { mountPianoRoll, type PianoRollRenderer, type PianoRollHandle } from "@audiorective/widgets/piano-roll";
 import { rightKeyboardLayout } from "./layout";
 import type { Dependencies, MidiApp, Note, Range } from "./audition";

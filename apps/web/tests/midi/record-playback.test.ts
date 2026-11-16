@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vitest";
-import { compileMidiPlaybackEvents } from "@audiorective/blocks/midi";
+import { compileMidiPlaybackEvents } from "@audiorective/midi";
 import { mountMidiApp } from "../../src/demos/midi/app";
 import { planMidiVoices, type PlannedVoice } from "../../src/demos/midi/voice-plan";
 

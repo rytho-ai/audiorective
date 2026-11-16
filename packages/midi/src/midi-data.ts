@@ -9,6 +9,14 @@ export type MidiSignature = Readonly<{ tick: number; numerator: number; denomina
 export type MidiData = Readonly<{ notes: readonly MidiNote[]; duration: number }>;
 /** Captured message on the AudioContext output timeline. Matched note messages carry their projected note ID. */
 export type RecordedMidiEvent = Readonly<{ audioTime: number; data: Uint8Array; noteId?: string }>;
+export type RecordedMidi = MidiData &
+  Readonly<{
+    /** Absolute positions on the borrowed AudioContext's output timeline. */
+    startTime: number;
+    endTime: number;
+    /** Messages accepted during the take in delivery order, including controllers and program changes. */
+    events: readonly RecordedMidiEvent[];
+  }>;
 export type ParsedMidi = MidiData & Readonly<{ ppq: number; tempos: readonly MidiTempo[]; signatures: readonly MidiSignature[]; endTick: number }>;
 const fail = (): never => {
   throw new Error("Invalid MIDI file.");

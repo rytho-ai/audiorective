@@ -159,10 +159,10 @@
     {
       "id": 11,
       "prompt": "Use current Audiorective workspace packages to inspect an SMF File in two piano rolls with shared time selection and source-tempo snapping. Use different note drawings, a pitch/velocity inspector, external playhead, and an existing caller-owned synth. Include invalid file recovery, one-view removal and final cleanup. Do not create a MIDI device connection or a new synth/transport in the widget.",
-      "expected_output": "MidiSequence and MIDI utilities from blocks/midi own note data and selection. mountPianoRoll from widgets/piano-roll borrows the same model; custom renderer changes note drawing while caller instruments and audio scheduling remain independent.",
+      "expected_output": "MidiSequence and MIDI utilities from @audiorective/midi own note data and selection. mountPianoRoll from widgets/piano-roll borrows the same model; custom renderer changes note drawing while caller instruments and audio scheduling remain independent.",
       "files": [],
       "expectations": [
-        "Imports MidiSequence/midiGrid from @audiorective/blocks/midi and mountPianoRoll from @audiorective/widgets/piano-roll, using a workspace build for Unreleased APIs.",
+        "Imports MidiSequence/midiGrid from @audiorective/midi and mountPianoRoll from @audiorective/widgets/piano-roll, using a workspace build for Unreleased APIs.",
         "Awaits File.arrayBuffer before synchronous sequence.load, guards stale reads, and catches parse failures without replacing the previous snapshot.",
         "Uses source tempo/signature metadata via midiGrid rather than assuming a constant120 BPM.",
         "Both views borrow one sequence; note edits go through updateNote and selection through the shared model without mirrored audio/UI state.",
@@ -383,7 +383,7 @@
       "expected_output": "MidiRecorder borrows the selected MIDIInput and AudioContext, captures raw timestamped messages and take-relative note data, while MidiSequence displays the take and the caller owns live synth routing and clip placement.",
       "files": [],
       "expectations": [
-        "Obtains Web MIDI permission and selects MIDIInput in app code; constructs MidiRecorder from @audiorective/blocks with the existing AudioContext and selected input",
+        "Obtains Web MIDI permission and selects MIDIInput in app code; constructs MidiRecorder from @audiorective/midi/web with the existing AudioContext and selected input",
         "Resumes the context, starts with recorder.start({ when }) in absolute AudioContext seconds, then calls synchronous recorder.stop() when the take ends",
         "Uses take.notes and take.duration with MidiSequence or a compatible piano-roll model, and passes absolute take.startTime/endTime to the future clip owner",
         "Understands take.events preserves controllers including sustain while note projection ends at key release; does not claim sustain automatically extends notes",
@@ -398,7 +398,7 @@
       "expected_output": "Compiles the current MidiSequence notes with the recorded take's non-note messages using compileMidiPlaybackEvents, preserving recorded ties and note identity while leaving playback scheduling to the app.",
       "files": [],
       "expectations": [
-        "Imports compileMidiPlaybackEvents and MidiSequence from @audiorective/blocks/midi, and constructs or updates a sequence from the recorded take",
+        "Imports compileMidiPlaybackEvents and MidiSequence from @audiorective/midi, and constructs or updates a sequence from the recorded take",
         "Calls compileMidiPlaybackEvents(take, sequence.getState()) after the note edit, rather than sending raw take.events alongside edited notes",
         "Explains that matched raw note messages carry noteId, so edited pitch/timing regenerates note bytes while overlapping notes retain distinct identities",
         "Explains that non-note messages including sustain remain and same-time original delivery order is retained; new note endpoints use the documented deterministic order",

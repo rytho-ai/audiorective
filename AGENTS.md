@@ -14,6 +14,9 @@ Modular toolkit for web audio development. Independent, composable packages that
 ```
 @audiorective/
 ├── core         # Reactive state for audio parameters (alien-signals)
+├── blocks       # Headless audio capture, playback and instrument events
+├── midi         # MIDI note data, event projection and browser take recording
+├── widgets      # Browser waveform, player and piano-roll views
 ├── react        # React bindings
 └── threejs      # Three.js bindings (engine glue, scene transform sync)
 ```

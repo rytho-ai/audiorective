@@ -1,4 +1,4 @@
-/** Pure MIDI data entry: parser, source-time grid, interval queries and headless state. */
+/** Pure MIDI note data, editing, queries and playback-event projection. */
 export * from "./midi-data";
 export { compileMidiPlaybackEvents } from "./midi-playback";
 export type { MidiPlaybackSource, MidiPlaybackEvent } from "./midi-playback";

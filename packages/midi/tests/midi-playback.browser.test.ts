@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { MidiRecorder } from "../src";
-import { compileMidiPlaybackEvents, MidiSequence, type MidiPlaybackEvent } from "../src/midi";
+import { MidiRecorder } from "../src/web";
+import { compileMidiPlaybackEvents, MidiSequence, type MidiPlaybackEvent } from "../src";
 
 function record(messages: readonly { data: number[]; at: number }[]) {
   const input = new EventTarget();

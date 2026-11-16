@@ -2,7 +2,7 @@
  * Reads: public MIDI note types, piano-roll gesture contracts and shared time plugin context.
  * Pointer capture lives on the stable surface, so renderers can replace note DOM during a drag.
  */
-import type { MidiData, MidiNote } from "@audiorective/blocks/midi";
+import type { MidiData, MidiNote } from "@audiorective/midi";
 import type { WaveformPlugin, WaveformPluginContext } from "./types";
 import type { PianoRollEditKind, PianoRollNoteEdit, PitchRange } from "./piano-roll-types";
 const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n));

@@ -2,7 +2,7 @@
  * Reads: core AudioProcessor for graph/lifecycle; pure MIDI types for caller data.
  */
 import { AudioProcessor, type SchedulableParam } from "@audiorective/core";
-import { compileMidiPlaybackEvents, type MidiNote, type MidiRange, type MidiData, type MidiPlaybackSource } from "@audiorective/blocks/midi";
+import { compileMidiPlaybackEvents, type MidiNote, type MidiRange, type MidiData, type MidiPlaybackSource } from "@audiorective/midi";
 import { planMidiVoices } from "./voice-plan";
 export type Note = MidiNote;
 export type Range = MidiRange;

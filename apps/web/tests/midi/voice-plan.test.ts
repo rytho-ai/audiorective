@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { compileMidiPlaybackEvents, type MidiData, type MidiPlaybackSource } from "@audiorective/blocks/midi";
+import { compileMidiPlaybackEvents, type MidiData, type MidiPlaybackSource } from "@audiorective/midi";
 import { planMidiVoices } from "../../src/demos/midi/voice-plan";
 
 const note: MidiData["notes"][number] = { id: "a", start: 0, end: 0.3, pitch: 62, velocity: 90, channel: 0, track: 0 };

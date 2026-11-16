@@ -2,15 +2,15 @@
 title: MIDI and Piano Roll
 ---
 
-Use `@audiorective/blocks/midi` for pure MIDI note data and `@audiorective/widgets/piano-roll` for visual presentation. Both entries can be imported without DOM or Web Audio globals. `MidiRecorder` is exported from the blocks root; recording requires a caller-provided `MIDIInput` and running `AudioContext`. Mounting a piano roll requires DOM, but never creates a player, synth, AudioContext or device connection.
+Use `@audiorective/midi` for pure MIDI note data and `@audiorective/widgets/piano-roll` for visual presentation. Both entries can be imported without DOM or Web Audio globals. `MidiRecorder` is exported from `@audiorective/midi/web`; recording requires a caller-provided `MIDIInput` and running `AudioContext`. Mounting a piano roll requires DOM, but never creates a player, synth, AudioContext or device connection.
 
 ## Record a MIDI take
 
 `MidiRecorder` borrows one Web MIDI input and the app's audio clock. The app obtains permission, chooses the device, resumes the context and owns live synth playback. The recorder adds its own `midimessage` listener, leaving other listeners intact.
 
 ```typescript
-import { MidiRecorder } from "@audiorective/blocks";
-import { MidiSequence } from "@audiorective/blocks/midi";
+import { MidiRecorder } from "@audiorective/midi/web";
+import { MidiSequence } from "@audiorective/midi";
 
 const access = await navigator.requestMIDIAccess();
 const input = access.inputs.values().next().value;
@@ -32,10 +32,10 @@ The returned `RecordedMidi` has absolute `startTime`/`endTime`, `duration`, an i
 
 ### Play the edited take
 
-`compileMidiPlaybackEvents(take, sequence.getState())` from `@audiorective/blocks/midi` returns an ordered list of MIDI messages in **take-relative seconds**. It regenerates note-on/off from the current `MidiSequence` notes and retains the recorded non-note messages, including sustain, program changes and pitch bend. This avoids playing stale raw notes after a pitch or timing edit. The function is pure: the app still chooses a synth or MIDI output, maps take-relative seconds to its clip/transport time, schedules messages and cancels obsolete voices after edits or transport changes.
+`compileMidiPlaybackEvents(take, sequence.getState())` from `@audiorective/midi` returns an ordered list of MIDI messages in **take-relative seconds**. It regenerates note-on/off from the current `MidiSequence` notes and retains the recorded non-note messages, including sustain, program changes and pitch bend. This avoids playing stale raw notes after a pitch or timing edit. The function is pure: the app still chooses a synth or MIDI output, maps take-relative seconds to its clip/transport time, schedules messages and cancels obsolete voices after edits or transport changes.
 
 ```typescript
-import { compileMidiPlaybackEvents, MidiSequence } from "@audiorective/blocks/midi";
+import { compileMidiPlaybackEvents, MidiSequence } from "@audiorective/midi";
 
 const sequence = new MidiSequence(take);
 sequence.updateNote(take.notes[0].id, { pitch: 62 });
@@ -54,7 +54,7 @@ Web MIDI `Event.timeStamp` uses the performance clock; `MidiRecorder` maps it to
 ## Load once, show two views
 
 ```typescript
-import { MidiSequence, midiGrid } from "@audiorective/blocks/midi";
+import { MidiSequence, midiGrid } from "@audiorective/midi";
 import { mountPianoRoll } from "@audiorective/widgets/piano-roll";
 
 const sequence = new MidiSequence();
@@ -125,7 +125,7 @@ effect(() => console.log(sequence.cells.notes.value.length, sequence.cells.selec
 sequence.setSelection({ start: 1, end: 2 }); // logs once
 ```
 
-Assigning `.value` is a type error and writing through `$` throws a `TypeError`; change state with `load`, `setData`, `setSelection` and `updateNote`. `import "@audiorective/blocks/midi"` stays free of DOM and AudioContext; it needs only `@audiorective/core` and `alien-signals`, both plain JavaScript.
+Assigning `.value` is a type error and writing through `$` throws a `TypeError`; change state with `load`, `setData`, `setSelection` and `updateNote`. `import "@audiorective/midi"` stays free of DOM and AudioContext; it needs only `@audiorective/core` and `alien-signals`, both plain JavaScript.
 
 Note fields require unique nonempty IDs, finite `0 <= start <= end <= duration`, integer pitch/velocity 0..127, channel 0..15 and a non-negative integer track. Zero-duration notes may be shown as a minimum-width mark. A duration extension does not invent new tempo/grid metadata; the caller decides which grid to supply.
 

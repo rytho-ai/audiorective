@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { parseMidi, tickToSeconds, midiGrid, visibleMidiNotes, MidiSequence } from "../src/midi";
+import { parseMidi, tickToSeconds, midiGrid, visibleMidiNotes, MidiSequence } from "../src";
 import { end, file, off, on, sig, tempo, track } from "./midi-fixture";
 const disposers: Array<() => void> = [];
 afterEach(() => {

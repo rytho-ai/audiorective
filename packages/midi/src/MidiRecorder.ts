@@ -1,17 +1,9 @@
 import { cell, readonlyCell, type ReadonlyCell } from "@audiorective/core";
-import type { MidiData, MidiNote, RecordedMidiEvent } from "./midi-data";
+import type { MidiNote, RecordedMidi, RecordedMidiEvent } from "./midi-data";
 
-export type { RecordedMidiEvent } from "./midi-data";
+export type { RecordedMidi, RecordedMidiEvent } from "./midi-data";
 
 export type MidiRecorderState = "idle" | "recording" | "destroyed";
-
-export interface RecordedMidi extends MidiData {
-  /** Absolute positions on the borrowed AudioContext's output timeline. */
-  readonly startTime: number;
-  readonly endTime: number;
-  /** Messages accepted during the take in delivery order, including controllers and program changes. */
-  readonly events: readonly RecordedMidiEvent[];
-}
 
 type ActiveNote = { start: number; pitch: number; velocity: number; channel: number; id: string };
 type Session = {

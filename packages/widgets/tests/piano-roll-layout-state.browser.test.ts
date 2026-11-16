@@ -1,6 +1,6 @@
 /** Custom controls must read the same snap state that note/selection gestures use. */
 import { expect, test, vi, afterEach } from "vitest";
-import { MidiSequence } from "@audiorective/blocks/midi";
+import { MidiSequence } from "@audiorective/midi";
 import { mountPianoRoll, type PianoRollControls, type PianoRollLayoutFrame } from "../src/piano-roll";
 import { host, own, cleanup } from "./helpers";
 

@@ -14,7 +14,8 @@ The audio engine owns its state. Your interfaces observe parameters, change valu
 | [Clock](/docs/clock)           | Transport, tempo automation, scheduling windows, and beat/bar/time rulers                                |
 | [Effects](/docs/effects)       | Filters, delay, reverb, distortion, modulation, pitch shifting, dynamics, channel strips, and send buses |
 | [Widgets](/docs/widgets)       | Browser waveform/piano-roll display, shared selection, audition and custom drawing                       |
-| [Blocks](/docs/blocks)         | Headless audio/MIDI recording, WavePlayer, cancellable grouped sample hits, and MidiSequence note data   |
+| [Blocks](/docs/blocks)         | Headless audio capture, WavePlayer and cancellable grouped sample hits                                   |
+| [MIDI](/docs/midi)             | MIDI file parsing, note editing, take recording and ordered playback events                              |
 | [React](/docs/react)           | Hooks and an engine context for reactive interfaces                                                      |
 | [Three.js](/docs/threejs)      | A shared audio context and spatial sound that follows scene objects                                      |
 | [PlayCanvas](/docs/playcanvas) | Engine integration and entity-to-panner bindings                                                         |
@@ -57,4 +58,4 @@ Audiorective's audio engine runs in the browser. For Astro, Next.js, or other se
 
 ### MIDI notes and piano roll
 
-Use the pure `blocks/midi` entry to parse SMF note data, preserve source-tempo coordinates, edit notes and share a selection. Mount independent piano-roll views through `widgets/piano-roll`; the caller chooses instruments and playback. See [MIDI and Piano Roll](/docs/midi) and the [showroom](/showroom/piano-roll).
+Use the pure `@audiorective/midi` entry to parse SMF note data, preserve source-tempo coordinates, edit notes and share a selection. Use `@audiorective/midi/web` to record a caller-selected Web MIDI input. Mount independent piano-roll views through `widgets/piano-roll`; the caller chooses instruments and playback. See [MIDI and Piano Roll](/docs/midi) and the [showroom](/showroom/piano-roll).

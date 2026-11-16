@@ -9,7 +9,7 @@ import { createSelectionPlugin } from "./selection";
 import type { Unsubscribe } from "./types";
 import { createPluginHost } from "./plugin-host";
 import { styles } from "./style";
-import { visibleMidiNotes, type MidiNote } from "@audiorective/blocks/midi";
+import { visibleMidiNotes, type MidiNote } from "@audiorective/midi";
 import type { PianoRollOptions, PianoRollHandle, PianoRollRenderer, PianoRollLayout, PitchRange } from "./piano-roll-types";
 export type * from "./piano-roll-types";
 export type { WaveformPlugin, WaveformPluginContext, PluginAttachment } from "./types";

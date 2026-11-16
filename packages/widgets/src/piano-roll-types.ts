@@ -1,5 +1,5 @@
 /** Borrowed MIDI models, replaceable appearance and widget-owned gesture contracts. */
-import type { MidiData, MidiNote, MidiRange } from "@audiorective/blocks/midi";
+import type { MidiData, MidiNote, MidiRange } from "@audiorective/midi";
 import type { PluginAttachment, SelectionCommit, SnapMode, WaveformPlugin, WaveformViewport } from "./types";
 export type PitchRange = Readonly<{ low: number; high: number }>;
 export interface PianoRollModel {
