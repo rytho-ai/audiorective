@@ -135,11 +135,12 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     // see start(): _previousWindowEndGeneration deliberately stays stale here too
   }
 
-  /** Cancel owned events after an edit and immediately refill the current look-ahead window. */
+  /** Revoke owned events starting at or after now, then refill from that same audio-clock boundary. */
   refresh(): void {
     if (this._destroyed || this.state.value !== "playing") return;
-    this._cancelOwned(true);
-    this._previousWindowEndBeat = this._timeline._invalidate();
+    const now = this._timeline.now;
+    this._cancelOwned(true, now);
+    this._previousWindowEndBeat = this._timeline._invalidate(now);
     if (this._ticking) this._refreshPending = true;
     else this._tick();
   }
@@ -152,12 +153,11 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     this._cancelOwned();
   }
 
-  private _cancelOwned(futureOnly = false): void {
-    const now = this._timeline.now;
+  private _cancelOwned(fromNow = false, now = this._timeline.now): void {
     this._cancelling++;
     try {
       for (const [event, when] of [...this._owned]) {
-        if (futureOnly && when <= now) continue;
+        if (fromNow && when < now) continue;
         this._owned.delete(event);
         try {
           event.cancel();

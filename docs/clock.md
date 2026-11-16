@@ -97,12 +97,12 @@ const clock = new Clock({
   },
 });
 
-// An edit inside the queued horizon: cancel future owned hits and refill it now.
+// An edit inside the queued horizon: cancel owned hits at/after now and refill it.
 pattern[3] = false;
 clock.refresh();
 ```
 
-`pause()`, `stop()`, `seek()`, a fresh `start()`, and `destroy()` cancel all owned events, including those already sounding. `resume()` starts new windows without reviving cancelled events. `refresh()` acts only while playing: it cancels **future** owned events, preserves already-started ones and the current transport position, increments the window generation, then immediately refills the horizon. It does not touch manual pad hits or other unregistered sound. If an edit must end an already-started hit, its audio owner cancels that handle explicitly. Do not register the same handle with multiple clocks; the caller chooses its owner.
+`pause()`, `stop()`, `seek()`, a fresh `start()`, and `destroy()` cancel all owned events, including those already sounding. `resume()` starts new windows without reviving cancelled events. `refresh()` acts only while playing: it captures one `AudioContext` time, cancels owned events whose registered `when` is **at or after** that time, preserves events before it and the transport position, increments the window generation, then immediately refills from the same boundary. A hit exactly at `now` belongs to the refill and is emitted once; an already-started hit with `when < now` stays active. It does not touch manual pad hits or other unregistered sound. If an edit must end an earlier hit, its audio owner cancels that handle explicitly. Do not register the same handle with multiple clocks; the caller chooses its owner.
 
 `pause()` and `resume()` are each a no-op unless the transport is in the state
 they act on — only a playing clock pauses, only a paused clock resumes. So
@@ -187,7 +187,7 @@ A freshly-started or freshly-seeked segment's very first tick is exempt from thi
 
 ## Live pattern editing
 
-Toggling a step whose window has already been committed takes effect on the _next_ pass, not immediately — an inherent ~`lookAhead` latency. This is an accepted property of look-ahead scheduling, not a bug to work around.
+For unowned events, toggling a step whose window has already been committed takes effect on the _next_ pass, leaving up to `lookAhead` seconds of queued sound. If the step's event was registered with `window.own()`, call `clock.refresh()` after the edit to cancel owned events at or after the captured audio time and immediately refill that window. A hit that began before that boundary remains active until its owner cancels it.
 
 ## Tick sources
 
