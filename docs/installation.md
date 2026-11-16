@@ -76,6 +76,7 @@ Compare that against `CHANGELOG.md` when an API described in the docs is missing
 ## Environment requirements
 
 - **A browser with the Web Audio API.** `createEngine` constructs a real `AudioContext` eagerly. There is no server-side mode; in Next.js, Remix, or Astro, mount the audio subtree behind a client-only boundary. See [Server-rendered Frameworks](./client-boundary.md).
+- **TypeScript 5.4 or later.** The published type declarations use `NoInfer`.
 - **TypeScript projects need the DOM lib** (`"lib": ["DOM", …]` in `tsconfig.json`) so `AudioContext`, `GainNode`, and `AudioParam` types resolve. Most front-end templates already have it.
 - **Node.js and jsdom** have no `AudioContext`. Headless tests run in a real browser (the packages themselves use vitest browser mode), or pass a context you construct or mock: `createEngine(setup, { context })`.
 - **AudioWorklet-backed effects** (`Compressor`, `Limiter`, `PitchShift` with the `stretch` engine) load their worklet module from a Blob URL at first construction, so they need no bundler configuration or copied assets. They throw `WorkletUnavailableError` on a context without `audioWorklet`.

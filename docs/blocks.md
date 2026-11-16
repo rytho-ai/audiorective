@@ -244,3 +244,19 @@ Loading through either view replaces the shared source. Each view keeps its own 
 The [pure waveform selection plugin](./widgets.md#selection-plugin-api) can use `model: player` without importing audio into the pure view entry. An application can supply any structural model implementing `getSelection()`, `setSelection()` and `subscribe()`. Detaching a view does not clear an external model.
 
 See [Core](./core.md#pcm-peak-summaries) for pure PCM summaries, [TimeStretch](./effects.md#timestretch) for offline DSP, and [Widgets](./widgets.md) for visual plugins, custom drawing and snapping.
+
+## Common errors
+
+Loading, selection and playback messages from `WavePlayer`. Stretch and time-mapping messages are listed with [stretch](#committed-versions-and-offline-stretch); waveform view and plugin messages are in [Widgets](./widgets.md#common-errors).
+
+| Message                                                                                                       | Cause                                            | Fix                                                                             |
+| ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------- |
+| `Range player is destroyed.`                                                                                  | Mutating or subscribing after block cleanup      | Create a new WavePlayer; shared views must not destroy their caller's player.   |
+| `Position must be finite seconds.` / `Start time must be finite, non-negative seconds.`                       | Invalid `seek` position or `play({ when })` time | Pass finite seconds; `when` is an absolute `AudioContext` time, clamped to now. |
+| `Enter an audio URL.`                                                                                         | Empty URL passed to `load`                       | Supply a URL or File.                                                           |
+| `Audio request failed: HTTP 404.` (status varies)                                                             | URL response is unsuccessful                     | Check the URL, access, and server response; call `load` again to recover.       |
+| `Audio request returned text instead of audio.`                                                               | URL served HTML/text                             | Fix routing/proxy to return audio, then retry load.                             |
+| `Audio download size does not match Content-Length.`                                                          | Truncated or incorrect byte length               | Fix the transfer/length, then retry load.                                       |
+| `Load progress needs non-negative byte counts and a null or matching total.` / `Unknown audio loading phase.` | Invalid cache adapter reports                    | Use download/read with safe byte counts or decode; total may be null.           |
+| `Audio file has no playable duration.`                                                                        | Decoded audio has zero duration                  | Supply audio with a positive duration.                                          |
+| `Selection must satisfy 0 <= start < end <= duration (finite seconds).`                                       | Invalid programmatic range                       | Await loading, then pass ordered finite endpoints within duration, or `null`.   |

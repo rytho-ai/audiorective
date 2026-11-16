@@ -118,6 +118,23 @@ export function App() {
 | `@audiorective/playcanvas` | PlayCanvas scene bindings (`attach`, `bindPanner`).                                                                                             | `references/playcanvas.md` |
 | `@audiorective/devtools`   | `measureLatency` / `assertLatency` for testing a processor's declared latency.                                                                  | `references/core.md`       |
 
+## Choosing a capability
+
+Blocks and widgets cover specific workflows. When a request does not match one, build on
+core with your own `AudioProcessor`; that is the intended path, not a fallback.
+
+| You are building…                                         | Use                                                              | Not                                                  |
+| --------------------------------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------- |
+| One-shot hits, pads, SFX; overlapping voices              | core `Sampler` / `Voice`                                         | `WavePlayer` (one playhead)                          |
+| A tempo-locked loop or stem with a scheduled start        | core `BufferPlayer` + `clock`                                    | `FilePlayer` (runs on the media clock)               |
+| A long track, podcast or stream                           | core `FilePlayer`                                                | `WavePlayer` / waveform selector (decode whole file) |
+| Load a clip, select a range, audition, loop or stretch it | blocks `WavePlayer`; widgets waveform selector for the UI        | a hand-drawn canvas and range logic                  |
+| A waveform picture from peaks, no audio                   | `@audiorective/widgets/waveform`                                 | the complete selector                                |
+| MIDI file notes: parse, edit, select, piano roll          | `@audiorective/blocks/midi` + `@audiorective/widgets/piano-roll` | live MIDI input (app code calling your synth)        |
+| A step sequencer, drum machine or transport               | `clock` + your own audio-layer class with a `Cell` pattern       | a sequencer block (there is none)                    |
+| An editable curve driving a parameter over time           | `@audiorective/core/automation`                                  | hand-scheduled ramps                                 |
+| A synth, custom effect, grains, anything else             | your own `AudioProcessor` on core                                | forcing a block to fit                               |
+
 ## What to read next
 
 **`references/core.md` is the core API reference**. Read
@@ -158,21 +175,20 @@ Then load only what the task needs:
 
 ## The one rule that always applies
 
-**Audio graphs and playback live as methods on `AudioProcessor` subclasses.** The complete
-waveform selector delegates to `WavePlayer`: pass a caller-owned shared `player`,
-or supply `context` to let the selector own a player; route its `output` once.
-Destroying a view leaves a supplied player alive. For metadata-only views, import from
-`@audiorective/widgets/waveform`; visual plugins own no audio transport. UI
-components call these methods — they never orchestrate audio logic themselves.
-Pure PCM computation uses ordinary functions/classes: core `summarizePeaks`, and
-effects `TimeStretch.process`. Use `WavePlayer(ctx, { stretch })` and
-`await player.setStretch(ratio)` to commit PCM/peaks/selection together while stopped.
-Every edit renders the original source; pending results never overwrite newer edits.
+**Audio graphs and playback live as methods on audio-layer objects** — `AudioProcessor`
+subclasses and blocks. UI components call those methods and read state; they never
+orchestrate audio logic themselves.
 
 - **Audio layer owns:** graph construction, envelope shaping, parameter
   automation, transport logic, anything touching `AudioContext.currentTime`.
-- **UI layer does:** read params (`useValue(processor.params.foo)`), set params
-  (`processor.params.foo.value = x`), call audio methods (`synth.filterSweep()`).
+- **UI layer does:** read state (`useValue(processor.params.foo)`,
+  `useValue(player.cells.isPlaying)`), set params (`processor.params.foo.value = x`),
+  call audio methods (`synth.filterSweep()`).
+- **Read-only cells change through methods.** State an owner has to validate is a
+  read-only entry in `owner.cells`: read it there, change it with the owner's method
+  (`player.setSelection(range)`), never by assignment.
+- **Views borrow.** Destroying a widget leaves a caller-supplied player or model alive
+  and playing; the caller destroys what it created.
 
 Keep UI callbacks thin, such as `() => synth.filterSweep()`. Read
 `references/architecture.md` for scheduling examples, Cell vs Param choices and
@@ -180,10 +196,8 @@ sharing state with imperative views.
 
 ## Audio runtime is client-only
 
-Pure `@audiorective/core/peaks` imports and computation work in Node/Workers.
-`@audiorective/effects/time-stretch` imports no audio implementation; processing
-requires browser Web Workers and a caller-provided compiled Rubber Band WASM module.
-It is an offline PCM processor, not an input/output wet/dry insert.
+Pure entries (`core/peaks`, `core/automation` curves, `blocks/midi`) import no audio
+runtime and work in Node. Everything that touches an `AudioContext` is client-only.
 
 `createEngine` builds a real `AudioContext`; there is none on a server, and
 there is no SSR mode to enable. In Next.js, Remix, or Astro, mount the audio
@@ -227,71 +241,19 @@ type error on a documented API:
 | `WorkletUnavailableError` from `@audiorective/effects`                  | Context without `audioWorklet` (old browser, some test contexts) | Use a browser with AudioWorklet, or the `granular` `PitchShift` engine which needs no worklet |
 | `Cannot start a destroyed engine`                                       | Reusing an engine after `destroy()`                              | Create a new engine; `destroy()` is final                                                     |
 
-### Waveform and MIDI errors
+### Errors by area
 
-| Symptom                                                                                                                                                        | Cause                                              | Fix                                                                                 |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `Piano roll layout must mount its viewport inside the supplied root.`                                                                                          | Layout omitted/cloned the supplied viewport        | Append the supplied viewport inside the layout root; retain its identity.           |
-| `Piano roll is destroyed.`                                                                                                                                     | Attaching after view cleanup                       | Mount another view; keep the borrowed model if still needed.                        |
-| `Plugin is already attached to this piano roll.`                                                                                                               | Same object attached twice to one view             | Destroy its attachment first, or create another plugin instance.                    |
-| `Waveform selector is destroyed.`                                                                                                                              | Calling `load` or `setSelection` after cleanup     | Mount a new selector.                                                               |
-| `Range player is destroyed.`                                                                                                                                   | Mutating or subscribing after block cleanup        | Create a new WavePlayer; shared views must not destroy their caller's player.       |
-| `Position must be finite seconds.` / `Start time must be finite, non-negative seconds.`                                                                        | Invalid `seek` position or `play({ when })` time   | Pass finite seconds; `when` is an absolute `AudioContext` time, clamped to now.     |
-| `Enter an audio URL.`                                                                                                                                          | Empty URL passed to `load`                         | Supply a URL or File.                                                               |
-| `Audio request failed: HTTP 404.` (status varies)                                                                                                              | URL response is unsuccessful                       | Check the URL, access, and server response; call `load` again to recover.           |
-| `Audio request returned text instead of audio.`                                                                                                                | URL served HTML/text                               | Fix routing/proxy to return audio, then retry load.                                 |
-| `Audio download size does not match Content-Length.`                                                                                                           | Truncated or incorrect byte length                 | Fix the transfer/length, then retry load.                                           |
-| `Load progress needs non-negative byte counts and a null or matching total.` / `Unknown audio loading phase.`                                                  | Invalid cache adapter reports                      | Use download/read with safe byte counts or decode; total may be null.               |
-| `Audio file has no playable duration.`                                                                                                                         | Decoded audio has zero duration                    | Supply audio with a positive duration.                                              |
-| `Waveform is destroyed.`                                                                                                                                       | Mutating or attaching to a destroyed view          | Mount a new view.                                                                   |
-| `Waveform data needs finite peaks and a positive duration.`                                                                                                    | Invalid peaks or duration                          | Supply nonempty finite peaks, matching extrema arrays, and finite positive seconds. |
-| `Zoom must be finite and at least 1.`                                                                                                                          | Invalid zoom factor                                | Use `1` to fit, or a larger finite factor.                                          |
-| `Playhead must be finite or null.`                                                                                                                             | Invalid playhead                                   | Supply finite source seconds or `null` to hide it.                                  |
-| `Plugin is already attached to this waveform.`                                                                                                                 | Duplicate attachment of one instance               | Reuse its attachment or detach it before attaching again.                           |
-| `Plugin attachment is destroyed.`                                                                                                                              | Mounting an overlay from a disposed attachment     | Stop asynchronous work during cleanup; use a live attachment context.               |
-| `Selection plugin is not attached.`                                                                                                                            | Setting metadata before attachment or after detach | Call `view.attach(selection)` before `selection.setSelection`.                      |
-| `Selection plugin is already attached.`                                                                                                                        | Reusing a selection plugin across live views       | Detach first, or create one plugin per view.                                        |
-| `Waveform already has a Selection owner.`                                                                                                                      | Multiple selection plugins on one view             | Keep one selection plugin per view.                                                 |
-| `Selection must satisfy 0 <= start < end <= duration (finite seconds).`                                                                                        | Invalid programmatic range                         | Await loading, then pass ordered finite endpoints within duration, or `null`.       |
-| `Invalid MIDI file.` / `Only MIDI format 0 and 1 are supported.` / `SMPTE MIDI time division is not supported.`                                                | Unsupported or corrupt SMF                         | Supply intact format0/1 PPQ note data; see MIDI reference.                          |
-| `MIDI ticks need positive PPQ and finite non-negative time.` / `MIDI grid needs valid PPQ, end tick and time signatures.` / `MIDI grid exceeds 100000 points.` | Invalid or oversized grid                          | Use parsed metadata and a bounded grid, or omit grid generation.                    |
-| `MIDI duration must be finite and non-negative.` / `MIDI notes need unique ids, valid source seconds and integer pitch/velocity/channel/track.`                | Invalid note data                                  | Normalize records to MIDI reference bounds.                                         |
-| `MidiSequence is destroyed.` / `MIDI note was not found.`                                                                                                      | Stale owner or source-local ID                     | Use a live sequence and IDs from its current snapshot.                              |
-| `Piano roll zoom must be between 1 and 64.` / `Piano roll pitches must satisfy 0 <= low <= high <= 127.` / `Piano roll scroll time must be finite.`            | Invalid viewport input                             | Use finite zoom/seconds and ordered integer pitches.                                |
+Every other thrown message is listed, with cause and fix, in the reference for its area:
 
-### PCM and stretch errors
-
-| Symptom                                                                                              | Cause                                 | Fix                                                                                                                          |
-| ---------------------------------------------------------------------------------------------------- | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `summarizePeaks: sampleRate must be a finite positive number`                                        | Invalid PCM rate                      | Provide the actual finite positive source sample rate.                                                                       |
-| `summarizePeaks: framesPerPeak must be a positive safe integer`                                      | Invalid bin size                      | Use whole source frames, default 128.                                                                                        |
-| `summarizePeaks: at least one channel is required`                                                   | No PCM channels                       | Provide at least one Float32Array.                                                                                           |
-| `summarizePeaks: every channel must be a Float32Array`                                               | Wrong sample representation           | Convert decoded samples to Float32Array.                                                                                     |
-| `summarizePeaks: channels must have equal frame counts`                                              | Unequal channel lengths               | Use planar channels of equal length.                                                                                         |
-| `summarizePeaks: samples must be finite numbers`                                                     | NaN/Infinity samples                  | Repair or reject invalid PCM.                                                                                                |
-| `peakFrameRange: index must identify an existing peak`                                               | Invalid bin index                     | Check min.length; empty input has no bins.                                                                                   |
-| `TimeStretch requires a compiled WebAssembly.Module.`                                                | Missing/wrong backend                 | Compile the caller-hosted compatible WASM before construction.                                                               |
-| `TimeStretch is destroyed.`                                                                          | Processor already cleaned up          | Create a new processor; block borrows it.                                                                                    |
-| `TimeStretch processing was aborted.`                                                                | Cancelled render                      | Handle AbortError; do not publish partial output.                                                                            |
-| `TimeStretch ratio must be positive and produce at least one frame.`                                 | Invalid ratio/result size             | Use a finite positive duration ratio; output rounds to whole frames.                                                         |
-| `TimeStretch needs finite equal-length PCM channels and an integer sampleRate from 8000 to 192000.`  | Unsupported PCM                       | Use equal finite Float32 channels at a supported integer rate.                                                               |
-| `TimeStretch requires Web Workers.`                                                                  | No browser Worker runtime             | Process in a browser with Workers.                                                                                           |
-| `TimeStretch: unsupported Rubber Band WASM ABI.`                                                     | Wrong module exports                  | Use the documented rubberband-wasm3.3 C ABI.                                                                                 |
-| `TimeStretch produced an unexpected frame count.`                                                    | Backend duration mismatch             | Check WASM compatibility; keep the prior block version.                                                                      |
-| `TimeStretch produced nonfinite PCM.`                                                                | Backend produced invalid samples      | Reject this render and check the backend/input.                                                                              |
-| `TimeStretch could not create a Rubber Band state.`                                                  | Backend initialization failed         | Check module/input support and available memory.                                                                             |
-| `TimeStretch allocation failed.`                                                                     | Backend allocation failed             | Use a smaller source/job or release other jobs.                                                                              |
-| `Rubber Band exited: …`                                                                              | Backend exited                        | Check the supplied module and input; retain prior playback.                                                                  |
-| `TimeStretch worker failed.`                                                                         | Worker startup/execution failure      | Check Worker/blob CSP and supplied module.                                                                                   |
-| `Stretch ratio must be finite and positive.`                                                         | Invalid block edit                    | Use a finite duration multiplier greater than zero.                                                                          |
-| `No audio source is loaded.`                                                                         | Edit before load                      | Await player.load before setStretch.                                                                                         |
-| `WavePlayer needs a stretch processor.`                                                              | No injected processor                 | Construct WavePlayer(ctx, { stretch }); caller destroys stretch.                                                             |
-| `Stretch processor returned incompatible PCM.`                                                       | Wrong rendered shape                  | Keep original sample rate/channel count and round(originalFrames\*ratio) frames.                                             |
-| `AutomationCurve needs nonempty finite points with nonnegative unique times and linear/hold shapes.` | Invalid curve replacement             | Supply finite `{ time, value, shape }` points with unique times >= 0; replace `.value` instead of mutating frozen snapshots. |
-| `AutomationCurve sample time must be finite.`                                                        | Nonfinite query                       | Pass finite curve coordinates to `valueAt`.                                                                                  |
-| `AutomationBinding needs finite nonnegative times, to >= from, and positive secondsPerUnit.`         | Invalid start/range/scale or overflow | Correct start options; current run is preserved.                                                                             |
-| `AutomationBinding is destroyed.`                                                                    | Reusing disposed binding              | Create a new binding; destroy bindings before their borrowed targets.                                                        |
-| `Time must be finite seconds.`                                                                       | Invalid coordinate conversion         | Pass finite source/output seconds.                                                                                           |
+| Message starts with or mentions                                                                                                                                     | Read                                        |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| `Waveform…`, `Zoom…`, `Playhead…`, `Plugin…`, `Selection plugin…`                                                                                                   | `references/widgets.md` → Common errors     |
+| `Range player…`, `Audio request…`, `Audio download…`, `Audio file…`, `Enter an audio URL.`, `Load progress…`, `Position…`, `Start time…`, `Selection must satisfy…` | `references/blocks.md` → Common errors      |
+| `Stretch…`, `No audio source…`, `WavePlayer needs…`, `Time must be finite…`                                                                                         | `references/blocks.md` → Committed versions |
+| `Piano roll…`, `MIDI…`, `MidiSequence…`, `Invalid MIDI file.`, `Only MIDI format…`, `SMPTE…`                                                                        | `references/midi.md` → Common errors        |
+| `summarizePeaks:…`, `peakFrameRange:…`                                                                                                                              | `references/core.md` → PCM peak summaries   |
+| `TimeStretch…`, `Rubber Band…`                                                                                                                                      | `references/effects.md` → TimeStretch       |
+| `AutomationCurve…`, `AutomationBinding…`                                                                                                                            | `references/automation.md` → Common errors  |
 
 ## References
 

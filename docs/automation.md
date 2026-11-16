@@ -216,3 +216,12 @@ already-active binding misses this race.
 For a Rack, keep the adapter in the block/app: resolve macro targets and program
 each native timeline in `program`, and hold all of them in `hold`. Rack lifetime,
 presets and mappings stay there. The private Rack probe is not a published block.
+
+## Common errors
+
+| Message                                                                                              | Cause                                 | Fix                                                                                                                          |
+| ---------------------------------------------------------------------------------------------------- | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `AutomationCurve needs nonempty finite points with nonnegative unique times and linear/hold shapes.` | Invalid curve replacement             | Supply finite `{ time, value, shape }` points with unique times >= 0; replace `.value` instead of mutating frozen snapshots. |
+| `AutomationCurve sample time must be finite.`                                                        | Nonfinite query                       | Pass finite curve coordinates to `valueAt`.                                                                                  |
+| `AutomationBinding needs finite nonnegative times, to >= from, and positive secondsPerUnit.`         | Invalid start/range/scale or overflow | Correct start options; current run is preserved.                                                                             |
+| `AutomationBinding is destroyed.`                                                                    | Reusing disposed binding              | Create a new binding; destroy bindings before their borrowed targets.                                                        |

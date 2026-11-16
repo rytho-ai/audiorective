@@ -262,3 +262,20 @@ Other public theme variables:
 | `--waveform-error`                                           | Error text color                                   |
 
 DOM classes use the `ar-` prefix to scope widget presentation. Internal class names and test attributes are implementation details; use the handle and plugin context for behavior.
+
+## Common errors
+
+Messages thrown by the waveform view, its plugins and the complete selector. Loading and playback messages come from the borrowed player: see [Blocks](./blocks.md#common-errors).
+
+| Message                                                     | Cause                                              | Fix                                                                                 |
+| ----------------------------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `Waveform selector is destroyed.`                           | Calling `load` or `setSelection` after cleanup     | Mount a new selector.                                                               |
+| `Waveform is destroyed.`                                    | Mutating or attaching to a destroyed view          | Mount a new view.                                                                   |
+| `Waveform data needs finite peaks and a positive duration.` | Invalid peaks or duration                          | Supply nonempty finite peaks, matching extrema arrays, and finite positive seconds. |
+| `Zoom must be finite and at least 1.`                       | Invalid zoom factor                                | Use `1` to fit, or a larger finite factor.                                          |
+| `Playhead must be finite or null.`                          | Invalid playhead                                   | Supply finite source seconds or `null` to hide it.                                  |
+| `Plugin is already attached to this waveform.`              | Duplicate attachment of one instance               | Reuse its attachment or detach it before attaching again.                           |
+| `Plugin attachment is destroyed.`                           | Mounting an overlay from a disposed attachment     | Stop asynchronous work during cleanup; use a live attachment context.               |
+| `Selection plugin is not attached.`                         | Setting metadata before attachment or after detach | Call `view.attach(selection)` before `selection.setSelection`.                      |
+| `Selection plugin is already attached.`                     | Reusing a selection plugin across live views       | Detach first, or create one plugin per view.                                        |
+| `Waveform already has a Selection owner.`                   | Multiple selection plugins on one view             | Keep one selection plugin per view.                                                 |
