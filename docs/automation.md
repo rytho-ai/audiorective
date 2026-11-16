@@ -185,16 +185,33 @@ tracks or a Rack. It does not alter source PCM or waveform peaks. A processed
 preview or offline render must separately apply the same curve in the same time
 coordinates.
 
-The current `WavePlayer.play()` starts on its internal current audio time and
-does not accept a shared `when`. A consumer can anchor automation to
-`player.outputToSource(player.position)` after awaiting play; this is a best-effort
-alignment, not a sample-accurate shared start. Use a playback primitive with an
-explicit scheduled start when that guarantee is required.
+Start the player and the binding from one shared `when`.
+[`WavePlayer.play({ when })`](./blocks.md#scheduled-start) schedules the first
+sound at that absolute audio time and resolves with the effective start time, or
+`null` when it started nothing:
+
+```typescript
+const token = ++operation; // owner's counter, also bumped on selection/stretch change
+const started = await player.play({ when: context.currentTime + 0.1 });
+if (started === null || token !== operation) return;
+binding.start({ when: started, from, to, secondsPerUnit });
+```
+
+Anchor the binding to the resolved value, not the requested one. With a
+lookahead long enough for `context.resume()` to settle, the resolved value equals
+the requested `when` and the source onset and the automation share that sample.
+A `when` that has passed clamps to now for both; the source then begins on the
+next render quantum, so that case is aligned to the quantum, not the sample.
+`from` must match the position the player starts from: with a selection, seek to
+its start (or stop) before playing.
 
 Keep a pending play operation’s source revision and selection alongside its
 operation token. A selection/stretch change must invalidate that token and stop
 the queued player start as well as the binding, even while `resume()`/`play()` is
-still awaiting. Observing only an already-active binding misses this race.
+still awaiting: a `seek` or selection change before `when` re-issues the player
+start from a new position at the same `when`, and a stretch commit cancels it, so
+a binding programmed for the old range no longer matches. Observing only an
+already-active binding misses this race.
 
 For a Rack, keep the adapter in the block/app: resolve macro targets and program
 each native timeline in `program`, and hold all of them in `hold`. Rack lifetime,

@@ -219,6 +219,7 @@
         "Explains AutomationTarget.program receives relative seconds plus absolute when; hold cancels and preserves the value at the supplied absolute audio time",
         "Keeps Rack macro resolution and nonlinear fanout in a block/app adapter; does not use the macro native backing as a substitute",
         "Distinguishes planned curve sampling from existing native ParamSync readback, including disconnected-node limitations",
+        "Starts the player with player.play({ when }) using a lookahead on the audio clock and anchors binding.start({ when }) to the time the promise resolves with; schedules nothing when it resolves null, and does not anchor to player.position after an unscheduled play()",
         "Guards pending asynchronous playback from selection or stretch changes by invalidating the operation token and queued player start, not only an active binding"
       ]
     },

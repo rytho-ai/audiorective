@@ -482,3 +482,50 @@ test("a load started re-entrantly from an observer is not overwritten by the old
   expect(player.duration).toBeCloseTo(1, 5);
   expect(player.getState()).toMatchObject({ loading: false, error: null });
 });
+
+test.each(["effect", "subscribe"] as const)(
+  "a pause and a newer play({ when }) issued re-entrantly from an observer (%s) supersede the older scheduled start",
+  async (kind) => {
+    const { context, player } = fixture();
+    await context.resume();
+    await player.load(audio(context));
+    const first = context.currentTime + 0.5,
+      second = context.currentTime + 5;
+    let newer: Promise<number | null> | undefined;
+    const react = () => {
+      if (player.cells.isPlaying.value && !newer) {
+        player.pause();
+        newer = player.play({ when: second });
+      }
+    };
+    if (kind === "effect") disposers.push(effect(react));
+    else disposers.push(player.subscribe(react));
+
+    // The older request started nothing that survives, so it must not report a start time.
+    expect(await player.play({ when: first })).toBeNull();
+    expect(newer).toBeDefined();
+    expect(await newer).toBe(second);
+    expect(player.getState()).toMatchObject({ isPlaying: true, position: 0 });
+    await new Promise((done) => setTimeout(done, 700));
+    // Past the superseded `first`: still queued for `second`, so the playhead has not moved.
+    expect(context.currentTime).toBeGreaterThan(first);
+    expect(player.position).toBe(0);
+
+    // A pause alone from an observer leaves the player stopped and the request unanswered.
+    player.pause();
+    newer = undefined;
+    let paused = false;
+    const cancel = () => {
+      if (player.cells.isPlaying.value && !paused) {
+        paused = true;
+        player.pause();
+      }
+    };
+    if (kind === "effect") disposers.push(effect(cancel));
+    else disposers.push(player.subscribe(cancel));
+    newer = Promise.resolve(null); // disarm the first observer
+    expect(await player.play({ when: context.currentTime + 0.2 })).toBeNull();
+    expect(paused).toBe(true);
+    expect(player.getState().isPlaying).toBe(false);
+  },
+);

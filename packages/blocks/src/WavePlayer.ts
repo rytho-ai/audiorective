@@ -21,6 +21,10 @@ export interface WavePlayerOptions {
   /** Optional URL/cache adapter. Files use native loading; the player owns lifecycle and summary. */
   loadSource?: WaveSourceLoader;
 }
+export interface WavePlayOptions {
+  /** Absolute audio-context seconds at which sound starts. A past time clamps to now. Default: now. */
+  when?: number;
+}
 export interface PlaybackVersion {
   readonly revision: number;
   readonly sourceRevision: number;
@@ -54,7 +58,7 @@ export type WavePlayerCells = {
   /** Committed selection in output seconds; the object is frozen. */
   selection: ReadonlyCell<Readonly<AudioRange> | null>;
   isLooping: ReadonlyCell<boolean>;
-  /** Transport flag: flips when playback starts or stops. */
+  /** Transport flag: true from the moment a start is issued, including one queued for a future `when`, until playback stops. */
   isPlaying: ReadonlyCell<boolean>;
   loading: ReadonlyCell<boolean>;
   loadProgress: ReadonlyCell<WaveLoadProgress | null>;
@@ -261,13 +265,19 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
   private bounds(): AudioRange {
     return this.range ?? { start: 0, end: this.duration };
   }
+  /** The audio time a restart must keep: a queued start's `when`, otherwise now. */
+  private startTime(): number {
+    return Math.max(this.context.currentTime, this.anchor?.time ?? 0);
+  }
   private halt(): void {
     ++this.command;
     this.held = this.position;
     this.anchor = null;
     this.player.stop();
   }
-  private begin(offset: number): void {
+  /** Starts at `when`, clamped to now, and returns the effective start time. Every start is a new command. */
+  private begin(offset: number, when = 0): number {
+    ++this.command;
     this.player.stop();
     const { start, end } = this.bounds();
     offset = Math.max(start, Math.min(end, offset));
@@ -276,18 +286,29 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
     this.player.loopStart = start;
     this.player.loopEnd = end;
     this.player.loop = this.looping;
-    const time = this.context.currentTime;
+    const time = Math.max(this.context.currentTime, when);
     this.anchor = { time, offset, start, end };
     this.player.start(time, offset);
     if (!this.looping) this.player.stop(time + end - offset);
+    return time;
   }
-  async play(): Promise<void> {
+  /** Resolves with the audio time at which sound starts, or null when this call started nothing. */
+  async play(options: WavePlayOptions = {}): Promise<number | null> {
     this.assertAlive();
-    if (!this.buffer || untracked(() => this.isPlaying)) return;
+    const when = options.when ?? 0;
+    if (!Number.isFinite(when) || when < 0) throw new RangeError("Start time must be finite, non-negative seconds.");
+    if (!this.buffer || untracked(() => this.isPlaying)) return null;
     const command = ++this.command;
     await this.audioContext.resume();
-    if (this.disposed || command !== this.command || !this.buffer) return;
-    this.change(() => this.begin(this.position));
+    if (this.disposed || command !== this.command || !this.buffer) return null;
+    // Fix this start's identity inside the change: observers notified by it may pause, seek or play again.
+    let started = 0,
+      time = 0;
+    this.change(() => {
+      time = this.begin(this.position, when);
+      started = this.command;
+    });
+    return started === this.command ? time : null;
   }
   pause(): void {
     this.assertAlive();
@@ -304,10 +325,11 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
     this.assertAlive();
     if (!Number.isFinite(position)) throw new RangeError("Position must be finite seconds.");
     this.change(() => {
-      const playing = this.isPlaying;
+      const playing = this.isPlaying,
+        when = this.startTime();
       this.halt();
       this.held = Math.max(0, Math.min(this.duration, position));
-      if (playing) this.begin(this.held);
+      if (playing) this.begin(this.held, when);
     });
   }
   setSelection(selection: AudioRange | null): void {
@@ -333,8 +355,8 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
         if (this.looping && position >= start && position < end) {
           this.player.loopStart = start;
           this.player.loopEnd = end;
-          this.anchor = { time: this.context.currentTime, offset: position, start, end };
-        } else this.begin(position);
+          this.anchor = { time: this.startTime(), offset: position, start, end };
+        } else this.begin(position, this.startTime());
       }
     });
   }
@@ -345,7 +367,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
       const playing = this.isPlaying,
         position = this.position;
       this.looping = looping;
-      if (playing) this.begin(position);
+      if (playing) this.begin(position, this.startTime());
     });
   }
   async audition(): Promise<void> {

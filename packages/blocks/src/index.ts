@@ -7,6 +7,7 @@ export type {
   WavePlayerState,
   WavePlayerCells,
   WavePlayerOptions,
+  WavePlayOptions,
   WaveStretchProcessor,
   PlaybackVersion,
 } from "./WavePlayer";

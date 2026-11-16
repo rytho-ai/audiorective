@@ -65,7 +65,7 @@ export const mountWaveformSelector: MountWaveformSelector = (root, options) => {
     target.addEventListener(type, listener);
     disposers.push(() => target.removeEventListener(type, listener));
   }
-  function run(action: () => Promise<void>): void {
+  function run(action: () => Promise<unknown>): void {
     void action().catch((reason) => {
       if (destroyed) return;
       playbackError = reason instanceof Error ? reason.message : String(reason);
