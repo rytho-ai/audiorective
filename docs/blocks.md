@@ -245,6 +245,28 @@ The [pure waveform selection plugin](./widgets.md#selection-plugin-api) can use 
 
 See [Core](./core.md#pcm-peak-summaries) for pure PCM summaries, [TimeStretch](./effects.md#timestretch) for offline DSP, and [Widgets](./widgets.md) for visual plugins, custom drawing and snapping.
 
+## Cancellable instrument events
+
+`InstrumentEvents` plays sample hits and owns reversible same-group choke policy. Use it when a sequencer can edit or cancel a hit after the Clock has scheduled it, or when a future closed-hat hit must choke an open-hat hit only if that closed hit still exists. Ordinary one-shot pads without choke can keep using core `Sampler` and `Voice`.
+
+```typescript
+import { InstrumentEvents } from "@audiorective/blocks";
+
+const instruments = new InstrumentEvents(context, [
+  { id: "open-hat", buffer: openHat, group: "hat", gate: true },
+  { id: "closed-hat", buffer: closedHat, group: "hat" },
+]);
+instruments.output.connect(context.destination);
+const manual = instruments.trigger("open-hat"); // caller owns this event
+const queued = instruments.trigger("closed-hat", 1, context.currentTime + 0.2);
+queued?.cancel(); // removes both the hit and its future choke; manual keeps sounding
+// Later: manual?.cancel(); instruments.destroy(); context.close();
+```
+
+`trigger(id, velocity = 1, when = context.currentTime)` returns an `InstrumentEvent` with idempotent `cancel()` / `stop()` and `onEnded(listener)`, or `null` for an unknown pad ID. Velocity clamps to 0..1; a past `when` plays now. `gate: true` loops a sample until its event is cancelled or choked; otherwise it plays once. Later hits with a **different ID** in the same `group` choke earlier hits at their native audio start time, even if the later hit was scheduled first. Hits of the same ID may overlap. Choke is carried by a per-event gain gate, so cancelling an unstarted hit retracts its future choke. A choke that already reached its deadline stays committed and cannot resurrect an earlier sound. The cleanup timer retires silent nodes; it does not time the audible cutoff.
+
+`assign(id, buffer)` replaces that pad's buffer, cancels its current and future hits, and retracts their future choke. `stopAll()` cancels every hit. `cells.activeEvents` is a read-only reactive count; `params.volume` follows the normal schedulable `.value` / `$` contract. The block owns its nodes and event handles, while the caller owns output routing and the `AudioContext`. It has no polyphony cap or voice-stealing policy. For Clock-owned sequenced hits, pass the handle to `window.own(hit, when)` and call `clock.refresh()` after pattern edits; manual hits remain unregistered. See [Clock](./clock.md#own-cancellable-events-when-transport-edits-must-cut-queued-sound).
+
 ## Common errors
 
 Loading, selection and playback messages from `WavePlayer`. Stretch and time-mapping messages are listed with [stretch](#committed-versions-and-offline-stretch); waveform view and plugin messages are in [Widgets](./widgets.md#common-errors).
@@ -260,3 +282,7 @@ Loading, selection and playback messages from `WavePlayer`. Stretch and time-map
 | `Load progress needs non-negative byte counts and a null or matching total.` / `Unknown audio loading phase.` | Invalid cache adapter reports                    | Use download/read with safe byte counts or decode; total may be null.           |
 | `Audio file has no playable duration.`                                                                        | Decoded audio has zero duration                  | Supply audio with a positive duration.                                          |
 | `Selection must satisfy 0 <= start < end <= duration (finite seconds).`                                       | Invalid programmatic range                       | Await loading, then pass ordered finite endpoints within duration, or `null`.   |
+| `Instrument pad IDs must be nonempty and unique.`                                                             | Empty or repeated pad ID                         | Give each pad a stable unique ID.                                               |
+| `Instrument event time must be finite, non-negative seconds.` / `Instrument velocity must be finite.`         | Invalid hit time or velocity                     | Use absolute audio seconds and a finite velocity.                               |
+| `Unknown instrument pad.`                                                                                     | `assign()` received an ID not in the bank        | Assign to a declared pad ID.                                                    |
+| `InstrumentEvents is destroyed.`                                                                              | Trigger or assign after cleanup                  | Create a new block; `destroy()` is final.                                       |

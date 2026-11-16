@@ -75,11 +75,34 @@ timeline.timeToBeat(ctx.currentTime); // current beat position
 
 ```typescript
 clock.start(); // or clock.start({ atBeat: 16 })
-clock.pause(); // freezes position; committed look-ahead audio keeps sounding (an accepted tail, ~lookAhead seconds)
+clock.pause(); // freezes position; unowned look-ahead audio keeps sounding (an accepted tail, ~lookAhead seconds)
 clock.resume(); // continues from the frozen position, no re-scheduling
 clock.stop(); // resets to beat 0
 clock.seek(64); // jumps to beat 64
 ```
+
+### Own cancellable events when transport edits must cut queued sound
+
+The default remains unchanged: `Clock` does not cancel sound scheduled by `onTick`, so an unowned event may keep playing for up to the look-ahead interval after `pause()`. For a hard stop or an editable pattern, register a returned event handle with `window.own(event, when)`. `when` is its finite, nonnegative absolute `AudioContext` start time. The handle must provide `cancel()` and `onEnded(listener)`; Clock drops naturally ended events from its registry. `InstrumentEvents.trigger()` in [Blocks](./blocks.md#cancellable-instrument-events) returns a compatible handle.
+
+```typescript
+const clock = new Clock({
+  timeline,
+  onTick(window) {
+    for (const { time, step } of window.rulers.pattern.grid(16)) {
+      if (!pattern[step]) continue;
+      const hit = instruments.trigger("closed-hat", 1, time);
+      if (hit) window.own(hit, time); // this sequencer owns this hit and its choke
+    }
+  },
+});
+
+// An edit inside the queued horizon: cancel future owned hits and refill it now.
+pattern[3] = false;
+clock.refresh();
+```
+
+`pause()`, `stop()`, `seek()`, a fresh `start()`, and `destroy()` cancel all owned events, including those already sounding. `resume()` starts new windows without reviving cancelled events. `refresh()` acts only while playing: it cancels **future** owned events, preserves already-started ones and the current transport position, increments the window generation, then immediately refills the horizon. It does not touch manual pad hits or other unregistered sound. If an edit must end an already-started hit, its audio owner cancels that handle explicitly. Do not register the same handle with multiple clocks; the caller chooses its owner.
 
 `pause()` and `resume()` are each a no-op unless the transport is in the state
 they act on — only a playing clock pauses, only a paused clock resumes. So
@@ -90,7 +113,7 @@ pair on a stopped clock leaves it stopped rather than starting it mid-segment.
 
 Every jump (`seek`, `start({ atBeat })`, stop→start) bumps `window.generation` and begins a new continuity segment — windows are non-overlapping only _within_ a segment, so beats may legitimately reappear across a backward seek. Consumers holding derived state (step counters, generator positions) should reset when `generation` changes.
 
-Pausing does not cancel already-committed audio: up to `lookAhead` seconds of scheduled events keep sounding after `pause()`. This is an accepted tail, consistent with how DAWs behave — the clock neither owns nor cancels scheduled events; consumers who genuinely need a hard stop cancel the voices they own.
+Pausing leaves already-committed **unowned** audio alone: up to `lookAhead` seconds of scheduled events keep sounding after `pause()`. This is an accepted tail. Events registered with `window.own()` are cancelled; a consumer that needs a hard stop registers its own handles without making Clock own audio nodes.
 
 ## Rulers — reading the beat axis
 
@@ -250,6 +273,12 @@ Two things to remember when writing assertions:
 
 - A window at `now` already covers `now + lookAhead`, so a loop ending at `t` has committed events up to `t + 0.1` with the defaults. Pick loop bounds accordingly, or you will "lose" a step you expected or gain one you didn't.
 - Pair the deterministic tests with one real-`WorkerTickSource` smoke test, and poll for the data instead of sleeping a fixed duration.
+
+## Common errors
+
+| Message                                                        | Cause                                                                                                        | Fix                                                                     |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| `Clock owned event time must be finite, non-negative seconds.` | `window.own(event, when)` received an invalid audio time; the event is cancelled before the error is thrown. | Pass the same absolute `AudioContext` time used to schedule that event. |
 
 ## Non-goals
 

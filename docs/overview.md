@@ -14,7 +14,7 @@ The audio engine owns its state. Your interfaces observe parameters, change valu
 | [Clock](/docs/clock)           | Transport, tempo automation, scheduling windows, and beat/bar/time rulers                                |
 | [Effects](/docs/effects)       | Filters, delay, reverb, distortion, modulation, pitch shifting, dynamics, channel strips, and send buses |
 | [Widgets](/docs/widgets)       | Browser waveform/piano-roll display, shared selection, audition and custom drawing                       |
-| [Blocks](/docs/blocks)         | Headless WavePlayer audio workflows and pure MidiSequence note data shared by multiple views             |
+| [Blocks](/docs/blocks)         | Headless WavePlayer, cancellable grouped sample hits, and pure MidiSequence note data                    |
 | [React](/docs/react)           | Hooks and an engine context for reactive interfaces                                                      |
 | [Three.js](/docs/threejs)      | A shared audio context and spatial sound that follows scene objects                                      |
 | [PlayCanvas](/docs/playcanvas) | Engine integration and entity-to-panner bindings                                                         |

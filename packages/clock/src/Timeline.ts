@@ -173,4 +173,16 @@ export class Timeline<TRulers extends Record<string, Ruler<unknown, unknown>> = 
     this._positionAtAnchor = (beat * 60) / this.bpm.valueAtTime(now);
     this._generation++;
   }
+
+  /** @internal Reissue the current horizon after an edit without moving the heard position. */
+  _invalidate(): number {
+    const now = this._now();
+    const beat = this.timeToBeat(now);
+    const position = this.position;
+    this._beatAtAnchor = beat;
+    this._timeAtAnchor = now;
+    this._positionAtAnchor = position;
+    this._generation++;
+    return beat;
+  }
 }

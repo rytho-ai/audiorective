@@ -12,7 +12,7 @@ Which `@audiorective/*` packages to install, what they pull in, and how to keep 
 | `@audiorective/clock`      | Transport, tempo, look-ahead scheduling, rulers (sequencers, drum machines, loopers)                 | —                       |
 | `@audiorective/effects`    | DSP effects, channel strips, send buses, offline rendering of an effects chain                       | —                       |
 | `@audiorective/widgets`    | Waveform/MIDI piano-roll display, range selection and audio audition without a UI framework          | —                       |
-| `@audiorective/blocks`     | Headless WavePlayer audio selection/playback and pure MidiSequence note data                         | —                       |
+| `@audiorective/blocks`     | Headless WavePlayer, cancellable grouped sample hits, and pure MidiSequence note data                | —                       |
 | `@audiorective/react`      | React hooks and an engine context                                                                    | `react` `^18 \|\| ^19`  |
 | `@audiorective/threejs`    | Spatial audio that follows three.js objects                                                          | `three` `>=0.150.0`     |
 | `@audiorective/playcanvas` | A shared `AudioContext` and spatial sound bound to PlayCanvas entity transforms                      | `playcanvas` `>=2.18.1` |
