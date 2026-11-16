@@ -35,6 +35,7 @@ try {
 | `setSelection(range: AudioRange \| null)`                    | Sets a defensive copy. Finite endpoints must satisfy `0 <= start < end <= duration`. Invalid edits leave state unchanged. Clearing disables looping. A stopped player stays stopped; a playing session follows the new bounds.                                                                                                                                            |
 | `getSelection(): AudioRange \| null`                         | Returns a copy of the authoritative selection.                                                                                                                                                                                                                                                                                                                            |
 | `play(options?: { when?: number }): Promise<number \| null>` | Resumes the supplied context, then starts or resumes within the current range (whole source without a range). At the end, the next play starts at the range start. `when` schedules the first sound; see [Scheduled start](#scheduled-start). Resolves with the effective start time, or `null` when the call started nothing. Context resume errors reject.              |
+| `attachSourceAutomation(binding): () => void`                | Borrows a core `AutomationBinding` in source seconds for non-looping playback. Starts, re-anchors and stops it with the player; the returned function detaches and stops it without destroying the binding or player. See [Source-time automation](#source-time-automation-on-a-selection).                                                                               |
 | `audition(): Promise<void>`                                  | Enables looping, seeks to the selected start and plays. No selection means no action.                                                                                                                                                                                                                                                                                     |
 | `pause()` / `stop()`                                         | Pause holds position; stop resets to the selection start, or zero. Both cancel pending play requests.                                                                                                                                                                                                                                                                     |
 | `seek(seconds)`                                              | Clamps finite seconds to the committed output duration. A playing session restarts within its bounds; a stopped session remains stopped.                                                                                                                                                                                                                                  |
@@ -49,12 +50,13 @@ try {
 
 ### Scheduled start
 
-`play({ when })` starts the sound at an absolute `AudioContext` time, so the player can share one start instant with anything else scheduled on the same clock, such as an [`AutomationBinding`](./automation.md#domain-adapters-and-waveform-composition).
+`play({ when })` starts the sound at an absolute `AudioContext` time. For a source-time envelope, attach an [`AutomationBinding`](./automation.md#domain-adapters-and-waveform-composition) before playing so the player shares the effective start and handles edits:
 
 ```typescript
+const detach = player.attachSourceAutomation(binding);
 const when = context.currentTime + 0.1; // lookahead: leaves room for the context to resume
 const started = await player.play({ when });
-if (started !== null) binding.start({ when: started, from, to, secondsPerUnit });
+// started is the actual start time or null; the attachment schedules no envelope on null.
 ```
 
 | Situation                                                 | Rule                                                                                                                                                                                                                                          |
@@ -67,6 +69,35 @@ if (started !== null) binding.start({ when: started, from, to, secondsPerUnit })
 | `pause`, `stop`, `load`, a `setStretch` commit, `destroy` | Cancel the queued start; nothing sounds. Pause holds the start offset.                                                                                                                                                                        |
 | `seek`, `setSelection`, `setLooping` while queued         | Keep the session and the same `when`. The start is re-issued from the new position and bounds, and a one-shot's end is measured from `when`. Only the re-issued start sounds.                                                                 |
 | `when` is not a finite, non-negative number               | Rejects with `Start time must be finite, non-negative seconds.`                                                                                                                                                                               |
+
+### Source-time automation on a selection
+
+For a non-looping waveform selection with an `AutomationBinding` in original source seconds, attach the borrowed binding to the player. The player starts both on the same effective audio time and maps its output selection and committed stretch ratio into the binding's source-time range. No app operation token or copied selection state is needed.
+
+```typescript
+import { AutomationBinding, AutomationCurve, audioParamTarget } from "@audiorective/core/automation";
+
+const envelope = new GainNode(context);
+// Route the output through this envelope once; remove any direct destination connection.
+player.output.connect(envelope);
+envelope.connect(context.destination);
+const curve = new AutomationCurve([
+  { time: 0, value: 1, shape: "linear" },
+  { time: player.sourceBuffer!.duration, value: 0, shape: "hold" },
+]);
+const binding = new AutomationBinding(context, curve, audioParamTarget(envelope.gain));
+const detach = player.attachSourceAutomation(binding);
+
+player.setSelection({ start: 1, end: 2 }); // output seconds
+await player.play({ when: context.currentTime + 0.1 });
+// curve.value = updatedPoints; // reprograms the remaining native automation
+// Manual takeover: detach(); envelope.gain.value = 0.5;
+// Cleanup: detach(); binding.destroy(); player.destroy(); envelope.disconnect();
+```
+
+The binding must use the player's exact `AudioContext`; the player borrows and stops it but never destroys it. Detaching stops automation and leaves playback running. Attach before playback or during a non-looping run; `setLooping(true)` and `audition()` are unavailable while a source binding is attached because a finite binding does not repeat over loops. Detach before manual target writes or changing the target. Curve edits remain live through `AutomationBinding` itself.
+
+If selection changes while `play()` is still awaiting `context.resume()`, that play resolves `null` and starts neither sound nor automation. A selection edit after a future start has been queued reissues both at the same `when` with the new range. Starting a stretch edit cancels a queued start; an already-sounding run continues on its committed version until the stretch commits, then stops with its binding. Unattached WavePlayer playback keeps its normal behavior. See [Automation](./automation.md#domain-adapters-and-waveform-composition) for target adapters and manual control.
 
 ## Observing state reactively
 
@@ -282,6 +313,8 @@ Loading, selection and playback messages from `WavePlayer`. Stretch and time-map
 | `Load progress needs non-negative byte counts and a null or matching total.` / `Unknown audio loading phase.` | Invalid cache adapter reports                    | Use download/read with safe byte counts or decode; total may be null.           |
 | `Audio file has no playable duration.`                                                                        | Decoded audio has zero duration                  | Supply audio with a positive duration.                                          |
 | `Selection must satisfy 0 <= start < end <= duration (finite seconds).`                                       | Invalid programmatic range                       | Await loading, then pass ordered finite endpoints within duration, or `null`.   |
+| `Source automation must use the player's AudioContext.`                                                       | Binding uses another audio clock                 | Construct it with the same `AudioContext` as the player.                        |
+| `Source automation requires non-looping playback.`                                                            | Loop requested with finite source automation     | Detach the binding before looping, or play the selection once.                  |
 | `Instrument pad IDs must be nonempty and unique.`                                                             | Empty or repeated pad ID                         | Give each pad a stable unique ID.                                               |
 | `Instrument event time must be finite, non-negative seconds.` / `Instrument velocity must be finite.`         | Invalid hit time or velocity                     | Use absolute audio seconds and a finite velocity.                               |
 | `Unknown instrument pad.`                                                                                     | `assign()` received an ID not in the bank        | Assign to a declared pad ID.                                                    |

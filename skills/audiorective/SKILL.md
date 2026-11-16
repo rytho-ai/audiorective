@@ -123,18 +123,19 @@ export function App() {
 Blocks and widgets cover specific workflows. When a request does not match one, build on
 core with your own `AudioProcessor`; that is the intended path, not a fallback.
 
-| You are building…                                         | Use                                                              | Not                                                  |
-| --------------------------------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------- |
-| One-shot hits, pads, SFX; overlapping voices              | core `Sampler` / `Voice`                                         | `WavePlayer` (one playhead)                          |
-| Editable sequenced hits with future choke groups          | blocks `InstrumentEvents` + clock window `own(hit, when)`        | irreversible future `Voice.stop(when)`               |
-| A tempo-locked loop or stem with a scheduled start        | core `BufferPlayer` + `clock`                                    | `FilePlayer` (runs on the media clock)               |
-| A long track, podcast or stream                           | core `FilePlayer`; `widgets/player` for a plain control bar      | `WavePlayer` / waveform selector (decode whole file) |
-| Load a clip, select a range, audition, loop or stretch it | blocks `WavePlayer`; widgets waveform selector for the UI        | a hand-drawn canvas and range logic                  |
-| A waveform picture from peaks, no audio                   | `@audiorective/widgets/waveform`                                 | the complete selector                                |
-| MIDI file notes: parse, edit, select, piano roll          | `@audiorective/blocks/midi` + `@audiorective/widgets/piano-roll` | live MIDI input (app code calling your synth)        |
-| A step sequencer, drum machine or transport               | `clock` + your own audio-layer class with a `Cell` pattern       | a sequencer block (there is none)                    |
-| An editable curve driving a parameter over time           | `@audiorective/core/automation`                                  | hand-scheduled ramps                                 |
-| A synth, custom effect, grains, anything else             | your own `AudioProcessor` on core                                | forcing a block to fit                               |
+| You are building…                                           | Use                                                               | Not                                                  |
+| ----------------------------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------- |
+| One-shot hits, pads, SFX; overlapping voices                | core `Sampler` / `Voice`                                          | `WavePlayer` (one playhead)                          |
+| Editable sequenced hits with future choke groups            | blocks `InstrumentEvents` + clock window `own(hit, when)`         | irreversible future `Voice.stop(when)`               |
+| A tempo-locked loop or stem with a scheduled start          | core `BufferPlayer` + `clock`                                     | `FilePlayer` (runs on the media clock)               |
+| A long track, podcast or stream                             | core `FilePlayer`; `widgets/player` for a plain control bar       | `WavePlayer` / waveform selector (decode whole file) |
+| Load a clip, select a range, audition, loop or stretch it   | blocks `WavePlayer`; widgets waveform selector for the UI         | a hand-drawn canvas and range logic                  |
+| Automate a non-looping waveform selection in source seconds | `WavePlayer.attachSourceAutomation(binding)` with core automation | app-owned play token and duplicated time mapping     |
+| A waveform picture from peaks, no audio                     | `@audiorective/widgets/waveform`                                  | the complete selector                                |
+| MIDI file notes: parse, edit, select, piano roll            | `@audiorective/blocks/midi` + `@audiorective/widgets/piano-roll`  | live MIDI input (app code calling your synth)        |
+| A step sequencer, drum machine or transport                 | `clock` + your own audio-layer class with a `Cell` pattern        | a sequencer block (there is none)                    |
+| An editable curve driving a parameter over time             | `@audiorective/core/automation`                                   | hand-scheduled ramps                                 |
+| A synth, custom effect, grains, anything else               | your own `AudioProcessor` on core                                 | forcing a block to fit                               |
 
 ## What to read next
 
@@ -152,29 +153,30 @@ the section you need rather than the whole file:
 
 Then load only what the task needs:
 
-| If you're doing…                                                                           | Also read                                        |
-| ------------------------------------------------------------------------------------------ | ------------------------------------------------ |
-| Designing a whole audio app (multiple sources, multiple UIs, spatial)                      | `references/designing-audio-apps.md`             |
-| Choosing a playback primitive (Sampler vs BufferPlayer vs FilePlayer)                      | `references/choosing-playback.md`                |
-| Sequencing, transport, tempo, a step sequencer or drum machine                             | `references/clock.md`                            |
-| Cancelling queued hits or re-filling a look-ahead window after an edit                     | `references/clock.md` + `references/blocks.md`   |
-| Deciding what goes in the audio layer vs the UI; Cell vs Param                             | `references/architecture.md`                     |
-| Writing or modifying an `AudioProcessor` subclass                                          | the `audio-processor-authoring` skill            |
-| Waveform drawing (`renderer`), range selection/audition, external playhead, visual plugins | `references/widgets.md`                          |
-| Plain Play/Pause, time, seek and volume controls without a waveform                        | `references/widgets.md` → Plain player controls  |
-| Curves, native automation binding, range/time scaling, macro target adapters               | `references/automation.md`                       |
-| Stretching PCM, preserving pitch, cancelling a render                                      | `references/effects.md` → TimeStretch            |
-| PCM min/max summaries and source-frame/time metadata                                       | `references/core.md` → PCM peak summaries        |
-| MIDI files, piano-roll layout/drawing/plugins, note drag/resize and caller-owned audition  | `references/midi.md`                             |
-| Observing block state (`cells`), loading phases, cancel, cached sources, audition          | `references/blocks.md` + `references/widgets.md` |
-| React UI bound to an engine                                                                | `references/react.md`                            |
-| Next.js / Remix / Astro / any app that renders on a server                                 | `references/client-boundary.md`                  |
-| 3D scene with spatial audio (three.js)                                                     | `references/threejs.md` + `architecture.md`      |
-| 3D scene with spatial audio (PlayCanvas)                                                   | `references/playcanvas.md` + `architecture.md`   |
-| PixiJS (2D) audio visualizer or interactive canvas                                         | `references/pixijs.md`                           |
-| Sharing state between React and an imperative view (three.js, Canvas2D, WebGPU)            | `references/architecture.md`                     |
-| Adding effects, building an FX rack, replacing Tone.js effects, offline export             | `references/effects.md`                          |
-| Understanding rationale ("why does this exist?")                                           | `references/overview.md`                         |
+| If you're doing…                                                                           | Also read                                           |
+| ------------------------------------------------------------------------------------------ | --------------------------------------------------- |
+| Designing a whole audio app (multiple sources, multiple UIs, spatial)                      | `references/designing-audio-apps.md`                |
+| Choosing a playback primitive (Sampler vs BufferPlayer vs FilePlayer)                      | `references/choosing-playback.md`                   |
+| Sequencing, transport, tempo, a step sequencer or drum machine                             | `references/clock.md`                               |
+| Cancelling queued hits or re-filling a look-ahead window after an edit                     | `references/clock.md` + `references/blocks.md`      |
+| Deciding what goes in the audio layer vs the UI; Cell vs Param                             | `references/architecture.md`                        |
+| Writing or modifying an `AudioProcessor` subclass                                          | the `audio-processor-authoring` skill               |
+| Waveform drawing (`renderer`), range selection/audition, external playhead, visual plugins | `references/widgets.md`                             |
+| Plain Play/Pause, time, seek and volume controls without a waveform                        | `references/widgets.md` → Plain player controls     |
+| Curves, native automation binding, range/time scaling, macro target adapters               | `references/automation.md`                          |
+| Source-time automation on a stretched WavePlayer selection                                 | `references/blocks.md` + `references/automation.md` |
+| Stretching PCM, preserving pitch, cancelling a render                                      | `references/effects.md` → TimeStretch               |
+| PCM min/max summaries and source-frame/time metadata                                       | `references/core.md` → PCM peak summaries           |
+| MIDI files, piano-roll layout/drawing/plugins, note drag/resize and caller-owned audition  | `references/midi.md`                                |
+| Observing block state (`cells`), loading phases, cancel, cached sources, audition          | `references/blocks.md` + `references/widgets.md`    |
+| React UI bound to an engine                                                                | `references/react.md`                               |
+| Next.js / Remix / Astro / any app that renders on a server                                 | `references/client-boundary.md`                     |
+| 3D scene with spatial audio (three.js)                                                     | `references/threejs.md` + `architecture.md`         |
+| 3D scene with spatial audio (PlayCanvas)                                                   | `references/playcanvas.md` + `architecture.md`      |
+| PixiJS (2D) audio visualizer or interactive canvas                                         | `references/pixijs.md`                              |
+| Sharing state between React and an imperative view (three.js, Canvas2D, WebGPU)            | `references/architecture.md`                        |
+| Adding effects, building an FX rack, replacing Tone.js effects, offline export             | `references/effects.md`                             |
+| Understanding rationale ("why does this exist?")                                           | `references/overview.md`                            |
 
 ## The one rule that always applies
 
@@ -248,17 +250,17 @@ type error on a documented API:
 
 Every other thrown message is listed, with cause and fix, in the reference for its area:
 
-| Message starts with or mentions                                                                                                                                                                           | Read                                        |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| `Waveform…`, `Zoom…`, `Playhead…`, `Plugin…`, `Selection plugin…`                                                                                                                                         | `references/widgets.md` → Common errors     |
-| `No track is loaded.`, `No audio is loaded.`, `Audio is still loading.`, `The audio context is closed.`                                                                                                   | `references/widgets.md` → Common errors     |
-| `Range player…`, `Audio request…`, `Audio download…`, `Audio file…`, `Enter an audio URL.`, `Load progress…`, `Position…`, `Start time…`, `Selection must satisfy…`, `Instrument…`, `Unknown instrument…` | `references/blocks.md` → Common errors      |
-| `Clock owned event time…`                                                                                                                                                                                 | `references/clock.md` → Common errors       |
-| `Stretch…`, `No audio source…`, `WavePlayer needs…`, `Time must be finite…`                                                                                                                               | `references/blocks.md` → Committed versions |
-| `Piano roll…`, `MIDI…`, `MidiSequence…`, `Invalid MIDI file.`, `Only MIDI format…`, `SMPTE…`                                                                                                              | `references/midi.md` → Common errors        |
-| `summarizePeaks:…`, `peakFrameRange:…`                                                                                                                                                                    | `references/core.md` → PCM peak summaries   |
-| `TimeStretch…`, `Rubber Band…`                                                                                                                                                                            | `references/effects.md` → TimeStretch       |
-| `AutomationCurve…`, `AutomationBinding…`                                                                                                                                                                  | `references/automation.md` → Common errors  |
+| Message starts with or mentions                                                                                                                                                                                                 | Read                                        |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| `Waveform…`, `Zoom…`, `Playhead…`, `Plugin…`, `Selection plugin…`                                                                                                                                                               | `references/widgets.md` → Common errors     |
+| `No track is loaded.`, `No audio is loaded.`, `Audio is still loading.`, `The audio context is closed.`                                                                                                                         | `references/widgets.md` → Common errors     |
+| `Range player…`, `Audio request…`, `Audio download…`, `Audio file…`, `Enter an audio URL.`, `Load progress…`, `Position…`, `Start time…`, `Selection must satisfy…`, `Source automation…`, `Instrument…`, `Unknown instrument…` | `references/blocks.md` → Common errors      |
+| `Clock owned event time…`                                                                                                                                                                                                       | `references/clock.md` → Common errors       |
+| `Stretch…`, `No audio source…`, `WavePlayer needs…`, `Time must be finite…`                                                                                                                                                     | `references/blocks.md` → Committed versions |
+| `Piano roll…`, `MIDI…`, `MidiSequence…`, `Invalid MIDI file.`, `Only MIDI format…`, `SMPTE…`                                                                                                                                    | `references/midi.md` → Common errors        |
+| `summarizePeaks:…`, `peakFrameRange:…`                                                                                                                                                                                          | `references/core.md` → PCM peak summaries   |
+| `TimeStretch…`, `Rubber Band…`                                                                                                                                                                                                  | `references/effects.md` → TimeStretch       |
+| `AutomationCurve…`, `AutomationBinding…`                                                                                                                                                                                        | `references/automation.md` → Common errors  |
 
 ## References
 

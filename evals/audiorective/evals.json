@@ -205,22 +205,22 @@
     },
     {
       "id": 14,
-      "prompt": "Use the workspace build of @audiorective to add a source-time gain envelope to a waveform selection. The audio owner already has a WavePlayer, whose output is time-stretched to twice its source duration. Use the optional core automation entry, schedule the selected range and allow live curve replacement. Show stop, manual control takeover and destroy. Also explain how a multi-target Rack macro would adapt without putting Rack knowledge in core. Do not run anything.",
-      "expected_output": "An audio owner borrows WavePlayer and owns a curve and finite AutomationBinding through an explicit native target, with correct source/output mapping and cleanup.",
+      "prompt": "Use the workspace build of @audiorective to add a source-time gain envelope to a non-looping waveform selection. The audio owner already has a WavePlayer, whose output is time-stretched to twice its source duration. Another view may change selection or stretch while play() awaits AudioContext.resume(). Use the optional core automation entry, schedule the selected range and allow live curve replacement. Show stop, manual control takeover and destroy. Also explain how a multi-target Rack macro would adapt without putting Rack knowledge in core. Do not run anything.",
+      "expected_output": "An audio owner borrows WavePlayer and owns a curve and finite AutomationBinding through an explicit native target; WavePlayer attaches the binding and handles source/output mapping, shared start, and pending edits.",
       "files": [],
       "expectations": [
         "Imports AutomationCurve, AutomationBinding and audioParamTarget from @audiorective/core/automation, not the root barrel",
         "Uses outgoing linear/hold shapes and replaces curve.value for validated edits; raw curve.$ writes require a valid sorted immutable snapshot",
         "Passes a native AudioParam (such as params.gain.audioParam) to audioParamTarget, not plain Param or a macro subclass",
-        "Maps output selection through player.outputToSource and secondsPerUnit equal to output/source duration",
+        "Uses player.attachSourceAutomation(binding) so WavePlayer maps output selection and stretch ratio into source-time binding coordinates",
         "Keeps scheduling and lifetime in an audio owner; widget callbacks call methods or change the shared curve",
-        "Stops binding before manual Param.value assignment, target replacement or processor destruction",
+        "Detaches or stops binding before manual native AudioParam or SchedulableParam value assignment, target replacement or processor destruction",
         "Does not implement setInterval/rAF scheduling, copy the scheduler, or claim the binding changes PCM/peaks",
         "Explains AutomationTarget.program receives relative seconds plus absolute when; hold cancels and preserves the value at the supplied absolute audio time",
         "Keeps Rack macro resolution and nonlinear fanout in a block/app adapter; does not use the macro native backing as a substitute",
         "Distinguishes planned curve sampling from existing native ParamSync readback, including disconnected-node limitations",
-        "Starts the player with player.play({ when }) using a lookahead on the audio clock and anchors binding.start({ when }) to the time the promise resolves with; schedules nothing when it resolves null, and does not anchor to player.position after an unscheduled play()",
-        "Guards pending asynchronous playback from selection or stretch changes by invalidating the operation token and queued player start, not only an active binding"
+        "Starts the player with player.play({ when }) using a lookahead on the audio clock; the attachment shares the effective start time and no binding starts when play resolves null",
+        "Lets the attachment invalidate pending playback on selection or stretch edits; does not add an app-owned operation token or copy the selection/time mapping"
       ]
     },
     {

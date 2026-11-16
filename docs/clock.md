@@ -187,7 +187,7 @@ A freshly-started or freshly-seeked segment's very first tick is exempt from thi
 
 ## Live pattern editing
 
-Toggling a step whose window has already been committed takes effect on the _next_ pass, not immediately — an inherent ~`lookAhead` latency. This is an accepted property of look-ahead scheduling, not a bug to work around.
+For unowned events, toggling a step whose window has already been committed takes effect on the _next_ pass, leaving up to `lookAhead` seconds of queued sound. If the step's event was registered with `window.own()`, call `clock.refresh()` after the edit to cancel future owned events and immediately refill that window. A hit that has already started remains active until its owner cancels it.
 
 ## Tick sources
 

@@ -176,42 +176,38 @@ For a waveform selection, an audio owner combines:
 - core curve/binding: source-time envelope and native gain schedule.
 - a GainNode or effect's native parameter: the actual processing.
 
-For output-time selection `[start, end]` and a source-time curve, use
+For output-time selection `[start, end]` and a source-time curve, the mapping is
 `from = player.outputToSource(start)`, `to = player.outputToSource(end)` and
-`secondsPerUnit = player.duration / player.sourceBuffer.duration`. Apply these
-when starting the audition; changing stretch or selection requires the owner to
-stop/re-anchor playback and automation. The core does not read clip IDs, peaks,
+`secondsPerUnit = player.duration / player.sourceBuffer.duration`.
+`WavePlayer.attachSourceAutomation()` applies it at each start and re-anchors
+its binding on selection changes; custom owners can use these same conversions.
+The core does not read clip IDs, peaks,
 tracks or a Rack. It does not alter source PCM or waveform peaks. A processed
 preview or offline render must separately apply the same curve in the same time
 coordinates.
 
-Start the player and the binding from one shared `when`.
-[`WavePlayer.play({ when })`](./blocks.md#scheduled-start) schedules the first
-sound at that absolute audio time and resolves with the effective start time, or
-`null` when it started nothing:
+For a non-looping selection, attach the source-time binding directly to the
+`WavePlayer`. It reads the current selection and stretch version and shares
+the effective start time with the source:
 
 ```typescript
-const token = ++operation; // owner's counter, also bumped on selection/stretch change
-const started = await player.play({ when: context.currentTime + 0.1 });
-if (started === null || token !== operation) return;
-binding.start({ when: started, from, to, secondsPerUnit });
+const detach = player.attachSourceAutomation(binding);
+await player.play({ when: context.currentTime + 0.1 });
+// Manual target takeover: detach(); gain.gain.value = manualValue;
+// Cleanup: detach(); binding.destroy(); player.destroy();
 ```
 
-Anchor the binding to the resolved value, not the requested one. With a
-lookahead long enough for `context.resume()` to settle, the resolved value equals
-the requested `when` and the source onset and the automation share that sample.
-A `when` that has passed clamps to now for both; the source then begins on the
-next render quantum, so that case is aligned to the quantum, not the sample.
-`from` must match the position the player starts from: with a selection, seek to
-its start (or stop) before playing.
-
-Keep a pending play operation’s source revision and selection alongside its
-operation token. A selection/stretch change must invalidate that token and stop
-the queued player start as well as the binding, even while `resume()`/`play()` is
-still awaiting: a `seek` or selection change before `when` re-issues the player
-start from a new position at the same `when`, and a stretch commit cancels it, so
-a binding programmed for the old range no longer matches. Observing only an
-already-active binding misses this race.
+The attachment replaces the caller's operation token and mapping for this
+single-playhead case. It invalidates a play still waiting for `context.resume()`
+when selection or stretch changes, and reprograms both source and binding after
+a queued selection edit. A stretch edit cancels a queued start. `play()` still
+resolves with the effective start time, or `null` when nothing started. Schedule
+with enough lookahead for `resume()` to settle; when a requested start has passed,
+source and envelope can only align at the next render quantum. Detach before
+direct writes to the target or replacing it. The player borrows the binding, so
+destroy the binding separately. Looping requires a different, repeating
+automation owner; this attachment rejects it. For custom players or multiple
+clip timelines, the app still owns their transport and coordinate conversion.
 
 For a Rack, keep the adapter in the block/app: resolve macro targets and program
 each native timeline in `program`, and hold all of them in `hold`. Rack lifetime,

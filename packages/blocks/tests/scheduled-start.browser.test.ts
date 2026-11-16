@@ -69,7 +69,9 @@ test("a source onset and a gain automation started from one shared `when` line u
     { time: STEP, value: 0.25, shape: "hold" },
   ]);
   const binding = new AutomationBinding(context, curve, audioParamTarget(envelope.gain));
+  const detach = player.attachSourceAutomation(binding);
   disposers.push(
+    () => detach(),
     () => binding.destroy(),
     () => envelope.disconnect(),
   );
@@ -78,7 +80,6 @@ test("a source onset and a gain automation started from one shared `when` line u
   const when = context.currentTime + 0.25 + 0.37 / rate;
   const started = await player.play({ when });
   expect(started).toBe(when);
-  binding.start({ when: started!, to: 1 });
 
   await until(context, when - 0.12);
   expect(context.currentTime).toBeLessThan(when);
@@ -101,6 +102,185 @@ test("a source onset and a gain automation started from one shared `when` line u
   // Absolute onset: the snapshot ends near `captured`; the analyser lags the clock by a few render quanta.
   const onsetTime = captured - (data.length - onset) / rate;
   expect(Math.abs(onsetTime - when)).toBeLessThan(0.02);
+});
+
+test("source automation maps a stretched output selection and follows a queued selection edit", async () => {
+  const context = new AudioContext();
+  const stretch = {
+    async process(input: { sampleRate: number; channels: Float32Array[] }, { ratio }: { ratio: number }) {
+      return { sampleRate: input.sampleRate, channels: input.channels.map((channel) => new Float32Array(Math.round(channel.length * ratio))) };
+    },
+  };
+  const player = new WavePlayer(context, { stretch });
+  const program = vi.fn();
+  const hold = vi.fn();
+  const binding = new AutomationBinding(
+    context,
+    new AutomationCurve([
+      { time: 0, value: 0, shape: "linear" },
+      { time: 2, value: 1, shape: "hold" },
+    ]),
+    { program, hold },
+  );
+  const detach = player.attachSourceAutomation(binding);
+  disposers.push(
+    () => context.close(),
+    () => player.destroy(),
+    () => binding.destroy(),
+    () => detach(),
+  );
+  await context.resume();
+  await player.load(bands(context, 2));
+  await player.setStretch(2);
+  player.setSelection({ start: 0.5, end: 1.5 });
+  const when = context.currentTime + 0.3;
+  expect(await player.play({ when })).toBe(when);
+  expect(program).toHaveBeenCalled();
+  expect(program.mock.calls.at(-1)![1]).toBe(when);
+  expect(program.mock.calls.at(-1)![0].at(-1).time).toBeCloseTo(1, 5); // (0.75 - 0.25) source seconds at 2x
+  player.setSelection({ start: 1, end: 2 });
+  expect(player.position).toBe(1);
+  expect(program.mock.calls.at(-1)![1]).toBe(when);
+  expect(program.mock.calls.at(-1)![0][0].value).toBeCloseTo(0.25, 5); // source second 0.5 on a 0..2 ramp
+  expect(hold).toHaveBeenCalled();
+  detach();
+  expect(hold.mock.calls.at(-1)![0]).toBeGreaterThanOrEqual(context.currentTime);
+  expect(player.isPlaying).toBe(true); // detaching automation leaves borrowed playback alive
+});
+
+test("a selection edit invalidates a play still awaiting resume when source automation is attached", async () => {
+  const { context, player } = await fixture();
+  await player.load(bands(context));
+  const program = vi.fn();
+  const binding = new AutomationBinding(context, new AutomationCurve([{ time: 0, value: 1, shape: "hold" }]), {
+    program,
+    hold: vi.fn(),
+  });
+  const detach = player.attachSourceAutomation(binding);
+  disposers.push(
+    () => binding.destroy(),
+    () => detach(),
+  );
+  let release!: () => void;
+  vi.spyOn(context, "resume").mockReturnValue(new Promise<void>((done) => (release = done)));
+  const pendingSelection = player.play({ when: context.currentTime + 0.2 });
+  player.setSelection({ start: 1, end: 2 });
+  release();
+  expect(await pendingSelection).toBeNull();
+  expect(player.isPlaying).toBe(false);
+  expect(program).not.toHaveBeenCalled();
+});
+
+test("starting an unfinished stretch invalidates pending and queued source automation", async () => {
+  const context = new AudioContext();
+  let resolveRender!: (value: { sampleRate: number; channels: Float32Array[] }) => void;
+  const player = new WavePlayer(context, {
+    stretch: {
+      process() {
+        return new Promise((resolve) => (resolveRender = resolve));
+      },
+    },
+  });
+  const program = vi.fn();
+  const hold = vi.fn();
+  const binding = new AutomationBinding(context, new AutomationCurve([{ time: 0, value: 1, shape: "hold" }]), { program, hold });
+  const detach = player.attachSourceAutomation(binding);
+  disposers.push(
+    () => context.close(),
+    () => player.destroy(),
+    () => binding.destroy(),
+    () => detach(),
+  );
+  await context.resume();
+  await player.load(bands(context, 1));
+  let release!: () => void;
+  vi.spyOn(context, "resume").mockReturnValue(new Promise<void>((done) => (release = done)));
+  const pendingStretch = player.play({ when: context.currentTime + 0.2 });
+  const stretching = player.setStretch(1.5);
+  expect(player.getState().processing).toBe(true);
+  release();
+  expect(await pendingStretch).toBeNull();
+  expect(program).not.toHaveBeenCalled();
+  resolveRender({ sampleRate: context.sampleRate, channels: [new Float32Array(Math.round(context.sampleRate * 1.5))] });
+  await stretching;
+
+  vi.restoreAllMocks();
+  const when = context.currentTime + 0.3;
+  expect(await player.play({ when })).toBe(when);
+  expect(program).toHaveBeenCalledTimes(1);
+  const secondStretch = player.setStretch(1.5);
+  expect(player.isPlaying).toBe(false); // queued start is withdrawn before the render commits
+  expect(hold).toHaveBeenCalled();
+  resolveRender({ sampleRate: context.sampleRate, channels: [new Float32Array(Math.round(context.sampleRate * 1.5))] });
+  await secondStretch;
+});
+
+test("source automation rejects another audio clock and looping, and manual detach stops binding before target writes", async () => {
+  const { context, player } = await fixture();
+  const other = new AudioContext();
+  disposers.push(() => other.close());
+  await player.load(bands(context));
+  const gain = new GainNode(context);
+  const curve = new AutomationCurve([{ time: 0, value: 1, shape: "hold" }]);
+  const wrong = new AutomationBinding(other, curve, audioParamTarget(gain.gain));
+  const binding = new AutomationBinding(context, curve, audioParamTarget(gain.gain));
+  disposers.push(
+    () => wrong.destroy(),
+    () => binding.destroy(),
+    () => gain.disconnect(),
+  );
+  expect(() => player.attachSourceAutomation(wrong)).toThrow("Source automation must use the player's AudioContext.");
+  const detach = player.attachSourceAutomation(binding);
+  expect(() => player.setLooping(true)).toThrow("Source automation requires non-looping playback.");
+  expect(await player.play({ when: context.currentTime + 0.2 })).not.toBeNull();
+  detach();
+  gain.gain.value = 0.4;
+  expect(gain.gain.value).toBeCloseTo(0.4, 2);
+  expect(player.isPlaying).toBe(true);
+  player.destroy();
+  expect(() => binding.start()).not.toThrow(); // player borrowed the binding; it did not destroy it
+});
+
+test("a reentrant automation target can pause without the old play starting sound", async () => {
+  const { context, player, analyser } = await fixture();
+  player.output.connect(analyser);
+  await player.load(bands(context));
+  const program = vi.fn(() => player.pause());
+  const binding = new AutomationBinding(context, new AutomationCurve([{ time: 0, value: 1, shape: "hold" }]), {
+    program,
+    hold: vi.fn(),
+  });
+  const detach = player.attachSourceAutomation(binding);
+  disposers.push(
+    () => binding.destroy(),
+    () => detach(),
+  );
+  expect(await player.play({ when: context.currentTime + 0.2 })).toBeNull();
+  expect(player.isPlaying).toBe(false);
+  expect(program).toHaveBeenCalledTimes(1);
+  await delay(280);
+  expect(peak(analyser)).toBeLessThan(0.001);
+});
+
+test("a failing automation hold does not prevent player cleanup", async () => {
+  const { context, player } = await fixture();
+  await player.load(bands(context));
+  const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+  const binding = new AutomationBinding(context, new AutomationCurve([{ time: 0, value: 1, shape: "hold" }]), {
+    program() {},
+    hold() {
+      throw new Error("target gone");
+    },
+  });
+  const detach = player.attachSourceAutomation(binding);
+  disposers.push(
+    () => binding.destroy(),
+    () => detach(),
+  );
+  expect(await player.play({ when: context.currentTime + 0.2 })).not.toBeNull();
+  expect(() => player.destroy()).not.toThrow();
+  expect(player.isPlaying).toBe(false);
+  expect(errorLog).toHaveBeenCalledWith("WavePlayer source automation stop failed:", expect.any(Error));
 });
 
 test("a queued start counts as playing, holds position until `when`, then follows the clock", async () => {

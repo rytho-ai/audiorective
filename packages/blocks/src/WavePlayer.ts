@@ -10,6 +10,7 @@ import {
   type SchedulableParam,
 } from "@audiorective/core";
 import { summarizePeaks, type PCMData, type PeakSummary } from "@audiorective/core/peaks";
+import type { AutomationBinding } from "@audiorective/core/automation";
 import { loadSource, type WaveLoadProgress, type WaveSourceLoader } from "./source";
 
 /** A processor is borrowed; its lifetime belongs to the caller. */
@@ -92,6 +93,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
   private disposed = false;
   private depth = 0;
   private readonly listeners = new Set<() => void>();
+  private readonly sourceAutomations = new Set<AutomationBinding>();
   private original: AudioBuffer | null = null;
   private sourceRevision = 0;
   private revision = 0;
@@ -240,6 +242,42 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
+  /** Borrow a source-time binding and follow this player's non-looping playback. Detach before manual target writes. */
+  attachSourceAutomation(binding: AutomationBinding): () => void {
+    this.assertAlive();
+    if (binding.context !== this.context) throw new Error("Source automation must use the player's AudioContext.");
+    if (this.looping) throw new Error("Source automation requires non-looping playback.");
+    if (!this.sourceAutomations.has(binding)) {
+      binding.stop();
+      this.sourceAutomations.add(binding);
+      try {
+        if (this.anchor && this.isPlaying) this.startSourceAutomation(binding, this.position, this.anchor.end, this.startTime());
+      } catch (error) {
+        this.sourceAutomations.delete(binding);
+        throw error;
+      }
+    }
+    return () => {
+      if (this.sourceAutomations.delete(binding)) this.stopSourceAutomation(binding);
+    };
+  }
+  private stopSourceAutomation(binding: AutomationBinding): void {
+    try {
+      binding.stop();
+    } catch (error) {
+      console.error("WavePlayer source automation stop failed:", error);
+    }
+  }
+  private startSourceAutomation(binding: AutomationBinding, offset: number, end: number, when: number): void {
+    const source = this.original;
+    if (!source) return;
+    binding.start({
+      when,
+      from: this.outputToSource(offset),
+      to: this.outputToSource(end),
+      secondsPerUnit: this.duration / source.duration,
+    });
+  }
   private assertAlive(): void {
     if (this.disposed) throw new Error("Range player is destroyed.");
   }
@@ -271,13 +309,14 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
   }
   private halt(): void {
     ++this.command;
+    for (const binding of this.sourceAutomations) this.stopSourceAutomation(binding);
     this.held = this.position;
     this.anchor = null;
     this.player.stop();
   }
-  /** Starts at `when`, clamped to now, and returns the effective start time. Every start is a new command. */
-  private begin(offset: number, when = 0): number {
-    ++this.command;
+  /** Starts at `when`, clamped to now; null means a reentrant command superseded this start. */
+  private begin(offset: number, when = 0): number | null {
+    const command = ++this.command;
     this.player.stop();
     const { start, end } = this.bounds();
     offset = Math.max(start, Math.min(end, offset));
@@ -287,9 +326,23 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
     this.player.loopEnd = end;
     this.player.loop = this.looping;
     const time = Math.max(this.context.currentTime, when);
-    this.anchor = { time, offset, start, end };
-    this.player.start(time, offset);
-    if (!this.looping) this.player.stop(time + end - offset);
+    this.anchor = null;
+    try {
+      for (const binding of this.sourceAutomations) {
+        this.startSourceAutomation(binding, offset, end, time);
+        if (this.command !== command || this.disposed) return null; // a target adapter may re-enter the player
+      }
+      this.player.start(time, offset);
+      if (this.command !== command || this.disposed) return null;
+      if (!this.looping) this.player.stop(time + end - offset);
+      this.anchor = { time, offset, start, end };
+    } catch (error) {
+      if (this.command === command) {
+        for (const binding of this.sourceAutomations) this.stopSourceAutomation(binding);
+        this.player.stop();
+      }
+      throw error;
+    }
     return time;
   }
   /** Resolves with the audio time at which sound starts, or null when this call started nothing. */
@@ -303,10 +356,10 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
     if (this.disposed || command !== this.command || !this.buffer) return null;
     // Fix this start's identity inside the change: observers notified by it may pause, seek or play again.
     let started = 0,
-      time = 0;
+      time: number | null = null;
     this.change(() => {
       time = this.begin(this.position, when);
-      started = this.command;
+      started = time === null ? 0 : this.command;
     });
     return started === this.command ? time : null;
   }
@@ -348,6 +401,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
     this.change(() => {
       const playing = this.isPlaying,
         position = this.position;
+      if (!playing && this.sourceAutomations.size) ++this.command; // invalidate a play still awaiting context.resume()
       this.range = selection ? { start: selection.start, end: selection.end } : null;
       if (!selection) this.looping = false;
       if (playing) {
@@ -362,6 +416,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
   }
   setLooping(looping: boolean): void {
     this.assertAlive();
+    if (looping && this.sourceAutomations.size) throw new Error("Source automation requires non-looping playback.");
     if (this.looping === looping) return;
     this.change(() => {
       const playing = this.isPlaying,
@@ -397,6 +452,10 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
     let id = 0,
       sourceRevision = 0;
     this.change(() => {
+      if (this.sourceAutomations.size) {
+        if (this.anchor && this.anchor.time > this.context.currentTime) this.halt();
+        else ++this.command; // invalidate a play still awaiting context.resume()
+      }
       this.cancelStretch();
       id = this.editRequest;
       sourceRevision = this.sourceRevision;
@@ -540,6 +599,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
       this.abort?.abort();
       this.abort = null;
       this.halt();
+      this.sourceAutomations.clear();
       this.player.buffer = null;
       this.range = null;
       this.looping = false;
