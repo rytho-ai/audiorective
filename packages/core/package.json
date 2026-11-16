@@ -23,6 +23,7 @@
   "exports": {
     ".": "./dist/index.js",
     "./peaks": "./dist/peaks.js",
+    "./automation": "./dist/automation.js",
     "./package.json": "./package.json"
   },
   "scripts": {

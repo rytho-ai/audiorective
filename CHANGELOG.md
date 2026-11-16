@@ -19,6 +19,8 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Added
 
+- **core:** Optional `@audiorective/core/automation` entry with immutable reactive `AutomationCurve`, finite audio-clock `AutomationBinding`, and explicit `audioParamTarget`. Supports linear/hold curves, range/time scaling, live reprogramming, native hold/cancel and borrowed-target cleanup without importing blocks or effects.
+
 - **widgets:** `PianoRollOptions.layout` replaces the surrounding keyboard, toolbar and arrangement while retaining the supplied viewport and widget behavior. `onNoteEdit` enables widget-owned move/edge-resize previews, shared beat snap/Alt bypass and single-release model commands; custom note renderers forward `onNotePointerDown` instead of implementing gestures. Source/geometry changes, cancellation and cleanup discard previews. MIDI showroom demonstrates alternate layout/drawing with shared editing.
 
 - **widgets:** `PianoRollHandle.attach(plugin)` accepts the existing `WaveformPlugin` contract for public time coordinates, overlays, viewport/data notifications and attachment-scoped cleanup. Waveform and piano-roll share plugin disposal; detachment and failed attachment preserve peer views, borrowed models and caller audio.

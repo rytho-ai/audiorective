@@ -10,6 +10,9 @@ Audio state is the single source of truth. UI frameworks observe and mutate dire
 
 For data-only waveform summaries, use the [`@audiorective/core/peaks`](#pcm-peak-summaries) entry. It requires neither Web Audio nor a DOM.
 
+For reactive curves, native parameter scheduling and domain adapters, use the optional
+[`@audiorective/core/automation`](./automation) entry.
+
 ## Quick Start
 
 ```typescript

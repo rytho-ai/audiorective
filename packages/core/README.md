@@ -8,6 +8,11 @@ Reactive primitives for Web Audio. The foundation package — everything else bu
 npm install @audiorective/core
 ```
 
+For immutable reactive curves and finite native automation scheduling, import
+`AutomationCurve`, `AutomationBinding` and `audioParamTarget` from the optional
+`@audiorective/core/automation` entry. See [Automation](../../docs/automation.md)
+for live edits, cancellation, time mapping and target ownership.
+
 ## Param
 
 Reactive parameter with a `.value` getter/setter matching Web Audio conventions. Built on [alien-signals](https://github.com/nicepkg/alien-signals).

@@ -65,8 +65,6 @@ class Synth extends AudioProcessor<{ volume: SchedulableParam; bpm: Param<number
   }
 }
 
-// audio/engine.ts — module scope is correct here, as long as this module only
-// ever loads in the browser (see "client-only" below)
 export const engine = createEngine((ctx) => {
   const synth = new Synth(ctx);
   synth.output.connect(ctx.destination);
@@ -106,10 +104,6 @@ export function App() {
 }
 ```
 
-Vanilla, three.js, PlayCanvas, and Pixi follow the same shape: build the engine
-once, read params through `effect()`/`useValue`, write with `.value`, and call
-processor methods for anything scheduled.
-
 ## Packages
 
 | Package                    | Purpose                                                                                                                                         | Reference                  |
@@ -148,6 +142,7 @@ Then load only what the task needs:
 | Deciding what goes in the audio layer vs the UI; Cell vs Param                             | `references/architecture.md`                     |
 | Writing or modifying an `AudioProcessor` subclass                                          | the `audio-processor-authoring` skill            |
 | Waveform drawing (`renderer`), range selection/audition, external playhead, visual plugins | `references/widgets.md`                          |
+| Curves, native automation binding, range/time scaling, macro target adapters               | `references/automation.md`                       |
 | Stretching PCM, preserving pitch, cancelling a render                                      | `references/effects.md` → TimeStretch            |
 | PCM min/max summaries and source-frame/time metadata                                       | `references/core.md` → PCM peak summaries        |
 | MIDI files, piano-roll layout/drawing/plugins, note drag/resize and caller-owned audition  | `references/midi.md`                             |
@@ -266,34 +261,38 @@ type error on a documented API:
 
 ### PCM and stretch errors
 
-| Symptom                                                                                             | Cause                            | Fix                                                                              |
-| --------------------------------------------------------------------------------------------------- | -------------------------------- | -------------------------------------------------------------------------------- |
-| `summarizePeaks: sampleRate must be a finite positive number`                                       | Invalid PCM rate                 | Provide the actual finite positive source sample rate.                           |
-| `summarizePeaks: framesPerPeak must be a positive safe integer`                                     | Invalid bin size                 | Use whole source frames, default 128.                                            |
-| `summarizePeaks: at least one channel is required`                                                  | No PCM channels                  | Provide at least one Float32Array.                                               |
-| `summarizePeaks: every channel must be a Float32Array`                                              | Wrong sample representation      | Convert decoded samples to Float32Array.                                         |
-| `summarizePeaks: channels must have equal frame counts`                                             | Unequal channel lengths          | Use planar channels of equal length.                                             |
-| `summarizePeaks: samples must be finite numbers`                                                    | NaN/Infinity samples             | Repair or reject invalid PCM.                                                    |
-| `peakFrameRange: index must identify an existing peak`                                              | Invalid bin index                | Check min.length; empty input has no bins.                                       |
-| `TimeStretch requires a compiled WebAssembly.Module.`                                               | Missing/wrong backend            | Compile the caller-hosted compatible WASM before construction.                   |
-| `TimeStretch is destroyed.`                                                                         | Processor already cleaned up     | Create a new processor; block borrows it.                                        |
-| `TimeStretch processing was aborted.`                                                               | Cancelled render                 | Handle AbortError; do not publish partial output.                                |
-| `TimeStretch ratio must be positive and produce at least one frame.`                                | Invalid ratio/result size        | Use a finite positive duration ratio; output rounds to whole frames.             |
-| `TimeStretch needs finite equal-length PCM channels and an integer sampleRate from 8000 to 192000.` | Unsupported PCM                  | Use equal finite Float32 channels at a supported integer rate.                   |
-| `TimeStretch requires Web Workers.`                                                                 | No browser Worker runtime        | Process in a browser with Workers.                                               |
-| `TimeStretch: unsupported Rubber Band WASM ABI.`                                                    | Wrong module exports             | Use the documented rubberband-wasm3.3 C ABI.                                     |
-| `TimeStretch produced an unexpected frame count.`                                                   | Backend duration mismatch        | Check WASM compatibility; keep the prior block version.                          |
-| `TimeStretch produced nonfinite PCM.`                                                               | Backend produced invalid samples | Reject this render and check the backend/input.                                  |
-| `TimeStretch could not create a Rubber Band state.`                                                 | Backend initialization failed    | Check module/input support and available memory.                                 |
-| `TimeStretch allocation failed.`                                                                    | Backend allocation failed        | Use a smaller source/job or release other jobs.                                  |
-| `Rubber Band exited: …`                                                                             | Backend exited                   | Check the supplied module and input; retain prior playback.                      |
-| `TimeStretch worker failed.`                                                                        | Worker startup/execution failure | Check Worker/blob CSP and supplied module.                                       |
-| `Stretch ratio must be finite and positive.`                                                        | Invalid block edit               | Use a finite duration multiplier greater than zero.                              |
-| `No audio source is loaded.`                                                                        | Edit before load                 | Await player.load before setStretch.                                             |
-| `WavePlayer needs a stretch processor.`                                                             | No injected processor            | Construct WavePlayer(ctx, { stretch }); caller destroys stretch.                 |
-| `Stretch processor returned incompatible PCM.`                                                      | Wrong rendered shape             | Keep original sample rate/channel count and round(originalFrames\*ratio) frames. |
-| `Time must be finite seconds.`                                                                      | Invalid coordinate conversion    | Pass finite source/output seconds.                                               |
+| Symptom                                                                                              | Cause                                 | Fix                                                                                                                          |
+| ---------------------------------------------------------------------------------------------------- | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `summarizePeaks: sampleRate must be a finite positive number`                                        | Invalid PCM rate                      | Provide the actual finite positive source sample rate.                                                                       |
+| `summarizePeaks: framesPerPeak must be a positive safe integer`                                      | Invalid bin size                      | Use whole source frames, default 128.                                                                                        |
+| `summarizePeaks: at least one channel is required`                                                   | No PCM channels                       | Provide at least one Float32Array.                                                                                           |
+| `summarizePeaks: every channel must be a Float32Array`                                               | Wrong sample representation           | Convert decoded samples to Float32Array.                                                                                     |
+| `summarizePeaks: channels must have equal frame counts`                                              | Unequal channel lengths               | Use planar channels of equal length.                                                                                         |
+| `summarizePeaks: samples must be finite numbers`                                                     | NaN/Infinity samples                  | Repair or reject invalid PCM.                                                                                                |
+| `peakFrameRange: index must identify an existing peak`                                               | Invalid bin index                     | Check min.length; empty input has no bins.                                                                                   |
+| `TimeStretch requires a compiled WebAssembly.Module.`                                                | Missing/wrong backend                 | Compile the caller-hosted compatible WASM before construction.                                                               |
+| `TimeStretch is destroyed.`                                                                          | Processor already cleaned up          | Create a new processor; block borrows it.                                                                                    |
+| `TimeStretch processing was aborted.`                                                                | Cancelled render                      | Handle AbortError; do not publish partial output.                                                                            |
+| `TimeStretch ratio must be positive and produce at least one frame.`                                 | Invalid ratio/result size             | Use a finite positive duration ratio; output rounds to whole frames.                                                         |
+| `TimeStretch needs finite equal-length PCM channels and an integer sampleRate from 8000 to 192000.`  | Unsupported PCM                       | Use equal finite Float32 channels at a supported integer rate.                                                               |
+| `TimeStretch requires Web Workers.`                                                                  | No browser Worker runtime             | Process in a browser with Workers.                                                                                           |
+| `TimeStretch: unsupported Rubber Band WASM ABI.`                                                     | Wrong module exports                  | Use the documented rubberband-wasm3.3 C ABI.                                                                                 |
+| `TimeStretch produced an unexpected frame count.`                                                    | Backend duration mismatch             | Check WASM compatibility; keep the prior block version.                                                                      |
+| `TimeStretch produced nonfinite PCM.`                                                                | Backend produced invalid samples      | Reject this render and check the backend/input.                                                                              |
+| `TimeStretch could not create a Rubber Band state.`                                                  | Backend initialization failed         | Check module/input support and available memory.                                                                             |
+| `TimeStretch allocation failed.`                                                                     | Backend allocation failed             | Use a smaller source/job or release other jobs.                                                                              |
+| `Rubber Band exited: …`                                                                              | Backend exited                        | Check the supplied module and input; retain prior playback.                                                                  |
+| `TimeStretch worker failed.`                                                                         | Worker startup/execution failure      | Check Worker/blob CSP and supplied module.                                                                                   |
+| `Stretch ratio must be finite and positive.`                                                         | Invalid block edit                    | Use a finite duration multiplier greater than zero.                                                                          |
+| `No audio source is loaded.`                                                                         | Edit before load                      | Await player.load before setStretch.                                                                                         |
+| `WavePlayer needs a stretch processor.`                                                              | No injected processor                 | Construct WavePlayer(ctx, { stretch }); caller destroys stretch.                                                             |
+| `Stretch processor returned incompatible PCM.`                                                       | Wrong rendered shape                  | Keep original sample rate/channel count and round(originalFrames\*ratio) frames.                                             |
+| `AutomationCurve needs nonempty finite points with nonnegative unique times and linear/hold shapes.` | Invalid curve replacement             | Supply finite `{ time, value, shape }` points with unique times >= 0; replace `.value` instead of mutating frozen snapshots. |
+| `AutomationCurve sample time must be finite.`                                                        | Nonfinite query                       | Pass finite curve coordinates to `valueAt`.                                                                                  |
+| `AutomationBinding needs finite nonnegative times, to >= from, and positive secondsPerUnit.`         | Invalid start/range/scale or overflow | Correct start options; current run is preserved.                                                                             |
+| `AutomationBinding is destroyed.`                                                                    | Reusing disposed binding              | Create a new binding; destroy bindings before their borrowed targets.                                                        |
+| `Time must be finite seconds.`                                                                       | Invalid coordinate conversion         | Pass finite source/output seconds.                                                                                           |
 
 ## References
 
-- [Installation](references/installation.md) · [Blocks](references/blocks.md) · [Widgets](references/widgets.md) · [MIDI/Piano Roll](references/midi.md) · [Core](references/core.md) · [Architecture](references/architecture.md) · [Designing Audio Apps](references/designing-audio-apps.md) · [Choosing Playback](references/choosing-playback.md) · [Clock](references/clock.md) · [Effects](references/effects.md) · [React](references/react.md) · [three.js](references/threejs.md) · [PlayCanvas](references/playcanvas.md) · [PixiJS](references/pixijs.md) · [Server-rendered frameworks](references/client-boundary.md) · [Overview](references/overview.md) · [Changelog](references/changelog.md)
+- [Installation](references/installation.md) · [Blocks](references/blocks.md) · [Widgets](references/widgets.md) · [MIDI/Piano Roll](references/midi.md) · [Core](references/core.md) · [Automation](references/automation.md) · [Architecture](references/architecture.md) · [Designing Audio Apps](references/designing-audio-apps.md) · [Choosing Playback](references/choosing-playback.md) · [Clock](references/clock.md) · [Effects](references/effects.md) · [React](references/react.md) · [three.js](references/threejs.md) · [PlayCanvas](references/playcanvas.md) · [PixiJS](references/pixijs.md) · [Server-rendered frameworks](references/client-boundary.md) · [Overview](references/overview.md) · [Changelog](references/changelog.md)

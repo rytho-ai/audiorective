@@ -202,6 +202,25 @@
         "Documents cancellation on Escape, pointercancel, source/geometry replacement and destruction, preserving peer/model/audio lifetime.",
         "Keeps background range selection separate from note editing and does not promise auto-scroll, multi-note editing or lossless SMF export."
       ]
+    },
+    {
+      "id": 14,
+      "prompt": "Use the workspace build of @audiorective to add a source-time gain envelope to a waveform selection. The audio owner already has a WavePlayer, whose output is time-stretched to twice its source duration. Use the optional core automation entry, schedule the selected range and allow live curve replacement. Show stop, manual control takeover and destroy. Also explain how a multi-target Rack macro would adapt without putting Rack knowledge in core. Do not run anything.",
+      "expected_output": "An audio owner borrows WavePlayer and owns a curve and finite AutomationBinding through an explicit native target, with correct source/output mapping and cleanup.",
+      "files": [],
+      "expectations": [
+        "Imports AutomationCurve, AutomationBinding and audioParamTarget from @audiorective/core/automation, not the root barrel",
+        "Uses outgoing linear/hold shapes and replaces curve.value for validated edits; raw curve.$ writes require a valid sorted immutable snapshot",
+        "Passes a native AudioParam (such as params.gain.audioParam) to audioParamTarget, not plain Param or a macro subclass",
+        "Maps output selection through player.outputToSource and secondsPerUnit equal to output/source duration",
+        "Keeps scheduling and lifetime in an audio owner; widget callbacks call methods or change the shared curve",
+        "Stops binding before manual Param.value assignment, target replacement or processor destruction",
+        "Does not implement setInterval/rAF scheduling, copy the scheduler, or claim the binding changes PCM/peaks",
+        "Explains AutomationTarget.program receives relative seconds plus absolute when; hold cancels and preserves the value at the supplied absolute audio time",
+        "Keeps Rack macro resolution and nonlinear fanout in a block/app adapter; does not use the macro native backing as a substitute",
+        "Distinguishes planned curve sampling from existing native ParamSync readback, including disconnected-node limitations",
+        "Guards pending asynchronous playback from selection or stretch changes by invalidating the operation token and queued player start, not only an active binding"
+      ]
     }
   ]
 }
