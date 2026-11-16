@@ -27,7 +27,20 @@ Report both directions. A description that fires on everything scores perfectly 
 
 ## Running functional evals
 
-Run each prompt in `evals.json` with the skill installed in a scratch workspace, then grade the transcript and outputs against `expectations` (skill-creator's `agents/grader.md` describes the grading pass). Compare against the same prompt without the skill, or with the previous version of the skill, to see what the skill actually changes.
+`run_functional_evals.mjs` answers every prompt in `evals.json` with `claude -p` from a throwaway project whose `.claude/skills/` holds a dereferenced copy of the skill under test and its sibling skills. The solver can only read (`Skill`, `Read`, `Glob`, `Grep`), so its answer is its final reply. A second `claude -p` call with no tools and no skill grades that reply against the prompt's `expectations`; it is never told which version of the skill produced the answer.
+
+```sh
+node evals/run_functional_evals.mjs audiorective --json /tmp/after.json
+
+# the same prompts against another version of the skill (e.g. a checkout of main)
+node evals/run_functional_evals.mjs audiorective --skill-dir ../audiorective-main/skills/audiorective --json /tmp/before.json
+
+node evals/run_functional_evals.mjs audiorective --ids 3,16,20 --runs 2 --model sonnet
+```
+
+Options: `--skill-dir`, `--ids <a,b,c>`, `--limit <n>`, `--runs` (1), `--concurrency` (4), `--timeout` seconds (600), `--model`, `--grader-model`, `--json <file>`. The report lists each eval's expectations met, whether the skill was opened, and which reference files were read; the JSON also keeps every answer and the grader's evidence. A run that does not complete is reported as an error and excluded from the totals, and the exit code is non-zero.
+
+Before changing a skill, run the set against the current skill and keep the JSON as the baseline, then run it again after the change with the same `--model`. Answers vary between runs, so treat a single-run drop on one eval as a reason to rerun that eval on both versions (`--ids`, `--runs 3`), not as a regression. Compare against the same prompt without the skill to see what the skill itself contributes (skill-creator's `agents/grader.md` describes that grading pass).
 
 ## Maintaining the sets
 
