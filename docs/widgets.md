@@ -4,9 +4,75 @@ title: Widgets
 
 Try the [waveform showroom](/showroom/waveform) for a working selector, or the [piano-roll showroom](/showroom/piano-roll) for shared MIDI views. See [MIDI and Piano Roll](./midi.md) for `mountPianoRoll` from the audio-independent `@audiorective/widgets/piano-roll` entry.
 
-`@audiorective/widgets` provides browser DOM widgets that mount into an element and return an imperative handle. Use `mountWaveformSelector` for loading audio, selecting a range, and auditioning it. Use the audio-independent `@audiorective/widgets/waveform` entry for a waveform driven by your own data and playback position.
+`@audiorective/widgets` provides browser DOM widgets that mount into an element and return an imperative handle. Use `mountPlayer` for ordinary playback controls without a waveform, `mountWaveformSelector` for loading audio, selecting a range, and auditioning it, or the audio-independent `@audiorective/widgets/waveform` entry for a waveform driven by your own data and playback position.
 
 The widgets implement their own waveform display and interaction. They require no UI framework or WaveSurfer dependency. The selector uses [WavePlayer](./blocks.md) for audio and selection. Pass a shared `player`, or supply `context` to let the selector own one. Its public audio connection is `handle.output`.
+
+## Plain player controls
+
+`@audiorective/widgets/player` mounts Play/Pause, position, duration and volume controls on a caller-owned player. It works without waveform decoding, so use `FilePlayer` for long tracks, podcasts and streams. The widget borrows the player: removing the controls leaves playback and the audio graph running.
+
+```typescript
+import { FilePlayer } from "@audiorective/core";
+import { fromFilePlayer, mountPlayer } from "@audiorective/widgets/player";
+
+const context = new AudioContext();
+const player = new FilePlayer(context, { src: "/music/track.mp3" });
+player.output.connect(context.destination);
+
+const controls = mountPlayer(document.querySelector<HTMLElement>("#player")!, {
+  player: fromFilePlayer(player),
+});
+
+// When this view is removed:
+controls.destroy(); // playback continues; the caller still owns player and context
+// At the end of the app's audio lifetime: player.destroy(); await context.close();
+```
+
+Call `mountPlayer` in a browser, behind a client-only boundary when the app also renders on a server. The caller routes and starts its audio context. A single player can drive several views; each view keeps only its own drag and error display state. `destroy()` is idempotent and removes DOM, effects, subscriptions and animation frames without stopping or destroying the player.
+
+### Pick an adapter
+
+`mountPlayer(root, { player, renderer?, label? })` accepts a `PlayerLike`. The three adapters provide that shape for existing players:
+
+| Adapter                    | Controls                 | Position and duration                                                                           | Playback failure reported                                |
+| -------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `fromFilePlayer(player)`   | Play/Pause, seek, volume | Reactive `currentTime` and `duration`; unknown length is supported                              | A blocked or rejected `audio.play()` and a missing track |
+| `fromWavePlayer(player)`   | Play/Pause, seek, volume | Audio clock while playing; paused seeks and committed versions update the view                  | Missing/loading audio and a rejected play request        |
+| `fromBufferPlayer(player)` | Play/Stop, volume        | No seek bar or time readout: `BufferPlayer` exposes no persistent playhead or reactive duration | Missing audio or a closed context                        |
+
+`FilePlayer.play()` deliberately resolves for browser autoplay blocks. Its adapter calls the documented `player.audio.play()` escape hatch to display the actual failure; the player's cells still follow the element. A failed play request made elsewhere cannot be inferred by this widget. `BufferPlayer` starts from the beginning after Stop. For a seekable in-memory track, use `WavePlayer`.
+
+`PlayerLike` is structural, so an app's own player can supply `isPlaying: Readable<boolean>`, `play()`, and `pause()`. Optional `volume` has a writable `.value`; optional `timeline` supplies `position()`, `duration: Readable<number>`, and `seek(seconds)` when seeking is possible. Set `timeline.clock: true` when position advances without reactive writes; the widget reads it per animation frame only while playing. Optional `subscribe(listener)` reports other changes that tracked values miss. `resumes: false` changes the active button label to Stop. Adapters hold no state and need no disposal.
+
+```typescript
+import type { Readable } from "@audiorective/core";
+
+interface PlayerLike {
+  readonly isPlaying: Readable<boolean>;
+  play(): void | Promise<void>; // throw or reject when playback cannot start
+  pause(): void;
+  readonly resumes?: boolean; // false means Stop, then Play starts over
+  readonly volume?: { readonly $: () => number; value: number };
+  readonly timeline?: {
+    position(): number; // current seconds; tracked reads update the widget
+    readonly clock?: boolean; // reread per frame while playing
+    readonly duration: Readable<number>;
+    seek?(seconds: number): void;
+  };
+  subscribe?(listener: () => void): () => void;
+}
+```
+
+### Interaction and renderer
+
+An unknown, zero, negative or non-finite duration displays `--:--` and disables seeking; it re-enables when a finite positive duration arrives. During a drag, incoming time updates do not move the thumb or time text. The player seeks once on release, and the view follows it again. A track change that makes seeking unavailable cancels the drag. A failed play requested by this view shows a notice; the notice clears when playback starts. `AbortError` from an interrupted request is ignored.
+
+Pass `renderer: PlayerRenderer` to replace the markup while keeping these interaction rules. The factory receives `(container, actions)` and returns `{ render(frame), destroy?() }`. Wire controls to `actions.toggle()`, `hold()`, `scrub(seconds)`, `commit()`, `cancel()`, and `setVolume(value)`. The widget sends one `PlayerFrame` with `isPlaying`, `resumes`, `position`, `duration`, `canSeek`, `scrubbing`, `volume`, and `notice`. `position`, `duration`, `volume` and `notice` can be `null`; numeric fields are finite when present. `render(frame)` runs initially and after state changes. Set an input's `max` before `value`, or the browser can clamp a resumed position to the old maximum. A renderer's `destroy()` releases any resources it created outside its container.
+
+`PlayerActions`, `PlayerFrame`, `PlayerRenderer`, `PlayerRendererInstance`, `PlayerOptions`, `PlayerHandle`, `PlayerTimeline`, `PlayerLike`, and `WritableValue` are exported types from this entry. `PlayerOptions.label` sets the control group's accessible name; its default is `"Player"`.
+
+`formatTime(seconds)` returns `m:ss`, with minutes unwrapped and seconds floored; `null` or a non-finite value returns `--:--`. The default renderer uses `ar-player-*` classes and `--player-font`, `--player-foreground`, `--player-accent`, and `--player-error` CSS variables. Its markup is an implementation detail; use a renderer when an app needs particular elements or text.
 
 ## Mount a selector
 
@@ -265,17 +331,21 @@ DOM classes use the `ar-` prefix to scope widget presentation. Internal class na
 
 ## Common errors
 
-Messages thrown by the waveform view, its plugins and the complete selector. Loading and playback messages come from the borrowed player: see [Blocks](./blocks.md#common-errors).
+Messages thrown by the plain player adapters, waveform view, its plugins and the complete selector. Waveform loading and playback messages come from the borrowed player: see [Blocks](./blocks.md#common-errors).
 
-| Message                                                     | Cause                                              | Fix                                                                                 |
-| ----------------------------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `Waveform selector is destroyed.`                           | Calling `load` or `setSelection` after cleanup     | Mount a new selector.                                                               |
-| `Waveform is destroyed.`                                    | Mutating or attaching to a destroyed view          | Mount a new view.                                                                   |
-| `Waveform data needs finite peaks and a positive duration.` | Invalid peaks or duration                          | Supply nonempty finite peaks, matching extrema arrays, and finite positive seconds. |
-| `Zoom must be finite and at least 1.`                       | Invalid zoom factor                                | Use `1` to fit, or a larger finite factor.                                          |
-| `Playhead must be finite or null.`                          | Invalid playhead                                   | Supply finite source seconds or `null` to hide it.                                  |
-| `Plugin is already attached to this waveform.`              | Duplicate attachment of one instance               | Reuse its attachment or detach it before attaching again.                           |
-| `Plugin attachment is destroyed.`                           | Mounting an overlay from a disposed attachment     | Stop asynchronous work during cleanup; use a live attachment context.               |
-| `Selection plugin is not attached.`                         | Setting metadata before attachment or after detach | Call `view.attach(selection)` before `selection.setSelection`.                      |
-| `Selection plugin is already attached.`                     | Reusing a selection plugin across live views       | Detach first, or create one plugin per view.                                        |
-| `Waveform already has a Selection owner.`                   | Multiple selection plugins on one view             | Keep one selection plugin per view.                                                 |
+| Message                                                     | Cause                                                             | Fix                                                                                 |
+| ----------------------------------------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `No track is loaded.`                                       | The plain player view requested FilePlayer playback with no `src` | Set `player.src` before pressing Play.                                              |
+| `No audio is loaded.`                                       | A WavePlayer or BufferPlayer adapter has no buffer                | Load audio before pressing Play.                                                    |
+| `Audio is still loading.`                                   | The WavePlayer adapter was asked to play before loading finished  | Await `player.load(...)`.                                                           |
+| `The audio context is closed.`                              | The BufferPlayer adapter cannot start a closed context            | Create a new context and player.                                                    |
+| `Waveform selector is destroyed.`                           | Calling `load` or `setSelection` after cleanup                    | Mount a new selector.                                                               |
+| `Waveform is destroyed.`                                    | Mutating or attaching to a destroyed view                         | Mount a new view.                                                                   |
+| `Waveform data needs finite peaks and a positive duration.` | Invalid peaks or duration                                         | Supply nonempty finite peaks, matching extrema arrays, and finite positive seconds. |
+| `Zoom must be finite and at least 1.`                       | Invalid zoom factor                                               | Use `1` to fit, or a larger finite factor.                                          |
+| `Playhead must be finite or null.`                          | Invalid playhead                                                  | Supply finite source seconds or `null` to hide it.                                  |
+| `Plugin is already attached to this waveform.`              | Duplicate attachment of one instance                              | Reuse its attachment or detach it before attaching again.                           |
+| `Plugin attachment is destroyed.`                           | Mounting an overlay from a disposed attachment                    | Stop asynchronous work during cleanup; use a live attachment context.               |
+| `Selection plugin is not attached.`                         | Setting metadata before attachment or after detach                | Call `view.attach(selection)` before `selection.setSelection`.                      |
+| `Selection plugin is already attached.`                     | Reusing a selection plugin across live views                      | Detach first, or create one plugin per view.                                        |
+| `Waveform already has a Selection owner.`                   | Multiple selection plugins on one view                            | Keep one selection plugin per view.                                                 |

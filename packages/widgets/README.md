@@ -1,6 +1,25 @@
 # @audiorective/widgets
 
-Framework-independent browser waveform widgets: load audio, select a range, and audition a loop, or render peaks with optional visual plugins.
+Framework-independent browser widgets for plain playback controls, waveform selection and MIDI views.
+
+## Plain player
+
+```typescript
+import { FilePlayer } from "@audiorective/core";
+import { fromFilePlayer, mountPlayer } from "@audiorective/widgets/player";
+
+const context = new AudioContext();
+const player = new FilePlayer(context, { src: "/music/track.mp3" });
+player.output.connect(context.destination);
+const controls = mountPlayer(document.querySelector<HTMLElement>("#player")!, {
+  player: fromFilePlayer(player),
+});
+// controls.destroy() removes this view; playback and the caller-owned player continue.
+```
+
+Adapters also support `WavePlayer` and `BufferPlayer`. A custom renderer replaces the markup while keeping playback, drag, unknown-duration and cleanup behavior. See the [plain player reference](../../docs/widgets.md#plain-player-controls).
+
+## Waveform
 
 ```typescript
 import { mountWaveformSelector } from "@audiorective/widgets";

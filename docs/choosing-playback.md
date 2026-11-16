@@ -81,6 +81,8 @@ In words:
 
 **Use when** the source is long-form and streamed: music, podcasts, backing tracks. Single playhead with `play`/`pause`/`seek`/`stop` and reactive `cells.currentTime` / `cells.duration` — built for a scrubber/progress UI.
 
+For a plain playback bar, mount [`@audiorective/widgets/player`](./widgets.md#plain-player-controls) with `fromFilePlayer(player)`; the view borrows this player and handles unknown duration and seek dragging.
+
 **Avoid when** you need beat-locking or sample-accurate scheduling. `FilePlayer` runs on the **media clock**, not the AudioContext sample clock, so it can't phase-lock to ctx-clocked sources and its rate/position aren't sample-accurate.
 
 ## Quick reference

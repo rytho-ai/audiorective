@@ -323,14 +323,14 @@
     {
       "id": 22,
       "prompt": "Add a simple podcast player bar to our audiorective app: play/pause, a seek slider, elapsed and total time, and a 1x/1.5x/2x speed toggle. Episodes are 60–90 minute mp3s on our CDN. No waveform. vanilla TS. don't run anything.",
-      "expected_output": "Uses core's streaming FilePlayer and a small hand-written DOM bar bound to its reactive cells. The waveform selector and WavePlayer are not used because they decode the whole file.",
+      "expected_output": "Uses core's streaming FilePlayer with the plain player widget for play/pause, seek and time; adds a small app-owned playback-rate control. The waveform selector and WavePlayer are not used because they decode the whole file.",
       "files": [],
       "expectations": [
         "Chooses FilePlayer from @audiorective/core for the episode, because it streams instead of decoding the whole file",
         "Does not use WavePlayer, mountWaveformSelector or BufferPlayer for a 60–90 minute file, and if it mentions them says they decode the entire file into memory",
-        "Binds the bar to the player's reactive state (cells for playing/current time/duration, params.volume if used) with effect or a framework binding; no polling timer for state",
-        "Handles duration being NaN before metadata loads instead of rendering NaN or enabling the slider",
-        "Does not let incoming time updates move the slider while the user is dragging it, and seeks on release (or continuously) through the player's seek method",
+        "Mounts the plain player widget from @audiorective/widgets/player with fromFilePlayer(player) for play/pause, seek and time, rather than rebuilding those controls",
+        "Relies on the widget to handle unknown duration and hold the seek slider against incoming time updates during a drag",
+        "Keeps the FilePlayer caller-owned: routes its output once and destroys the view separately from the player",
         "Speed changes go through the player's playbackRate; play is started from a user gesture"
       ]
     }

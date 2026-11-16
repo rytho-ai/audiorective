@@ -5,3 +5,4 @@ export { createSelectionPlugin } from "./selection";
 export type * from "./types";
 export { mountPianoRoll } from "./piano-roll";
 export type * from "./piano-roll-types";
+export * from "./player";

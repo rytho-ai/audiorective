@@ -826,7 +826,7 @@ player.onEnded(cb: () => void): void
 player.destroy(): void
 ```
 
-**`play()` swallows two error classes silently:** autoplay-gesture errors (browser blocked playback before a user gesture) and `AbortError` (the element was replaced or unloaded mid-play). Surface-level calls remain fire-and-forget for the common case; gate on `player.cells.isPlaying` to react to actual state.
+**`play()` swallows two error classes silently:** autoplay-gesture errors (browser blocked playback before a user gesture) and `AbortError` (the element was replaced or unloaded mid-play). Read `player.cells.isPlaying` for actual playback state; a false value after `play()` cannot distinguish a blocked request from an interrupted one. For a plain control bar that reports its own play failures, use [`mountPlayer` with `fromFilePlayer(player)`](./widgets.md#plain-player-controls); its adapter calls the documented `audio.play()` escape hatch and ignores `AbortError`.
 
 ```typescript
 // React example — bind transport cells to UI
