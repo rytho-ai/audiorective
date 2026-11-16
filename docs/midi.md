@@ -2,7 +2,35 @@
 title: MIDI and Piano Roll
 ---
 
-Use `@audiorective/blocks/midi` for headless MIDI note data and `@audiorective/widgets/piano-roll` for its visual presentation. Both entries can be imported without DOM or Web Audio globals. Mounting a piano roll requires DOM, but never creates a player, synth, AudioContext or device connection.
+Use `@audiorective/blocks/midi` for pure MIDI note data and `@audiorective/widgets/piano-roll` for visual presentation. Both entries can be imported without DOM or Web Audio globals. `MidiRecorder` is exported from the blocks root; recording requires a caller-provided `MIDIInput` and running `AudioContext`. Mounting a piano roll requires DOM, but never creates a player, synth, AudioContext or device connection.
+
+## Record a MIDI take
+
+`MidiRecorder` borrows one Web MIDI input and the app's audio clock. The app obtains permission, chooses the device, resumes the context and owns live synth playback. The recorder adds its own `midimessage` listener, leaving other listeners intact.
+
+```typescript
+import { MidiRecorder } from "@audiorective/blocks";
+import { MidiSequence } from "@audiorective/blocks/midi";
+
+const access = await navigator.requestMIDIAccess();
+const input = access.inputs.values().next().value;
+if (!input) throw new Error("Connect a MIDI input first.");
+await input.open(); // app owns device availability and any access error
+await context.resume();
+const recorder = new MidiRecorder(context, input);
+recorder.start({ when: context.currentTime + 0.1 });
+// Later, from the stop control:
+const take = recorder.stop();
+const sequence = new MidiSequence({ notes: take.notes, duration: take.duration });
+// A future clip owner receives take.startTime/endTime and places the sequence.
+recorder.destroy();
+```
+
+`start({ when? })` accepts absolute AudioContext seconds; omitted means the current audible output position. It filters messages whose mapped time precedes the start. `stop()` ends at the current output position and returns immediately; call it when the desired end arrives. Stopping before a future start throws and leaves that take active. `cancel()` discards an active take. A recorder can make repeated takes, while `destroy()` only removes its own listener. `cells.state` is a read-only reactive `"idle" | "recording" | "destroyed"` value; `recording` means a take is active even if its future start has not arrived.
+
+The returned `RecordedMidi` has absolute `startTime`/`endTime`, `duration`, an immutable `notes` array in **take-relative seconds**, and `events` in delivery order. Each event has an absolute `audioTime` and a copied `Uint8Array` of the MIDI bytes. Notes use track 0 and retain channel, pitch and attack velocity. Same-channel, same-pitch overlapping note-ons pair with note-offs FIFO; a velocity-zero note-on is an off. Unreleased notes end at the take's end. Unmatched note-offs have no projected note. Controller, program-change and other messages remain in `events`, but sustain pedal does not extend the projected notes. A caller may use `MidiSequence.setData({ notes: take.notes, duration: take.duration })` to show one take; merging takes and clip placement belong to a higher owner.
+
+Web MIDI `Event.timeStamp` uses the performance clock; `MidiRecorder` maps it to the AudioContext's **output timeline** with `getOutputTimestamp()`. Before the first audio block produces that correlation, it falls back to a sampled `performance.now()`/`currentTime` pair. This mapping is an estimate, not sample-accurate MIDI input timing or a device latency correction. The app should calibrate any desired performance/monitor offset when placing the take. See the [Web MIDI event timestamp](https://www.w3.org/TR/webmidi/#midimessageevent-interface) and [Web Audio output timestamp](https://www.w3.org/TR/webaudio/#dom-audiocontext-getoutputtimestamp) definitions.
 
 ## Load once, show two views
 
@@ -27,7 +55,7 @@ sequence.destroy();
 
 ## Data and time
 
-`parseMidi(ArrayBuffer | Uint8Array): ParsedMidi` reads Standard MIDI Files in format 0 or 1 with PPQ division. It projects note events through the file tempo map into **source seconds**, retaining track/channel identity. It does not request Web MIDI permission or synthesize controller, sustain-pedal, pitch-bend or program-change behavior. Format 2 and SMPTE division are rejected.
+`parseMidi(ArrayBuffer | Uint8Array): ParsedMidi` reads Standard MIDI Files in format 0 or 1 with PPQ division. It projects note events through the file tempo map into **source seconds**, retaining track/channel identity. It does not request Web MIDI permission or synthesize controller, sustain-pedal, pitch-bend or program-change behavior. Format 2 and SMPTE division are rejected. `MidiRecorder` captures live messages separately; it is not an SMF writer.
 
 ```typescript
 type MidiNote = Readonly<{
@@ -220,6 +248,11 @@ This split supports both a silent MIDI inspector and an audible application with
 | `MIDI duration must be finite and non-negative.`                                             | Repair the supplied duration.                                                                                          |
 | `MIDI notes need unique ids, valid source seconds and integer pitch/velocity/channel/track.` | Normalize note records to the documented bounds.                                                                       |
 | `MidiSequence is destroyed.`                                                                 | Create another owner; remove its borrowed views before final owner cleanup.                                            |
+| `MidiRecorder is destroyed.`                                                                 | Construct a new recorder after final cleanup.                                                                          |
+| `MidiRecorder already has an active take.` / `MidiRecorder has no active take to stop.`      | Finish or cancel the current take before starting another; start before stopping.                                      |
+| `MidiRecorder needs a running AudioContext.`                                                 | Resume the caller-owned context from a user gesture before recording.                                                  |
+| `MidiRecorder time must be finite, non-negative seconds.`                                    | Pass an absolute finite AudioContext start time.                                                                       |
+| `MidiRecorder stop must follow its start time.`                                              | Stop after the requested start time, or cancel the armed take.                                                         |
 | `MIDI note was not found.`                                                                   | Use an ID from the current source snapshot.                                                                            |
 | `Selection must satisfy 0 <= start < end <= duration (finite seconds).`                      | Use ordered endpoints within the loaded duration.                                                                      |
 | `Piano roll zoom must be between 1 and 64.`                                                  | Pass a finite zoom factor in that interval.                                                                            |

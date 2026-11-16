@@ -24,6 +24,10 @@
     "should_trigger": true
   },
   {
+    "query": "Record a MIDI keyboard performance against our browser metronome, preserve the sustain events, and show the captured notes in a piano roll. We have an AudioContext and synth already.",
+    "should_trigger": true
+  },
+  {
     "query": "I'm adding a synth pad to our Next.js app (app router). The oscillator + filter code is in lib/audio/pad.ts and the knobs are React components. how should I wire the state so the UI stays in sync with the AudioParams?",
     "should_trigger": true
   },

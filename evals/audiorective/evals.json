@@ -318,7 +318,7 @@
         "Handles navigator.requestMIDIAccess and message parsing in app code, calling noteOn/noteOff-style methods on an AudioProcessor synth",
         "Sustain pedal logic (deferring releases while the pedal is down) lives in the audio-layer object, not in UI handlers",
         "Held notes are a Cell (or equivalent reactive state on the audio-layer object) that the UI observes; no duplicate copy in a UI store",
-        "Says plainly that the library has no live-MIDI-input block and that core primitives are the right level here"
+        "Says plainly that MidiRecorder writes takes but does not route live keyboard events to a synth; core primitives remain the right level for playing"
       ]
     },
     {
@@ -375,6 +375,21 @@
         "Treats returned frame positions as actual raw capture times and leaves latency calibration and take placement to the future clip/track owner",
         "Uses recorder.cancel() for discard and destroys the recorder separately from the borrowed stream and AudioContext",
         "Does not use MediaRecorder timeslice count as a sample-accurate timeline or invent a project-wide recording/track model"
+      ]
+    },
+    {
+      "id": 26,
+      "prompt": "Build a browser MIDI take recorder with the workspace audiorective packages. We already have a playing metronome, AudioContext, and polyphonic synth. The user picks one Web MIDI keyboard, presses record before the next bar, plays overlapping notes and the sustain pedal, then stops. Hand the resulting notes and their raw position to our future clip owner and show them in a piano roll. Keep live keyboard playback and permission in our app; show cancel and cleanup. Do not run anything.",
+      "expected_output": "MidiRecorder borrows the selected MIDIInput and AudioContext, captures raw timestamped messages and take-relative note data, while MidiSequence displays the take and the caller owns live synth routing and clip placement.",
+      "files": [],
+      "expectations": [
+        "Obtains Web MIDI permission and selects MIDIInput in app code; constructs MidiRecorder from @audiorective/blocks with the existing AudioContext and selected input",
+        "Resumes the context, starts with recorder.start({ when }) in absolute AudioContext seconds, then calls synchronous recorder.stop() when the take ends",
+        "Uses take.notes and take.duration with MidiSequence or a compatible piano-roll model, and passes absolute take.startTime/endTime to the future clip owner",
+        "Understands take.events preserves controllers including sustain while note projection ends at key release; does not claim sustain automatically extends notes",
+        "Keeps keyboard-to-synth noteOn/noteOff and sustain playback in the app's audio owner, separate from the recorder and piano-roll view",
+        "Uses recorder.cancel() to discard, recorder.destroy() for listener cleanup, and leaves the borrowed MIDI input and AudioContext owned by the app",
+        "Does not invent a Track/Clip owner, apply unmeasured latency correction, or treat mapped MIDI event times as sample accurate"
       ]
     }
   ]

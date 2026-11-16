@@ -2,7 +2,7 @@
 title: Blocks
 ---
 
-`@audiorective/blocks` provides headless audio functionality. A block owns audio behavior and state; widgets read that state and call its methods. Playback blocks need Web Audio, but no document, elements, renderer, or UI framework. The pure `@audiorective/blocks/midi` entry provides `MidiSequence`, parsing and source-time queries without AudioContext; see [MIDI and Piano Roll](./midi.md).
+`@audiorective/blocks` provides headless audio and MIDI functionality. A block owns behavior and state; widgets read that state and call its methods. Playback blocks need Web Audio, but no document, elements, renderer, or UI framework. The blocks root exports `MidiRecorder`; the pure `@audiorective/blocks/midi` entry provides `MidiSequence`, parsing and source-time queries; see [MIDI and Piano Roll](./midi.md).
 
 ## WavePlayer
 

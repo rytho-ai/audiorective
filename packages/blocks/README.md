@@ -14,4 +14,4 @@ See the [complete stretch-and-selector example](../../docs/blocks.md#compose-off
 
 ## MIDI data
 
-`@audiorective/blocks/midi` exports `MidiSequence`, `parseMidi`, `midiGrid`, `tickToSeconds` and `visibleMidiNotes`. They work without DOM or AudioContext. One sequence owns immutable notes and a shared source-time selection; piano-roll views borrow it. Parsing accepts SMF format0/1 PPQ note data; it is not a transport, synth, lossless MIDI editor or Web MIDI device connection. See [MIDI and Piano Roll](../../docs/midi.md).
+The blocks root exports `MidiRecorder`, which borrows a running AudioContext and caller-selected MIDIInput and returns raw events and take-relative notes. The pure `@audiorective/blocks/midi` entry exports `MidiSequence`, `parseMidi`, `midiGrid`, `tickToSeconds` and `visibleMidiNotes` without DOM or AudioContext globals. A sequence owns immutable notes and shared source-time selection for piano-roll views. Parsing accepts SMF format0/1 PPQ note data; neither the recorder nor parser is a transport, synth or lossless MIDI file editor. See [MIDI and Piano Roll](../../docs/midi.md).
