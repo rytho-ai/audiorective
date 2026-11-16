@@ -142,6 +142,8 @@ function claude(prompt, { cwd, tools, maxTurns, useModel }) {
       if (spawnError) return done({ error: `could not start claude: ${spawnError.message}` });
       if (timedOut) return done({ error: `timed out after ${timeoutMs / 1000}s` });
       if (!result) return done({ error: `claude exited without a result (code ${code}, signal ${signal})` });
+      if (result.is_error || result.terminal_reason === "api_error" || result.api_error)
+        return done({ error: `claude reported ${result.api_error ?? result.terminal_reason ?? "an error"}` });
       if (result.subtype !== "success") return done({ error: `claude reported ${result.subtype}` });
       done({
         text: String(result.result ?? ""),

@@ -118,6 +118,8 @@ function runOnce(query) {
       if (triggered) return done({ hit: true });
       if (spawnError) return done({ error: `could not start claude: ${spawnError.message}` });
       if (timedOut) return done({ error: `timed out after ${timeoutSeconds}s` });
+      if (result?.is_error || result?.terminal_reason === "api_error" || result?.api_error)
+        return done({ error: `claude reported ${result.api_error ?? result.terminal_reason ?? "an error"}` });
       // A completed run ends in a `result` event. `error_max_turns` is still a completed
       // run: Claude spent its one turn on some other tool, which is a genuine non-trigger.
       if (result && (result.subtype === "success" || result.subtype === "error_max_turns")) return done({ hit: false });
