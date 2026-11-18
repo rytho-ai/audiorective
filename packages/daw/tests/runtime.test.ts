@@ -239,6 +239,22 @@ describe("workspace automatic application", () => {
     project.destroy();
   });
 
+  test("Workspace effect methods do not trigger a second application; a direct Project edit applies once", async () => {
+    const { project, track, workspace } = await setup();
+    const setEffects = fakes.racks[0].setEffects;
+    const applications = setEffects.mock.calls.length;
+    const filter = (frequency: number) => [{ id: "f", type: "filter", enabled: true, wet: 1, mode: "lowpass", frequency, q: 1 }] as const;
+    workspace.setTrackEffects(track.id, filter(800));
+    expect(setEffects.mock.calls.length).toBe(applications + 1);
+    await workspace.flush();
+    expect(setEffects.mock.calls.length).toBe(applications + 1);
+    project.setTrackEffects(track.id, filter(1200));
+    await workspace.flush();
+    expect(setEffects.mock.calls.length).toBe(applications + 2);
+    workspace.destroy();
+    project.destroy();
+  });
+
   test("adding and removing an empty effect bus never replaces a live instrument or stops transport", async () => {
     const { project, track, device, workspace, clock } = await setup({ withDevice: true });
     const host = workspace.host(device!.id);
@@ -334,7 +350,13 @@ describe("workspace composition", () => {
         throw new Error("no audio");
       },
     } as unknown as AudioContext;
-    await expect(openWorkspace(broken, bytes)).rejects.toThrow("no audio");
+    const destroy = vi.spyOn(Project.prototype, "destroy");
+    try {
+      await expect(openWorkspace(broken, bytes)).rejects.toThrow("no audio");
+      expect(destroy).toHaveBeenCalledTimes(1);
+    } finally {
+      destroy.mockRestore();
+    }
   });
 });
 
