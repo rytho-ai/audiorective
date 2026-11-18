@@ -1,0 +1,25 @@
+{
+  "name": "@audiorective/daw-demo",
+  "version": "2.3.2",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "smoke": "node smoke.mjs",
+    "smoke:export": "node export-smoke.mjs",
+    "smoke:reference": "node reference-song.mjs"
+  },
+  "dependencies": {
+    "@audiorective/blocks": "workspace:^",
+    "@audiorective/midi": "workspace:^",
+    "@audiorective/widgets": "workspace:^",
+    "@audiorective/workspace": "workspace:^"
+  },
+  "devDependencies": {
+    "playwright": "^1.58.2",
+    "typescript": "^5.9.3",
+    "vite": "^8.1.3"
+  }
+}

@@ -113,6 +113,11 @@ describe("public custom waveform renderers", () => {
     max.fill(0);
     expect(Array.from(first.peaks!.min)).toEqual([-0.25, -0.5]);
     expect(Array.from(first.peaks!.max)).toEqual([0.5, 1]);
+    view.setAmplitudeZoom(4);
+    const amplified = custom.frames.at(-1)!;
+    expect(amplified.amplitudeZoom).toBe(4);
+    expect(amplified.peaks).toBe(first.peaks);
+    expect(amplified.width).toBe(first.width);
     view.setZoom(3);
     const zoomed = custom.frames.at(-1)!;
     expect(zoomed.peaks).toBe(first.peaks);

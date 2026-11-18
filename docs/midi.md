@@ -18,7 +18,7 @@ if (!input) throw new Error("Connect a MIDI input first.");
 await input.open(); // app owns device availability and any access error
 await context.resume();
 const recorder = new MidiRecorder(context, input);
-recorder.start({ when: context.currentTime + 0.1 });
+const outputStart = recorder.start({ when: context.currentTime + 0.1 });
 // Later, from the stop control:
 const take = recorder.stop();
 const sequence = new MidiSequence({ notes: take.notes, duration: take.duration });
@@ -26,7 +26,7 @@ const sequence = new MidiSequence({ notes: take.notes, duration: take.duration }
 recorder.destroy();
 ```
 
-`start({ when? })` accepts absolute AudioContext seconds; omitted means the current audible output position. It filters messages whose mapped time precedes the start. `stop()` ends at the current output position and returns immediately; call it when the desired end arrives. Stopping before a future start throws and leaves that take active. `cancel()` discards an active take. A recorder can make repeated takes, while `destroy()` only removes its own listener. `cells.state` is a read-only reactive `"idle" | "recording" | "destroyed"` value; `recording` means a take is active even if its future start has not arrived.
+`start({ when? })` accepts absolute AudioContext seconds and returns the actual output-clock start time for placement anchors; omitted means the current audible output position. It filters messages whose mapped time precedes the start. `stop()` ends at the current output position and returns immediately; call it when the desired end arrives. Stopping before a future start throws and leaves that take active. `cancel()` discards an active take. A recorder can make repeated takes, while `destroy()` only removes its own listener. `cells.state` is a read-only reactive `"idle" | "recording" | "destroyed"` value; `recording` means a take is active even if its future start has not arrived.
 
 The returned `RecordedMidi` has absolute `startTime`/`endTime`, `duration`, an immutable `notes` array in **take-relative seconds**, and `events` in delivery order. Each event has an absolute `audioTime` and a copied `Uint8Array` of the MIDI bytes. Matched note-on/off events also carry the projected note's `noteId`; this links later edits to their original event order. The byte arrays themselves remain mutable. Notes use track 0 and retain channel, pitch and attack velocity. Same-channel, same-pitch overlapping note-ons pair with note-offs FIFO; a velocity-zero note-on is an off. Unreleased notes end at the take's end. Unmatched note-offs have no projected note. Controller, program-change and other messages remain in `events`, but sustain pedal does not extend the projected notes. A caller may use `MidiSequence.setData({ notes: take.notes, duration: take.duration })` to show one take; merging takes and clip placement belong to a higher owner.
 
@@ -133,9 +133,9 @@ Note fields require unique nonempty IDs, finite `0 <= start <= end <= duration`,
 
 `mountPianoRoll(root, options): PianoRollHandle` borrows a structural `model` implementing `getState`, `getSelection`, `setSelection`, and `subscribe`. `MidiSequence` satisfies it; other application-owned models can too. It reads state directly rather than copying notes/selection into a UI store. `onNoteEdit` can call your application's existing edit command; models do not need to inherit `MidiSequence` or expose an `updateNote` method.
 
-Options include `label`, inclusive integer `pitches: {low, high}`, `grid: {beats, downbeats}`, `snap: "off" | "beat" | "downbeat"`, `renderer`, `layout`, `onNoteEdit(edit)`, `onNoteClick(note)` and `onCommit(event)`. Each view retains independent zoom/pitch presentation. Grid values use the same source seconds as notes.
+Options include `label`, inclusive integer `pitches: {low, high}`, `grid: {beats, downbeats}`, `snap: "off" | "beat" | "downbeat"`, `timeUnit: "seconds" | "beats"`, `renderer`, `layout`, `onNoteEdit(edit)`, `onNoteClick(note)` and `onCommit(event)`. Each view retains independent zoom/pitch presentation. The widget defaults to seconds. For a beat-locked Workspace MIDI clip, pass `timeUnit: clip.timeUnit`; notes, duration, grid, playhead, scroll and plugin coordinates all use that clip's unit. The default note labels show the selected unit. `getViewport().timeUnit` and `pixelsPerUnit` state the display scale; `pixelsPerSecond` remains a compatibility alias on the shared viewport shape, and its numeric value is pixels per beat in beat mode.
 
-Drag on the background to select a time range. Selection handles support arrow keys (0.01 seconds) and Shift (0.1 seconds); Alt bypasses pointer snap. Clicking or keyboard-activating a note calls `onNoteClick` for a caller-owned inspector. Omitting `onNoteEdit` keeps notes read-only for inspection. Providing it enables widget-owned note move and edge-resize gestures; apply the committed edit to your model. At compressed pitch scales, key labels show octave Cs to avoid overlapping text.
+Drag on the background to select a time range. Selection handles support arrow keys (0.01 model units) and Shift (0.1 model units); Alt bypasses pointer snap. Clicking or keyboard-activating a note calls `onNoteClick` for a caller-owned inspector. Omitting `onNoteEdit` keeps notes read-only for inspection. Providing it enables widget-owned note move and edge-resize gestures; apply the committed edit to your model. At compressed pitch scales, key labels show octave Cs to avoid overlapping text.
 
 | Handle                            | Contract                                                                                       |
 | --------------------------------- | ---------------------------------------------------------------------------------------------- |
@@ -143,7 +143,7 @@ Drag on the background to select a time range. Selection handles support arrow k
 | `setZoom(factor)`                 | Finite factor 1..64; 1 fits the source, changes retain the viewport center.                    |
 | `scrollTo(seconds)`               | Moves the horizontal viewport using finite source seconds.                                     |
 | `setPitchRange({low, high})`      | Integer `0 <= low <= high <= 127`, inclusive.                                                  |
-| `attach(plugin)`                  | Attaches a `WaveformPlugin`; returns an independently destroyable `PluginAttachment`.          |
+| `attach(plugin)`                  | Attaches a `TimeViewPlugin`; returns an independently destroyable `PluginAttachment`.          |
 | `getViewport()`                   | `{duration, pixelsPerSecond, scrollLeft, width, height}` in content/viewport pixels.           |
 | `setSnap(mode)` / `setGrid(grid)` | Changes this view's snapping/grid; selection remains in the borrowed model.                    |
 | `destroy()`                       | Detaches observers, listeners, selection and renderer; preserves model, other views and audio. |
@@ -210,12 +210,12 @@ A click without a drag and keyboard activation still inspect the note. Backgroun
 
 ## Add a time-based overlay or interaction
 
-`view.attach(plugin)` uses the same `WaveformPlugin` / `WaveformPluginContext` contract as `mountWaveform`. Both types and `PluginAttachment` are exported from the piano-roll entry. A marker plugin can be reused in either widget without a second coordinate mapping.
+`view.attach(plugin)` uses the shared [`TimeViewPlugin` contract](./widgets.md#write-a-visual-plugin) for piano roll, waveform, and waveform selector. The piano-roll entry exports `TimeViewPlugin`, `TimeViewPluginContext`, and `PluginAttachment`. Use `ctx.timeUnit` to distinguish beats and seconds.
 
 ```typescript
-import { mountPianoRoll, type WaveformPlugin } from "@audiorective/widgets/piano-roll";
+import { mountPianoRoll, type TimeViewPlugin } from "@audiorective/widgets/piano-roll";
 
-function markerAt(seconds: number): WaveformPlugin {
+function markerAt(time: number): TimeViewPlugin {
   return {
     attach(ctx) {
       const layer = document.createElement("div");
@@ -225,7 +225,7 @@ function markerAt(seconds: number): WaveformPlugin {
       layer.append(marker);
       ctx.mountOverlay(layer);
       const draw = () => {
-        marker.style.left = `${ctx.timeToX(seconds)}px`;
+        marker.style.left = `${ctx.timeToX(time)}px`;
       };
       ctx.onViewportChange(draw);
       ctx.onDataChange(draw);
@@ -240,7 +240,7 @@ const marker = view.attach(markerAt(1));
 // view.destroy() removes every attachment, preserving the borrowed sequence/audio.
 ```
 
-The context provides `surface`, live `duration`, `getViewport()`, `getViewportRect()`, `timeToX(seconds)`, `clientXToTime(clientX)`, `scrollBy(pixels)`, `mountOverlay(element)`, `onViewportChange`, `onDataChange`, `listen` and `onCleanup`. Times are source seconds; `timeToX` returns pixels in the full scrolling note surface. `clientXToTime` accounts for the actual content origin and current scroll. `getViewportRect` is the visible viewport's browser rectangle, including its border; `surface.getBoundingClientRect()` gives the scrolling content origin. Keyboard width is internal: callers do not calculate or inspect it.
+The context provides `surface`, live `duration`, `getViewport()`, `getViewportRect()`, `timeToX(time)`, `clientXToTime(clientX)`, `scrollBy(pixels)`, `mountOverlay(element)`, `onViewportChange`, `onDataChange`, `listen` and `onCleanup`. Times use the borrowed model's declared unit; `timeToX` returns pixels in the full scrolling note surface. `clientXToTime` accounts for the actual content origin and current scroll. `getViewportRect` is the visible viewport's browser rectangle, including its border; `surface.getBoundingClientRect()` gives the scrolling content origin. Keyboard width is internal: callers do not calculate or inspect it.
 
 Overlay layers fill the note surface and default to `pointer-events: none`. Interactive children can set `pointer-events: auto`; stop their `pointerdown` propagation when they should not start native background range selection. Use `ctx.listen` for events and `ctx.onCleanup` for caller resources such as observers or animation frames. Data notifications occur on note-array or duration replacement, before layout; viewport notifications follow layout, horizontal scroll, zoom and pitch-range changes. Selection-only changes are observed through the borrowed model's subscription.
 
@@ -265,7 +265,7 @@ This split supports both a silent MIDI inspector and an audible application with
 | `MIDI grid needs valid PPQ, end tick and time signatures.`                                   | Use parsed metadata or valid positive finite signatures.                                                               |
 | `MIDI grid exceeds 100000 points.`                                                           | Use a bounded caller-supplied grid or omit grid generation for very long data.                                         |
 | `MIDI duration must be finite and non-negative.`                                             | Repair the supplied duration.                                                                                          |
-| `MIDI notes need unique ids, valid source seconds and integer pitch/velocity/channel/track.` | Normalize note records to the documented bounds.                                                                       |
+| `MIDI notes need unique ids, valid source times and integer pitch/velocity/channel/track.` | Normalize note records to the documented bounds in the caller's time unit.                                                                       |
 | `MidiSequence is destroyed.`                                                                 | Create another owner; remove its borrowed views before final owner cleanup.                                            |
 | `MidiRecorder is destroyed.`                                                                 | Construct a new recorder after final cleanup.                                                                          |
 | `MidiRecorder already has an active take.` / `MidiRecorder has no active take to stop.`      | Finish or cancel the current take before starting another; start before stopping.                                      |
@@ -275,11 +275,11 @@ This split supports both a silent MIDI inspector and an audible application with
 | `MIDI playback needs finite, non-negative times and valid MIDI notes.`                       | Supply a valid take and current `MidiSequence` snapshot; do not pass corrupt times or note fields.                     |
 | `MIDI playback needs note IDs on recorded note-ons.`                                         | The raw take predates note-ID capture or was assembled without IDs; capture a tagged take.                             |
 | `MIDI note was not found.`                                                                   | Use an ID from the current source snapshot.                                                                            |
-| `Selection must satisfy 0 <= start < end <= duration (finite seconds).`                      | Use ordered endpoints within the loaded duration.                                                                      |
+| `Selection must satisfy 0 <= start < end <= duration (finite model time).`                      | Use ordered endpoints within the loaded duration.                                                                      |
 | `Piano roll zoom must be between 1 and 64.`                                                  | Pass a finite zoom factor in that interval.                                                                            |
 | `Piano roll pitches must satisfy 0 <= low <= high <= 127.`                                   | Pass ordered integer MIDI pitches.                                                                                     |
-| `Piano roll scroll time must be finite.`                                                     | Use finite seconds.                                                                                                    |
-| `Playhead must be finite or null.`                                                           | Use finite seconds or null to hide it.                                                                                 |
+| `Piano roll scroll time must be finite.`                                                     | Use a finite position in the model's unit.                                                                                                    |
+| `Playhead must be finite or null.`                                                           | Use a finite position in the model's unit, or null to hide it.                                                                                 |
 | `Piano roll layout must mount its viewport inside the supplied root.`                        | Layout omitted/cloned the supplied viewport. Append the supplied viewport inside the layout root; retain its identity. |
 | `Piano roll is destroyed.`                                                                   | Attaching after view cleanup. Mount another view; keep the borrowed model if still needed.                             |
 | `Plugin is already attached to this piano roll.`                                             | Same object attached twice to one view. Destroy its attachment first, or create another plugin instance.               |

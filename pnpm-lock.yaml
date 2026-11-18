@@ -24,6 +24,31 @@ importers:
         specifier: 3.6.2
         version: 3.6.2
 
+  apps/daw-demo:
+    dependencies:
+      '@audiorective/blocks':
+        specifier: workspace:^
+        version: link:../../packages/blocks
+      '@audiorective/midi':
+        specifier: workspace:^
+        version: link:../../packages/midi
+      '@audiorective/widgets':
+        specifier: workspace:^
+        version: link:../../packages/widgets
+      '@audiorective/workspace':
+        specifier: workspace:^
+        version: link:../../packages/workspace
+    devDependencies:
+      playwright:
+        specifier: ^1.58.2
+        version: 1.58.2
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vite:
+        specifier: ^8.1.3
+        version: 8.1.3(@types/node@24.10.0)(esbuild@0.28.1)(jiti@2.6.1)(yaml@2.8.1)
+
   apps/web:
     dependencies:
       '@astrojs/react':
@@ -123,6 +148,9 @@ importers:
       '@audiorective/core':
         specifier: workspace:^
         version: link:../core
+      '@audiorective/effects':
+        specifier: workspace:^
+        version: link:../effects
     devDependencies:
       '@types/node':
         specifier: ^24.9.1
@@ -260,6 +288,25 @@ importers:
       playwright:
         specifier: ^1.58.2
         version: 1.58.2
+      tsdown:
+        specifier: ^0.15.9
+        version: 0.15.12(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.2)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.0.18
+        version: 4.0.18(@types/node@24.10.0)(@vitest/browser-playwright@4.0.18)(jiti@2.6.1)(jsdom@28.1.0(canvas@3.2.1))(lightningcss@1.32.0)(yaml@2.8.1)
+
+  packages/host:
+    dependencies:
+      '@audiorective/core':
+        specifier: workspace:^
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^24.9.1
+        version: 24.10.0
       tsdown:
         specifier: ^0.15.9
         version: 0.15.12(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.2)(typescript@5.9.3)
@@ -424,6 +471,43 @@ importers:
       playwright:
         specifier: ^1.58.2
         version: 1.58.2
+      tsdown:
+        specifier: ^0.15.9
+        version: 0.15.12(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.2)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.0.18
+        version: 4.0.18(@types/node@24.10.0)(@vitest/browser-playwright@4.0.18)(jiti@2.6.1)(jsdom@28.1.0(canvas@3.2.1))(lightningcss@1.32.0)(yaml@2.8.1)
+
+  packages/workspace:
+    dependencies:
+      '@audiorective/blocks':
+        specifier: workspace:^
+        version: link:../blocks
+      '@audiorective/clock':
+        specifier: workspace:^
+        version: link:../clock
+      '@audiorective/core':
+        specifier: workspace:^
+        version: link:../core
+      '@audiorective/host':
+        specifier: workspace:^
+        version: link:../host
+      '@audiorective/midi':
+        specifier: workspace:^
+        version: link:../midi
+      '@xmldom/xmldom':
+        specifier: ^0.9.8
+        version: 0.9.12
+      fflate:
+        specifier: ^0.8.2
+        version: 0.8.2
+    devDependencies:
+      '@types/node':
+        specifier: ^24.9.1
+        version: 24.10.0
       tsdown:
         specifier: ^0.15.9
         version: 0.15.12(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.2)(typescript@5.9.3)
@@ -1942,6 +2026,11 @@ packages:
   '@xmldom/xmldom@0.8.13':
     resolution: {integrity: sha512-KRYzxepc14G/CEpEGc3Yn+JKaAeT63smlDr+vjB8jRfgTBBI9wRj/nkQEO+ucV8p8I9bfKLWp37uHgFrbntPvw==}
     engines: {node: '>=10.0.0'}
+    deprecated: this version has critical issues, please update to the latest version
+
+  '@xmldom/xmldom@0.9.12':
+    resolution: {integrity: sha512-5AXjrcMClTryPe9LgZrygpB1lj7s0S9E0+W+AHaVKAVyHanafK86iPSvG5xHVSp/jC+VH1UXu0TAEmY279xH7A==}
+    engines: {node: '>=14.6'}
 
   acorn-jsx@5.3.2:
     resolution: {integrity: sha512-rq9s+JNhf0IChjtDXxllJ7g41oZk5SlXtp0LHwyA5cejwn7vKmKp4pPri6YEePv2PU65sAsegbXtIinmDFDXgQ==}
@@ -5430,6 +5519,8 @@ snapshots:
   '@webgpu/types@0.1.69': {}
 
   '@xmldom/xmldom@0.8.13': {}
+
+  '@xmldom/xmldom@0.9.12': {}
 
   acorn-jsx@5.3.2(acorn@8.17.0):
     dependencies:

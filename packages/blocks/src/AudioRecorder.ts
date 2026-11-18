@@ -14,12 +14,28 @@ export interface RecordedAudio extends PCMData {
   readonly endFrame: number;
   readonly startTime: number;
   readonly endTime: number;
+  readonly dropouts?: readonly Readonly<{ startFrame: number; endFrame: number }>[];
+}
+export interface RecordedAudioSpan {
+  readonly channelCount: number;
+  readonly sampleRate: number;
+  readonly startFrame: number;
+  readonly endFrame: number;
+  readonly startTime: number;
+  readonly endTime: number;
+  /** Missing browser render frames, represented as silence in streamed PCM. */
+  readonly dropouts?: readonly Readonly<{ startFrame: number; endFrame: number }>[];
+}
+export interface RecordedAudioChunk {
+  readonly startFrame: number;
+  readonly channels: readonly Float32Array[];
 }
 
 type RecorderMessage =
   | { type: "begin"; frame: number }
   | { type: "chunk"; startFrame: number; channels: Float32Array[] }
-  | { type: "done"; startFrame: number; endFrame: number };
+  | { type: "done"; startFrame: number; endFrame: number; dropouts?: Array<{ startFrame: number; endFrame: number }> }
+  | { type: "gap"; startFrame: number; endFrame: number };
 
 type Session = {
   startFrame: number;
@@ -28,7 +44,10 @@ type Session = {
   sink?: GainNode;
   onContextState?: () => void;
   chunks: Array<{ startFrame: number; channels: Float32Array[] }>;
-  resolve?: (take: RecordedAudio) => void;
+  writeChunk?: (chunk: RecordedAudioChunk) => void | Promise<void>;
+  nextFrame?: number;
+  pendingWrites: Set<Promise<void>>;
+  resolve?: (take: RecordedAudio | RecordedAudioSpan) => void;
   reject?: (error: unknown) => void;
 };
 
@@ -93,6 +112,16 @@ export class AudioRecorder extends AudioProcessor<{}, { state: ReadonlyCell<Audi
 
   /** Arms one take at an absolute AudioContext time. Late worklet registration starts at the first available frame. */
   async start(options: { when?: number } = {}): Promise<void> {
+    return this.startCapture(options);
+  }
+
+  /** Sends bounded chunks to an external writer without retaining the take's PCM in memory. */
+  async startStream(writeChunk: (chunk: RecordedAudioChunk) => void | Promise<void>, options: { when?: number } = {}): Promise<void> {
+    if (typeof writeChunk !== "function") throw new TypeError("AudioRecorder stream needs a chunk writer.");
+    return this.startCapture(options, writeChunk);
+  }
+
+  private async startCapture(options: { when?: number }, writeChunk?: (chunk: RecordedAudioChunk) => void | Promise<void>): Promise<void> {
     if (this.disposed) throw new Error("AudioRecorder is destroyed.");
     if (this.active) throw new Error("AudioRecorder already has an active take.");
     const when = options.when ?? this.context.currentTime;
@@ -100,6 +129,8 @@ export class AudioRecorder extends AudioProcessor<{}, { state: ReadonlyCell<Audi
     const session: Session = {
       startFrame: Math.ceil(Math.max(when, this.context.currentTime) * this.context.sampleRate),
       chunks: [],
+      writeChunk,
+      pendingWrites: new Set(),
     };
     this.active = session;
     this.errorStore.value = null;
@@ -144,6 +175,18 @@ export class AudioRecorder extends AudioProcessor<{}, { state: ReadonlyCell<Audi
 
   /** Schedule the exclusive end of the current take; resolves with PCM and actual frame timing. */
   stop(options: { when?: number } = {}): Promise<RecordedAudio> {
+    if (this.active?.writeChunk) throw new Error("AudioRecorder streaming take needs stopStream().");
+    return this.stopCapture(options) as Promise<RecordedAudio>;
+  }
+
+  /** Finish streaming after every accepted chunk has reached the caller's writer. */
+  stopStream(options: { when?: number } = {}): Promise<RecordedAudioSpan> {
+    if (this.disposed) throw new Error("AudioRecorder is destroyed.");
+    if (!this.active?.writeChunk) throw new Error("AudioRecorder has no started stream to stop.");
+    return this.stopCapture(options) as Promise<RecordedAudioSpan>;
+  }
+
+  private stopCapture(options: { when?: number }): Promise<RecordedAudio | RecordedAudioSpan> {
     if (this.disposed) throw new Error("AudioRecorder is destroyed.");
     const session = this.active;
     if (!session?.node || untracked(() => this.stateStore.value) === "stopping") throw new Error("AudioRecorder has no started take to stop.");
@@ -174,11 +217,61 @@ export class AudioRecorder extends AudioProcessor<{}, { state: ReadonlyCell<Audi
     if (message.type === "begin") {
       if (untracked(() => this.stateStore.value) === "armed") this.stateStore.value = "recording";
     } else if (message.type === "chunk") {
-      session.chunks.push({ startFrame: message.startFrame, channels: message.channels });
+      if (!session.writeChunk) session.chunks.push({ startFrame: message.startFrame, channels: message.channels });
+      else {
+        try {
+          const size = message.channels[0]?.length ?? 0;
+          if (
+            !size ||
+            message.startFrame !== (session.nextFrame ?? message.startFrame) ||
+            message.channels.length !== this.channels ||
+            message.channels.some((channel) => channel.length !== size)
+          )
+            throw new Error(
+              `AudioRecorder lost captured frames: expected ${session.nextFrame ?? message.startFrame}, received ${message.startFrame} (${size} frames).`,
+            );
+          if (session.pendingWrites.size >= 64) throw new Error("AudioRecorder stream writer fell behind.");
+          session.nextFrame = message.startFrame + size;
+          const pending = Promise.resolve().then(() => session.writeChunk!({ startFrame: message.startFrame, channels: message.channels }));
+          session.pendingWrites.add(pending);
+          pending.then(
+            () => session.pendingWrites.delete(pending),
+            (error) => {
+              session.pendingWrites.delete(pending);
+              if (this.active === session) this.fail(session, error);
+            },
+          );
+        } catch (error) {
+          this.fail(session, error);
+        }
+      }
+    } else if (message.type === "gap") {
+      this.fail(session, new Error("AudioRecorder render clock skipped more than two seconds."));
     } else if (message.type === "done") {
       try {
         const frameCount = message.endFrame - message.startFrame;
         if (frameCount < 1) throw new Error("AudioRecorder captured no frames.");
+        if (session.writeChunk) {
+          if (session.nextFrame !== message.endFrame) throw new Error("AudioRecorder lost captured frames.");
+          const span: RecordedAudioSpan = Object.freeze({
+            channelCount: this.channels,
+            sampleRate: this.context.sampleRate,
+            startFrame: message.startFrame,
+            endFrame: message.endFrame,
+            startTime: message.startFrame / this.context.sampleRate,
+            endTime: message.endFrame / this.context.sampleRate,
+            ...(message.dropouts?.length ? { dropouts: Object.freeze(message.dropouts.map((gap) => Object.freeze(gap))) } : {}),
+          });
+          Promise.all(session.pendingWrites).then(
+            () => {
+              if (this.active !== session) return;
+              session.resolve?.(span);
+              this.release(session);
+            },
+            (error) => this.fail(session, error),
+          );
+          return;
+        }
         const channels = Array.from({ length: this.channels }, () => new Float32Array(frameCount));
         let cursor = message.startFrame;
         for (const chunk of session.chunks) {
@@ -198,6 +291,7 @@ export class AudioRecorder extends AudioProcessor<{}, { state: ReadonlyCell<Audi
           endFrame: message.endFrame,
           startTime: message.startFrame / this.context.sampleRate,
           endTime: message.endFrame / this.context.sampleRate,
+          ...(message.dropouts?.length ? { dropouts: Object.freeze(message.dropouts.map((gap) => Object.freeze(gap))) } : {}),
         });
         session.resolve?.(take);
         this.release(session);

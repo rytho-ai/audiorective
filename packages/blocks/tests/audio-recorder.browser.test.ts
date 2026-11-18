@@ -38,6 +38,73 @@ test("captures a scheduled live source at exact audio frames without duplicating
   expect(recorder.cells.state.value).toBe("idle");
 });
 
+test("streams ordered PCM chunks without returning a full in-memory take", async () => {
+  const sampleRate = 48_000;
+  const context = new OfflineAudioContext(1, sampleRate / 2, sampleRate);
+  const recorder = new AudioRecorder(context, { channels: 1 });
+  disposers.push(() => recorder.destroy());
+  const source = new ConstantSourceNode(context, { offset: 0.25 });
+  source.connect(recorder.input);
+  source.start(0);
+  source.stop(0.4);
+  const chunks: Array<{ startFrame: number; size: number; peak: number }> = [];
+  await recorder.startStream(
+    async (chunk) => {
+      await Promise.resolve();
+      chunks.push({
+        startFrame: chunk.startFrame,
+        size: chunk.channels[0].length,
+        peak: Math.max(...chunk.channels[0]),
+      });
+    },
+    { when: 0.1 },
+  );
+  expect(() => recorder.stop()).toThrow("AudioRecorder streaming take needs stopStream().");
+  const pending = recorder.stopStream({ when: 0.3 });
+  await context.startRendering();
+  const span = await pending;
+  expect(span).toEqual({ channelCount: 1, sampleRate, startFrame: 4800, endFrame: 14400, startTime: 0.1, endTime: 0.3 });
+  expect(chunks.length).toBeGreaterThan(1);
+  expect(
+    chunks.reduce((cursor, chunk) => {
+      expect(chunk.startFrame).toBe(cursor);
+      expect(chunk.peak).toBeCloseTo(0.25, 6);
+      return cursor + chunk.size;
+    }, span.startFrame),
+  ).toBe(span.endFrame);
+  expect(recorder.cells.state.value).toBe("idle");
+});
+
+test("a stalled chunk writer fails instead of retaining an unbounded take", async () => {
+  const context = new OfflineAudioContext(1, 48_000 * 8, 48_000);
+  const recorder = new AudioRecorder(context, { channels: 1 });
+  disposers.push(() => recorder.destroy());
+  const source = new ConstantSourceNode(context, { offset: 0.2 });
+  source.connect(recorder.input);
+  source.start(0);
+  await recorder.startStream(() => new Promise<void>(() => {}), { when: 0.1 });
+  const pending = recorder.stopStream({ when: 7 });
+  const rejected = expect(pending).rejects.toThrow("AudioRecorder stream writer fell behind.");
+  await context.startRendering();
+  await rejected;
+  expect(recorder.cells.state.value).toBe("idle");
+});
+
+test("a failed chunk writer rejects the streamed take and releases capture", async () => {
+  const context = new OfflineAudioContext(1, 48_000, 48_000);
+  const recorder = new AudioRecorder(context, { channels: 1 });
+  disposers.push(() => recorder.destroy());
+  const source = new ConstantSourceNode(context, { offset: 0.2 });
+  source.connect(recorder.input);
+  source.start(0);
+  await recorder.startStream(() => Promise.reject(new Error("Storage full")), { when: 0.1 });
+  const rejected = expect(recorder.stopStream({ when: 0.5 })).rejects.toThrow("Storage full");
+  await context.startRendering();
+  await rejected;
+  expect(recorder.cells.error.value).toBe("Storage full");
+  expect(recorder.cells.state.value).toBe("idle");
+});
+
 test("cancel discards a stopped take, then a second take reuses the borrowed input", async () => {
   const sampleRate = 48_000;
   const context = new OfflineAudioContext(1, sampleRate / 2, sampleRate);

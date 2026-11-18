@@ -14,6 +14,8 @@ Which `@audiorective/*` packages to install, what they pull in, and how to keep 
 | `@audiorective/widgets`    | Waveform/MIDI piano-roll display, range selection and audio audition without a UI framework          | —                       |
 | `@audiorective/blocks`     | Headless audio capture, WavePlayer and cancellable grouped sample hits                               | —                       |
 | `@audiorective/midi`       | MIDI file parsing, shared note data, playback event projection and browser MIDI take recording       | —                       |
+| `@audiorective/workspace`  | Audio/MIDI project ownership, browser playback and DAWproject save/open                             | —                       |
+| `@audiorective/host`       | WebCLAP plug-in hosting through the `./webclap` entry                                               | —                       |
 | `@audiorective/react`      | React hooks and an engine context                                                                    | `react` `^18 \|\| ^19`  |
 | `@audiorective/threejs`    | Spatial audio that follows three.js objects                                                          | `three` `>=0.150.0`     |
 | `@audiorective/playcanvas` | A shared `AudioContext` and spatial sound bound to PlayCanvas entity transforms                      | `playcanvas` `>=2.18.1` |
@@ -49,6 +51,8 @@ npm install @audiorective/widgets
 ```
 
 Use `@audiorective/widgets` for the complete selector or `@audiorective/widgets/waveform` for audio-independent rendering and plugins. See [Widgets](./widgets.md). For MIDI parsing/shared note state use `@audiorective/midi`; for browser recording use `@audiorective/midi/web`; for audio-independent piano-roll rendering use `@audiorective/widgets/piano-roll`. See [MIDI and Piano Roll](./midi.md). Check the [changelog](../CHANGELOG.md) against the installed package: APIs listed under Unreleased require a workspace build or packed artifact until a release includes them.
+
+For a small persistent audio/MIDI arrangement, install `@audiorective/workspace` and see [Workspace and DAWproject](./workspace.md). Its `Project` and codec work without an AudioContext; the browser `Workspace` runtime borrows one from the app and uses `@audiorective/host` for WebCLAP devices. See [WebCLAP host](./host.md) for serving its worklet and bundle assets.
 
 Latency tests for your own processors:
 

@@ -65,6 +65,20 @@ test("two views share background range drag, snap and keyboard handles", async (
   expect(m.getSelection()!.end).toBeCloseTo(2.01);
   expect(overlays(a.root)[1]).toBeCloseTo(2.01);
 });
+test("beat model keeps note labels, grid snap and playhead in beats", async () => {
+  const model = new MidiSequence({
+    duration: 4,
+    notes: [{ id: "beat-note", start: 1, end: 2, pitch: 60, velocity: 90, channel: 0, track: 0 }],
+  });
+  disposers.push(() => model.destroy());
+  const { root, roll, surface } = view(model, { timeUnit: "beats", grid: { beats: [0, 1, 2, 3, 4], downbeats: [0, 4] }, snap: "beat" });
+  expect(roll.getViewport()).toMatchObject({ timeUnit: "beats", pixelsPerUnit: surface.clientWidth / 4 });
+  expect(root.querySelector('[data-note-id="beat-note"]')?.getAttribute("aria-label")).toContain("1.000 to 2.000 beats");
+  roll.setPlayhead(2);
+  expect(root.querySelector<HTMLElement>("[data-testid=piano-playhead]")!.style.left).toBe(`${surface.clientWidth / 2}px`);
+  await drag(surface, 4, 0.4, 1.6);
+  expect(model.getSelection()).toEqual({ start: 0, end: 2 });
+});
 test("view cleanup preserves owner, selection, peer and caller context", () => {
   const m = owner(),
     a = view(m),

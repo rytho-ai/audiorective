@@ -3,7 +3,7 @@ import { isValidMidiNote, type MidiData, type RecordedMidiEvent } from "./midi-d
 
 export type MidiPlaybackSource = Readonly<{ startTime: number; events: readonly RecordedMidiEvent[] }>;
 export type MidiPlaybackEvent = Readonly<{
-  /** Seconds relative to the take start. The caller places this on its own transport. */
+  /** Relative to the source start, in the same unit as the supplied sequence. */
   time: number;
   /** MIDI bytes. A caller sending to an external device may use these directly. */
   data: Uint8Array;
@@ -12,8 +12,8 @@ export type MidiPlaybackEvent = Readonly<{
 }>;
 
 type RankedEvent = MidiPlaybackEvent & { order: number };
-/** A nanosecond is below Web MIDI timestamp precision and removes subtraction round-off at ties. */
-const playbackTime = (seconds: number) => Math.round(seconds * 1e9) / 1e9;
+/** Rounding below source clock precision removes subtraction round-off at ties. */
+const playbackTime = (time: number) => Math.round(time * 1e9) / 1e9;
 
 function isNoteMessage(data: Uint8Array): boolean {
   if (data.length < 3 || data[0] < 0x80 || data[0] >= 0xf0) return false;

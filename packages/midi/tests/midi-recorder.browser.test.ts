@@ -29,7 +29,7 @@ test("captures raw MIDI and projects paired notes into a MidiSequence-compatible
   const { input, pair, recorder, emit } = setup();
   const otherListener = vi.fn();
   input.addEventListener("midimessage", otherListener);
-  recorder.start({ when: 10.1 });
+  expect(recorder.start({ when: 10.1 })).toBe(10.1);
   emit([0x90, 60, 50], 1110);
   emit([0x90, 60, 70], 1120);
   emit([0x91, 60, 80], 1130);

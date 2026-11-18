@@ -6,15 +6,25 @@ import { defaultPianoRollLayout, defaultPianoRollRenderer } from "./piano-roll-v
 import { createNoteEditor } from "./piano-roll-edit";
 import { prepareGrid, snapTime } from "./snap-time";
 import { createSelectionPlugin } from "./selection";
-import type { Unsubscribe } from "./types";
+import type { TimeViewPluginContext, Unsubscribe } from "./types";
 import { createPluginHost } from "./plugin-host";
 import { styles } from "./style";
 import { visibleMidiNotes, type MidiNote } from "@audiorective/midi";
 import type { PianoRollOptions, PianoRollHandle, PianoRollRenderer, PianoRollLayout, PitchRange } from "./piano-roll-types";
 export type * from "./piano-roll-types";
-export type { WaveformPlugin, WaveformPluginContext, PluginAttachment } from "./types";
+export type {
+  PluginAttachment,
+  PluginTarget,
+  TimeViewPlugin,
+  TimeViewPluginContext,
+  WaveformPlugin,
+  WaveformPluginContext,
+  WidgetPlugin,
+  WidgetPluginContext,
+} from "./types";
 const clamp = (n: number, low: number, high: number) => Math.max(low, Math.min(high, n));
 export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): PianoRollHandle {
+  const timeUnit = options.timeUnit ?? "seconds";
   const container = document.createElement("section");
   container.className = "ar-widget ar-piano-roll";
   container.setAttribute("aria-label", options.label ?? "Piano roll");
@@ -76,9 +86,9 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
     target.addEventListener(type, fn);
     return own(() => target.removeEventListener(type, fn));
   };
-  const timeToX = (seconds: number) => clamp(seconds, 0, state.duration) * scale;
+  const timeToX = (time: number) => clamp(time, 0, state.duration) * scale;
   const snapshot = () =>
-    Object.freeze({ duration: state.duration, pixelsPerSecond: scale, scrollLeft: viewport.scrollLeft, width: viewport.clientWidth, height });
+    Object.freeze({ duration: state.duration, timeUnit, pixelsPerUnit: scale, pixelsPerSecond: scale, scrollLeft: viewport.scrollLeft, width: viewport.clientWidth, height });
   let renderer: ReturnType<PianoRollRenderer> | undefined;
   let presentation: ReturnType<PianoRollLayout> | undefined;
   const pitchToY = (pitch: number) => ((pitches.high - pitch) * height) / (pitches.high - pitches.low + 1);
@@ -106,6 +116,7 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
     renderer?.render(
       Object.freeze({
         notes: visibleMidiNotes(editor.notes(), range, pitches),
+        timeUnit,
         duration: state.duration,
         width,
         height,
@@ -139,14 +150,18 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
           const el = document.createElement("div");
           el.className = "ar-pr-beat";
           el.style.left = `${timeToX(t)}px`;
-          if (grid.downbeats.includes(t)) el.style.borderLeftWidth = "2px";
+          if (grid.downbeats.includes(t)) {
+            el.classList.add("downbeat");
+            el.style.borderLeftWidth = "2px";
+          }
           return el;
         }),
     );
     render();
   }
-  const plugins = createPluginHost("piano roll", ({ isActive, own }) => ({
+  const plugins = createPluginHost<TimeViewPluginContext>("piano roll", ({ isActive, own }) => ({
     surface,
+    timeUnit,
     get duration() {
       return state.duration;
     },
@@ -183,9 +198,9 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
     onCleanup: own,
   }));
   const handle: PianoRollHandle = {
-    setPlayhead(seconds) {
-      if (seconds !== null && !Number.isFinite(seconds)) throw new RangeError("Playhead must be finite or null.");
-      position = seconds;
+    setPlayhead(time) {
+      if (time !== null && !Number.isFinite(time)) throw new RangeError("Playhead must be finite or null.");
+      position = time;
       drawPlayhead();
     },
     setZoom(factor) {
@@ -197,9 +212,9 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
       viewport.scrollLeft = timeToX(center) - viewport.clientWidth / 2;
       render();
     },
-    scrollTo(seconds) {
-      if (!Number.isFinite(seconds)) throw new RangeError("Piano roll scroll time must be finite.");
-      viewport.scrollLeft = timeToX(seconds);
+    scrollTo(time) {
+      if (!Number.isFinite(time)) throw new RangeError("Piano roll scroll time must be finite.");
+      viewport.scrollLeft = timeToX(time);
       render();
     },
     setPitchRange(next) {

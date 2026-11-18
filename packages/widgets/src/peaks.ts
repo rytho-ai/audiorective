@@ -7,7 +7,7 @@ export function cachePeaks(buffer: AudioBuffer): Peaks {
     channels: Array.from({ length: buffer.numberOfChannels }, (_, c) => buffer.getChannelData(c)),
   });
 }
-export function peakPath(peaks: Peaks, width: number, height: number): string {
+export function peakPath(peaks: Peaks, width: number, height: number, amplitudeZoom = 1): string {
   const commands: string[] = [];
   const columns = Math.ceil(width);
   for (let x = 0; x < columns; x += 2) {
@@ -19,7 +19,9 @@ export function peakPath(peaks: Peaks, width: number, height: number): string {
       lo = Math.min(lo, peaks.min[i]);
       hi = Math.max(hi, peaks.max[i]);
     }
-    commands.push(`M${x},${(((1 - hi) * height) / 2).toFixed(1)}V${(((1 - lo) * height) / 2).toFixed(1)}`);
+    commands.push(
+      `M${x},${(((1 - Math.min(1, hi * amplitudeZoom)) * height) / 2).toFixed(1)}V${(((1 - Math.max(-1, lo * amplitudeZoom)) * height) / 2).toFixed(1)}`,
+    );
   }
   return commands.join("");
 }

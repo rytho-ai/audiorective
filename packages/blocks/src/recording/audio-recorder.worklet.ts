@@ -13,6 +13,7 @@ class AudioRecorderProcessor extends AudioWorkletProcessor {
     this.chunkStart = 0;
     this.chunkLength = 0;
     this.chunks = Array.from({ length: this.channels }, () => new Float32Array(4096));
+    this.dropouts = [];
     this.disposed = false;
     this.port.onmessage = ({ data }) => {
       if (data.type === "dispose") this.disposed = true;
@@ -35,7 +36,7 @@ class AudioRecorderProcessor extends AudioWorkletProcessor {
       if (!enabled) {
         if (this.firstFrame !== null) {
           this.flush();
-          this.port.postMessage({ type: "done", startFrame: this.firstFrame, endFrame: this.endFrame });
+          this.port.postMessage({ type: "done", startFrame: this.firstFrame, endFrame: this.endFrame, dropouts: this.dropouts });
           this.disposed = true;
           return false;
         }
@@ -44,6 +45,21 @@ class AudioRecorderProcessor extends AudioWorkletProcessor {
       if (this.firstFrame === null) {
         this.firstFrame = frame;
         this.port.postMessage({ type: "begin", frame });
+      }
+      if (this.endFrame !== null && frame > this.endFrame) {
+        const missing = frame - this.endFrame;
+        if (missing > sampleRate * 2) {
+          this.port.postMessage({ type: "gap", startFrame: this.endFrame, endFrame: frame });
+          this.disposed = true;
+          return false;
+        }
+        this.dropouts.push({ startFrame: this.endFrame, endFrame: frame });
+        for (let lost = this.endFrame; lost < frame; lost++) {
+          if (!this.chunkLength) this.chunkStart = lost;
+          for (let channel = 0; channel < this.channels; channel++) this.chunks[channel][this.chunkLength] = 0;
+          this.chunkLength++;
+          if (this.chunkLength === this.chunks[0].length) this.flush();
+        }
       }
       if (!this.chunkLength) this.chunkStart = frame;
       for (let channel = 0; channel < this.channels; channel++) {

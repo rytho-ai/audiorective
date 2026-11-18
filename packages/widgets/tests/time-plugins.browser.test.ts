@@ -1,14 +1,76 @@
-/** Public integration/lifecycle contract for plugins shared by both time-based views. */
+/** Public integration and lifecycle for plugins shared by time-based views. */
 import { afterEach, expect, test, vi } from "vitest";
 import { userEvent } from "vitest/browser";
 import { MidiSequence } from "@audiorective/midi";
+import { WavePlayer } from "@audiorective/blocks";
+import { mountWaveformSelector, type TimeViewPlugin } from "../src";
 import { mountPianoRoll, type WaveformPlugin, type WaveformPluginContext } from "../src/piano-roll";
 import { mountWaveform } from "../src/waveform";
-import { cleanup, host, own, pointer } from "./helpers";
+import { bandsFile, cleanup, element, host, own, pointer } from "./helpers";
 
 afterEach(async () => {
   await cleanup();
   vi.restoreAllMocks();
+});
+
+test("one time plugin mounts on all three views, follows units and cleans up each attachment", async () => {
+  const context = new AudioContext();
+  own(() => context.close());
+  const player = new WavePlayer(context);
+  own(() => player.destroy());
+  const model = new MidiSequence({ duration: 8, notes: [] });
+  own(() => model.destroy());
+
+  const wave = mountWaveform(host(), { data: { peaks: Float32Array.of(0.5), duration: 4 } });
+  const piano = mountPianoRoll(host(), { model, timeUnit: "beats" });
+  const selectorRoot = host();
+  const selector = mountWaveformSelector(selectorRoot, { player });
+  own(() => wave.destroy());
+  own(() => piano.destroy());
+  own(() => selector.destroy());
+
+  const layers: HTMLElement[] = [];
+  const lines: HTMLElement[] = [];
+  const observedDurations = vi.fn();
+  const cleanups = vi.fn();
+  const marker: TimeViewPlugin = {
+    attach(ctx) {
+      const layer = document.createElement("div");
+      const line = document.createElement("span");
+      line.style.position = "absolute";
+      layer.append(line);
+      layers.push(layer);
+      lines.push(line);
+      ctx.mountOverlay(layer);
+      const draw = () => {
+        line.style.left = `${ctx.timeToX(ctx.timeUnit === "beats" ? 2 : 1)}px`;
+        line.textContent = ctx.timeUnit;
+      };
+      ctx.onViewportChange(draw);
+      ctx.onDataChange(observedDurations);
+      ctx.onCleanup(cleanups);
+      draw();
+    },
+  };
+  const waveformMarker = wave.attach(marker);
+  piano.attach(marker);
+  const selectorMarker = selector.attach(marker);
+  await selector.load(bandsFile(4));
+  expect(observedDurations.mock.calls).toEqual([[4]]);
+  expect(layers.map((layer) => layer.textContent)).toEqual(["seconds", "beats", "seconds"]);
+  expect(lines.every((line) => line.isConnected && parseFloat(line.style.left) > 0)).toBe(true);
+  const leftBeforeZoom = parseFloat(lines[2].style.left);
+  element<HTMLButtonElement>(selectorRoot, "zoom-in").click();
+  expect(parseFloat(lines[2].style.left)).toBeCloseTo(2 * leftBeforeZoom);
+
+  waveformMarker.destroy();
+  expect(layers.map((layer) => layer.isConnected)).toEqual([false, true, true]);
+  selector.destroy();
+  selectorMarker.destroy();
+  expect(layers.map((layer) => layer.isConnected)).toEqual([false, true, false]);
+  expect(cleanups).toHaveBeenCalledTimes(2);
+  expect(player.buffer?.duration).toBe(4);
+  expect(context.state).not.toBe("closed");
 });
 
 for (const kind of ["waveform", "piano roll"] as const) {

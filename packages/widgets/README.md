@@ -1,6 +1,8 @@
 # @audiorective/widgets
 
-Framework-independent browser widgets for plain playback controls, waveform selection and MIDI views.
+Framework-independent browser widgets for plain playback controls, waveform selection, MIDI views and arrangement clip gestures.
+
+`@audiorective/widgets/arrangement` provides `attachClipGesture` for snapped clip moves and keyboard nudges, and `attachTimelineZoom` for continuous anchored timeline zoom. Both borrow caller-owned DOM and project state. See the [widgets reference](../../docs/widgets.md).
 
 ## Plain player
 
@@ -55,5 +57,7 @@ See the [widget reference](../../docs/widgets.md) for public types, loading and 
 For offline edits, pass a `WavePlayer` configured with a borrowed stretch processor and call `await player.setStretch(ratio)`. See the [complete composition example](../../docs/blocks.md#compose-offline-stretch-and-a-selector) for caller-hosted WASM, routing, URL/File errors and cleanup.
 
 ## Piano roll
+
+Set `timeUnit: "beats"` when the borrowed MIDI model uses beats; its grid, note labels, playhead and plugin coordinates then share that unit. The default is seconds.
 
 Import `mountPianoRoll` from `@audiorective/widgets/piano-roll` for MIDI notes, a piano keyboard, source-time range selection, beat snapping, zoom/scroll and an external playhead. Pass a shared `MidiSequence` from `@audiorective/midi` or a structural model. Each view borrows data and selection, owns its renderer/viewport, and creates no audio nodes. `layout` replaces keyboard, toolbar and arrangement around the supplied widget viewport. `onNoteEdit` enables widget-owned move/edge-resize previews and a single model-command commit; custom renderers forward pointerdown to the frame handler. `renderer` replaces note drawing; `onNoteClick` connects your inspector and model editing controls. `view.attach(plugin)` accepts the same `WaveformPlugin` as waveform views, providing time coordinates, overlays, notifications and attachment-owned cleanup. See [MIDI and Piano Roll](../../docs/midi.md).

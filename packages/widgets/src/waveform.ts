@@ -4,7 +4,7 @@ import { defaultRenderer } from "./renderer";
 import { styles } from "./style";
 import { createPluginHost } from "./plugin-host";
 
-import type { WaveformViewport, WaveformOptions, WaveformHandle, WaveformRendererInstance } from "./types";
+import type { TimeViewPluginContext, WaveformViewport, WaveformOptions, WaveformHandle, WaveformRendererInstance } from "./types";
 export { createSelectionPlugin } from "./selection";
 export type {
   WaveformData,
@@ -15,6 +15,11 @@ export type {
   WaveformOptions,
   WaveformHandle,
   PluginAttachment,
+  PluginTarget,
+  WidgetPlugin,
+  WidgetPluginContext,
+  TimeViewPlugin,
+  TimeViewPluginContext,
   Unsubscribe,
   Selection,
   SnapMode,
@@ -55,7 +60,8 @@ export function mountWaveform(root: HTMLElement, options: WaveformOptions = {}):
   let peaks: Peaks | null = null,
     duration = 0,
     scale = 1,
-    zoom = 1;
+    zoom = 1,
+    amplitudeZoom = 1;
   let position = options.playhead ?? null,
     destroyed = false;
   const snapshot = (): WaveformViewport =>
@@ -77,7 +83,7 @@ export function mountWaveform(root: HTMLElement, options: WaveformOptions = {}):
     const width = Math.max(viewport.clientWidth, duration * scale),
       height = surface.clientHeight || 180;
     track.style.width = `${width}px`;
-    renderer?.render(Object.freeze({ peaks, width, height, pixelsPerSecond: scale }));
+    renderer?.render(Object.freeze({ peaks, width, height, pixelsPerSecond: scale, amplitudeZoom }));
     ruler.replaceChildren();
     const target = 85 / scale,
       exponent = 10 ** Math.floor(Math.log10(target || 1));
@@ -110,8 +116,9 @@ export function mountWaveform(root: HTMLElement, options: WaveformOptions = {}):
   viewport.addEventListener("scroll", emitViewport);
   const resize = new ResizeObserver(layout);
   resize.observe(viewport);
-  const plugins = createPluginHost("waveform", ({ isActive, own }) => ({
+  const plugins = createPluginHost<TimeViewPluginContext>("waveform", ({ isActive, own }) => ({
     surface,
+    timeUnit: "seconds",
     get duration() {
       return duration;
     },
@@ -167,6 +174,7 @@ export function mountWaveform(root: HTMLElement, options: WaveformOptions = {}):
       peaks = next;
       duration = next?.duration ?? 0;
       zoom = 1;
+      amplitudeZoom = 1;
       viewport.scrollLeft = 0;
       position = position === null ? null : clamp(position, 0, duration);
       // Data invalidation happens before drawing the new viewport; plugins cancel gestures here.
@@ -181,6 +189,13 @@ export function mountWaveform(root: HTMLElement, options: WaveformOptions = {}):
     },
     getViewport: snapshot,
     setZoom,
+    setAmplitudeZoom(factor) {
+      if (destroyed) throw new Error("Waveform is destroyed.");
+      if (!Number.isFinite(factor) || factor < 1 || factor > 32) throw new RangeError("Amplitude zoom must be finite and from 1 to 32.");
+      amplitudeZoom = factor;
+      layout();
+    },
+    getAmplitudeZoom: () => amplitudeZoom,
     scrollTo(seconds) {
       if (destroyed) return;
       viewport.scrollLeft = clamp(seconds, 0, duration) * scale;

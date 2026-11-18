@@ -13,8 +13,23 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ## [Unreleased]
 
+### Added
+
+- **workspace:** `workspace.player` plugs directly into `mountPlayer` with play, pause, reactive project duration and seek in project seconds.
+- **blocks / workspace:** `@audiorective/blocks/effect-rack` owns ordered Filter and PingPongDelay inserts. Project stores rack settings and Workspace applies them after WebCLAP without restarting playback. DAWproject saves the inserts as Audiorective built-in devices. The DAW Devices panel supports adding, reordering, bypass, editing and removal.
+- **widgets:** `mountParameter()` provides reactive horizontal, vertical and rotary controls with linear and logarithmic coordinates. `mountLevelMeter()` displays peak and RMS from a borrowed float reader. The DAW uses both in its effect rack.
+
+- **widgets:** Waveform, piano roll, and waveform selector expose the shared `attach(TimeViewPlugin)` interface. Plugins read the view's seconds or beats from `TimeViewPluginContext.timeUnit` and clean up through their own attachment. The waveform selector passes the plugin to its internal waveform. Existing `WaveformPlugin` types remain compatible.
+
+- **workspace:** `TempoMap`, `Project.tempoMap` and `setTempoChanges()` provide step-tempo beat/project-second conversion. DAWproject reads and writes beat-based hold `TempoAutomation`; Workspace rebases Clock on play and seek. `Project.addMidiClip(..., { timeUnit: "beats" })` and `addMidiTake(..., { timeUnit: "beats" })` create beat-locked MIDI notes and ordered control events; existing clips default to seconds. `Project.clipTimeSeconds()` converts a clip boundary for project-second views. The codec writes beat clip lanes and unit-bound private event fingerprints.
+- **widgets:** `@audiorective/widgets/arrangement` provides `attachClipGesture()` for snapped clip moves and beat-based keyboard nudges, plus `attachTimelineZoom()` for anchored continuous slider and Ctrl/⌘+wheel zoom over caller-owned views. `ClipGestureOptions.timeUnit` lets gesture input and commits use the clip's native seconds or beats. `PianoRollOptions.timeUnit` labels borrowed model times; `PianoRollViewport` exposes `timeUnit` and `pixelsPerUnit`.
+
 ### Changed
 
+- **blocks:** `AudioRecorder` fills short browser render gaps with silence and reports their absolute frame ranges in optional `dropouts`; a gap beyond two seconds fails the take.
+- **workspace:** Streaming DAWproject saves use stored ZIP entries with CRC and size in local headers, and stop before classic ZIP limits. This removes reliance on ZIP data descriptors for large file-backed media.
+- **midi:** `MidiRecorder.start()` returns its actual output-clock start time for a Workspace take anchor; existing callers may ignore the return value.
+- **workspace:** `Workspace.commit()` chooses a clip/mixer/automation/state refresh without host reload when topology is unchanged, and rebuilds routing only after track or device topology changes. The DAW demo uses this entry after Project edits.
 - **midi / blocks / widgets:** MIDI note data, `MidiSequence` and `compileMidiPlaybackEvents` use the pure `@audiorective/midi` entry; browser `MidiRecorder` uses `@audiorective/midi/web`. The unreleased `@audiorective/blocks/midi` entry and blocks-root recorder exports are removed. Piano-roll widgets and the showroom use the new package without changing note editing, recording or audio playback behavior.
 
 - **widgets:** Piano-roll layout frames expose the current `snap` mode. Calling `setSnap` refreshes custom controls synchronously, so externally changed snapping stays visible without duplicating widget state.
@@ -23,6 +38,17 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Added
 
+- **workspace:** `Project.snapshot()`, `Workspace.portabilityReport()` and `Workspace.exportAudioFallbackTo()` provide a separate real-time mix and optional stem WAV ZIP for sharing WebCLAP projects with people who lack the matching CLAP binary. The fallback checks unresolved devices and render dropouts, supports cancellation and uses temporary OPFS media. The DAW demo exposes share guidance and audio export.
+- **workspace:** `AudioMediaWriter` accepts streamed recorder chunks into caller-owned storage; `createOpfsAudioMediaWriter` supplies a browser disk-backed target. `Project.addAudioMediaClip` stores frame windows into an `AudioMedia` asset, so split/trim/duplicate avoid whole-take PCM copies. Workspace schedules file-backed audio in two-second chunks and exposes `saveTo(writable)` / `openBlob(blob)` for streamed DAWproject ZIP save and Blob-backed reopen. `save()` remains an in-memory convenience. The DAW demo records to OPFS and uses native streaming file save when available.
+- **workspace:** DAWproject import accepts empty standard metadata fields while rejecting nonempty unsupported metadata. A Cubase 14 export probe confirms unsupported track structure, EQ and time-signature automation still reject rather than disappearing on save.
+- **workspace:** Track-volume automation now drives a separate native gain stage during playback and seek, preserving mute/solo behavior. Audio clips reuse an `AudioBuffer` while the same clip object remains current. `takeAnchor()` and `takePosition()` map recorder start times to project position with explicit input-latency correction.
+- **blocks:** `AudioRecorder.startStream(writeChunk)` and `stopStream()` send ordered PCM chunks to caller-owned storage without retaining a full take; the recorder bounds outstanding writes and returns frame/timing metadata.
+
+- **widgets:** Pure waveform views expose `setAmplitudeZoom(1..32)` and `getAmplitudeZoom()` for display-only waveform height, with the factor available to custom renderers. The DAW demo separates time and wave-height controls and lets users resize the lower editor.
+- **workspace:** `Project.splitClip` and `trimClip` edit audio and MIDI clips in clip-local seconds, preserving PCM, overlapping MIDI notes and in-range controller events. The DAW demo adds playhead split/trim controls and session-local clip/note undo and redo.
+- **workspace:** Projects can move, duplicate and remove audio/MIDI clips, rename projects/tracks, remove tracks, and store track mute/solo/pan and named section markers in standard DAWproject fields. Workspace applies mixer changes to native audio nodes and refreshes clip-only arrangement edits without reloading WebCLAP hosts. The private DAW demo now offers a shared eight-track arrangement, clip dragging, piano-roll and waveform editor, browser, mixer, device rack, and four switchable skins.
+- **host / workspace:** `@audiorective/host/webclap` loads a WebCLAP bundle in an AudioWorklet, schedules cancellable MIDI, bridges its editor and reads/writes opaque CLAP state. `Workspace` adds a browser transport and track graph over `Project`, captures device state on save, and stores CLAP identity/state in DAWProject plus an Audiorective bundle locator. The private DAW demo uses open-webclap Oxo Synth2 as its default instrument.
+- **workspace:** New `@audiorective/workspace` package owns a small audio/MIDI project and saves/opens DAWproject 1.0 ZIPs with fixed tempo, seconds-based clips, float32 WAV assets, MIDI notes/controllers and track-volume automation. An Audiorective private entry preserves note IDs and same-time recorded MIDI order for native round trips; changed or missing private detail falls back to standard XML with a warning. Unsupported structures fail on open instead of being silently dropped.
 - **midi:** `compileMidiPlaybackEvents(take, sequence)` projects edited notes with the recorded take's non-note MIDI messages in stable same-time order, normalizing sub-nanosecond floating-point differences. Matched raw note messages carry `noteId` for edit and overlap identity; scheduling, instrument choice and clip placement remain caller-owned.
 - **midi:** `MidiRecorder` borrows one caller-owned Web MIDI input and a running AudioContext to record raw messages with mapped output-timeline positions. It projects paired note on/off into a take-relative `MidiData` snapshot, preserves controller messages, supports cancellation and leaves live synth playback and take placement to the app.
 - **blocks:** `AudioRecorder` captures short PCM takes from a caller-connected Web Audio input using AudioWorklet sample-frame timing. It exposes a read-only recording state, scheduled start/stop, cancellation and repeatable takes; results retain raw audio-clock frame positions for later Track/Clip placement. It owns no microphone permission, monitor route or AudioContext.
@@ -53,6 +79,10 @@ predates that API. See the "Version mismatches" note in the skill.
 
 - **widgets:** `renderer` on `mountWaveform` and `mountWaveformSelector` replaces waveform drawing with caller-supplied SVG, Canvas, or DOM. A factory mounts once and returns `render(frame)` plus optional `destroy()`. Cached extrema and content dimensions follow data, zoom, and resize changes while the widget retains its linear timeline, selection, plugins, and audio ownership.
 - **widgets:** `@audiorective/widgets` provides a framework-independent `mountWaveformSelector` with URL/File loading, range selection, keyboard adjustment, optional beat/downbeat snapping, zoom/scroll, and audition controls. The caller supplies an `AudioContext` and routes `output`; widget destruction leaves that context open. `mountWaveform` and `createSelectionPlugin` are also exported from the audio-independent `@audiorective/widgets/waveform` entry for precomputed peaks, external playheads, metadata-only selection, and custom visual plugins with attachment-owned cleanup. These APIs are unreleased; an installed older npm package does not include them.
+
+### Fixed
+
+- **workspace:** A cancelled audio clip's late `onended` callback no longer removes a newer handle for the same clip, preventing duplicate playback after rapid seek or replay.
 
 ## [2.3.2] - 2026-09-16
 

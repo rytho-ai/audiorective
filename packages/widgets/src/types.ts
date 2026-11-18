@@ -27,7 +27,7 @@ export type WaveformSelectorOptions = (
   renderer?: WaveformRenderer;
 };
 
-export interface WaveformSelectorHandle {
+export interface WaveformSelectorHandle extends PluginTarget<TimeViewPluginContext> {
   /** Settles after the initial load; resolves immediately without an initial source. */
   readonly ready: Promise<void>;
   readonly output: AudioNode;
@@ -55,6 +55,8 @@ export type WaveformRenderFrame = Readonly<{
   width: number;
   height: number;
   pixelsPerSecond: number;
+  /** Display gain for waveform height; PCM and cached peaks remain unchanged. */
+  amplitudeZoom: number;
 }>;
 export interface WaveformRendererInstance {
   render(frame: WaveformRenderFrame): void;
@@ -71,12 +73,31 @@ export type WaveformViewport = Readonly<{
 }>;
 export type Unsubscribe = () => void;
 
-/** Coordinates use content pixels inside the scrolling waveform. */
-export interface WaveformPluginContext {
+/** Resources registered by a plugin are released when its attachment is destroyed. */
+export interface WidgetPluginContext {
+  /** Registers a listener for the lifetime of the plugin attachment. */
+  listen(target: EventTarget, type: string, listener: EventListener): Unsubscribe;
+  /** Runs immediately if its attachment has already been destroyed. */
+  onCleanup(dispose: Unsubscribe): Unsubscribe;
+}
+
+export interface WidgetPlugin<Context extends WidgetPluginContext = WidgetPluginContext> {
+  attach: (context: Context) => { destroy(): void } | Unsubscribe | void;
+}
+export interface PluginAttachment {
+  destroy(): void;
+}
+export interface PluginTarget<Context extends WidgetPluginContext> {
+  /** Mount an extension and return a handle that can detach it independently. */
+  attach(plugin: WidgetPlugin<Context>): PluginAttachment;
+}
+
+/** Compatibility interface. Use TimeViewPluginContext to read the time unit. */
+export interface WaveformPluginContext extends WidgetPluginContext {
   readonly surface: HTMLElement;
   readonly duration: number;
   getViewport(): WaveformViewport;
-  timeToX(seconds: number): number;
+  timeToX(time: number): number;
   clientXToTime(clientX: number): number;
   scrollBy(pixels: number): void;
   getViewportRect(): DOMRect;
@@ -84,16 +105,14 @@ export interface WaveformPluginContext {
   mountOverlay(element: HTMLElement): Unsubscribe;
   onViewportChange(listener: (viewport: WaveformViewport) => void): Unsubscribe;
   onDataChange(listener: (duration: number) => void): Unsubscribe;
-  /** Registrations are removed when this attachment is destroyed. */
-  listen(target: EventTarget, type: string, listener: EventListener): Unsubscribe;
-  /** Late registrations run immediately after attachment destruction. */
-  onCleanup(dispose: Unsubscribe): Unsubscribe;
 }
+/** Times use the view's unit. The horizontal coordinate is in scrolling content pixels. */
+export interface TimeViewPluginContext extends WaveformPluginContext {
+  readonly timeUnit: "seconds" | "beats";
+}
+export type TimeViewPlugin = WidgetPlugin<TimeViewPluginContext>;
 export interface WaveformPlugin {
   attach(context: WaveformPluginContext): { destroy(): void } | Unsubscribe | void;
-}
-export interface PluginAttachment {
-  destroy(): void;
 }
 export type WaveformOptions = {
   data?: WaveformData;
@@ -101,15 +120,17 @@ export type WaveformOptions = {
   label?: string;
   renderer?: WaveformRenderer;
 };
-export interface WaveformHandle {
+export interface WaveformHandle extends PluginTarget<TimeViewPluginContext> {
   /** Replace the data and reset zoom, scroll and plugin selections. */
   setData(data: WaveformData | null): void;
   setPlayhead(seconds: number | null): void;
   getViewport(): WaveformViewport;
   /** A factor of 1 fits the entire source; zoom preserves the viewport center. */
   setZoom(factor: number): void;
+  /** Visual waveform height only, from 1× to 32×; audio and cached peaks are unchanged. */
+  setAmplitudeZoom(factor: number): void;
+  getAmplitudeZoom(): number;
   scrollTo(seconds: number): void;
-  attach(plugin: WaveformPlugin): PluginAttachment;
   destroy(): void;
 }
 

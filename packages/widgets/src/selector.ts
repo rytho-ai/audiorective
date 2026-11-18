@@ -187,6 +187,7 @@ export const mountWaveformSelector: MountWaveformSelector = (root, options) => {
       error: playbackError ?? player.getState().error,
       pixelsPerSecond: waveform.getViewport().pixelsPerSecond,
     }),
+    attach: (plugin) => waveform.attach(plugin),
     destroy() {
       if (destroyed) return;
       destroyed = true;

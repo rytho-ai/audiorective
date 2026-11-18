@@ -66,7 +66,7 @@ export class MidiSequence {
     const notes = data.notes
       .map((n) => {
         if (!isValidMidiNote(n, data.duration) || ids.has(n.id))
-          throw new RangeError("MIDI notes need unique ids, valid source seconds and integer pitch/velocity/channel/track.");
+          throw new RangeError("MIDI notes need unique ids, valid source times and integer pitch/velocity/channel/track.");
         ids.add(n.id);
         return Object.freeze({ ...n });
       })
@@ -90,7 +90,7 @@ export class MidiSequence {
         selection.start >= selection.end ||
         selection.end > this.state.duration)
     )
-      throw new RangeError("Selection must satisfy 0 <= start < end <= duration (finite seconds).");
+      throw new RangeError("Selection must satisfy 0 <= start < end <= duration (finite model time).");
     this.commit({ ...this.state, selection: selection ? Object.freeze({ ...selection }) : null });
   }
   updateNote(id: string, patch: Partial<Omit<MidiNote, "id">>): void {

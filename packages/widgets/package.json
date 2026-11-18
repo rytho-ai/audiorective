@@ -37,6 +37,10 @@
     "./player": {
       "types": "./dist/player.d.ts",
       "import": "./dist/player.js"
+    },
+    "./arrangement": {
+      "types": "./dist/arrangement.d.ts",
+      "import": "./dist/arrangement.js"
     }
   },
   "scripts": {

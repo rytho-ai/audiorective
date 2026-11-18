@@ -1,12 +1,11 @@
-/** Attachment-scoped cleanup shared by time-based waveform and piano-roll plugins.
- * Reads: ./types. Widgets supply geometry; this host owns plugin registration and disposal.
+/** Widgets supply their own context; this host owns plugin registration and disposal.
  */
-import type { PluginAttachment, Unsubscribe, WaveformPlugin, WaveformPluginContext } from "./types";
+import type { PluginAttachment, Unsubscribe, WidgetPlugin, WidgetPluginContext } from "./types";
 
 type PluginScope = { isActive(): boolean; own(dispose: Unsubscribe): Unsubscribe };
 
-export function createPluginHost(name: "waveform" | "piano roll", contextFor: (scope: PluginScope) => WaveformPluginContext) {
-  const attachments = new Map<WaveformPlugin, PluginAttachment>();
+export function createPluginHost<Context extends WidgetPluginContext>(name: string, contextFor: (scope: PluginScope) => Context) {
+  const attachments = new Map<WidgetPlugin<Context>, PluginAttachment>();
   const title = name[0].toUpperCase() + name.slice(1);
   let destroyed = false;
   const runCleanup = (dispose: Unsubscribe) => {
@@ -17,7 +16,7 @@ export function createPluginHost(name: "waveform" | "piano roll", contextFor: (s
     }
   };
   return {
-    attach(plugin: WaveformPlugin): PluginAttachment {
+    attach(plugin: WidgetPlugin<Context>): PluginAttachment {
       if (destroyed) throw new Error(`${title} is destroyed.`);
       if (attachments.has(plugin)) throw new Error(`Plugin is already attached to this ${name}.`);
       let active = true;

@@ -405,6 +405,182 @@
         "Treats returned event.time as take-relative seconds and leaves clip placement, synth scheduling, transport cancellation and live keyboard routing with the application",
         "Does not invent a public MidiPlayer, claim MidiSequence itself stores controllers, or claim the compiler implements pedal sound behavior"
       ]
+    },
+    {
+      "id": 28,
+      "prompt": "Our browser studio already has an AudioRecorder take and a MidiRecorder take. Put each on a track at chosen song-second positions, edit one MIDI note, save a DAWproject file, then reopen it and prepare the MIDI events for our synth. Explain what happens if another DAW removes Audiorective-only event details. Do not run anything.",
+      "expected_output": "Uses @audiorective/workspace Project as the project owner, saves and opens a .dawproject archive, and distinguishes portable XML content from private MIDI-order fidelity.",
+      "files": [],
+      "expectations": [
+        "Imports Project, saveDawProject and openDawProject from @audiorective/workspace and adds matching audio/MIDI tracks",
+        "Calls addAudioClip with the recorded PCM and addMidiTake with the recorded MIDI at explicit project-second positions instead of treating AudioContext absolute times as arrangement positions",
+        "Edits the MIDI clip through clip.sequence and saves the Project to .dawproject bytes",
+        "Reopens with openDawProject, checks warnings, and uses the loaded MidiClip.playbackEvents() as clip-relative events for the caller-owned synth scheduler",
+        "Explains that standard XML carries notes/controllers/audio while Audiorective private data preserves note IDs and same-time raw event order; missing or changed private data produces a warning and standard fallback",
+        "Does not claim this narrow codec imports arbitrary DAWproject devices, routing or beat timelines"
+      ]
+    },
+    {
+      "id": 29,
+      "prompt": "Use the current Audiorective workspace packages in a browser app. Put an editable MIDI clip on a track with an open-webclap Oxo Synth2 instrument, play it through one caller-owned AudioContext, let a user change the plug-in patch, and save/reopen the song as DAWProject. Explain which saved plug-in fields another DAW can read and how this browser app finds the WebCLAP bundle on reopen. Show runtime and project cleanup. Do not run anything.",
+      "expected_output": "Project owns clips and WebCLAP device state, Workspace owns browser playback and captures live state when saving, and the app owns AudioContext and editor view.",
+      "files": [],
+      "expectations": [
+        "Imports Project and Workspace from @audiorective/workspace and uses addWebClapDevice on a MIDI track with the Oxo Synth2 CLAP ID and a bundle URL",
+        "Creates Workspace with the caller-owned AudioContext, destination and a served WebCLAP worklet URL, then uses its play/stop or seek methods",
+        "Passes the MidiClip.sequence to a piano-roll widget and keeps the view separate from the audio runtime",
+        "Mounts the loaded host's editor in an iframe or uses host.setParameter, while preserving state through Workspace.save and Workspace.open",
+        "Inspects reopen warnings and explains that DAWProject stores CLAP identity/state while Audiorective's private host manifest locates the WebCLAP bundle",
+        "Destroys the view, Workspace and Project while leaving the borrowed AudioContext to the app",
+        "Does not claim that a WebCLAP bundle is embedded in the archive or that another DAW can load the browser bundle directly"
+      ]
+    },
+    {
+      "id": 30,
+      "prompt": "Build a browser multitrack arranger with the current Audiorective workspace package. Let users move and duplicate MIDI/audio clips, add named section markers, solo and pan tracks while playing, and save/reopen the result as DAWproject without reloading WebCLAP on each clip edit. Explain how the model, runtime and UI share responsibilities. Do not run anything.",
+      "expected_output": "Project owns persistent arrangement and mixer state; Workspace applies runtime mixer controls and refreshes clip edits; the UI owns only transient selection and viewport.",
+      "files": [],
+      "expectations": [
+        "Uses Project.moveClip, duplicateClip and removeClip with project seconds and matching track kinds",
+        "Stores named section markers through Project.setMarkers and renders Project.markers on the shared time axis",
+        "Calls await Workspace.commit after Project edits; explains that it refreshes clip/mixer/automation changes without reloading hosts and rebuilds routing after track or device topology changes",
+        "Uses Workspace.setTrackMuted, setTrackSolo and setTrackPan for live changes and saves via Workspace.save",
+        "Renders one shared time axis with per-track lanes and keeps selection and zoom in the UI rather than duplicating clip or mixer state",
+        "Explains that DAWproject standard Channel fields carry mute, normalized pan and solo, while WebCLAP bundle lookup remains private",
+        "Destroys borrowed editor views and the Workspace and Project on teardown"
+      ]
+    },
+    {
+      "id": 31,
+      "prompt": "Using the current Audiorective workspace package, split a MIDI clip at 2 seconds into a song, trim the right side to its final second, then split an audio clip at a sample boundary. Explain how an open piano-roll view and Workspace playback should respond, and save the result as DAWproject. Do not run anything.",
+      "expected_output": "Project owns content edits in clip-local seconds; the UI remounts borrowed MIDI views and refreshes Workspace scheduling without recreating device hosts.",
+      "files": [],
+      "expectations": [
+        "Calls Project.splitClip with a clip-local offset rather than an absolute song position",
+        "Calls Project.trimClip with clip-local start/end and recognizes that the left split clip keeps its ID",
+        "Re-reads Project.tracks and remounts a borrowed piano-roll after a split or trim because MIDI sequence objects are replaced",
+        "Calls Workspace.commit after clip edits so the live arrangement refreshes without reloading plug-in hosts",
+        "Explains that audio cuts round to samples and crossing MIDI notes are clipped into each retained segment",
+        "Saves through Workspace.save or saveDawProject and does not invent time-stretch behavior"
+      ]
+    },
+    {
+      "id": 32,
+      "prompt": "Build a pure waveform view for a quiet audio clip. Give users separate horizontal time zoom and waveform-height controls, keep the original peaks/audio untouched, and show how a custom renderer follows the height control. Use current @audiorective/widgets/waveform APIs without creating an AudioContext. Do not run anything.",
+      "expected_output": "Uses mountWaveform setZoom for time, setAmplitudeZoom/getAmplitudeZoom for display height, and amplitudeZoom from the custom render frame without mutating peaks.",
+      "files": [],
+      "expectations": [
+        "Imports mountWaveform from @audiorective/widgets/waveform and supplies peak data",
+        "Uses setZoom for horizontal time scale and setAmplitudeZoom with a factor from 1 through 32 for waveform height",
+        "Reads getAmplitudeZoom for the displayed factor and does not imply it changes audio gain",
+        "Custom renderer reads frame.amplitudeZoom and draws from read-only frame.peaks without modifying the arrays",
+        "Creates no AudioContext or audio playback merely to inspect the waveform",
+        "Calls destroy when the view is removed"
+      ]
+    },
+    {
+      "id": 33,
+      "prompt": "In an Audiorective browser DAW, record a MIDI take during transport playback, place it with measured input latency, save a track-volume automation curve and make that curve audible, then explain how to record a long audio take without retaining all PCM in the recorder. Use current APIs; do not run anything.",
+      "expected_output": "Uses one Workspace project-time anchor, commits project edits to runtime, and chooses AudioRecorder streaming for caller-owned long-take storage.",
+      "files": [],
+      "expectations": [
+        "Uses MidiRecorder.start()'s returned output-clock time with Workspace.takeAnchor and passes the take plus explicit non-negative input latency to Workspace.takePosition",
+        "Uses Project.addMidiTake at the returned project-second placement, not at the raw absolute AudioContext time",
+        "Calls Project.setVolumeAutomation with linear or hold points in project seconds and then awaits Workspace.commit to apply the curve during playback",
+        "Uses AudioRecorder.startStream with AudioMediaWriter.writeChunk, then stopStream and writer.finish to add a file-backed clip with Project.addAudioMediaClip",
+        "Explains that a correction crossing project zero requires preroll rather than silently clamping the clip"
+      ]
+    },
+    {
+      "id": 34,
+      "prompt": "Build a browser DAW that records a long microphone take, splits it, saves it as DAWproject without making a whole-take PCM array, and reopens it for waveform viewing and playback. Use current Audiorective APIs; do not run anything.",
+      "expected_output": "Uses AudioRecorder streaming, caller-owned disk storage, media clips and streaming DAWproject save/open while preserving explicit media lifetime.",
+      "files": [],
+      "expectations": [
+        "Creates AudioMediaWriter or createOpfsAudioMediaWriter and passes writeChunk to AudioRecorder.startStream",
+        "Finishes with stopStream and writer.finish, then calls Project.addAudioMediaClip at a Workspace.takePosition-derived project second",
+        "Splits or trims the media clip with Project methods without converting all media into Float32Array channels",
+        "Saves to a WritableStream with Workspace.saveTo and reopens a Blob/File with Workspace.openBlob",
+        "Uses AudioMedia.peaks for the waveform and disposes caller-owned temporary media only after clips and undo state release it",
+        "Does not claim the download fallback or Workspace.save is bounded-memory for the final ZIP"
+      ]
+    },
+    {
+      "id": 35,
+      "prompt": "I need to hand an Audiorective WebCLAP DAW project to someone using another DAW who may not have my synth. Show the current save and audio delivery APIs, explain what they can edit or hear, and what compatibility I must still test. Do not run anything.",
+      "expected_output": "Shares a DAWproject for supported editable content plus a separate real-time audio fallback, without claiming universal plug-in or DAW import compatibility.",
+      "files": [],
+      "expectations": [
+        "Uses Workspace.portabilityReport to list standard content, matching CLAP plug-in dependencies and fidelity limits",
+        "Uses Workspace.saveTo for a file-backed DAWproject archive and Workspace.exportAudioFallbackTo for a separate mix/stems WAV ZIP",
+        "Explains that the receiving DAW needs its own CLAP binary to recreate a hosted plug-in, while the WAV mix remains audible without it",
+        "Explains the audio fallback is captured in real time in a browser with OPFS, and has mix only above 15 tracks",
+        "Does not claim arbitrary DAWproject import or cross-DAW editability without testing named DAWs and versions"
+      ]
+    },
+    {
+      "id": 36,
+      "prompt": "I am building an Audiorective DAW arrangement. Tempo steps from 120 to 60 BPM at beat 4. Let users drag a clip between lanes with snapped preview and one undoable commit, nudge it a beat with the keyboard, and zoom the timeline continuously. Explain which package owns the time conversion and which owns the gesture. Use current workspace APIs; do not run anything.",
+      "expected_output": "Uses Project's step tempo map as the single beat/project-seconds owner, the arrangement widget for reusable clip gestures, and the app for edit history, runtime commit and continuous zoom presentation.",
+      "files": [],
+      "expectations": [
+        "Calls project.setTempoChanges([{ beat: 4, bpm: 60 }]) and awaits workspace.commit() after the edit",
+        "Uses project.tempoMap beatToSeconds, secondsToBeat or snapSeconds for ruler and snapping; beat 8 maps to project second 6",
+        "Imports attachClipGesture from @audiorective/widgets/arrangement and passes project.tempoMap as timeMap",
+        "Uses attachTimelineZoom from the arrangement entry for continuous anchored slider and Ctrl/Meta+wheel zoom, with the app providing redraw in onScale",
+        "Lets the widget own pointer preview, cancellation and keyboard nudge but applies Project.moveClip and undo history in onMove",
+        "Calls workspace.commit() after the Project clip move and destroys the gesture before removing its clip element",
+        "Keeps zoom as a view scale in pixels per second and anchors the visible time while it changes",
+        "Distinguishes legacy seconds clips from new beat-locked MIDI clips; only beat MIDI placement, notes and controls stretch after tempo edits"
+      ]
+    },
+    {
+      "id": 37,
+      "prompt": "Record an Audiorective MIDI take at project second 1.5 with tempo 120 BPM until beat 4, then 60 BPM. Place the take so MIDI notes and CC64 stretch when the tempo map changes, show it in a piano roll, move it with the arrangement gesture, and save/reopen a DAWproject. Use current APIs; do not run anything.",
+      "expected_output": "Explicit beat MIDI unit from placement through playback, widget gestures and DAWproject round trip.",
+      "files": [],
+      "expectations": [
+        "Uses Project.addMidiTake(trackId, take, 1.5, { timeUnit: \"beats\" }) so all notes and captured controls convert through the tempo map",
+        "Passes clip.timeUnit to mountPianoRoll and supplies grid and playhead in clip-local beats",
+        "Passes clip.time and clip.timeUnit to attachClipGesture; its onMove time already uses that unit and can go directly to Project.moveClip",
+        "Calls workspace.commit after tempo or clip edits and treats Workspace.position as project seconds",
+        "Saves and reopens DAWproject with beat Clips lanes and explains that legacy seconds clips stay fixed when BPM changes"
+      ]
+    },
+    {
+      "id": 38,
+      "prompt": "Add the same cue overlay to an Audiorective pure waveform, waveform audition selector, and beat-based piano roll. The cue is at 2 seconds in both audio views and at beat 5 in the piano roll. It should stay aligned when zooming and when the source changes, and be removable from one view independently. Show how with current APIs.",
+      "expected_output": "Implements a shared time-view plugin with attachment-local DOM and coordinate mapping.",
+      "files": [],
+      "expectations": [
+        "Types the extension as TimeViewPlugin and calls each view's attach method, including the WaveformSelectorHandle",
+        "Checks context.timeUnit to choose 2 seconds or beat 5 and uses timeToX to place the cue",
+        "Creates an overlay per attachment, subscribes to viewport and data changes, and draws once on attach",
+        "Uses the attachment handle to remove one overlay, with no manual global listeners or destruction of the borrowed model or player"
+      ]
+    },
+    {
+      "id": 39,
+      "prompt": "In an Audiorective browser DAW, put an adjustable lowpass and ping-pong delay after a hosted synth. Show a logarithmic cutoff knob, a wet fader, and a mono output meter. Explain how to reorder the inserts without recreating the synth and save and reopen the settings. Use current APIs.",
+      "expected_output": "Sets ordered built-in rack slots through Workspace and binds reusable parameter controls to authored settings without creating another audio owner.",
+      "files": [],
+      "expectations": [
+        "Uses workspace.setTrackEffects with ordered Filter and Delay slot settings and shows stable IDs and a bypass flag",
+        "Uses mountParameter with rotary and log for cutoff, and a vertical control for mix",
+        "Uses workspace.trackEffectOutput with an analyser and mountLevelMeter, then cleans up views and its own connection",
+        "Saves and reopens the rack through Workspace's DAWproject API and identifies the built-in inserts as Audiorective-specific"
+      ]
+    },
+    {
+      "id": 40,
+      "prompt": "Build a simple browser audition tool using a Workspace and two audio takes. Show how to wire the standard playback and seek controls when creating the project and how to mount them again after reopening a .dawproject file. Use current Audiorective APIs.",
+      "expected_output": "Uses the Workspace's borrowed player view for audible play, pause and seek in both sessions.",
+      "files": [],
+      "expectations": [
+        "Uses mountPlayer(root, { player: workspace.player }) without adapting Clock state, polling the playhead or copying duration into a new cell",
+        "Routes Workspace output to the caller's AudioContext destination on both Workspace.create and Workspace.openBlob or Workspace.open",
+        "Destroys the old controls before remounting for the reopened Workspace and tears down the old Workspace and Project separately"
+      ]
     }
   ]
 }

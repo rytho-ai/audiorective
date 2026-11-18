@@ -6,7 +6,57 @@ Try the [waveform showroom](/showroom/waveform) for a working selector, or the [
 
 `@audiorective/widgets` provides browser DOM widgets that mount into an element and return an imperative handle. Use `mountPlayer` for ordinary playback controls without a waveform, `mountWaveformSelector` for loading audio, selecting a range, and auditioning it, or the audio-independent `@audiorective/widgets/waveform` entry for a waveform driven by your own data and playback position.
 
+For a DAW arrangement with caller-rendered clips, `@audiorective/widgets/arrangement` exports `attachClipGesture(element, options)`. It borrows a clip element and owns pointer capture, click versus drag, snapped preview, cancellation, and one move commit on release. Arrow Left/Right moves one musical beat; Shift moves four. Pass a structural time map such as `project.tempoMap`; Alt bypasses pointer snapping. `onMove` receives a move intent, so the caller applies its own Project edit, history and `Workspace.commit()`.
+
+```typescript
+import { attachClipGesture } from "@audiorective/widgets/arrangement";
+
+const gesture = attachClipGesture(clipElement, {
+  clipId: clip.id,
+  trackId: track.id,
+  time: clip.time,
+  timeUnit: clip.kind === "midi" ? clip.timeUnit : "seconds",
+  timeMap: project.tempoMap,
+  pixelsPerSecond: () => zoom,
+  trackAt: (x, y) => findCompatibleTrackAt(x, y),
+  onSelect: () => selectClip(clip.id),
+  onOpen: () => openClipEditor(clip.id),
+  onMove: ({ clipId, trackId, time }) => {
+    history.record("Move clip", () => project.moveClip(clipId, trackId, time));
+    void workspace.commit();
+  },
+});
+
+// Before removing the element:
+gesture.destroy();
+```
+
+The caller renders lanes and clip appearance, supplies compatible track hit testing, and keeps shared selection/history. `time` and `onMove.time` use `timeUnit` (seconds by default, or beats); the widget converts through `timeMap` for its second-based pointer geometry and beat keyboard nudges. The widget never creates an AudioContext or changes the Project by itself. This interaction entry has no dependency on `@audiorective/workspace`.
+
+`attachTimelineZoom` from the same entry owns continuous zoom gestures over a caller-rendered time axis. It connects an optional range input and Ctrl/⌘+wheel, keeps the project time under the pointer (or viewport center for the slider), and batches redraws to animation frames. The caller supplies `getScale()` in pixels per project second and `onScale(next)` to redraw its arrangement; `ruler()` returns the current time-axis element after that redraw. Buttons can call `zoom.zoomBy(1.45)` and fit-to-project can call `zoom.zoomTo(scale, leftEdgeX)`. Call `zoom.cancel()` when switching projects and `zoom.destroy()` when removing the view. The default range is 2–2000 pixels per second; `minScale` and `maxScale` can change it.
+
 The widgets implement their own waveform display and interaction. They require no UI framework or WaveSurfer dependency. The selector uses [WavePlayer](./blocks.md) for audio and selection. Pass a shared `player`, or supply `context` to let the selector own one. Its public audio connection is `handle.output`.
+
+## Parameter controls and metering
+
+`mountParameter(root, { param, orientation, scale, min, max, step, label, format })` binds directly to a borrowed numeric `.value`. Use horizontal for a slider, vertical for a fader, or rotary for a knob. The control follows tracked changes such as native parameter automation. It uses parameter metadata when explicit options are omitted. Use a positive minimum for log scaling. Home and End set the range endpoints; arrow keys adjust the value. Drag a knob up or down and hold Shift for smaller movement.
+
+```typescript
+import { mountParameter, mountLevelMeter } from "@audiorective/widgets";
+
+const cutoff = mountParameter(controls, {
+  param: filter.params.frequency,
+  orientation: "rotary", scale: "log", min: 20, max: 20_000, step: 1,
+  label: "Cutoff", format: value => `${Math.round(value)} Hz`,
+});
+const level = mountLevelMeter(meters, {
+  sampleCount: analyser.fftSize,
+  read: samples => analyser.getFloatTimeDomainData(samples),
+});
+// cutoff.destroy() and level.destroy() release just the views.
+```
+
+For app-owned commands, supply a structural getter that reads the current tracked value and a setter that calls the command. `mountLevelMeter()` reports mono sample peak and RMS per snapshot, including samples over full scale. Call `destroy()` to stop the sampling loop. The caller owns the analyser and audio routing.
 
 ## Plain player controls
 
@@ -33,13 +83,16 @@ Call `mountPlayer` in a browser, behind a client-only boundary when the app also
 
 ### Pick an adapter
 
-`mountPlayer(root, { player, renderer?, label? })` accepts a `PlayerLike`. The three adapters provide that shape for existing players:
+`mountPlayer(root, { player, renderer?, label? })` accepts a `PlayerLike`. Use the matching adapter or pass a Workspace's `player` directly.
 
 | Adapter                    | Controls                 | Position and duration                                                                           | Playback failure reported                                |
 | -------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
 | `fromFilePlayer(player)`   | Play/Pause, seek, volume | Reactive `currentTime` and `duration`; unknown length is supported                              | A blocked or rejected `audio.play()` and a missing track |
 | `fromWavePlayer(player)`   | Play/Pause, seek, volume | Audio clock while playing; paused seeks and committed versions update the view                  | Missing/loading audio and a rejected play request        |
 | `fromBufferPlayer(player)` | Play/Stop, volume        | No seek bar or time readout: `BufferPlayer` exposes no persistent playhead or reactive duration | Missing audio or a closed context                        |
+| `workspace.player`        | Play/Pause, seek         | Project seconds, reactive duration and position changes from transport actions                | A rejected `Workspace.play()` request                    |
+
+When opening or creating a Workspace for speaker playback, pass `{ destination: context.destination }`. For an existing graph, route `workspace.output` from the app. See [Workspace playback controls](./workspace.md#mount-playback-controls).
 
 `FilePlayer.play()` deliberately resolves for browser autoplay blocks. Its adapter calls the documented `player.audio.play()` escape hatch to display the actual failure; the player's cells still follow the element. A failed play request made elsewhere cannot be inferred by this widget. `BufferPlayer` starts from the beginning after Stop. For a seekable in-memory track, use `WavePlayer`.
 
@@ -142,6 +195,7 @@ type WaveformSelectorOptions = {
 | `cancelLoad(): void`                               | Cancels the player's active load. On a shared player this affects all observing selectors; destroying a borrowed view still leaves the caller's load running.                                                |
 | `setSelection(selection: Selection \| null): void` | Sets metadata and updates the player's range without initiating playback. Endpoints must be finite and satisfy `0 <= start < end <= duration`.                                                               |
 | `getState(): WaveformSelectorState`                | Returns a snapshot; selection boundaries and position use committed output seconds.                                                                                                                          |
+| `attach(plugin: TimeViewPlugin)`                   | Adds an overlay or interaction to the selector's waveform in committed output seconds. Returns a `PluginAttachment`. |
 | `destroy(): void`                                  | Idempotently removes mounted DOM, listeners, observers, animation frames, pending load ownership, plugins, and owned audio nodes. Leaves the caller's context open.                                          |
 
 `WaveformSelectorState` contains `duration`, `selection`, `position`, `isPlaying`, `isLooping`, `loading`, `loadProgress`, `error: string | null`, `pixelsPerSecond`, `processing`, `stretchRatio`, `revision`, and `sourceDuration`. `duration` is the current output duration; `sourceDuration` belongs to the original source. Loading errors appear in the widget as well as in state. Catch `ready` and `load()` rejections when calling them directly. URL fetches follow the browser's CORS rules; decoding errors keep the browser's message.
@@ -179,6 +233,7 @@ const attachment = view.attach(selection);
 selection.setSelection({ start: 1, end: 3 });
 view.setPlayhead(1.5); // feed updates from an external player if needed
 view.setZoom(2);
+view.setAmplitudeZoom(4); // visual height only; original peaks and audio stay unchanged
 
 // Optional early detach; view.destroy() also destroys all attachments.
 attachment.destroy();
@@ -203,8 +258,10 @@ Peak values must be finite, and duration must be finite and positive. The view c
 | `setPlayhead(seconds: number \| null)` | Shows a finite position clamped to the displayed timeline; `null` hides the playhead.                             |
 | `getViewport()`                        | Returns `WaveformViewport`: `duration`, `pixelsPerSecond`, `scrollLeft`, `width`, `height`. Distances are pixels. |
 | `setZoom(factor: number)`              | Requires finite `factor >= 1`; zoom preserves the viewport center and is bounded internally.                      |
+| `setAmplitudeZoom(factor: number)`     | Scales only the displayed waveform height from `1` to `32`; cached peaks and audio remain unchanged.              |
+| `getAmplitudeZoom()`                   | Returns the current display-only amplitude factor.                                                                |
 | `scrollTo(seconds: number)`            | Scrolls toward a displayed timeline position, clamped to the available range.                                     |
-| `attach(plugin: WaveformPlugin)`       | Returns a `PluginAttachment` with idempotent `destroy()`.                                                         |
+| `attach(plugin: TimeViewPlugin)`       | Returns a `PluginAttachment` with idempotent `destroy()`.                                                         |
 | `destroy()`                            | Idempotently detaches plugins and removes the view and its resources.                                             |
 
 ### Selection plugin API
@@ -231,13 +288,13 @@ const outline: WaveformRenderer = (container) => {
   svg.append(path);
   container.append(svg);
   return {
-    render({ peaks, width, height }) {
+    render({ peaks, width, height, amplitudeZoom }) {
       svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
       const commands: string[] = [];
       if (peaks) {
         for (let i = 0; i < peaks.max.length; i++) {
           const x = ((i + 0.5) / peaks.max.length) * width;
-          const y = ((1 - peaks.max[i]) * height) / 2;
+          const y = ((1 - Math.min(1, peaks.max[i] * amplitudeZoom)) * height) / 2;
           commands.push(`${i ? "L" : "M"}${x},${y}`);
         }
       }
@@ -253,11 +310,12 @@ const view = mountWaveform(document.querySelector<HTMLElement>("#waveform")!, {
   data: { peaks: Float32Array.of(0.2, 0.8, 0.4, 0.6), duration: 6 },
   renderer: outline,
 });
+view.setAmplitudeZoom(4);
 // Selection plugins and external playheads work with this drawing too.
 // view.destroy() also destroys the renderer.
 ```
 
-`WaveformRenderFrame` contains `peaks: Readonly<WaveformPeaks> | null`, `width`, `height`, and `pixelsPerSecond`. Peaks are cached extrema combined across channels; treat their arrays as read-only. Width and height describe the **full scrolling content in CSS pixels**, and a displayed timeline time maps to `seconds * pixelsPerSecond`. `null` means clear the drawing. The widget calls `render` initially and on data, zoom, and size changes. Scrolling is native DOM movement; it does not require redrawing the whole content. Playback position is a separate overlay.
+`WaveformRenderFrame` contains `peaks: Readonly<WaveformPeaks> | null`, `width`, `height`, `pixelsPerSecond`, and `amplitudeZoom`. Peaks are cached extrema combined across channels; treat their arrays as read-only. A custom renderer applies `amplitudeZoom` to its drawing if it wants the public amplitude control; the default renderer clips enlarged peaks at the view's top and bottom. Width and height describe the **full scrolling content in CSS pixels**, and a displayed timeline time maps to `seconds * pixelsPerSecond`. `null` means clear the drawing. The widget calls `render` initially and on data, zoom, and size changes. Scrolling is native DOM movement; it does not require redrawing the whole content. Playback position is a separate overlay.
 
 The drawing container is decorative and ignores pointer events. Use plugins for interactive overlays; selection, snapping, ruler, playhead, and audio continue to be owned by the widget. The renderer can change the shape within the same linear time axis; a circular or otherwise different time-coordinate system requires a separate interaction design. Canvas renderers own their backing resolution and device-pixel scaling. A live color/theme change inside a custom renderer is the renderer's responsibility.
 
@@ -265,12 +323,12 @@ The widget calls the returned `destroy()` once, including after an initial `rend
 
 ## Write a visual plugin
 
-Use the public `WaveformPluginContext` for coordinates, overlays, subscriptions, and cleanup. Coordinates from `timeToX()` are content pixels inside the scrolling waveform; `clientXToTime()` converts browser pointer coordinates into displayed timeline seconds.
+Use `view.attach(plugin)` for waveform, piano roll, and waveform selector extensions. All three implement `PluginTarget<TimeViewPluginContext>`. The plugin reads `context.timeUnit` to interpret coordinates. Waveform and selector use seconds, with the selector using the current playback version's output seconds. Piano roll uses its configured seconds or beats. The app supplies the appropriate time in each unit.
 
 ```typescript
-import { mountWaveform, type WaveformPlugin } from "@audiorective/widgets/waveform";
+import { mountWaveform, type TimeViewPlugin } from "@audiorective/widgets/waveform";
 
-const marker: WaveformPlugin = {
+const marker: TimeViewPlugin = {
   attach(context) {
     const layer = document.createElement("div");
     const line = document.createElement("div");
@@ -283,7 +341,9 @@ const marker: WaveformPlugin = {
     layer.append(line);
     context.mountOverlay(layer);
     const draw = () => {
-      line.style.left = `${context.timeToX(2)}px`;
+      const time = context.timeUnit === "beats" ? 4 : 2;
+      line.hidden = time > context.duration;
+      line.style.left = `${context.timeToX(time)}px`;
     };
     context.onViewportChange(draw);
     context.onDataChange(draw);
@@ -294,11 +354,14 @@ const marker: WaveformPlugin = {
 const view = mountWaveform(document.querySelector<HTMLElement>("#markers")!, {
   data: { peaks: new Float32Array([0.2, 0.8, 0.4]), duration: 5 },
 });
-view.attach(marker);
-// view.destroy() removes the marker overlay and subscriptions too.
+const attachment = view.attach(marker);
+// Pass marker to a piano roll or selector the same way.
+// attachment.destroy() removes just the marker. view.destroy() removes all attachments.
 ```
 
-The context exposes `surface`, live `duration`, `getViewport()`, `timeToX()`, `clientXToTime()`, `scrollBy(pixels)`, and `getViewportRect()`. Resource methods return unsubscribe functions: `mountOverlay(element)`, `onViewportChange(listener)`, `onDataChange(listener)`, `listen(target, type, listener)`, and `onCleanup(dispose)`. Attachments own those registrations. For additional resources such as a timer, register their disposal with `onCleanup`. `attach` may also return a cleanup function or an object with `destroy()`.
+`timeToX()` returns content pixels and `clientXToTime()` converts browser pixels back to the view's time unit. Use these helpers to place overlays independently of zoom and scroll. `mountOverlay()`, `onViewportChange()`, `onDataChange()`, `listen()`, and `onCleanup()` return cleanup functions and are disposed with the attachment. A plugin can also return a disposer from `attach()`. Keep per-attachment DOM and state inside `attach()` if the same plugin object will serve multiple views.
+
+`WidgetPlugin<Context>` and `WidgetPluginContext` describe lifecycle and resource cleanup for other context shapes. `TimeViewPlugin` is the specialization for these three time views. `WaveformPlugin` and `WaveformPluginContext` are compatibility exports. For clip movement and timeline zoom on an app-rendered arrangement, use the dedicated arrangement gesture functions above.
 
 Overlays default to `pointer-events: none`; interactive children can opt into `pointer-events: auto`. A control handling its own pointer gesture can call `preventDefault()` on pointerdown to keep selection interaction from claiming it. Keep extensions on this public seam rather than querying the widget's internal markup.
 
@@ -331,18 +394,26 @@ DOM classes use the `ar-` prefix to scope widget presentation. Internal class na
 
 ## Common errors
 
+| Control message | Fix |
+| --- | --- |
+| `Parameter control needs a finite increasing range and a positive minimum for log scale.` | Provide a finite increasing range, above zero for log scale. |
+| `Parameter control step must be positive.` | Supply a finite positive step, or omit it. |
+| `Level meter sample count must be a positive integer.` | Supply the length of the float buffer your reader needs. |
+
 Messages thrown by the plain player adapters, waveform view, its plugins and the complete selector. Waveform loading and playback messages come from the borrowed player: see [Blocks](./blocks.md#common-errors).
 
 | Message                                                     | Cause                                                             | Fix                                                                                 |
 | ----------------------------------------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
 | `No track is loaded.`                                       | The plain player view requested FilePlayer playback with no `src` | Set `player.src` before pressing Play.                                              |
+| `Timeline zoom needs a positive increasing scale range.` | Invalid arrangement zoom limits | Use finite positive `minScale` and a larger `maxScale`. |
 | `No audio is loaded.`                                       | A WavePlayer or BufferPlayer adapter has no buffer                | Load audio before pressing Play.                                                    |
 | `Audio is still loading.`                                   | The WavePlayer adapter was asked to play before loading finished  | Await `player.load(...)`.                                                           |
 | `The audio context is closed.`                              | The BufferPlayer adapter cannot start a closed context            | Create a new context and player.                                                    |
 | `Waveform selector is destroyed.`                           | Calling `load` or `setSelection` after cleanup                    | Mount a new selector.                                                               |
-| `Waveform is destroyed.`                                    | Mutating or attaching to a destroyed view                         | Mount a new view.                                                                   |
+| `Waveform is destroyed.`                                    | Mutating a destroyed waveform or attaching after waveform or selector cleanup | Mount a new view or selector. |
 | `Waveform data needs finite peaks and a positive duration.` | Invalid peaks or duration                                         | Supply nonempty finite peaks, matching extrema arrays, and finite positive seconds. |
 | `Zoom must be finite and at least 1.`                       | Invalid zoom factor                                               | Use `1` to fit, or a larger finite factor.                                          |
+| `Amplitude zoom must be finite and from 1 to 32.`           | Invalid display-only amplitude factor                             | Pass a finite factor from `1` through `32`.                                         |
 | `Playhead must be finite or null.`                          | Invalid playhead                                                  | Supply finite source seconds or `null` to hide it.                                  |
 | `Plugin is already attached to this waveform.`              | Duplicate attachment of one instance                              | Reuse its attachment or detach it before attaching again.                           |
 | `Plugin attachment is destroyed.`                           | Mounting an overlay from a disposed attachment                    | Stop asynchronous work during cleanup; use a live attachment context.               |

@@ -1,0 +1,51 @@
+{
+  "name": "@audiorective/workspace",
+  "version": "2.3.2",
+  "description": "DAWproject-backed audio and MIDI projects with a browser playback runtime",
+  "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/audiorective/audiorective/tree/main/packages/workspace#readme",
+  "bugs": {
+    "url": "https://github.com/audiorective/audiorective/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/audiorective/audiorective.git",
+    "directory": "packages/workspace"
+  },
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run",
+    "probe:cubase": "node probes/cubase-export.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@audiorective/blocks": "workspace:^",
+    "@audiorective/core": "workspace:^",
+    "@audiorective/clock": "workspace:^",
+    "@audiorective/host": "workspace:^",
+    "@audiorective/midi": "workspace:^",
+    "@xmldom/xmldom": "^0.9.8",
+    "fflate": "^0.8.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.9.1",
+    "tsdown": "^0.15.9",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  },
+  "sideEffects": false
+}

@@ -1,5 +1,13 @@
 [
   {
+    "query": "Our browser sequencer needs a WebCLAP synth, editable notes, and a DAWproject save that restores the synth patch after reopening. We already use audiorective for audio.",
+    "should_trigger": true
+  },
+  {
+    "query": "I'm porting a JUCE plug-in to WebCLAP in C++ and need help with the CLAP extension ABI; we don't use Audiorective.",
+    "should_trigger": false
+  },
+  {
     "query": "Build a browser MIDI file inspector with a piano roll, beat snap and two views sharing selected notes/time. We already own the AudioContext and synth.",
     "should_trigger": true
   },
@@ -101,6 +109,14 @@
   },
   {
     "query": "our Next.js page throws 'window is not defined' when importing mapbox-gl on the server",
+    "should_trigger": false
+  },
+  {
+    "query": "We have a browser audio recorder and MIDI keyboard take. Put both on tracks, save the song as DAWproject, then reopen and keep the pedal/release timing intact.",
+    "should_trigger": true
+  },
+  {
+    "query": "Explain the published DAWproject XML schema at a high level. We aren't building an app or using Audiorective.",
     "should_trigger": false
   }
 ]

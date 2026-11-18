@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-Hant" data-skin="slate">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Audiorective Studio</title>
+    <link rel="stylesheet" href="/studio.css" />
+    <link rel="stylesheet" href="/themes.css" />
+  </head>
+  <body>
+    <div class="studio" data-browser-open="false" data-lower-open="false">
+      <header class="topbar">
+        <div class="brand"><span class="brand-mark">◈</span><strong>AUDIORECTIVE</strong></div>
+        <div class="project-name"><strong id="project-title">Audiorective DAW</strong></div>
+        <div class="workspace-toggles">
+          <button id="toggle-browser" aria-pressed="false">瀏覽器</button><button id="toggle-lower" aria-pressed="false">編輯／混音</button>
+        </div>
+        <div class="top-actions">
+          <label class="skin-picker"
+            >外觀
+            <select id="skin" aria-label="介面外觀">
+              <option value="midnight">午夜</option>
+              <option value="slate" selected>青石</option>
+              <option value="canvas">畫布</option>
+              <option value="orchid">蘭紫</option>
+            </select></label
+          ><button id="portability">分享說明</button><button id="export-audio">匯出音訊</button><button id="new">新建</button><button id="open">開啟</button
+          ><button id="save" class="primary">儲存工程</button><input id="open-file" type="file" accept=".dawproject" />
+        </div>
+      </header>
+      <div class="transport">
+        <div class="transport-buttons">
+          <button id="stop" title="停止">■</button><button id="play" class="play-button" title="播放">▶</button
+          ><button id="pause" title="暫停">Ⅱ</button>
+        </div>
+        <div class="transport-readout"><span class="sr-only">播放位置</span><strong id="time">0:00.0</strong></div>
+        <div class="transport-field"><span class="sr-only">速度</span><strong id="bpm">120</strong><small>BPM</small></div>
+        <div class="transport-field"><span class="sr-only">拍號</span><strong id="meter">4/4</strong></div>
+        <button id="loop" class="loop-button" aria-pressed="false" title="循環選取的 clip，未選取則循環全曲">↻ 循環</button>
+        <div class="transport-spacer"></div>
+        <div class="transport-record">
+          <button id="record-midi"><span class="record-dot">●</span> 錄 MIDI</button
+          ><button id="record-audio"><span class="record-dot">●</span> 錄音訊</button>
+        </div>
+        <div class="zoom-controls">
+          <button id="zoom-out" aria-label="縮小時間軸">−</button><button id="zoom-fit" title="顯示整首工程">全部</button
+          ><input id="timeline-zoom" type="range" min="0" max="1000" step="1" aria-label="時間軸縮放" title="拖動連續縮放；在編曲區按 Ctrl／⌘ 並滾輪也可縮放" /><button id="zoom-in" aria-label="放大">＋</button>
+        </div>
+      </div>
+      <div class="work-area">
+        <aside class="browser">
+          <div class="panel-heading"><span>瀏覽器</span><span class="heading-icon">◫</span></div>
+          <div class="browser-section">
+            <span class="section-label">新增軌道</span
+            ><button id="add-midi" class="browser-item">
+              <span class="item-icon midi-icon">▦</span><span><strong>MIDI 軌</strong><small>音符與 WebCLAP 樂器</small></span
+              ><b>＋</b></button
+            ><button id="add-audio" class="browser-item">
+              <span class="item-icon audio-icon">◢</span><span><strong>音訊軌</strong><small>匯入或錄製波形</small></span
+              ><b>＋</b>
+            </button>
+          </div>
+          <div class="browser-section">
+            <span class="section-label">裝置</span
+            ><button id="browser-synth" class="browser-item">
+              <span class="item-icon synth-icon">◉</span><span><strong>Oxo Synth2</strong><small>WebCLAP · Instrument</small></span
+              ><b>＋</b>
+            </button>
+          </div>
+          <div class="browser-section">
+            <span class="section-label">素材</span
+            ><button id="browser-import" class="browser-item">
+              <span class="item-icon audio-icon">↑</span><span><strong>匯入音訊</strong><small>放入選取的音訊軌</small></span
+              ><b>＋</b></button
+            ><input id="audio-file" type="file" accept="audio/*" />
+          </div>
+          <div class="browser-note">
+            <label class="record-latency" for="record-latency"
+              >錄音輸入補償 <input id="record-latency" type="number" min="0" max="500" step="1" value="0" /> ms</label
+            >
+            <span>先量測設備延遲；補償若跨過工程起點，請先預留錄音前段。</span>
+          </div>
+        </aside>
+        <main class="main-area">
+          <div class="arrange-heading">
+            <div><strong>編曲</strong><span id="arrange-summary">8 軌 · 26 片段</span></div>
+            <div class="arrange-tools">
+              <span id="snap-label">吸附：1 拍</span><button id="new-midi-track">＋ MIDI 軌</button><button id="new-midi-clip">＋ MIDI 片段</button
+              ><button id="split" title="在播放位置分割片段">分割</button><button id="trim-start" title="裁掉播放位置之前的內容">裁左</button
+              ><button id="trim-end" title="裁掉播放位置之後的內容">裁右</button><button id="duplicate" title="複製選取的 clip">複製</button
+              ><button id="delete" title="刪除選取的 clip">刪除</button><button id="undo" title="復原片段與音符編輯 (Ctrl/⌘ Z)" disabled>復原</button
+              ><button id="redo" title="重做片段與音符編輯 (Ctrl/⌘ Shift Z)" disabled>重做</button>
+            </div>
+          </div>
+          <div id="tracks" class="arrangement" aria-label="編曲時間軸"></div>
+          <div class="arrange-footer"><span id="status" role="status">正在載入工程…</span><span id="duration">4.0 s</span></div>
+          <section class="lower-panel">
+            <div
+              id="lower-resize"
+              class="lower-resize"
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label="調整下方編輯區高度"
+              aria-controls="editor-panel"
+              aria-valuemin="180"
+              aria-valuenow="300"
+              tabindex="0"
+            ></div>
+            <div class="lower-tabs">
+              <button id="tab-editor" class="active">編輯</button><button id="tab-mixer">混音</button><button id="tab-device">裝置</button
+              ><span id="selection-caption">選取片段開始編輯</span>
+            </div>
+            <div id="editor-panel" class="panel-body"></div>
+            <div id="mixer-panel" class="panel-body hidden"></div>
+            <div id="device-panel" class="panel-body hidden"></div>
+          </section>
+        </main>
+      </div>
+      <div id="log" class="event-log" aria-live="off"></div>
+      <dialog id="portability-dialog" aria-labelledby="portability-title">
+        <h2 id="portability-title">分享工程</h2>
+        <p>儲存工程會產生可編輯的 DAWproject。其他 DAW 的實際匯入效果取決於它支援的內容與版本。</p>
+        <p id="portability-details"></p>
+        <p>匯出音訊會另外產生混音與各軌 WAV；沒有相同插件的收件者也能播放這份音訊。</p>
+        <form method="dialog"><button>關閉</button></form>
+      </dialog>
+    </div>
+    <script type="module" src="/main.ts"></script>
+  </body>
+</html>

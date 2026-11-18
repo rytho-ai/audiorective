@@ -75,7 +75,7 @@ export class MidiRecorder {
   };
 
   /** Arm one take. `when` is an absolute AudioContext time; omitted means the current audible output position. */
-  start(options: { when?: number } = {}): void {
+  start(options: { when?: number } = {}): number {
     if (this.disposed) throw new Error("MidiRecorder is destroyed.");
     if (this.active) throw new Error("MidiRecorder already has an active take.");
     if (this.context.state !== "running") throw new Error("MidiRecorder needs a running AudioContext.");
@@ -86,6 +86,7 @@ export class MidiRecorder {
     this.active = session;
     this.takeNumber++;
     this.stateStore.value = "recording";
+    return session.startTime;
   }
 
   /** Finish now; notes use seconds relative to the take start and may be handed to MidiSequence. */

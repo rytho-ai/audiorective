@@ -14,9 +14,9 @@ export const defaultRenderer: WaveformRenderer = (container) => {
   svg.append(center, path);
   container.append(svg);
   return {
-    render({ peaks, width, height }) {
+    render({ peaks, width, height, amplitudeZoom }) {
       svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-      path.setAttribute("d", peaks ? peakPath(peaks, width, height) : "");
+      path.setAttribute("d", peaks ? peakPath(peaks, width, height, amplitudeZoom) : "");
       center.setAttribute("d", `M0,${height / 2}H${width}`);
     },
     destroy() {

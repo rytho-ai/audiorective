@@ -1,7 +1,9 @@
 /** Borrowed MIDI models, replaceable appearance and widget-owned gesture contracts. */
 import type { MidiData, MidiNote, MidiRange } from "@audiorective/midi";
-import type { PluginAttachment, SelectionCommit, SnapMode, WaveformPlugin, WaveformViewport } from "./types";
+import type { PluginTarget, SelectionCommit, SnapMode, TimeViewPluginContext, WaveformViewport } from "./types";
 export type PitchRange = Readonly<{ low: number; high: number }>;
+/** Piano-roll viewport scale in the borrowed model's time unit. */
+export type PianoRollViewport = WaveformViewport & Readonly<{ timeUnit: "seconds" | "beats"; pixelsPerUnit: number }>;
 export interface PianoRollModel {
   getState(): MidiData & Readonly<{ selection: MidiRange | null }>;
   getSelection(): MidiRange | null;
@@ -12,12 +14,13 @@ export type PianoRollEditKind = "move" | "resize-start" | "resize-end";
 export type PianoRollNoteEdit = Readonly<{ kind: PianoRollEditKind; previous: MidiNote; note: MidiNote }>;
 export type PianoRollRenderFrame = Readonly<{
   notes: readonly MidiNote[];
+  timeUnit: "seconds" | "beats";
   width: number;
   height: number;
   duration: number;
   pitches: PitchRange;
-  viewport: WaveformViewport;
-  timeToX(seconds: number): number;
+  viewport: PianoRollViewport;
+  timeToX(time: number): number;
   pitchToY(pitch: number): number;
   readonly editable: boolean;
   /** Forward a note press; widget owns capture, preview, snap, cancellation and commit. */
@@ -40,6 +43,8 @@ export type PianoRollLayout = (
 };
 export type PianoRollOptions = {
   model: PianoRollModel;
+  /** Unit of the borrowed model's note times, duration, grid and playhead. Default: seconds. */
+  timeUnit?: "seconds" | "beats";
   label?: string;
   pitches?: PitchRange;
   grid?: Readonly<{ beats: readonly number[]; downbeats: readonly number[] }>;
@@ -51,14 +56,12 @@ export type PianoRollOptions = {
   onNoteClick?: (note: MidiNote) => void;
   onCommit?: (commit: SelectionCommit) => void;
 };
-export interface PianoRollHandle {
-  setPlayhead(seconds: number | null): void;
+export interface PianoRollHandle extends PluginTarget<TimeViewPluginContext> {
+  setPlayhead(time: number | null): void;
   setZoom(factor: number): void;
-  scrollTo(seconds: number): void;
+  scrollTo(time: number): void;
   setPitchRange(pitches: PitchRange): void;
-  getViewport(): WaveformViewport;
-  /** Attach a time-based overlay/interaction using the same context as waveform plugins. */
-  attach(plugin: WaveformPlugin): PluginAttachment;
+  getViewport(): PianoRollViewport;
   setSnap(mode: SnapMode): void;
   setGrid(grid: Readonly<{ beats: readonly number[]; downbeats: readonly number[] }>): void;
   destroy(): void;

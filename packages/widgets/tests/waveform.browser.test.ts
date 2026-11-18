@@ -21,6 +21,26 @@ afterEach(async () => {
 });
 
 describe("audio independent waveform and selection", () => {
+  test("amplitude zoom enlarges quiet peaks without changing time scale or source data", () => {
+    const root = host();
+    const peaks = Float32Array.of(0.01, 0.02, 0.015, 0.005);
+    const source = [...peaks];
+    const view = mountWaveform(root, { data: { peaks, duration: 2 } });
+    own(() => view.destroy());
+    const path = root.querySelector<SVGPathElement>('[data-testid="wave-path"]')!;
+    const before = path.getBBox().height;
+    const viewport = view.getViewport();
+    view.setAmplitudeZoom(8);
+    expect(path.getBBox().height).toBeGreaterThan(before * 4);
+    expect(view.getAmplitudeZoom()).toBe(8);
+    expect(view.getViewport().pixelsPerSecond).toBe(viewport.pixelsPerSecond);
+    expect([...peaks]).toEqual(source);
+    expect(() => view.setAmplitudeZoom(33)).toThrow("Amplitude zoom must be finite and from 1 to 32.");
+    expect(view.getAmplitudeZoom()).toBe(8);
+    view.setData({ peaks, duration: 2 });
+    expect(view.getAmplitudeZoom()).toBe(1);
+  });
+
   test("pure view renders peaks and ruler without creating audio or transport controls", () => {
     const forbidden = vi.fn(() => {
       throw new Error("Audio is forbidden in a pure waveform");
