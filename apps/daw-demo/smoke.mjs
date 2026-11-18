@@ -61,7 +61,7 @@ try {
     try {
       const before = Number(seek.max);
       project.setTempoChanges([{ beat: 2, bpm: 60 }]);
-      await workspace.commit();
+      await workspace.flush();
       const afterTempo = Number(seek.max);
       clip.sequence.setData({ duration: 6, notes: [] });
       const afterClip = Number(seek.max);
@@ -682,7 +682,7 @@ try {
     const playingAnchor = workspace.takeAnchor();
     const playingPlacement = workspace.takePosition(playingAnchor, { startTime: playingAnchor.audioTime + 0.2 }, 0.05);
     project.moveClip(project.tracks[0].clips[0].id, project.tracks[0].id, 0.25);
-    await workspace.commit();
+    await workspace.flush();
     const keptHost = workspace.host(project.tracks[0].devices[0].id) === host && workspace.clock.state.value === "playing";
     workspace.stop();
 
@@ -693,7 +693,7 @@ try {
       { time: 0.25, value: 1, shape: "hold" },
       { time: 0.75, value: 0, shape: "hold" },
     ]);
-    await workspace.commit();
+    await workspace.sync();
     for (const other of project.tracks) if (other.id !== track.id) workspace.setTrackVolume(other.id, 0);
     const analyser = workspace.context.createAnalyser();
     analyser.fftSize = 2048;
@@ -728,7 +728,7 @@ try {
       { time: 0, value: 0, shape: "linear" },
       { time: 0.5, value: 1, shape: "hold" },
     ]);
-    await workspace.commit();
+    await workspace.flush();
     workspace.seek(0.25);
     await workspace.play();
     await waitUntil(0.4);
@@ -768,7 +768,7 @@ try {
   const tempoRuntime = await page.evaluate(async () => {
     const { workspace, project } = window.__daw;
     project.setTempoChanges([{ beat: 4, bpm: 60 }]);
-    await workspace.commit();
+    await workspace.flush();
     workspace.seek(0);
     await workspace.play();
     const origin = workspace.timeline.beatToTime(0);
@@ -782,11 +782,11 @@ try {
     const host = workspace.host(project.tracks[0].devices[0].id);
     const beforeEdit = workspace.position;
     project.setTempoChanges([{ beat: 4, bpm: 90 }]);
-    await workspace.commit();
+    await workspace.flush();
     const afterEdit = workspace.position;
     const keptHost = workspace.host(project.tracks[0].devices[0].id) === host && workspace.clock.state.value === "playing";
     project.setTempoChanges([{ beat: 4, bpm: 60 }]);
-    await workspace.commit();
+    await workspace.flush();
     workspace.stop();
     return { step, end, beatAfterSeek, positionAfterSeek, editDrift: afterEdit - beforeEdit, keptHost };
   });
@@ -797,7 +797,7 @@ try {
     const { project, workspace } = window.__daw;
     const track = project.addTrack("Tempo note", "midi");
     const clip = project.addMidiClip(track.id, { duration: 4, notes: [] }, 3);
-    await workspace.commit();
+    await workspace.sync();
     return clip.id;
   });
   await page.locator("#zoom-in").click(); // Re-render the imported tempo grid through the normal UI.
@@ -828,7 +828,7 @@ try {
       6,
       { timeUnit: "beats" },
     );
-    await workspace.commit();
+    await workspace.flush();
     return clip.id;
   });
   const beatGeometry = async () =>
@@ -868,7 +868,7 @@ try {
   await page.evaluate(async () => {
     const { project, workspace } = window.__daw;
     project.setTempoChanges([{ beat: 4, bpm: 120 }]);
-    await workspace.commit();
+    await workspace.flush();
   });
   await page.locator("#zoom-in").click();
   const afterStretch = await awaitBeatGeometry();
@@ -918,7 +918,7 @@ try {
   await page.evaluate(async () => {
     const { project, workspace } = window.__daw;
     project.setTempoChanges([{ beat: 4, bpm: 60 }]);
-    await workspace.commit();
+    await workspace.flush();
   });
   await page.locator("#zoom-in").click();
   const zoomAnchor = await page.evaluate(() => {

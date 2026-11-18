@@ -120,6 +120,7 @@ The `schedulableParam` helper (without `bind`) creates a `SchedulableParam` back
 8. **No state duplication** — AudioProcessor owns all state. UI frameworks observe/mutate directly. No separate store.
 9. **Unified SchedulableParam** — one type regardless of backing. `bind` with AudioParam is an internal optimization, not a type distinction.
 10. **Observable state lives in `cells` or `params`** — for blocks as for core processors. A cell is the only store: no private field mirrored by `subscribe`. State whose change involves validation, playback or cancellation is registered as `readonlyCell(...)` over a private `Cell` and written only through the owner's methods; multi-field operations commit in one `batch`. Public readers are tracked, the owner's internal reads are `untracked`. Clock-derived values such as `position` stay plain getters. `getState()`/`subscribe()`, where a block has them, are thin wrappers over the cells.
+11. **Light edits propagate; interrupting rebuilds are explicit** — a running `Workspace` applies light `Project` edits automatically (coalesced, serialized, errors in `cells.error`). A structural rebuild that stops audio and reloads hosts never runs by itself: topology changes set `cells.needsSync` and the caller runs `sync()`.
 
 ## AudioProcessor Base Class
 

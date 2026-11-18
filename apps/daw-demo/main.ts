@@ -8,6 +8,7 @@ import {
   type ProjectTrack,
   type TakeAnchor,
 } from "@audiorective/workspace";
+import { effect } from "@audiorective/core";
 import { StudioView } from "./studio-view";
 import { MidiRecorder } from "@audiorective/midi/web";
 import { AudioRecorder } from "@audiorective/blocks";
@@ -51,6 +52,15 @@ function log(message: string): void {
 function status(message: string): void {
   $("status").textContent = message;
   log(message);
+}
+let stopWorkspaceError: (() => void) | undefined;
+/** Surface a failed automatic application of Project edits. */
+function watchWorkspace(next: Workspace): void {
+  stopWorkspaceError?.();
+  stopWorkspaceError = effect(() => {
+    const message = next.cells.error.value;
+    if (message) status(`套用編輯失敗：${message}`);
+  });
 }
 function handleError(error: unknown): void {
   status(error instanceof Error ? error.message : String(error));
@@ -236,9 +246,11 @@ function addNote(clip: MidiClip, placement?: { start: number; pitch: number }): 
   const state = clip.sequence.getState();
   const map = workspace.project.tempoMap;
   const position = clip.timeUnit === "beats" ? map.secondsToBeat(workspace.position) : workspace.position;
-  const proposedStart = placement?.start ?? (clip.timeUnit === "beats"
-    ? Math.max(0, Math.floor(Math.max(clip.time, position)) - clip.time)
-    : Math.max(0, map.beatToSeconds(Math.floor(map.secondsToBeat(Math.max(clip.time, position)))) - clip.time));
+  const proposedStart =
+    placement?.start ??
+    (clip.timeUnit === "beats"
+      ? Math.max(0, Math.floor(Math.max(clip.time, position)) - clip.time)
+      : Math.max(0, map.beatToSeconds(Math.floor(map.secondsToBeat(Math.max(clip.time, position)))) - clip.time));
   const start = Math.max(0, Math.min(Math.max(0, state.duration - 0.01), proposedStart));
   const beatAtNote = clip.timeUnit === "beats" ? clip.time + start : map.secondsToBeat(clip.time + start);
   const length = Math.min(state.duration - start, clip.timeUnit === "beats" ? 1 : map.beatToSeconds(beatAtNote + 1) - (clip.time + start));
@@ -251,7 +263,7 @@ function addNote(clip: MidiClip, placement?: { start: number; pitch: number }): 
 
 async function addSynth(track: ProjectTrack): Promise<void> {
   addDefaultSynth(workspace.project, track.id);
-  await workspace.commit();
+  await workspace.sync();
   renderTracks();
   status("已加入 Oxo Synth2");
 }
@@ -260,7 +272,7 @@ async function uploadAudio(trackId: string, file: File): Promise<void> {
   const decoded = await context.decodeAudioData(await file.arrayBuffer());
   const channels = Array.from({ length: decoded.numberOfChannels }, (_, index) => new Float32Array(decoded.getChannelData(index)));
   studio.recordClipEdit("匯入音訊", () => workspace.project.addAudioClip(trackId, { sampleRate: decoded.sampleRate, channels }, workspace.position));
-  await workspace.commit();
+  await workspace.flush();
   renderTracks();
   status(`已加入音訊 ${file.name}`);
 }
@@ -370,6 +382,7 @@ async function replaceProject(next: Workspace): Promise<void> {
   const previous = workspace;
   studio.resetProject();
   workspace = next;
+  watchWorkspace(next);
   looping = false;
   loopClipId = undefined;
   studio.setLoopTarget(undefined);
@@ -424,8 +437,10 @@ async function recordMidi(): Promise<void> {
       for (const device of workspace.project.tracks.find((item) => item.id === trackId)?.devices ?? []) workspace.host(device.id)?.panic();
       $("record-midi").textContent = "錄 MIDI";
     }
-    studio.recordClipEdit("錄製 MIDI", () => workspace.project.addMidiTake(trackId, take, workspace.takePosition(anchor, take, latency), { timeUnit: "beats" }));
-    await workspace.commit();
+    studio.recordClipEdit("錄製 MIDI", () =>
+      workspace.project.addMidiTake(trackId, take, workspace.takePosition(anchor, take, latency), { timeUnit: "beats" }),
+    );
+    await workspace.flush();
     renderTracks();
     status(`MIDI take：${take.notes.length} 個音符`);
     return;
@@ -469,7 +484,7 @@ async function recordAudio(): Promise<void> {
         throw error;
       }
       ownedMedia.add(media);
-      await workspace.commit();
+      await workspace.flush();
       renderTracks();
       const lostFrames = take.dropouts?.reduce((sum, gap) => sum + gap.endFrame - gap.startFrame, 0) ?? 0;
       status(
@@ -564,7 +579,7 @@ $<HTMLInputElement>("open-file").addEventListener("change", (event) => {
 async function addMidiTrack(): Promise<void> {
   const track = workspace.project.addTrack(`MIDI ${workspace.project.tracks.length + 1}`, "midi");
   addDefaultSynth(workspace.project, track.id);
-  await workspace.commit();
+  await workspace.sync();
   studio.selectTrack(track.id);
   status("已新增 MIDI 軌 · Oxo Synth2 已就緒");
 }
@@ -572,7 +587,7 @@ $("add-midi").addEventListener("click", () => addMidiTrack().catch(handleError))
 $("new-midi-track").addEventListener("click", () => addMidiTrack().catch(handleError));
 $("add-audio").addEventListener("click", async () => {
   workspace.project.addTrack(`Audio ${workspace.project.tracks.length + 1}`, "audio");
-  await workspace.commit();
+  await workspace.sync();
   studio.selectTrack(workspace.project.tracks.at(-1)!.id);
   status("已新增音訊軌");
 });
@@ -664,6 +679,7 @@ function animate(): void {
 Workspace.create(context, demoProject(), options)
   .then((created) => {
     workspace = created;
+    watchWorkspace(created);
     studio.selectedTrackId = created.project.tracks[0]?.id;
     studio.selectedClipId = created.project.tracks[0]?.clips[0]?.id;
     renderTracks();

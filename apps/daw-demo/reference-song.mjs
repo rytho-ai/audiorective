@@ -60,7 +60,9 @@ try {
   assert.equal(await page.locator(".studio").getAttribute("data-browser-open"), "true");
 
   await page.locator("#add-midi").click();
-  await page.waitForFunction(() => window.__daw.project.tracks[0]?.devices.length === 1 && window.__daw.workspace.host(window.__daw.project.tracks[0].devices[0].id));
+  await page.waitForFunction(
+    () => window.__daw.project.tracks[0]?.devices.length === 1 && window.__daw.workspace.host(window.__daw.project.tracks[0].devices[0].id),
+  );
   await page.evaluate(() => {
     const input = new EventTarget();
     input.name = "Reference MIDI";
@@ -125,7 +127,7 @@ try {
       { time: 0, value: 0, shape: "linear" },
       { time: 0.5, value: 1, shape: "hold" },
     ]);
-    await workspace.commit();
+    await workspace.flush();
   });
   const before = await page.evaluate(() => ({
     title: window.__daw.project.title,
@@ -180,16 +182,22 @@ try {
   const audioPeak = wavPeak(audioEntries.get(`tracks/${after.tracks[1].id}.wav`));
   assert.ok(mixPeak > 0.001 && midiPeak > 0.001 && audioPeak > 0.001, `silent export: ${JSON.stringify({ mixPeak, midiPeak, audioPeak })}`);
   assert.deepEqual(pageErrors, []);
-  console.log(JSON.stringify({
-    result: "reference song passed",
-    recordedMidiNotes: 1,
-    recordedAudioFrames: audioFrames,
-    reopenedTracks: after.tracks.length,
-    mixPeak,
-    midiPeak,
-    audioPeak,
-    unsupported: ["bus routing", "WebCLAP effect selection", "automation lane UI", "crash recovery"],
-  }, null, 2));
+  console.log(
+    JSON.stringify(
+      {
+        result: "reference song passed",
+        recordedMidiNotes: 1,
+        recordedAudioFrames: audioFrames,
+        reopenedTracks: after.tracks.length,
+        mixPeak,
+        midiPeak,
+        audioPeak,
+        unsupported: ["bus routing", "WebCLAP effect selection", "automation lane UI", "crash recovery"],
+      },
+      null,
+      2,
+    ),
+  );
 } finally {
   await browser?.close();
   await server.close();

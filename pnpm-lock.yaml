@@ -29,6 +29,9 @@ importers:
       '@audiorective/blocks':
         specifier: workspace:^
         version: link:../../packages/blocks
+      '@audiorective/core':
+        specifier: workspace:^
+        version: link:../../packages/core
       '@audiorective/midi':
         specifier: workspace:^
         version: link:../../packages/midi

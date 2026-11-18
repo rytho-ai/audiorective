@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@audiorective/blocks": "workspace:^",
+    "@audiorective/core": "workspace:^",
     "@audiorective/midi": "workspace:^",
     "@audiorective/widgets": "workspace:^",
     "@audiorective/workspace": "workspace:^"

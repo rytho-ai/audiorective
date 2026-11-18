@@ -1,6 +1,6 @@
 import { Clock, Timeline } from "@audiorective/clock";
 import type { TickWindow } from "@audiorective/clock";
-import { batch, cell, readonlyCell, type Cell, type Readable } from "@audiorective/core";
+import { batch, cell, effect, readonlyCell, untracked, type Cell, type ReadonlyCell, type Readable } from "@audiorective/core";
 import { AutomationBinding, AutomationCurve, audioParamTarget } from "@audiorective/core/automation";
 import type { AutomationPoint } from "@audiorective/core/automation";
 import { WebClapHost } from "@audiorective/host/webclap";
@@ -73,8 +73,15 @@ export class Workspace {
   readonly timeline: Timeline;
   readonly clock: Clock;
   readonly player: WorkspacePlayer;
+  /**
+   * Observable runtime state. `needsSync` is true when the Project's track/device topology differs from the
+   * loaded runtime; call `sync()` to rebuild. `error` holds the message of the latest failed application.
+   */
+  readonly cells: Readonly<{ needsSync: ReadonlyCell<boolean>; error: ReadonlyCell<string | null> }>;
 
   private readonly projectSource: Cell<Project>;
+  private readonly needsSyncSource = cell(false);
+  private readonly errorSource = cell<string | null>(null);
   private readonly options: WorkspaceOptions;
   private readonly tracks = new Map<string, TrackRuntime>();
   private readonly scheduledAudio = new Map<string, AudioHandle>();
@@ -84,6 +91,18 @@ export class Workspace {
   private readonly seekPoint = cell({ seconds: 0 });
   private activeTempoMap: TempoMap;
   private destroyed = false;
+  private stopWatching: (() => void) | undefined;
+  /** Serializes automatic applications with `sync()`. */
+  private chain: Promise<void> = Promise.resolve();
+  /** The in-flight automatic application burst, or null when idle. */
+  private pending: Promise<void> | null = null;
+  private dirty = false;
+  private failure: unknown = null;
+  /** The Project and revision the runtime last reflected or evaluated. */
+  private appliedProject: Project | undefined;
+  private appliedRevision = -1;
+  /** Greater than zero while the runtime writes its own edits into Project. */
+  private quiet = 0;
 
   private constructor(context: AudioContext, project: Project, options: WorkspaceOptions) {
     this.context = context;
@@ -94,6 +113,7 @@ export class Workspace {
     if (options.destination) this.output.connect(options.destination);
     this.timeline = new Timeline({ audioContext: context, bpm: project.bpm });
     this.clock = new Clock({ timeline: this.timeline, lookAhead: 0.15, tickInterval: 0.025, onTick: (window) => this.schedule(window) });
+    this.cells = Object.freeze({ needsSync: readonlyCell(this.needsSyncSource), error: readonlyCell(this.errorSource) });
     this.player = Object.freeze({
       isPlaying: readonlyCell(() => this.clock.state.value === "playing"),
       play: () => this.play(),
@@ -122,6 +142,7 @@ export class Workspace {
     const workspace = new Workspace(context, project, options);
     try {
       await workspace.sync();
+      workspace.watch();
       return workspace;
     } catch (error) {
       workspace.destroy();
@@ -199,9 +220,122 @@ export class Workspace {
     return time;
   }
 
-  /** Rebuild runtime routing after structural Project edits. Existing notes remain in Project. */
+  /** Watch the Project so light edits apply automatically; started after the first sync. */
+  private watch(): void {
+    this.stopWatching = effect(() => {
+      const project = this.projectSource.value;
+      const revision = project.cells.revision.value;
+      untracked(() => {
+        if (this.quiet || this.destroyed) return;
+        if (project !== this.appliedProject || revision !== this.appliedRevision) this.scheduleApply();
+      });
+    });
+  }
+
+  private revisionNow(): number {
+    return untracked(() => this.project.cells.revision.value);
+  }
+
+  private markApplied(): void {
+    this.appliedProject = this.project;
+    this.appliedRevision = this.revisionNow();
+  }
+
+  private isCurrent(): boolean {
+    return this.appliedProject === this.project && this.appliedRevision === this.revisionNow();
+  }
+
+  /** Write an edit made by the runtime itself into Project without re-applying it. */
+  private runtimeEdit(edit: () => void): void {
+    const current = this.isCurrent();
+    this.quiet++;
+    try {
+      edit();
+    } finally {
+      this.quiet--;
+    }
+    if (current) this.markApplied();
+  }
+
+  private exclusive<T>(task: () => Promise<T>): Promise<T> {
+    const result = this.chain.then(task);
+    this.chain = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  private setError(error: unknown): void {
+    this.failure = error;
+    this.errorSource.value = error instanceof Error ? error.message : String(error);
+  }
+
+  private clearError(): void {
+    this.failure = null;
+    this.errorSource.value = null;
+  }
+
+  /** Coalesce edits into one application per microtask burst; later edits queue exactly one more run. */
+  private scheduleApply(): void {
+    if (this.destroyed) return;
+    this.dirty = true;
+    if (this.pending) return;
+    this.pending = (async () => {
+      await Promise.resolve();
+      try {
+        while (this.dirty && !this.destroyed) {
+          this.dirty = false;
+          if (this.isCurrent()) continue;
+          try {
+            await this.exclusive(() => this.applyLight());
+          } catch (error) {
+            if (!this.destroyed) this.setError(error);
+          }
+        }
+      } finally {
+        this.pending = null;
+      }
+    })();
+  }
+
+  /** Wait for automatic application to settle, ignoring failures. */
+  private async idle(): Promise<void> {
+    if (!this.destroyed && !this.isCurrent() && !this.pending) this.scheduleApply();
+    while (this.pending) await this.pending;
+    await this.chain;
+  }
+
+  /**
+   * Resolve when every pending automatic application has finished; reject with the error of the latest
+   * failed application (also in `cells.error`). After `destroy()` it resolves once in-flight work settles.
+   */
+  async flush(): Promise<void> {
+    await this.idle();
+    if (!this.destroyed && this.failure !== null) throw this.failure;
+  }
+
+  /** Rebuild runtime routing after structural Project edits and clear `cells.needsSync`. Stops transport. */
   async sync(): Promise<void> {
     if (this.destroyed) throw new Error("Workspace is destroyed.");
+    await this.exclusive(() => this.rebuild());
+  }
+
+  private async rebuild(): Promise<void> {
+    if (this.destroyed) throw new Error("Workspace is destroyed.");
+    this.markApplied();
+    try {
+      await this.rebuildTracks();
+      this.needsSyncSource.value = false;
+      this.clearError();
+    } catch (error) {
+      this.needsSyncSource.value = true;
+      this.setError(error);
+      throw error;
+    }
+  }
+
+  private async rebuildTracks(): Promise<void> {
     const position = this.position;
     this.stop();
     this.activeTempoMap = this.project.tempoMap;
@@ -277,9 +411,13 @@ export class Workspace {
     }
   }
 
-  /** Apply Project edits through one entry point; clip and mixer edits keep hosted devices alive. */
-  async commit(): Promise<void> {
-    if (this.destroyed) throw new Error("Workspace is destroyed.");
+  /**
+   * Apply light Project edits in place. A topology change sets `cells.needsSync` and applies nothing,
+   * so transport and loaded hosts stay untouched until the caller runs `sync()`.
+   */
+  private async applyLight(): Promise<void> {
+    if (this.destroyed) return;
+    this.markApplied();
     const position = this.position;
     const tracks = this.project.tracks;
     const sameTopology =
@@ -293,8 +431,9 @@ export class Workspace {
           runtime.deviceKeys.every((key, index) => key === nextKeys[index])
         );
       });
+    this.needsSyncSource.value = !sameTopology;
     if (!sameTopology) {
-      await this.sync();
+      this.clearError();
       return;
     }
     if (this.activeTempoMap !== this.project.tempoMap) {
@@ -311,12 +450,14 @@ export class Workspace {
         if (runtime.deviceStates.get(device.id) === device.state) continue;
         const host = runtime.hosts.get(device.id);
         if (host) await host.loadState(device.state);
+        if (this.destroyed) return;
         runtime.deviceStates.set(device.id, device.state);
       }
     }
     this.applyMixer();
     for (const track of tracks) this.updateAutomation(this.tracks.get(track.id)!, track);
     this.refreshArrangement();
+    this.clearError();
   }
 
   private updateAutomation(runtime: TrackRuntime, track: ProjectTrack): void {
@@ -421,20 +562,20 @@ export class Workspace {
   }
 
   setTrackVolume(trackId: string, value: number): void {
-    this.project.setTrackVolume(trackId, value);
+    this.runtimeEdit(() => this.project.setTrackVolume(trackId, value));
     this.applyMixer();
   }
 
   setTrackMuted(trackId: string, muted: boolean): void {
-    this.project.setTrackMuted(trackId, muted);
+    this.runtimeEdit(() => this.project.setTrackMuted(trackId, muted));
     this.applyMixer();
   }
   setTrackSolo(trackId: string, solo: boolean): void {
-    this.project.setTrackSolo(trackId, solo);
+    this.runtimeEdit(() => this.project.setTrackSolo(trackId, solo));
     this.applyMixer();
   }
   setTrackPan(trackId: string, pan: number): void {
-    this.project.setTrackPan(trackId, pan);
+    this.runtimeEdit(() => this.project.setTrackPan(trackId, pan));
     this.applyMixer();
   }
 
@@ -444,7 +585,7 @@ export class Workspace {
     const track = this.project.tracks.find((item) => item.id === trackId);
     if (!runtime || !track) throw new Error("Workspace effects need a live track.");
     runtime.rack.setEffects(effects);
-    this.project.setTrackEffects(trackId, runtime.rack.effects);
+    this.runtimeEdit(() => this.project.setTrackEffects(trackId, runtime.rack.effects));
     runtime.effectSettings = this.project.tracks.find((item) => item.id === trackId)!.effects;
   }
 
@@ -473,6 +614,7 @@ export class Workspace {
 
   async save(): Promise<Uint8Array> {
     if (this.destroyed) throw new Error("Workspace is destroyed.");
+    await this.idle();
     await this.captureStates();
     if (this.project.tracks.some((track) => track.clips.some((clip) => clip.kind === "audio" && !!clip.media))) {
       const chunks: Uint8Array[] = [];
@@ -500,6 +642,7 @@ export class Workspace {
   /** Stream the project to a caller-owned file or other WritableStream. */
   async saveTo(destination: WritableStream<Uint8Array>): Promise<void> {
     if (this.destroyed) throw new Error("Workspace is destroyed.");
+    await this.idle();
     await this.captureStates();
     await saveDawProjectTo(this.project, destination);
   }
@@ -552,6 +695,7 @@ export class Workspace {
     signal?.addEventListener("abort", cancel, { once: true });
     try {
       checkAbort();
+      await this.idle();
       await this.captureStates();
       const renderProject = this.project.snapshot();
       project = renderProject;
@@ -666,7 +810,8 @@ export class Workspace {
         const host = this.host(device.id);
         const runtime = this.tracks.get(track.id);
         if (host && runtime?.deviceStates.get(device.id) === device.state) {
-          this.project.setDeviceState(device.id, await host.saveState());
+          const state = await host.saveState();
+          this.runtimeEdit(() => this.project.setDeviceState(device.id, state));
           runtime.deviceStates.set(
             device.id,
             this.project.tracks.find((item) => item.id === track.id)!.devices.find((item) => item.id === device.id)!.state,
@@ -873,6 +1018,9 @@ export class Workspace {
     if (this.destroyed) return;
     this.stop();
     this.destroyed = true;
+    this.dirty = false;
+    this.stopWatching?.();
+    this.stopWatching = undefined;
     this.clock.destroy();
     this.disposeTracks();
     this.output.disconnect();

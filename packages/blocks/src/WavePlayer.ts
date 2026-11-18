@@ -279,7 +279,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
     });
   }
   private assertAlive(): void {
-    if (this.disposed) throw new Error("Range player is destroyed.");
+    if (this.disposed) throw new Error("WavePlayer is destroyed.");
   }
   private notify(): void {
     if (this.depth) return;
@@ -288,7 +288,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
       try {
         untracked(listener);
       } catch (error) {
-        console.error("Range player listener failed.", error);
+        console.error("WavePlayer listener failed.", error);
       }
     }
   }

@@ -31,12 +31,12 @@ predates that API. See the "Version mismatches" note in the skill.
 - **blocks:** `AudioRecorder` fills short browser render gaps with silence and reports their absolute frame ranges in optional `dropouts`; a gap beyond two seconds fails the take.
 - **workspace:** Streaming DAWproject saves use stored ZIP entries with CRC and size in local headers, and stop before classic ZIP limits. This removes reliance on ZIP data descriptors for large file-backed media.
 - **midi:** `MidiRecorder.start()` returns its actual output-clock start time for a Workspace take anchor; existing callers may ignore the return value.
-- **workspace:** `Workspace.commit()` chooses a clip/mixer/automation/state refresh without host reload when topology is unchanged, and rebuilds routing only after track or device topology changes. The DAW demo uses this entry after Project edits.
+- **workspace:** A running `Workspace` applies light `Project` edits (tempo map, effect rack, device state, mixer, volume automation, clips) automatically, coalesced per microtask and serialized, without reloading hosts. A track/device topology change sets the read-only `workspace.cells.needsSync` and leaves transport and hosts alone until `await workspace.sync()`; light edits wait for it. `workspace.cells.error` holds the latest failed application, and `await workspace.flush()` resolves when pending application is done (rejecting on failure). `save()`, `saveTo()` and `exportAudioFallbackTo()` wait for pending application. There is no `commit()`.
 - **midi / blocks / widgets:** MIDI note data, `MidiSequence` and `compileMidiPlaybackEvents` use the pure `@audiorective/midi` entry; browser `MidiRecorder` uses `@audiorective/midi/web`. The unreleased `@audiorective/blocks/midi` entry and blocks-root recorder exports are removed. Piano-roll widgets and the showroom use the new package without changing note editing, recording or audio playback behavior.
 
 - **widgets:** Piano-roll layout frames expose the current `snap` mode. Calling `setSnap` refreshes custom controls synchronously, so externally changed snapping stays visible without duplicating widget state.
 
-- **blocks / widgets:** Rename the unreleased `RangePlayer` to `WavePlayer`, including `WavePlayerOptions`, `WavePlayerSource`, `WavePlayerState`, `WaveStretchProcessor`, `WaveLoadProgress`, and `WaveSourceLoader`. Consumers use the new names; loading, range playback, stretch and ownership behavior are unchanged.
+- **blocks / widgets:** Rename the unreleased `RangePlayer` to `WavePlayer`, including `WavePlayerOptions`, `WavePlayerSource`, `WavePlayerState`, `WaveStretchProcessor`, `WaveLoadProgress`, and `WaveSourceLoader`, and the destroyed-player messages (`WavePlayer is destroyed.`, `WavePlayer listener failed.`). Consumers use the new names; loading, range playback, stretch and ownership behavior are unchanged.
 
 ### Added
 

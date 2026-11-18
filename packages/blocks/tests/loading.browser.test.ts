@@ -228,5 +228,5 @@ test("cancel in the peaks notification prevents publication", async () => {
   await player.load(context.createBuffer(1, 800, 8000));
   expect(player.getState()).toMatchObject({ duration: 0, loading: false, loadProgress: null, error: null });
   player.destroy();
-  expect(() => player.cancelLoad()).toThrow("Range player is destroyed.");
+  expect(() => player.cancelLoad()).toThrow("WavePlayer is destroyed.");
 });

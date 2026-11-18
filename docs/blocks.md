@@ -44,7 +44,7 @@ try {
 | `cancelLoad(): void`                                         | Cancels the active load, clears progress without an error, and ignores late results. Idle calls preserve the committed version.                                                                                                                                                                                                                                           |
 | `getState()`                                                 | Snapshot containing `duration`, copied `selection`, `position`, `isPlaying`, `isLooping`, `loading`, `loadProgress`, `error: string \| null`, `processing`, `stretchRatio`, `sourceDuration`, and `revision`.                                                                                                                                                             |
 | `subscribe(listener: () => void): () => void`                | Change notifications for source, selection, loading and playback; returns unsubscribe. Does not call immediately or tick for clock-only position movement. Render once, subscribe for changes, and read `position` per animation frame when needed. A failing listener is logged without preventing other updates.                                                        |
-| `destroy()`                                                  | Idempotently cancels loads, edits and play requests, stops/disconnects owned audio and releases buffers/listeners. It never destroys the borrowed stretch processor. Leaves the caller context open. Mutating a destroyed player throws `Range player is destroyed.`                                                                                                      |
+| `destroy()`                                                  | Idempotently cancels loads, edits and play requests, stops/disconnects owned audio and releases buffers/listeners. It never destroys the borrowed stretch processor. Leaves the caller context open. Mutating a destroyed player throws `WavePlayer is destroyed.`                                                                                                        |
 
 `AudioRange` is `{ start: number; end: number }`. `WavePlayerSource`, `WavePlayerState`, `WavePlayerOptions`, `WavePlayOptions`, `WaveStretchProcessor`, and `PlaybackVersion` are exported. Playback, selection, seek, and position use **committed output seconds**. Original source seconds remain available through `sourceDuration` and the mapping helpers below. With ratio 1 the timelines coincide.
 
@@ -341,7 +341,7 @@ const rack = new EffectRack(context, [
 ]);
 source.connect(rack.input);
 rack.output.connect(context.destination);
-rack.setEffects(rack.effects.map(slot => slot.id === "delay" ? { ...slot, enabled: false } : slot));
+rack.setEffects(rack.effects.map((slot) => (slot.id === "delay" ? { ...slot, enabled: false } : slot)));
 // On teardown, disconnect your source from rack.input and call rack.destroy().
 ```
 
@@ -349,16 +349,16 @@ rack.setEffects(rack.effects.map(slot => slot.id === "delay" ? { ...slot, enable
 
 ## Common errors
 
-| Message | Fix |
-| --- | --- |
+| Message                                                                | Fix                                                                  |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------------- |
 | `EffectRack needs unique slot IDs and valid Filter or Delay settings.` | Use distinct nonempty slot IDs and settings inside the ranges above. |
-| `EffectRack is destroyed.` | Construct a new rack before applying settings. |
+| `EffectRack is destroyed.`                                             | Construct a new rack before applying settings.                       |
 
 Loading, selection and playback messages from `WavePlayer`. Stretch and time-mapping messages are listed with [stretch](#committed-versions-and-offline-stretch); waveform view and plugin messages are in [Widgets](./widgets.md#common-errors).
 
 | Message                                                                                                                                            | Cause                                            | Fix                                                                             |
 | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------- |
-| `Range player is destroyed.`                                                                                                                       | Mutating or subscribing after block cleanup      | Create a new WavePlayer; shared views must not destroy their caller's player.   |
+| `WavePlayer is destroyed.`                                                                                                                         | Mutating or subscribing after block cleanup      | Create a new WavePlayer; shared views must not destroy their caller's player.   |
 | `Position must be finite seconds.` / `Start time must be finite, non-negative seconds.`                                                            | Invalid `seek` position or `play({ when })` time | Pass finite seconds; `when` is an absolute `AudioContext` time, clamped to now. |
 | `Enter an audio URL.`                                                                                                                              | Empty URL passed to `load`                       | Supply a URL or File.                                                           |
 | `Audio request failed: HTTP 404.` (status varies)                                                                                                  | URL response is unsuccessful                     | Check the URL, access, and server response; call `load` again to recover.       |
