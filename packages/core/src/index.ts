@@ -22,6 +22,7 @@ export { BufferPlayer } from "./BufferPlayer";
 export type { BufferPlayerOptions } from "./BufferPlayer";
 export { FilePlayer } from "./FilePlayer";
 export type { FilePlayerOptions } from "./FilePlayer";
+export type { CancellableEvent, BeatTiming } from "./contracts";
 export { renderOffline } from "./renderOffline";
 export type { RenderOfflineOptions } from "./renderOffline";
 export { defineGraph } from "./graph";

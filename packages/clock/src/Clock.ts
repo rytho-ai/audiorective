@@ -1,20 +1,16 @@
-import { Param } from "@audiorective/core";
+import { Param, type CancellableEvent } from "@audiorective/core";
 import type { Timeline } from "./Timeline";
 import type { Ruler } from "./rulers/Ruler";
 import { WorkerTickSource } from "./TickSource";
 import type { TickSource } from "./TickSource";
 import type { CoreTickWindow, TransportState } from "./types";
 
+export type { CancellableEvent };
+
 export interface MissedGap {
   gapStart: number;
   gapEnd: number;
   gapDuration: number;
-}
-
-/** A consumer-owned audio event that Clock may revoke after a transport change. */
-export interface CancellableEvent {
-  cancel(): void;
-  onEnded(listener: () => void): void;
 }
 
 export type TickWindow<TRulers extends Record<string, Ruler<unknown, unknown>>> = CoreTickWindow & {
