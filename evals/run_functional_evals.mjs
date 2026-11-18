@@ -18,10 +18,11 @@
 //          --model <id>   --grader-model <id>   --json <out-file>
 
 import { spawn } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertNoSymlinks, copyResolved } from "./stage_skill.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..");
@@ -66,16 +67,17 @@ evalSet = evalSet.slice(0, limit);
 if (evalSet.length === 0) usage(`no matching evals in evals/${skillName}/evals.json`);
 
 // Stage the skill (and its siblings, which it may route to) in an empty project.
-// References are symlinks into docs/, so the copy dereferences them.
+// References are symlinks into docs/, so the copy resolves them into real files.
 const project = mkdtempSync(join(tmpdir(), "functional-eval-"));
 const staged = join(project, ".claude", "skills");
 mkdirSync(staged, { recursive: true });
-cpSync(skillDir, join(staged, skillName), { recursive: true, dereference: true });
+copyResolved(skillDir, join(staged, skillName));
 for (const sibling of readdirSync(dirname(skillDir), { withFileTypes: true })) {
   const from = join(dirname(skillDir), sibling.name);
   if (!sibling.isDirectory() || sibling.name === basename(skillDir) || !existsSync(join(from, "SKILL.md"))) continue;
-  cpSync(from, join(staged, sibling.name), { recursive: true, dereference: true });
+  copyResolved(from, join(staged, sibling.name));
 }
+assertNoSymlinks(staged);
 const graderDir = mkdtempSync(join(tmpdir(), "functional-grade-"));
 
 const env = { ...process.env };
