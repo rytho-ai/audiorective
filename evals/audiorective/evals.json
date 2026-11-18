@@ -859,7 +859,7 @@
       "expected_output": "A Node-safe project tool that imports only the daw project and codec entries, with no runtime, clock, host or widgets, and no AudioContext.",
       "files": [],
       "expectations": [
-        "Imports Project from @audiorective/daw/project and openDawProject and saveDawProject from @audiorective/daw/dawproject",
+        "Imports openDawProject and saveDawProject from @audiorective/daw/dawproject (and, if it names the Project type, from @audiorective/daw/project) and no other @audiorective entry",
         "Does not import the @audiorective/daw root, @audiorective/daw/runtime, Workspace, @audiorective/clock, @audiorective/host, @audiorective/widgets or any @audiorective/blocks subpath, and constructs no AudioContext",
         "Reads warnings from the open result and calls moveClip(clipId, trackId, time) and setTitle on the reopened project, then saves with saveDawProject",
         "Calls project.destroy() on the opened project when finished",
@@ -868,14 +868,15 @@
     },
     {
       "id": 65,
-      "prompt": "build me a 16-step drum machine in vanilla typescript. I already decode my own 4 AudioBuffers (kick, snare, closed hat, open hat) and there is no project file or DAW here, just a grid, a bpm field and play/stop. Keep the dependencies as small as you can. don't run anything.",
+      "prompt": "build me a 16-step drum machine in vanilla typescript with audiorective. I already decode my own 4 AudioBuffers (kick, snare, closed hat, open hat). a closed hat has to cut off a ringing open hat, but if I delete a closed-hat step that is already scheduled, the open hat must keep ringing. there is no project file or DAW here, just a grid, a bpm field and play/stop. Keep the dependencies as small as you can. don't run anything.",
       "expected_output": "A small drum machine over clock, the blocks sequencer and instrument-events subpaths and an optional step-grid widget, with no daw package and no sample library.",
       "files": [],
       "expectations": [
-        "Imports StepSequencer from @audiorective/blocks/sequencer and InstrumentEvents from @audiorective/blocks/instrument-events, and Clock and Timeline from @audiorective/clock; there is no @audiorective/blocks root import",
+        "Imports StepSequencer from @audiorective/blocks/sequencer and InstrumentEvents from @audiorective/blocks/instrument-events (or an equivalent that schedules retractable grouped hits through Clock) with Clock and Timeline from @audiorective/clock; there is no @audiorective/blocks root import",
+        "Puts closed and open hat in one choke group so cancelling a scheduled closed-hat hit also retracts its future choke, instead of scheduling an irreversible stop on the open hat",
         "Does not import @audiorective/daw, @audiorective/host, @audiorective/effects, @audiorective/midi, @audiorective/blocks/samples or @audiorective/blocks/player, and creates no Project or Workspace",
-        "Passes the Timeline as the sequencer's timing (beatToTime and timeToBeat), registers each returned hit with window.own(hit, when) and calls clock.refresh() after pattern edits",
-        "Uses @audiorective/widgets mountStepGrid with the sequencer for the grid, or states that it is optional, instead of hand-writing step toggling",
+        "Calls sequencer.schedule(window, timeline) from the Clock tick, passing the same Timeline as the BeatTiming (the sequencer registers its hits with window.own itself), and calls clock.refresh() after pattern edits",
+        "Uses @audiorective/widgets mountStepGrid for the grid or names it as an option; a hand-written grid is acceptable when it calls the sequencer's setVelocity",
         "Cleans up by destroying the clock and InstrumentEvents and leaving the caller's AudioContext open"
       ]
     }
