@@ -99,6 +99,10 @@ For a plain playback bar, mount [`@audiorective/widgets/player`](./widgets.md#pl
 | Reactive state   | `cells.activeVoices`              | `cells.isPlaying`                 | `cells.isPlaying`/`currentTime`/`duration` |
 | Best for         | SFX, hits, one-shots, sample pads | beat-locked loops/stems, DJ moves | music, long-form, scrubbing                |
 
+## Capability modules built on these
+
+Higher-level modules reuse these primitives and import only core, so they stay standalone. `@audiorective/blocks/player`'s `WavePlayer` wraps `BufferPlayer` with a selection and offline stretch; `@audiorective/blocks/samples`'s `SampleLibrary` auditions through a `BufferPlayer` voice; `@audiorective/blocks/instrument-events` plays cancellable pad hits for sequencers. See [Blocks](./blocks.md).
+
 ## Common mistakes
 
 - **Using `FilePlayer` for a beat-locked loop.** It can't phase-lock (media clock) and the rate isn't schedulable — loops drift. Use `BufferPlayer`.

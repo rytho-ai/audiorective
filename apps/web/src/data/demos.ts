@@ -16,7 +16,7 @@ export const demos: Demo[] = [
     thumb: "/showroom/piano-roll.svg",
     route: "/showroom/piano-roll",
     source: "https://github.com/audiorective/audiorective/tree/main/apps/web/src/demos/midi",
-    packages: ["@audiorective/blocks", "@audiorective/widgets"],
+    packages: ["@audiorective/midi", "@audiorective/widgets"],
   },
   {
     slug: "waveform",

@@ -56,19 +56,68 @@ Classes that only hold structured state should **not** extend `AudioProcessor`. 
 - Calling audio-layer methods (`synth.filterSweep()`, `sequencer.rampBpm(180, 4)`)
 - Layout, styling, conditional rendering
 
-## Standalone modules and Workspace
+## Layers and dependency direction
 
-Keep an operation in a standalone module when a caller can supply the source, timing or destination it needs without a project. Workspace connects those operations to project tracks, its shared clock, an audio graph and persistence. A standalone module can have a Workspace adapter and still be useful in a sampler, editor or small player.
+Packages sit in four layers. An import points down, never up or sideways inside a layer.
 
-| Capability                   | Standalone entry                                                                                                                                                | Workspace connection                                                                                                                                  |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Source playback and audition | Blocks `WavePlayer` plays a caller-owned source or selection. `SampleLibrary` decodes, leases and auditions assets.                                             | Workspace resolves the current placed clip and borrows its cached or file-backed window for audition. Project owns clip placement and retained media. |
-| Capture and editing          | Blocks `AudioRecorder`, MIDI `MidiRecorder`, clip-envelope scheduling and Effects `TimeStretch` work with caller-supplied input, time or PCM.                   | Workspace places takes and prepares stretch edits. Project stores the clip envelope, source window and rendered audio.                                |
-| Live performance             | Blocks `InstrumentEvents`, `StepSequencer` and `ClipLauncher` borrow playback targets or a clock.                                                               | `attachStepSequencer()` supplies project timing. `launchClips()` resolves clip IDs and switches the affected routes.                                  |
-| Effects and hosting          | Effects `Filter` and `Equalizer` own DSP and response. Blocks `EffectRack` owns an ordered built-in chain. Host runs individual WebCLAP devices over Web Audio. | Workspace connects track devices and built-in inserts. Project saves device identity, state and ordered rack settings.                                |
-| Mixing and editing UI        | Effects `Channel` and `SendBus` can form a mixer graph. Widgets take borrowed audio or edit data for meters, EQ, mixer and timeline interactions.               | Project describes track routing, sends and automation. Workspace applies those choices to the running graph and transport.                            |
+```
+Layer 4  Apps          apps/daw-demo, a drum machine, a project-file tool, your app
+Layer 3  Project and   widgets  ∥  daw (daw/runtime, daw/dawproject, daw/project)
+         interaction
+Layer 2  Capabilities  clock, midi, effects, host, blocks/player, blocks/recorder,
+                       blocks/samples, blocks/instrument-events,
+                       blocks/sequencer, blocks/launcher
+Layer 1  Foundation    core
+Side     (core only)   react, threejs, playcanvas, devtools
+```
 
-Keep the dependency direction from Workspace to reusable audio capabilities. Bind widgets to the module that already owns the value. Store project data once, and keep temporary runtime state where it is used.
+`widgets` and `daw` are parallel and never import each other. The app is the one place that knows both, and the wiring is app code. A box in the diagram is a responsibility, not an npm package: all `blocks` subpaths ship in one package.
+
+| Module              | May import                                                       | Must not import                                 |
+| ------------------- | ---------------------------------------------------------------- | ----------------------------------------------- |
+| App                 | any layer                                                        | n/a                                             |
+| `widgets`           | core; types of capability modules, or local structural contracts | `daw`; capability runtime classes               |
+| `daw/runtime`       | `daw/project`, core, the capability modules it needs             | `widgets`, `daw/dawproject`                     |
+| `daw/dawproject`    | `daw/project`, core                                              | the runtime, anything needing an `AudioContext` |
+| `daw/project`       | core (including `PCMData`), `midi` root, `effects/rack-preset`   | the runtime, the codec, `AudioContext`, the DOM |
+| A capability module | core                                                             | other capability modules, layer 3               |
+| `core`              | nothing                                                          | everything                                      |
+
+`pnpm check:layers` enforces these edges over the real import graph. A new edge between capability modules needs a written reason.
+
+### Three kinds of capability module
+
+"Independent" means two things: the module imports no sibling, and it works when taken out alone. They are separate questions.
+
+| Kind           | Test                                                                     | Modules                                                                                                              |
+| -------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| **Standalone** | Imports only core; give it an `AudioContext` and it works                | `clock`, `midi`, `effects`, `host`, `blocks/player`, `blocks/recorder`, `blocks/samples`, `blocks/instrument-events` |
+| **Borrowing**  | Imports only core, but cannot run until the caller supplies an interface | `blocks/sequencer` (a `BeatTiming` and a trigger returning a `CancellableEvent`), `blocks/launcher` (a transport)    |
+| **Composed**   | Imports a sibling capability module                                      | none; an exception needs a written reason and an edge that disappears when the feature is unused                     |
+
+A borrowing module names what it needs as a structural type in [core](./core.md#shared-contracts), so `Timeline`, `Clock`, `InstrumentEvents` or the DAW runtime can each satisfy it without the module importing any of them. `SampleLibrary` previews through core `BufferPlayer` for the same reason: it stays standalone.
+
+### Features are not modules: the Mixer
+
+A feature the user sees usually spans three layers. To place a decision, ask whether it survives closing the view and whether it survives saving the file.
+
+| Part of the Mixer                                | Owner         | Code                                                                 |
+| ------------------------------------------------ | ------------- | -------------------------------------------------------------------- |
+| Faders, pan, mute and solo buttons, level meters | `widgets`     | `mountMixer`, which takes only `state`, `editTrack` and `editMaster` |
+| Per-track volume, pan, mute, solo and routing    | `daw/project` | `ProjectTrack`                                                       |
+| Which tracks and paths stay audible under solo   | `daw/runtime` | `soloRouting` over `ProjectTrack`                                    |
+| Gain, pan and mute nodes, sends                  | `effects`     | `Channel`, `SendBus`                                                 |
+
+The piano roll, arrangement, automation lanes, clip grid and step grid split the same way: gestures and drawing in `widgets`, saved content in `daw/project`, sound in a capability module or the runtime. A widget that takes a local structural contract (`step-grid`, `sample-browser`, `clip-grid`, `warp-markers`, `clip-envelope-editor`, `mountMixer`) works over a DAW project or over your own model.
+
+### Two reference compositions
+
+| Application                         | Needs                                                           | Optional                                                       | Never loaded                                                                            |
+| ----------------------------------- | --------------------------------------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| A drum machine with its own buffers | `core`, `clock`, `blocks/sequencer`, `blocks/instrument-events` | `widgets` (step grid), `blocks/samples` (load or browse sound) | `daw`, `blocks/player`, `host`, `effects`, `midi`, `blocks/recorder`, `blocks/launcher` |
+| A `.dawproject` tool in Node        | `core`, `daw/project`, `daw/dawproject`                         | `effects/rack-preset`, `midi`                                  | `daw/runtime`, `clock`, `host`, `widgets`, the other blocks                             |
+
+Keep the dependency direction downward. Bind widgets to the module that already owns the value. Store project data once, and keep temporary runtime state where it is used.
 
 ## Examples
 

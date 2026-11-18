@@ -42,7 +42,7 @@ export default defineConfig({
             { label: "Blocks", slug: "docs/blocks" },
             { label: "Widgets", slug: "docs/widgets" },
             { label: "MIDI and Piano Roll", slug: "docs/midi" },
-            { label: "Workspace and DAWproject", slug: "docs/workspace" },
+            { label: "DAW and DAWproject", slug: "docs/daw" },
             { label: "WebCLAP host", slug: "docs/host" },
             { label: "Devtools", slug: "docs/devtools" },
           ],

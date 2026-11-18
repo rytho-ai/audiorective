@@ -30,11 +30,11 @@ const gesture = attachClipGesture(clipElement, {
 gesture.destroy();
 ```
 
-The caller renders lanes and clip appearance, supplies compatible track hit testing, and keeps shared selection/history. `time` and `onMove.time` use `timeUnit` (seconds by default, or beats); the widget converts through `timeMap` for its second-based pointer geometry and beat keyboard nudges. The widget never creates an AudioContext or changes the Project by itself. This interaction entry has no dependency on `@audiorective/workspace`.
+The caller renders lanes and clip appearance, supplies compatible track hit testing, and keeps shared selection/history. `time` and `onMove.time` use `timeUnit` (seconds by default, or beats); the widget converts through `timeMap` for its second-based pointer geometry and beat keyboard nudges. The widget never creates an AudioContext or changes the Project by itself. This interaction entry has no dependency on `@audiorective/daw`.
 
 `attachTimelineZoom` from the same entry owns continuous zoom gestures over a caller-rendered time axis. It connects an optional range input and Ctrl/⌘+wheel, keeps the project time under the pointer (or viewport center for the slider), and batches redraws to animation frames. The caller supplies `getScale()` in pixels per project second and `onScale(next)` to redraw its arrangement; `ruler()` returns the current time-axis element after that redraw. Buttons can call `zoom.zoomBy(1.45)` and fit-to-project can call `zoom.zoomTo(scale, leftEdgeX)`. Call `zoom.cancel()` when switching projects and `zoom.destroy()` when removing the view. The default range is 2–2000 pixels per second; `minScale` and `maxScale` can change it.
 
-The widgets implement their own waveform display and interaction. They require no UI framework or WaveSurfer dependency. The selector uses [WavePlayer](./blocks.md) for audio and selection. Pass a shared `player`, or supply `context` to let the selector own one. Its public audio connection is `handle.output`.
+The widgets implement their own waveform display and interaction. They require no UI framework or WaveSurfer dependency. The selector uses [WavePlayer](./blocks.md) for audio and selection. Pass a shared `player`, or supply `createPlayer` to let the selector construct, own and destroy one. Its public audio connection is `handle.output`.
 
 ## Parameter controls and metering
 
@@ -64,39 +64,39 @@ For app-owned commands, supply a structural getter that reads the current tracke
 
 ## Clip envelope editor
 
-`mountClipEnvelopeEditor(root, { duration, envelope, onChange })` exposes linear gain, fade-in and fade-out fields for a caller-owned reactive envelope. It commits changes in clip-local seconds and limits the combined fade length to `duration`. Use its `labels` option to localize the controls. The widget updates when the borrowed state changes and tears down its own observer on `destroy()`.
+`mountClipEnvelopeEditor(root, { duration, envelope, onChange })` takes a local `{ gain, fadeIn, fadeOut }` shape (the `ClipEnvelope` in `@audiorective/daw/project` fits) and exposes linear gain, fade-in and fade-out fields for a caller-owned reactive envelope. It commits changes in clip-local seconds and limits the combined fade length to `duration`. Use its `labels` option to localize the controls. The widget updates when the borrowed state changes and tears down its own observer on `destroy()`.
 
 ## Automation overlay
 
 `view.attach(createAutomationOverlay({ points, fromView, toView, defaultValue, maxValue, onCommit }))` layers a borrowed curve over a waveform or other time view. Supply a reactive `points` reader and increasing inverse time conversions. The overlay follows zoom and scroll. Double-click to add a point, drag to move it, or use the arrow keys on a focused point. Enter switches between linear and hold. Delete removes the point. An optional `snap` function receives view time, and Alt bypasses it. Dragging commits once on release and cancels on Escape or data replacement.
 
-The attachment owns its gesture and drawing. The caller owns the points and playback. For a project clip, derive the conversion from [the clip's source window](./workspace.md#clip-gain-automation) and pass updates to Project in `onCommit`. Supply optional `viewBreakpoints` at slope changes in a piecewise mapping.
+The attachment owns its gesture and drawing. The caller owns the points and playback. For a project clip, derive the conversion from [the clip's source window](./daw.md#clip-gain-automation) and pass updates to Project in `onCommit`. Supply optional `viewBreakpoints` at slope changes in a piecewise mapping.
 
 ## Warp markers
 
-`view.attach(createWarpMarkers({ anchors, sampleRate, sourceFrames, sourceFrameAt, onCommit }))` mounts a seconds-view marker editor. `anchors` is a reactive reader of source/output frame pairs. Supply a conversion from waveform seconds to source frames for new markers. Double-click to add a marker, drag it to change its output position, or move a focused marker with the arrow keys. Shift increases the keyboard step. Delete removes a marker and Escape cancels a drag. The view commits on release and renders neighboring markers in order. It borrows the anchors and leaves audio processing and undo to the caller.
+`view.attach(createWarpMarkers({ anchors, sampleRate, sourceFrames, sourceFrameAt, onCommit }))` mounts a seconds-view marker editor. `anchors` is a reactive reader of source/output frame pairs. Supply a conversion from waveform seconds to source frames for new markers. Double-click to add a marker, drag it to change its output position, or move a focused marker with the arrow keys. Shift increases the keyboard step. Delete removes a marker and Escape cancels a drag. The view commits on release and renders neighboring markers in order. It borrows the anchors and leaves audio processing and undo to the caller. An anchor is a local `{ sourceFrame, outputFrame }` pair, the same shape as `ClipStretchAnchor` in `@audiorective/daw/project` and `WaveStretchAnchor` in `@audiorective/blocks/player`.
 
 ## Spectrum and EQ editor
 
 `mountSpectrum(root, { sampleRate, fftSize, read })` projects borrowed FFT dB values onto a log-frequency axis. A Web Audio analyser can supply the values through `read: (bins) => analyser.getFloatFrequencyData(bins)`. The reader receives `fftSize / 2` entries. The widget releases its animation frame on destruction. The caller owns the analyser and its audio connection.
 
-`mountEqEditor(root, { bands, readResponse })` edits borrowed numeric controls. Each band has a stable ID, label and reactive `frequency`, with optional `gain` and `q` controls. Pass a response function that fills **linear magnitudes** at the supplied frequencies. Drag or use Left and Right to change frequency. Gain-enabled bands also use vertical movement and Up or Down. Page Up, Page Down and the wheel adjust Q when supplied. The widget can run against standalone Params and generated analysis data, or it can borrow feedback from [Workspace](./workspace.md#effect-rack).
+`mountEqEditor(root, { bands, readResponse })` edits borrowed numeric controls. Each band has a stable ID, label and reactive `frequency`, with optional `gain` and `q` controls. Pass a response function that fills **linear magnitudes** at the supplied frequencies. Drag or use Left and Right to change frequency. Gain-enabled bands also use vertical movement and Up or Down. Page Up, Page Down and the wheel adjust Q when supplied. The widget can run against standalone Params and generated analysis data, or it can borrow feedback from [the DAW runtime](./daw.md#effect-rack).
 
 ## Step grid and pads
 
-`mountStepGrid(root, { sequencer })` edits the provided pattern's velocities and displays its current step. Click a step to toggle and focus it to adjust its velocity. Destroying the view leaves the borrowed pattern available.
+`mountStepGrid(root, { sequencer })` edits the provided pattern's velocities and displays its current step. `sequencer` is a local structural contract (`pattern`, `currentStep` and `setVelocity`), so a `StepSequencer` or your own pattern model fits. Click a step to toggle and focus it to adjust its velocity. Destroying the view leaves the borrowed pattern available.
 
 `mountPadGrid(root, { pads, press })` turns pointer or focused keyboard presses into calls to `press(id)`. A one-shot callback returns nothing. For a gated sound, return a release callback for that specific press. The widget releases held inputs on key or pointer release, focus loss and destruction. It leaves the audio engine and pad mapping with the caller.
 
 ## Sample browser
 
-`mountSampleBrowser(root, { library, choose, onError, labels? })` renders a borrowed [Sample Library](./blocks.md#sample-library). The caller supplies file input and placement. On `choose(id)`, acquire the buffer, copy or retain it in the destination and release the lease when finished. `destroy()` removes the view, leaving audition and imports available to the caller.
+`mountSampleBrowser(root, { library, choose, onError, labels? })` renders a borrowed [Sample Library](./blocks.md#sample-library), or any `library` with a `state` readable of rows, `preview`, `stopPreview` and `remove`. The caller supplies file input and placement. On `choose(id)`, acquire the buffer, copy or retain it in the destination and release the lease when finished. `destroy()` removes the view, leaving audition and imports available to the caller.
 
 ## Mixer controls
 
 `mountMixer(root, { state, editTrack, editMaster, output? })` binds volume, pan, mute and solo controls to an external mixer state. Give it a `Readable<MixerState>` and apply edits in the owner. To display meters, return each track's post-fader `AudioNode` from `output(id)` and the master from `output(null)`. The widget detaches only its own analysis branches and reactive subscription on `destroy()`. Add app-specific routing controls with `appendControls(id, element)`, whose optional return value cleans up that strip.
 
-With Workspace, read `project.cells.revision` when projecting `project.tracks` and `project.masterVolume`. Bind the edit callbacks to [Workspace mixer methods](./workspace.md#mixer-buses-and-sends). The same view can borrow a different mixer as long as it supplies the same state and actions.
+`mountMixer` imports only core and takes the structural `state`, `editTrack` and `editMaster` contract, so the same view works over a DAW project or your own mixer model. With a DAW `Workspace`, read `project.cells.revision` when projecting `project.tracks` and `project.masterVolume`, and bind the edit callbacks to [Workspace mixer methods](./daw.md#mixer-buses-and-sends).
 
 ## Timeline range gesture
 
@@ -119,7 +119,7 @@ const lane = mountAutomationLane(root, {
   onCommit(next) {
     project.setVolumeAutomation(track.id, next);
     lane.setPoints(project.tracks.find(({ id }) => id === track.id)!.volumeAutomation);
-    void workspace.commit().catch(reportError);
+    void workspace.flush().catch(reportError); // optional: edits apply automatically
   },
 });
 // On hide or teardown:
@@ -130,9 +130,9 @@ The caller owns the envelope, applies undo and redo, and calls `setPoints()` wit
 
 ## Clip Grid
 
-`mountClipGrid(root, { state, launch, cancel, labels? })` renders buttons for an app-owned scene layout. Supply a reactive `ClipLauncherState` from Blocks or Workspace and a callback that handles the whole launch group. Use `setLayout({ tracks, scenes })` when the grid changes. Give each scene a label and at most one clip per track. The widget exposes `data-clip-state` as `idle`, `queued` or `active` for theming and keeps button state in sync with the borrowed launcher.
+`mountClipGrid(root, { state, launch, cancel, labels? })` renders buttons for an app-owned scene layout. Supply a reactive launcher state (a `Readable` of `{ active, queued }`, which `ClipLauncher` and `workspace.session` both provide) and a callback that handles the whole launch group. Use `setLayout({ tracks, scenes })` when the grid changes. Give each scene a label and at most one clip per track. The widget exposes `data-clip-state` as `idle`, `queued` or `active` for theming and keeps button state in sync with the borrowed launcher.
 
-The return buttons request `clipId: null` for the affected tracks. The widget's `destroy()` removes its own DOM and subscription. See the [Workspace example](./workspace.md#clip-launcher) for wiring and launch timing.
+The return buttons request `clipId: null` for the affected tracks. The widget's `destroy()` removes its own DOM and subscription. See the [DAW example](./daw.md#clip-launcher) for wiring and launch timing.
 
 ## Plain player controls
 
@@ -168,7 +168,7 @@ Call `mountPlayer` in a browser, behind a client-only boundary when the app also
 | `fromBufferPlayer(player)` | Play/Stop, volume        | No seek bar or time readout: `BufferPlayer` exposes no persistent playhead or reactive duration | Missing audio or a closed context                        |
 | `workspace.player`         | Play/Pause, seek         | Project seconds, reactive duration and position changes from transport actions                  | A rejected `Workspace.play()` request                    |
 
-When opening or creating a Workspace for speaker playback, pass `{ destination: context.destination }`. For an existing graph, route `workspace.output` from the app. See [Workspace playback controls](./workspace.md#mount-playback-controls).
+When opening or creating a Workspace for speaker playback, pass `{ destination: context.destination }`. For an existing graph, route `workspace.output` from the app. See [DAW playback controls](./daw.md#mount-playback-controls).
 
 `FilePlayer.play()` deliberately resolves for browser autoplay blocks. Its adapter calls the documented `player.audio.play()` escape hatch to display the actual failure; the player's cells still follow the element. A failed play request made elsewhere cannot be inferred by this widget. `BufferPlayer` starts from the beginning after Stop. For a seekable in-memory track, use `WavePlayer`.
 
@@ -207,11 +207,12 @@ Pass `renderer: PlayerRenderer` to replace the markup while keeping these intera
 
 ```typescript
 import { mountWaveformSelector } from "@audiorective/widgets";
+import { WavePlayer } from "@audiorective/blocks/player";
 
 const context = new AudioContext(); // or pass your app's existing context
 const root = document.querySelector<HTMLElement>("#waveform")!;
 const selector = mountWaveformSelector(root, {
-  context,
+  createPlayer: () => new WavePlayer(context), // the selector owns and destroys this player
   source: "/audio/loop.wav", // optional; also accepts a File
   onSelectionChange(selection) {
     console.log(selection); // { start, end } in committed output seconds, or null
@@ -234,11 +235,11 @@ if (selector.getState().duration >= 2) {
 // selector.destroy();
 ```
 
-The caller owns the context and routing. The selector resumes the supplied context when a user initiates playback; it neither creates nor closes a context, and it does not connect its output to the destination. Connect its output to a destination or your effects chain. Mount in the browser with a DOM, Web Audio, and `ResizeObserver`; keep mounting behind a client-only boundary in a server-rendered app.
+The caller owns the context and routing. The selector resumes the player's context when a user initiates playback; it neither creates nor closes a context, and it does not connect its output to the destination. The widget core imports no block at runtime: the app supplies the `WavePlayer`, directly or through `createPlayer`. Connect its output to a destination or your effects chain. Mount in the browser with a DOM, Web Audio, and `ResizeObserver`; keep mounting behind a client-only boundary in a server-rendered app.
 
 ### Interaction
 
-To share audio and selection across views, call `mountWaveformSelector(root, { player })` with a `WavePlayer` from `@audiorective/blocks`. Supply either `context` or `player`. The view does not destroy a supplied player or cancel its loads when detached. Route the shared output once. Loading or changing selection through any view updates the player and all its views; renderer, zoom and snap remain local. See [Blocks](./blocks.md#share-a-block-between-widgets).
+To share audio and selection across views, call `mountWaveformSelector(root, { player })` with a `WavePlayer` from `@audiorective/blocks/player`. Supply either `createPlayer` or `player`. The view does not destroy a supplied player or cancel its loads when detached. Route the shared output once. Loading or changing selection through any view updates the player and all its views; renderer, zoom and snap remain local. See [Blocks](./blocks.md#share-a-block-between-widgets).
 
 - Load an audio URL or local file using the built-in controls. Loading does not start playback.
 - Drag in either direction to create a range and start looping its audition. The endpoints are normalized to increasing seconds.
@@ -253,7 +254,7 @@ To share audio and selection across views, call `mountWaveformSelector(root, { p
 type Selection = { start: number; end: number };
 
 type WaveformSelectorOptions = {
-  context: AudioContext; // alternatively supply player: WavePlayer, without context
+  createPlayer: () => WavePlayer; // alternatively supply player: WavePlayer, without createPlayer
   source?: string | File;
   grid?: { beats: number[]; downbeats: number[] };
   onSelectionChange?: (selection: Selection | null) => void;
@@ -266,7 +267,7 @@ type WaveformSelectorOptions = {
 | Member                                             | Behavior                                                                                                                                                                                                     |
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `ready: Promise<void>`                             | Resolves after the initial load, or immediately without `source`; rejects if the current initial load fails.                                                                                                 |
-| `output: AudioNode`                                | Caller-routed audio output, using the supplied context.                                                                                                                                                      |
+| `output: AudioNode`                                | Caller-routed audio output of the selector's player.                                                                                                                                                         |
 | `load(source: string \| File): Promise<void>`      | Replaces the audio and clears the selection. The latest request wins, including when earlier decoding finishes later. A failed current request rejects and populates `error`; a subsequent load can recover. |
 | `cancelLoad(): void`                               | Cancels the player's active load. On a shared player this affects all observing selectors; destroying a borrowed view still leaves the caller's load running.                                                |
 | `setSelection(selection: Selection \| null): void` | Sets metadata and updates the player's range without initiating playback. Endpoints must be finite and satisfy `0 <= start < end <= duration`.                                                               |

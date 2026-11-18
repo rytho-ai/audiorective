@@ -15,13 +15,13 @@ Modular toolkit for web audio development. Independent, composable packages that
 @audiorective/
 ├── core         # Reactive state for audio parameters (alien-signals): Param, AudioProcessor, engine, peaks, automation
 ├── clock        # Timing and scheduling: transport, tempo, look-ahead tick windows, rulers
-├── effects      # DSP effects: filter, delay, dynamics, pitch shift, channel strip, send bus
+├── effects      # DSP effects: filter, delay, dynamics, pitch shift, channel strip, send bus; effect rack (`/rack`, pure data `/rack-preset`)
 ├── devtools     # Dev-time validators, e.g. impulse-based latency measurement
-├── blocks       # Headless audio capture, playback and instrument events
+├── blocks       # Headless capabilities by subpath, no root entry: player, recorder, samples, instrument-events, sequencer, launcher
 ├── midi         # MIDI note data and event projection (root); browser take recording (`/web`)
 ├── host         # Browser WebCLAP plug-in host (`/webclap`)
 ├── widgets      # Browser waveform, player, piano-roll and arrangement views
-├── workspace    # DAWproject-backed Project model and browser playback runtime
+├── daw          # `/project` model, `/dawproject` codec (both pure), `/runtime` browser Workspace; root joins them
 ├── react        # React bindings
 ├── threejs      # Three.js bindings (engine glue, scene transform sync)
 └── playcanvas   # PlayCanvas bindings (engine glue, entity-to-panner transform sync)
@@ -31,11 +31,24 @@ Modular toolkit for web audio development. Independent, composable packages that
 
 ## Layering
 
-Dependencies point downward only: `core` / `clock` / `effects` -> `blocks` / `midi` / `host` -> `widgets` -> `workspace`, with `react`, `threejs` and `playcanvas` as sibling bindings that depend on `core` alone. Every package depends on `core`; `effects` and `clock` do not depend on each other, and `blocks` builds on `effects`. `widgets` consumes `blocks` and `midi`; `workspace` consumes `blocks`, `clock`, `host` and `midi` and does not import `widgets` (apps connect the two).
+Four layers; an import points down, never up, and never sideways inside layer 2 or 3:
 
-Pure entries stay separate from browser-runtime entries so Node and server code can import them: `core/peaks`, `core/automation` and the `midi` root have no DOM or `AudioContext` dependency, while `midi/web`, `host/webclap` and the widget entries are browser-only. Inside `workspace`, `Project` and the DAWproject codec (`model.ts`, `dawproject.ts`, `media.ts`) avoid `AudioContext` and the DOM, but they share the package root with the browser `Workspace` runtime; the split is by module, not by entry. `widgets/waveform` is a DOM view, not a pure entry.
+```
+4  apps          apps/web, apps/daw-demo, a drum machine, a project-file tool
+3  widgets ∥ daw (daw/runtime, daw/dawproject, daw/project)
+2  capabilities  clock, midi, effects, host, blocks/{player,recorder,samples,instrument-events,sequencer,launcher}
+1  core
+   side          react, threejs, playcanvas, devtools: import core only
+```
 
-When placing a capability, consult [Standalone modules and Workspace](docs/architecture.md#standalone-modules-and-workspace). Workspace consumes standalone audio operations, and the app binds Widgets to their existing owners.
+- `widgets` and `daw` are parallel and never import each other; the app wires them. `widgets` takes local structural contracts (or type-only imports of capability types), not capability runtime classes.
+- A capability module imports only `core`, never another capability module or layer 3. `blocks` has no root entry: each capability is a subpath. A module is _standalone_ (works given an `AudioContext`) or _borrowing_ (`blocks/sequencer`, `blocks/launcher` need a `BeatTiming` or transport from the caller). Cross-module contracts such as `CancellableEvent` and `BeatTiming` live in `core`. Importing a sibling capability module is an exception that needs a written reason.
+- `daw/project` imports `core`, the `midi` root and `effects/rack-preset`; it takes PCM as core `PCMData`, not recorder types. `daw/dawproject` imports `daw/project` and `core`. `daw/runtime` imports `daw/project`, `core` and the capability modules it needs, and does not import `daw/dawproject` or `widgets`. The `daw` root re-exports the three entries and adds `openWorkspace`, `openWorkspaceBlob`, `saveWorkspace` and `saveWorkspaceTo`.
+- `pnpm check:layers` enforces these edges over the import graph; run it after adding an import between packages or entries.
+
+Pure entries stay separate from browser-runtime entries so Node and server code can import them: `core/peaks`, `core/automation`, `effects/rack-preset`, `daw/project`, `daw/dawproject` and the `midi` root have no DOM or `AudioContext` dependency, while `midi/web`, `host/webclap`, `daw/runtime` and the widget entries are browser-only. `widgets/waveform` is a DOM view, not a pure entry.
+
+When placing a feature, consult [Layers and dependency direction](docs/architecture.md#layers-and-dependency-direction). A feature usually spans layers: gestures and drawing in `widgets`, saved content in `daw/project`, sound in a capability module or `daw/runtime`.
 
 ## Core Conventions
 
@@ -122,7 +135,7 @@ The `schedulableParam` helper (without `bind`) creates a `SchedulableParam` back
 8. **No state duplication** — AudioProcessor owns all state. UI frameworks observe/mutate directly. No separate store.
 9. **Unified SchedulableParam** — one type regardless of backing. `bind` with AudioParam is an internal optimization, not a type distinction.
 10. **Observable state lives in `cells` or `params`** — for blocks as for core processors. A cell is the only store: no private field mirrored by `subscribe`. State whose change involves validation, playback or cancellation is registered as `readonlyCell(...)` over a private `Cell` and written only through the owner's methods; multi-field operations commit in one `batch`. Public readers are tracked, the owner's internal reads are `untracked`. Clock-derived values such as `position` stay plain getters. `getState()`/`subscribe()`, where a block has them, are thin wrappers over the cells.
-11. **Light edits propagate; interrupting rebuilds are explicit** — a running `Workspace` applies light `Project` edits automatically (coalesced, serialized, errors in `cells.error`). A structural rebuild that stops audio and reloads hosts never runs by itself: topology changes set `cells.needsSync` and the caller runs `sync()`. See [Project edits](docs/workspace.md#apply-project-edits-to-the-live-graph) for the waiting and error contract.
+11. **Light edits propagate; interrupting rebuilds are explicit** — a running `Workspace` (`daw/runtime`) applies light `Project` edits automatically (coalesced, serialized, errors in `cells.error`). A structural rebuild that stops audio and reloads hosts never runs by itself: topology changes set `cells.needsSync` and the caller runs `sync()`. See [Project edits](docs/workspace.md#apply-project-edits-to-the-live-graph) for the waiting and error contract.
 
 ## AudioProcessor Base Class
 
@@ -142,11 +155,11 @@ Runtime `dependencies` from each `package.json`:
 - `clock`: `core`, `alien-signals`
 - `effects`: `core`, `signalsmith-stretch` (dev: `devtools`)
 - `devtools`: `core`
-- `blocks`: `core`, `effects`
+- `blocks`: `core`
 - `midi`: `core`
 - `host`: `core`
 - `widgets`: `core`, `blocks`, `midi`
-- `workspace`: `core`, `blocks`, `clock`, `host`, `midi`, `@xmldom/xmldom`, `fflate`
+- `daw`: `core`, `blocks`, `clock`, `effects`, `host`, `midi`, `@xmldom/xmldom`, `fflate`
 - `react`: `core`, `alien-signals`; peer-depends on `react`
 - `threejs`: `core`; peer-depends on `three`
 - `playcanvas`: `core`; peer-depends on `playcanvas`

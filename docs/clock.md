@@ -72,7 +72,7 @@ for (const slice of loop.slices(audioStart, window.time.lookAheadEnd)) {
 }
 ```
 
-Use `slice.cycle` when identifying scheduled events. Intersect each stem with the common range and let short stems fall silent until the shared repeat. See [Workspace range audition](./workspace.md#audition-a-range-across-audio-tracks) for an implementation.
+Use `slice.cycle` when identifying scheduled events. Intersect each stem with the common range and let short stems fall silent until the shared repeat. See [DAW range audition](./daw.md#audition-a-range-across-audio-tracks) for an implementation.
 
 ## Timeline — the beat↔time mapping
 
@@ -99,7 +99,7 @@ clock.seek(64); // jumps to beat 64
 
 ### Own cancellable events when transport edits must cut queued sound
 
-The default remains unchanged: `Clock` does not cancel sound scheduled by `onTick`, so an unowned event may keep playing for up to the look-ahead interval after `pause()`. For a hard stop or an editable pattern, register a returned event handle with `window.own(event, when)`. `when` is its finite, nonnegative absolute `AudioContext` start time. The handle must provide `cancel()` and `onEnded(listener)`; Clock drops naturally ended events from its registry. `InstrumentEvents.trigger()` in [Blocks](./blocks.md#cancellable-instrument-events) returns a compatible handle.
+The default remains unchanged: `Clock` does not cancel sound scheduled by `onTick`, so an unowned event may keep playing for up to the look-ahead interval after `pause()`. For a hard stop or an editable pattern, register a returned event handle with `window.own(event, when)`. `when` is its finite, nonnegative absolute `AudioContext` start time. The handle is a core `CancellableEvent` (`cancel()` and `onEnded(listener)`, re-exported by this package); Clock drops naturally ended events from its registry. `InstrumentEvents.trigger()` in [Blocks](./blocks.md#cancellable-instrument-events) returns a compatible handle. `Timeline` satisfies core's `BeatTiming`, so it can be passed to `StepSequencer.schedule(window, timing)` without any other package in between.
 
 ```typescript
 const clock = new Clock({

@@ -13,6 +13,19 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ## [Unreleased]
 
+### Changed (breaking)
+
+- **workspace → daw:** the package is `@audiorective/daw` and has three entries plus a convenience root. Migration: `import { Project, … } from "@audiorective/workspace"` becomes `from "@audiorective/daw/project"`; `openDawProject`, `openDawProjectBlob`, `saveDawProject`, `saveDawProjectTo` come from `@audiorective/daw/dawproject`; `Workspace` and `scheduleClipEnvelope` come from `@audiorective/daw/runtime`. `@audiorective/daw` re-exports all three. `project` and `dawproject` load without an `AudioContext` or the DOM; `runtime` does not import the codec.
+- **daw:** `Workspace.open`, `Workspace.openBlob`, `workspace.save()` and `workspace.saveTo()` are removed. Migration: `Workspace.open(ctx, bytes, o)` → `openWorkspace(ctx, bytes, o)`; `Workspace.openBlob(ctx, blob, o)` → `openWorkspaceBlob(ctx, blob, o)`; `workspace.save()` → `saveWorkspace(workspace)`; `workspace.saveTo(stream)` → `saveWorkspaceTo(workspace, stream)`. All four come from the `@audiorective/daw` root. `Workspace.create(ctx, project, o)` is unchanged.
+- **daw:** `workspace.checkpoint()` waits for pending edits, folds live plug-in state into `Project` and returns it. `WorkspaceOptions.warnings` seeds `workspace.warnings`; `openWorkspace` passes file-open warnings through it.
+- **blocks:** the root entry `@audiorective/blocks` is removed. Migration: `WavePlayer` → `@audiorective/blocks/player`; `AudioRecorder` and its recording types → `@audiorective/blocks/recorder`; `SampleLibrary` → `@audiorective/blocks/samples`; `InstrumentEvents` → `@audiorective/blocks/instrument-events`; `StepSequencer` → `@audiorective/blocks/sequencer`; `ClipLauncher` → `@audiorective/blocks/launcher`. Each subpath imports only `@audiorective/core`.
+- **blocks → effects:** `EffectRack` and `LiveRackMacro` move from `@audiorective/blocks/effect-rack` to `@audiorective/effects/rack`. The pure settings and validation (`normalizeRackEffects`, `normalizeRackPreset`, `retainRackMacroTargets`, `rackMacroRange`, the `Rack*` types) are also available without an `AudioContext` from `@audiorective/effects/rack-preset`.
+- **blocks → daw:** `ClipEnvelope`, `normalizeClipEnvelope`, `unityClipEnvelope`, `clipGainAt` move from `@audiorective/blocks` to `@audiorective/daw/project`; `scheduleClipEnvelope` moves to `@audiorective/daw/runtime`. `WaveStretchAnchor` stays in `blocks/player`; `ClipStretchAnchor` in `daw/project` has the same shape.
+- **core / clock / blocks:** `CancellableEvent` and the new `BeatTiming` (`beatToTime`, `timeToBeat`) are core contracts. `@audiorective/clock` still re-exports `CancellableEvent`. `InstrumentEvent` extends it. `StepTiming` is removed: use `BeatTiming`. `StepSequencer` triggers return any `CancellableEvent`, and `ClipLaunchTransport` extends `BeatTiming`.
+- **blocks:** `SampleLibrary.preview()` plays through core `BufferPlayer` instead of `WavePlayer`, so `blocks/samples` imports only core.
+- **widgets:** `mountStepGrid`, `mountSampleBrowser`, `mountClipGrid`, `createWarpMarkers` and `mountClipEnvelopeEditor` accept local structural contracts instead of block or project classes. `mountWaveformSelector`'s `{ context }` option is replaced by `{ createPlayer: () => WavePlayer }`: `{ context }` → `{ createPlayer: () => new WavePlayer(context) }`. Passing `{ player }` is unchanged.
+- **daw:** `Workspace.commit()` does not exist; direct `Project` edits apply automatically (see below). Call `await workspace.flush()` to wait.
+
 ### Fixed
 
 - **blocks:** `WavePlayer.buffer`, `.duration` and `.sourceBuffer` track the committed playback version. `EffectRack.effects` and its read-only `cells.effects` update alongside the live chain. A destroyed WavePlayer now reports `WavePlayer is destroyed.`.

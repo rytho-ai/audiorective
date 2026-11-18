@@ -1,6 +1,6 @@
 # @audiorective/blocks
 
-Headless audio blocks for Audiorective. `WavePlayer` loads audio, selects ranges in the committed output timeline, and handles play/pause/seek/loop audition without DOM dependencies. It reuses core's `BufferPlayer` and works alone or with waveform widgets.
+Headless audio blocks for Audiorective, imported by subpath (`/player`, `/recorder`, `/samples`, `/instrument-events`, `/sequencer`, `/launcher`); there is no root entry and each subpath imports only `@audiorective/core`. `WavePlayer` loads audio, selects ranges in the committed output timeline, and handles play/pause/seek/loop audition without DOM dependencies. It reuses core's `BufferPlayer` and works alone or with waveform widgets.
 
 `AudioRecorder` captures short PCM takes from a caller-connected input through an AudioWorklet. It returns actual AudioContext start/end sample frames; the caller owns microphone permission, monitor routing, latency calibration and take placement. See [Record an audio take](../../docs/blocks.md#record-an-audio-take).
 

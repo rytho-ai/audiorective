@@ -234,6 +234,62 @@ class FxRack extends AudioProcessor<{}, {}> {
 }
 ```
 
+## EffectRack inserts
+
+Import `EffectRack` from `@audiorective/effects/rack`; its pure settings, validation and macro-range helpers live in `@audiorective/effects/rack-preset`, which loads without an `AudioContext`. It owns an ordered chain of built-in Filter, PingPongDelay and Equalizer inserts behind stable `input` and `output` nodes, and borrows the caller's audio context.
+
+```typescript
+import { EffectRack } from "@audiorective/effects/rack";
+
+const rack = new EffectRack(context, [
+  { id: "filter", type: "filter", enabled: true, wet: 1, mode: "lowpass", frequency: 1200, q: 0.7 },
+  { id: "delay", type: "delay", enabled: true, wet: 0.35, delayTime: 0.25, feedback: 0.25 },
+]);
+source.connect(rack.input);
+rack.output.connect(context.destination);
+rack.setEffects(rack.effects.map((slot) => (slot.id === "delay" ? { ...slot, enabled: false } : slot)));
+// On teardown, disconnect your source from rack.input and call rack.destroy().
+```
+
+`setEffects()` takes a complete ordered snapshot, validates it, and preserves processors with the same slot ID and type. An empty chain passes audio through. Bypass sets the effective mix to dry while preserving the configured mix. Filter accepts lowpass or highpass, 20–20,000 Hz and Q 0.1–20. Delay accepts 0.01–1 second and feedback 0–0.95. Both accept a mix from 0–1. `rack.effects` and `rack.cells.effects` are the tracked, frozen settings snapshot; an effect or `useValue` that reads either re-runs after `setEffects()`, the only writer. [the DAW runtime](./daw.md#effect-rack) connects these settings to a project and playback.
+
+Observe the read-only `rack.cells.effects.value` or `rack.effects` for the current order and settings. Use `setEffects()` to edit that snapshot.
+
+Add `{ id, type: "eq", enabled, wet, bands }` for one Equalizer insert. Each band uses `{ frequency, gain, q }` and follows the [Equalizer ranges](#parametric-equalizer). Edits retain a slot's Equalizer when its band count stays the same.
+
+`rack.readFilterResponse(slotId, frequencies, magnitudes, phases)` reads the current response for a Filter or Equalizer by slot ID. It yields `false` for an absent slot or a Delay. In the DAW runtime the same operation is available as `workspace.trackFilterResponse(trackId, slotId, frequencies, magnitudes, phases)`.
+
+### Rack macros and presets
+
+Each macro owns one normalized control and one or more built-in parameter targets. Set its mappings in the third constructor argument or in a complete preset.
+
+```typescript
+rack.setPreset({
+  effects: rack.effects,
+  macros: [
+    {
+      id: "tone",
+      label: "Tone",
+      value: 0.5,
+      targets: [
+        { slotId: "filter", parameter: "frequency", min: 200, max: 8000, scale: "exponential" },
+        { slotId: "delay", parameter: "feedback", min: 0.05, max: 0.65 },
+      ],
+    },
+  ],
+});
+const tone = rack.macro("tone")!;
+tone.param.value = 0.7;
+const preset = rack.capturePreset();
+rack.setPreset(preset);
+```
+
+`rack.cells.macros.value` lists the live controls. Bind an ordinary knob to a macro's `param`. For audio-clock automation, pass `macro.automation` to [AutomationBinding](./automation.md). Linear or hold segments in the normalized curve produce native ramps or steps on the mapped parameters. Exponential targets require positive endpoints. Stop a running binding before taking manual control so subsequent curve edits do not reprogram the target.
+
+Only one macro can own a given slot parameter. Use `rackMacroRange(slot, parameter)` for ranges. Supported targets are mix (`wet`) on every insert, Filter `frequency` and `q`, and Delay `delayTime` and `feedback`. Removing a slot drops its mappings. Bypassing a slot keeps its macro phase and makes that insert dry.
+
+`capturePreset()` returns version 1, the ordered slots, mappings and current macro positions. Authored curves belong to their caller. `setPreset()` validates the entire rack and prepares missing nodes before touching existing controls. A successful recall resets the recalled positions and cancels their old schedules. Existing controls retain identity when their IDs and labels match.
+
 ## Offline export
 
 `renderOffline` (from `@audiorective/core`) builds an `OfflineAudioContext`, runs an async `setup` callback, and returns the rendered `AudioBuffer`. Await `ready` on every worklet-backed effect (`Compressor`, `Limiter`, `PitchShift` with `engine: "stretch"`) inside `setup` before rendering starts:
@@ -273,3 +329,17 @@ const wav = await renderOffline({ seconds: 8, channels: 2, sampleRate: 44100 }, 
 ## Advanced: pre-warming worklets
 
 `registerWorklet(ctx, name, source)` is exported for apps that want to load a worklet module ahead of first use (e.g. during a loading screen) rather than on first construction of `Compressor`, `Limiter`, or a stretch-engine `PitchShift`. `Compressor` and `Limiter` call it with the same `(ctx, name)` pair internally, so a pre-warm call and the effect's own call share one `addModule` load.
+
+## Common errors
+
+| Rack message                                                                         | Fix                                                                                   |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
+| `EffectRack needs unique slot IDs and valid Filter, Delay or EQ settings.`           | Use distinct nonempty slot IDs and settings inside the ranges above.                  |
+| `Equalizer needs valid bands with frequency 20–20000 Hz, gain ±24 dB, and Q 0.1–20.` | Supply one or more bands with values in the supported ranges.                         |
+| `EffectRack is destroyed.`                                                           | Construct a new rack before applying settings.                                        |
+| `EffectRack preset version must be 1.`                                               | Pass a version 1 snapshot or omit the version when authoring a preset.                |
+| `EffectRack macros need unique IDs, normalized values, and distinct valid targets.`  | Use positions from 0 to 1 and assign a supported slot parameter to at most one macro. |
+| `EffectRack macro target is unavailable.`                                            | Rebuild the preset against the current rack slots and supported ranges.               |
+| `EffectRack macro value needs a number from 0 to 1.`                                 | Pass a finite normalized position.                                                    |
+| `EffectRack macro automation needs a time and a normalized curve starting at zero.`  | Use absolute audio seconds for the start and a relative curve beginning at zero.      |
+| `EffectRack macro is disposed.`                                                      | Look up the replacement control on the live rack.                                     |

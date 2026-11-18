@@ -1136,6 +1136,23 @@ engine.core.context; // AudioContext
 
 ---
 
+## Shared contracts
+
+Two structural types let capability modules cooperate without importing each other. A module that needs one declares it as a parameter type; any object with the same members satisfies it.
+
+```typescript
+import type { BeatTiming, CancellableEvent } from "@audiorective/core";
+
+interface CancellableEvent {
+  cancel(): void;
+  onEnded(listener: () => void): void;
+}
+type BeatTiming = Readonly<{ beatToTime(beat: number): number; timeToBeat(time: number): number }>;
+```
+
+- `CancellableEvent` is a consumer-owned audio event that a scheduler may revoke after a transport or edit change. `Clock`'s `window.own(event, when)` accepts one (`@audiorective/clock` re-exports the type), and `InstrumentEvent` extends it.
+- `BeatTiming` converts between beats and absolute audio-context time. `Timeline` satisfies it, and `StepSequencer.schedule(window, timing)` and `ClipLauncher`'s transport take it.
+
 ## Package Structure
 
 ```
@@ -1149,6 +1166,7 @@ signals/src/
 ├── Spatial.ts           # AudioProcessor wrapping a PannerNode
 ├── Analyser.ts          # AudioProcessor wrapping an AnalyserNode (spectrum/waveform tap)
 ├── peaks.ts             # pure PCM summaries and frame/time bin ranges
+├── contracts.ts         # CancellableEvent and BeatTiming structural contracts
 ├── types.ts             # SignalAccessor, ComputedAccessor, Readable, ParamBind, etc.
 └── index.ts             # public exports
 ```
@@ -1196,5 +1214,7 @@ export type {
   GraphSink,
   PCMData,
   PeakSummary,
+  CancellableEvent,
+  BeatTiming,
 };
 ```

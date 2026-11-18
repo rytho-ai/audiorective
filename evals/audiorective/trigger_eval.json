@@ -40,7 +40,7 @@
     "should_trigger": true
   },
   {
-    "query": "our project already uses @audiorective/core \u2014 can you add a filter sweep that ramps cutoff from 200hz to 12k over 2 bars when the user hits the 'drop' button",
+    "query": "our project already uses @audiorective/core — can you add a filter sweep that ramps cutoff from 200hz to 12k over 2 bars when the user hits the 'drop' button",
     "should_trigger": true
   },
   {
@@ -56,7 +56,7 @@
     "should_trigger": true
   },
   {
-    "query": "replace tone.js in our looper \u2014 we only use Tone.Transport, Tone.Player and a PingPongDelay and the bundle is huge",
+    "query": "replace tone.js in our looper — we only use Tone.Transport, Tone.Player and a PingPongDelay and the bundle is huge",
     "should_trigger": true
   },
   {
@@ -88,7 +88,7 @@
     "should_trigger": false
   },
   {
-    "query": "my react app re-renders too much \u2014 the zustand store updates on every mouse move. how do I fix the state management?",
+    "query": "my react app re-renders too much — the zustand store updates on every mouse move. how do I fix the state management?",
     "should_trigger": false
   },
   {
@@ -96,7 +96,7 @@
     "should_trigger": false
   },
   {
-    "query": "implement a VST3 plugin in C++ with JUCE \u2014 a simple tremolo with rate and depth",
+    "query": "implement a VST3 plugin in C++ with JUCE — a simple tremolo with rate and depth",
     "should_trigger": false
   },
   {
@@ -118,5 +118,9 @@
   {
     "query": "Explain the published DAWproject XML schema at a high level. We aren't building an app or using Audiorective.",
     "should_trigger": false
+  },
+  {
+    "query": "We have a Node script in CI that opens exported .dawproject files, renames tracks and moves clips, then writes them back out. No browser or audio device involved. Is there a library for the project model?",
+    "should_trigger": true
   }
 ]

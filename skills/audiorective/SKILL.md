@@ -106,61 +106,57 @@ export function App() {
 
 ## Packages
 
-| Package                      | Purpose                                                                                                                                                    | Reference                  |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
-| `@audiorective/core`         | Reactive audio primitives, `AudioProcessor`, engine, `defineGraph`, `Spatial`, `Analyser`, `Sampler`, `BufferPlayer`, `FilePlayer`.                        | `references/core.md`       |
-| `@audiorective/clock`        | Timing/scheduling engine — transport, tempo, look-ahead tick windows, rulers (bars, cycles/loops, seconds).                                                | `references/clock.md`      |
-| `@audiorective/effects`      | DSP effects — Filter, Equalizer, Distortion, Phaser, FrequencyShifter, PingPongDelay, Convolver, Compressor, Limiter, PitchShift; Channel strip + SendBus. | `references/effects.md`    |
-| `@audiorective/widgets`      | Player, waveform, piano-roll and caller-owned arrangement clip gestures.                                                                                   | `references/widgets.md`    |
-| `@audiorective/blocks`       | Headless recorder, wave player, sample library, clip launcher, step sequencer and cancellable hits.                                                        | `references/blocks.md`     |
-| `@audiorective/midi`         | Pure MIDI notes, sequence and playback projection; `/web` records a selected input.                                                                        | `references/midi.md`       |
-| `@audiorective/workspace`    | Project tempo map, tracks/clips, DAWproject save/open and browser runtime.                                                                                 | `references/workspace.md`  |
-| `@audiorective/host/webclap` | Browser WebCLAP instrument/effect host: reactive `params` per CLAP parameter, MIDI scheduling, `saveState`/`loadState`, editor bridge.                     | `references/host.md`       |
-| `@audiorective/react`        | React bindings (`useValue`, `createEngineContext` → `EngineProvider`, `useEngine`).                                                                        | `references/react.md`      |
-| `@audiorective/threejs`      | three.js scene bindings (`attach`, `PannerAnchor`).                                                                                                        | `references/threejs.md`    |
-| `@audiorective/playcanvas`   | PlayCanvas scene bindings (`attach`, `bindPanner`).                                                                                                        | `references/playcanvas.md` |
-| `@audiorective/devtools`     | `measureLatency` / `assertLatency` for testing a processor's declared latency.                                                                             | `references/core.md`       |
+| Package                      | Purpose                                                                                                                                             | Reference                  |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| `@audiorective/core`         | Reactive audio primitives, `AudioProcessor`, engine, `defineGraph`, `Spatial`, `Analyser`, `Sampler`, `BufferPlayer`, `FilePlayer`.                 | `references/core.md`       |
+| `@audiorective/clock`        | Timing/scheduling engine — transport, tempo, look-ahead tick windows, rulers (bars, cycles/loops, seconds).                                         | `references/clock.md`      |
+| `@audiorective/effects`      | DSP effects, Channel strip + SendBus; `/rack` `EffectRack`, `/rack-preset` pure rack data, `/time-stretch`.                                         | `references/effects.md`    |
+| `@audiorective/widgets`      | Player, waveform, piano-roll and caller-owned arrangement clip gestures.                                                                            | `references/widgets.md`    |
+| `@audiorective/blocks`       | Headless capabilities, imported by subpath with no root entry: `/player`, `/recorder`, `/samples`, `/instrument-events`, `/sequencer`, `/launcher`. | `references/blocks.md`     |
+| `@audiorective/midi`         | Pure MIDI notes, sequence and playback projection; `/web` records a selected input.                                                                 | `references/midi.md`       |
+| `@audiorective/daw`          | `/project` model and `/dawproject` codec (Node-safe); `/runtime` `Workspace` (browser); root joins them with `openWorkspace` / `saveWorkspace`.     | `references/daw.md`        |
+| `@audiorective/host/webclap` | Browser WebCLAP instrument/effect host: reactive `params` per CLAP parameter, MIDI scheduling, `saveState`/`loadState`, editor bridge.              | `references/host.md`       |
+| `@audiorective/react`        | React bindings (`useValue`, `createEngineContext` → `EngineProvider`, `useEngine`).                                                                 | `references/react.md`      |
+| `@audiorective/threejs`      | three.js scene bindings (`attach`, `PannerAnchor`).                                                                                                 | `references/threejs.md`    |
+| `@audiorective/playcanvas`   | PlayCanvas scene bindings (`attach`, `bindPanner`).                                                                                                 | `references/playcanvas.md` |
+| `@audiorective/devtools`     | `measureLatency` / `assertLatency` for testing a processor's declared latency.                                                                      | `references/core.md`       |
 
 ## Choosing a capability
 
 Blocks and widgets cover specific workflows. When a request does not match one, build on
-core with your own `AudioProcessor`; that is the intended path, not a fallback.
+core with your own `AudioProcessor`; that is the intended path, not a fallback. Import the
+narrowest subpath: capability modules import only core, `blocks/sequencer` and `blocks/launcher`
+borrow a transport you supply, and `widgets` and `daw` never import each other (the app wires them).
 
 | You are building…                                                  | Use                                                                                                                                      | Not                                                  |
 | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
 | One-shot hits, pads, SFX; overlapping voices                       | core `Sampler` / `Voice`                                                                                                                 | `WavePlayer` (one playhead)                          |
-| Editable sequenced hits with future choke groups                   | blocks `InstrumentEvents` + clock window `own(hit, when)`                                                                                | irreversible future `Voice.stop(when)`               |
-| Record a short audio take against the audio clock                  | blocks `AudioRecorder` with a caller-connected input                                                                                     | `MediaRecorder` chunk intervals as sample positions  |
+| Editable sequenced hits with future choke groups                   | `blocks/instrument-events` `InstrumentEvents` + clock window `own(hit, when)`                                                            | irreversible future `Voice.stop(when)`               |
+| Record a short audio take against the audio clock                  | `blocks/recorder` `AudioRecorder`, caller-connected input                                                                                | `MediaRecorder` chunk intervals as sample positions  |
 | Record MIDI notes from a keyboard into a take                      | `@audiorective/midi/web` `MidiRecorder` with a caller-owned input/context                                                                | `MidiSequence` as a live event listener              |
 | A tempo-locked loop or stem with a scheduled start                 | core `BufferPlayer` + `clock`                                                                                                            | `FilePlayer` (runs on the media clock)               |
 | A long track, podcast or stream                                    | core `FilePlayer`; `widgets/player` for a plain control bar                                                                              | `WavePlayer` / waveform selector (decode whole file) |
-| Load a clip, select a range, audition, loop or stretch it          | blocks `WavePlayer`; widgets waveform selector for the UI                                                                                | a hand-drawn canvas and range logic                  |
-| Audition an audio clip or shared range already placed in a Project | `workspace.auditionAudioClip(clipId)` or `workspace.auditionRange(range, { trackIds })`; see `references/workspace.md`                   | seeking and starting the arrangement                 |
+| Load a clip, select a range, audition, loop or stretch it          | `blocks/player` `WavePlayer`; widgets waveform selector for the UI                                                                       | a hand-drawn canvas and range logic                  |
+| Audition an audio clip or shared range already placed in a Project | `workspace.auditionAudioClip(clipId)` or `workspace.auditionRange(range, { trackIds })`; see `references/daw.md`                         | seeking and starting the arrangement                 |
 | Automate a non-looping waveform selection in source seconds        | `WavePlayer.attachSourceAutomation(binding)` with core automation                                                                        | app-owned play token and duplicated time mapping     |
 | A waveform picture from peaks, no audio                            | `@audiorective/widgets/waveform`                                                                                                         | the complete selector                                |
 | MIDI file notes: parse, edit, select, piano roll                   | `@audiorective/midi` + `@audiorective/widgets/piano-roll`                                                                                | live MIDI input (app code calling your synth)        |
-| Play, edit and save a DAWproject with WebCLAP devices              | `@audiorective/workspace` + `@audiorective/host/webclap`; pass `workspace.player` to `mountPlayer`                                       | separate project or player state                     |
-| Step patterns or a drum machine                                    | `blocks` `StepSequencer` with a borrowed clock and trigger                                                                               | a private scheduling loop                            |
+| Play, edit and save a DAWproject with WebCLAP devices              | `@audiorective/daw` + `@audiorective/host/webclap`; pass `workspace.player` to `mountPlayer`                                             | separate project or player state                     |
+| Read, edit or write `.dawproject` files in Node (no audio)         | `@audiorective/daw/project` + `@audiorective/daw/dawproject` only                                                                        | `@audiorective/daw` root or `daw/runtime`            |
+| Step patterns or a drum machine with its own buffers               | `clock` + `blocks/sequencer` + `blocks/instrument-events`; add `widgets` `mountStepGrid`. No `daw`                                       | a private scheduling loop, or pulling in a Project   |
 | An editable curve driving a parameter, rack macro, or clip gain    | `core/automation` for parameters or `macro.automation`. For clips use `Project.setAudioClipGainAutomation` and `createAutomationOverlay` | hand-scheduled ramps                                 |
 | A synth, custom effect, grains, anything else                      | your own `AudioProcessor` on core                                                                                                        | forcing a block to fit                               |
 
-For short audio takes, the app owns microphone permission and monitoring. Connect its
-source to `new AudioRecorder(context).input`, await `recorder.ready`, then start with
-absolute AudioContext seconds. Await `recorder.stop()`; its PCM and `startFrame` /
-`endFrame` (`startTime` / `endTime`) belong to the clip owner. `cancel()` discards a
-take; `destroy()` releases recorder resources. See `references/blocks.md` → Record
-an audio take for the full example. This API captures short in-memory takes.
+For a short audio take, the app owns microphone permission and monitoring: connect its
+source to `new AudioRecorder(context).input`, await `recorder.ready`, start with absolute
+AudioContext seconds, then await `recorder.stop()`. The PCM and frame positions belong to the
+clip owner. See `references/blocks.md` → Record an audio take.
 
-For a MIDI take, the app obtains `MIDIInput`, owns live synth playback and
-resumes its AudioContext. Use `new MidiRecorder(context, input)` from
-`@audiorective/midi/web`, `recorder.start({ when })`, then `const take =
-recorder.stop()` when the take ends. The synchronous result has absolute
-`startTime`/`endTime`, raw timestamped `events`, and take-relative `notes` plus
-`duration` for `MidiSequence`. `cancel()` discards; `destroy()` leaves the input
-and context alive. For edited playback, use `compileMidiPlaybackEvents` with
-the take and current sequence to retain controls and original same-time order. See `references/midi.md` → Record a MIDI take. For live
-keyboard-to-synth playing without recording, handle input in the app's audio
-layer; the recorder does not play notes.
+For a MIDI take, the app obtains `MIDIInput` and resumes its AudioContext. Use
+`new MidiRecorder(context, input)` from `@audiorective/midi/web`, `recorder.start({ when })`,
+then `recorder.stop()` for `events`, `notes` and `duration`. For edited playback use
+`compileMidiPlaybackEvents`. See `references/midi.md` → Record a MIDI take. The recorder does
+not play notes.
 
 ## What to read next
 
@@ -178,35 +174,35 @@ the section you need rather than the whole file:
 
 Then load only what the task needs:
 
-| If you're doing…                                                                                                          | Also read                                                         |
-| ------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| Designing a whole audio app (multiple sources, multiple UIs, spatial)                                                     | `references/designing-audio-apps.md`                              |
-| Choosing a playback primitive (Sampler vs BufferPlayer vs FilePlayer)                                                     | `references/choosing-playback.md`                                 |
-| Sequencing, transport, tempo, a step sequencer or drum machine                                                            | `references/clock.md`                                             |
-| Cancelling queued hits or re-filling a look-ahead window after an edit                                                    | `references/clock.md` + `references/blocks.md`                    |
-| Deciding what goes in the audio layer vs the UI; Cell vs Param                                                            | `references/architecture.md`                                      |
-| Writing or modifying an `AudioProcessor` subclass                                                                         | the `audio-processor-authoring` skill                             |
-| Waveform, visual plugins, spectrum, EQ and audio controls                                                                 | `references/widgets.md`                                           |
-| Plain Play/Pause, time, seek and volume controls without a waveform                                                       | `references/widgets.md` → Plain player controls                   |
-| Curves, native automation binding, range/time scaling, macro target adapters                                              | `references/automation.md`                                        |
-| Source-time automation on a stretched WavePlayer selection                                                                | `references/blocks.md` + `references/automation.md`               |
-| Stretching PCM, moving an interior transient, cancelling a pitch-preserving render                                        | `references/effects.md` → TimeStretch                             |
-| PCM min/max summaries and source-frame/time metadata                                                                      | `references/core.md` → PCM peak summaries                         |
-| MIDI files, piano-roll layout/drawing/plugins, note drag/resize and caller-owned audition                                 | `references/midi.md`                                              |
-| Capturing Web MIDI messages and projecting a note take against the audio clock                                            | `references/midi.md` → Record a MIDI take                         |
-| Takes, tempo, beat MIDI, clip editing/stretch/warp, Session launch, step sequencing, bus routing and DAWproject save/open | `references/workspace.md`                                         |
-| Edit a running Project, wait with `flush()`, or rebuild with `sync()`                                                     | `references/workspace.md` → Apply Project edits to the live graph |
-| Host a WebCLAP device, choose a CLAP ID from a bundle, bind a Param or save a patch                                       | `references/host.md` + `references/workspace.md`                  |
-| Observing block state (`cells`), loading phases, cancel, cached sources, audition                                         | `references/blocks.md` + `references/widgets.md`                  |
-| Capturing a short audio take at an audio-clock time with caller-owned input                                               | `references/blocks.md` → Record an audio take                     |
-| React UI bound to an engine                                                                                               | `references/react.md`                                             |
-| Next.js / Remix / Astro / any app that renders on a server                                                                | `references/client-boundary.md`                                   |
-| 3D scene with spatial audio (three.js)                                                                                    | `references/threejs.md` + `architecture.md`                       |
-| 3D scene with spatial audio (PlayCanvas)                                                                                  | `references/playcanvas.md` + `architecture.md`                    |
-| PixiJS (2D) audio visualizer or interactive canvas                                                                        | `references/pixijs.md`                                            |
-| Sharing state between React and an imperative view (three.js, Canvas2D, WebGPU)                                           | `references/architecture.md`                                      |
-| Adding effects, building an FX rack, replacing Tone.js effects, offline export                                            | `references/effects.md`                                           |
-| Understanding rationale ("why does this exist?")                                                                          | `references/overview.md`                                          |
+| If you're doing…                                                                                                          | Also read                                                   |
+| ------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Designing a whole audio app (multiple sources, multiple UIs, spatial)                                                     | `references/designing-audio-apps.md`                        |
+| Choosing a playback primitive (Sampler vs BufferPlayer vs FilePlayer)                                                     | `references/choosing-playback.md`                           |
+| Sequencing, transport, tempo, a step sequencer or drum machine                                                            | `references/clock.md`                                       |
+| Cancelling queued hits or re-filling a look-ahead window after an edit                                                    | `references/clock.md` + `references/blocks.md`              |
+| Deciding what goes in the audio layer vs the UI; Cell vs Param; which layer or package owns a feature                     | `references/architecture.md`                                |
+| Writing or modifying an `AudioProcessor` subclass                                                                         | the `audio-processor-authoring` skill                       |
+| Waveform, visual plugins, spectrum, EQ and audio controls                                                                 | `references/widgets.md`                                     |
+| Plain Play/Pause, time, seek and volume controls without a waveform                                                       | `references/widgets.md` → Plain player controls             |
+| Curves, native automation binding, range/time scaling, macro target adapters                                              | `references/automation.md`                                  |
+| Source-time automation on a stretched WavePlayer selection                                                                | `references/blocks.md` + `references/automation.md`         |
+| Stretching PCM, moving an interior transient, cancelling a pitch-preserving render                                        | `references/effects.md` → TimeStretch                       |
+| PCM min/max summaries and source-frame/time metadata                                                                      | `references/core.md` → PCM peak summaries                   |
+| MIDI files, piano-roll layout/drawing/plugins, note drag/resize and caller-owned audition                                 | `references/midi.md`                                        |
+| Capturing Web MIDI messages and projecting a note take against the audio clock                                            | `references/midi.md` → Record a MIDI take                   |
+| Takes, tempo, beat MIDI, clip editing/stretch/warp, Session launch, step sequencing, bus routing and DAWproject save/open | `references/daw.md`                                         |
+| Edit a running Project, wait with `flush()`, or rebuild with `sync()`                                                     | `references/daw.md` → Apply Project edits to the live graph |
+| Host a WebCLAP device, choose a CLAP ID from a bundle, bind a Param or save a patch                                       | `references/host.md` + `references/daw.md`                  |
+| Observing block state (`cells`), loading phases, cancel, cached sources, audition                                         | `references/blocks.md` + `references/widgets.md`            |
+| Capturing a short audio take at an audio-clock time with caller-owned input                                               | `references/blocks.md` → Record an audio take               |
+| React UI bound to an engine                                                                                               | `references/react.md`                                       |
+| Next.js / Remix / Astro / any app that renders on a server                                                                | `references/client-boundary.md`                             |
+| 3D scene with spatial audio (three.js)                                                                                    | `references/threejs.md` + `architecture.md`                 |
+| 3D scene with spatial audio (PlayCanvas)                                                                                  | `references/playcanvas.md` + `architecture.md`              |
+| PixiJS (2D) audio visualizer or interactive canvas                                                                        | `references/pixijs.md`                                      |
+| Sharing state between React and an imperative view (three.js, Canvas2D, WebGPU)                                           | `references/architecture.md`                                |
+| Adding effects, building an FX rack, replacing Tone.js effects, offline export                                            | `references/effects.md`                                     |
+| Understanding rationale ("why does this exist?")                                                                          | `references/overview.md`                                    |
 
 ## The one rule that always applies
 
@@ -231,8 +227,8 @@ sharing state with imperative views.
 
 ## Audio runtime is client-only
 
-Pure entries (`core/peaks`, `core/automation` curves, `@audiorective/midi`, `@audiorective/workspace`) import no audio
-runtime and work in Node. Everything that touches an `AudioContext` is client-only.
+Pure entries (`core/peaks`, `core/automation` curves, `@audiorective/midi`, `effects/rack-preset`, `daw/project`,
+`daw/dawproject`) import no audio runtime and work in Node. Everything that touches an `AudioContext` is client-only.
 
 `createEngine` builds a real `AudioContext`; there is none on a server, and
 there is no SSR mode to enable. In Next.js, Remix, or Astro, mount the audio
@@ -258,7 +254,7 @@ type error on a documented API:
    `node -p "require('@audiorective/core/package.json').version"`.
 3. If the API postdates the installed version, tell the user to upgrade
    (`npm i @audiorective/core@latest`, all `@audiorective/*` together) rather
-   than hand-rolling the missing API. APIs under **Unreleased** require a workspace
+   than hand-rolling the missing API. APIs under **Unreleased** require a repository
    build or packed artifact; `@latest` cannot supply an unreleased API.
 
 ## Common errors
@@ -280,20 +276,21 @@ type error on a documented API:
 
 Every other thrown message is listed, with cause and fix, in the reference for its area:
 
-| Message starts with or mentions                                                                                                                                                                                                                         | Read                                                        |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| `Waveform…`, `Zoom…`, `Timeline zoom needs a positive increasing scale range.`, `Playhead…`, `Plugin…`, `Selection plugin…`, `Parameter control…`, `Level meter…`, `Frequency plot…`, `Spectrum…`, `EQ editor…`, `Automation overlay…`, `Warp markers…` | `references/widgets.md` → Common errors                     |
-| `No track is loaded.`, `No audio is loaded.`, `Audio is still loading.`, `The audio context is closed.`                                                                                                                                                 | `references/widgets.md` → Common errors                     |
-| `WavePlayer…`, `Audio request…`, `Audio download…`, `Audio file…`, `Enter an audio URL.`, `Load progress…`, `Position…`, `Start time…`, `Selection must satisfy…`, `Source automation…`, `Instrument…`, `Unknown instrument…`, `AudioRecorder…`         | `references/blocks.md` → Common errors                      |
-| `Clock owned event time…`                                                                                                                                                                                                                               | `references/clock.md` → Common errors                       |
-| `Stretch…`, `No audio source…`, `WavePlayer needs…`, `Time must be finite…`, `EffectRack…`, `Equalizer…`, `Sample Library…`, `Sample lease…`, `Step Sequencer…`, `Clip gain…`, `Workspace clip stretch…`                                                | `references/blocks.md` → Committed versions / Common errors |
-| `Piano roll…`, `MIDI…`, `MidiSequence…`, `MidiRecorder…`, `Invalid MIDI file.`, `Only MIDI format…`, `SMPTE…`                                                                                                                                           | `references/midi.md` → Common errors                        |
-| `Project…`, `Workspace audition…`, `Workspace range audition…`, `Start Workspace playback before launching clips.`, `Clip Launcher…`, `Audio clip gain automation…`, `Flush the project before setting a live track macro.`                             | `references/workspace.md` → Common errors                   |
-| `WebCLAP…`                                                                                                                                                                                                                                              | `references/host.md` → Common errors                        |
-| `summarizePeaks:…`, `peakFrameRange:…`                                                                                                                                                                                                                  | `references/core.md` → PCM peak summaries                   |
-| `TimeStretch…`, `Rubber Band…`                                                                                                                                                                                                                          | `references/effects.md` → TimeStretch                       |
-| `AutomationCurve…`, `AutomationBinding…`                                                                                                                                                                                                                | `references/automation.md` → Common errors                  |
+| Message starts with or mentions                                                                                                                                                                                                                                      | Read                                                        |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `Waveform…`, `Zoom…`, `Timeline zoom needs a positive increasing scale range.`, `Playhead…`, `Plugin…`, `Selection plugin…`, `Parameter control…`, `Level meter…`, `Frequency plot…`, `Spectrum…`, `EQ editor…`, `Automation overlay…`, `Warp markers…`              | `references/widgets.md` → Common errors                     |
+| `No track is loaded.`, `No audio is loaded.`, `Audio is still loading.`, `The audio context is closed.`                                                                                                                                                              | `references/widgets.md` → Common errors                     |
+| `WavePlayer…`, `Audio request…`, `Audio download…`, `Audio file…`, `Enter an audio URL.`, `Load progress…`, `Position…`, `Start time…`, `Selection must satisfy…`, `Source automation…`, `Instrument…`, `Unknown instrument…`, `AudioRecorder…`                      | `references/blocks.md` → Common errors                      |
+| `Clock owned event time…`                                                                                                                                                                                                                                            | `references/clock.md` → Common errors                       |
+| `Stretch…`, `No audio source…`, `WavePlayer needs…`, `Time must be finite…`, `Sample Library…`, `Sample lease…`, `Step Sequencer…`                                                                                                                                   | `references/blocks.md` → Committed versions / Common errors |
+| `EffectRack…`, `Equalizer…`                                                                                                                                                                                                                                          | `references/effects.md` → Common errors                     |
+| `Piano roll…`, `MIDI…`, `MidiSequence…`, `MidiRecorder…`, `Invalid MIDI file.`, `Only MIDI format…`, `SMPTE…`                                                                                                                                                        | `references/midi.md` → Common errors                        |
+| `Project…`, `Clip gain…`, `Workspace clip stretch…`, `Workspace audition…`, `Workspace range audition…`, `Start Workspace playback before launching clips.`, `Clip Launcher…`, `Audio clip gain automation…`, `Flush the project before setting a live track macro.` | `references/daw.md` → Common errors                         |
+| `WebCLAP…`                                                                                                                                                                                                                                                           | `references/host.md` → Common errors                        |
+| `summarizePeaks:…`, `peakFrameRange:…`                                                                                                                                                                                                                               | `references/core.md` → PCM peak summaries                   |
+| `TimeStretch…`, `Rubber Band…`                                                                                                                                                                                                                                       | `references/effects.md` → TimeStretch                       |
+| `AutomationCurve…`, `AutomationBinding…`                                                                                                                                                                                                                             | `references/automation.md` → Common errors                  |
 
 ## References
 
-- [Installation](references/installation.md) · [Blocks](references/blocks.md) · [Widgets](references/widgets.md) · [MIDI/Piano Roll](references/midi.md) · [Workspace/DAWproject](references/workspace.md) · [WebCLAP host](references/host.md) · [Core](references/core.md) · [Automation](references/automation.md) · [Architecture](references/architecture.md) · [Designing Audio Apps](references/designing-audio-apps.md) · [Choosing Playback](references/choosing-playback.md) · [Clock](references/clock.md) · [Effects](references/effects.md) · [React](references/react.md) · [three.js](references/threejs.md) · [PlayCanvas](references/playcanvas.md) · [PixiJS](references/pixijs.md) · [Server-rendered frameworks](references/client-boundary.md) · [Overview](references/overview.md) · [Changelog](references/changelog.md)
+- [Installation](references/installation.md) · [Blocks](references/blocks.md) · [Widgets](references/widgets.md) · [MIDI/Piano Roll](references/midi.md) · [DAW/DAWproject](references/daw.md) · [WebCLAP host](references/host.md) · [Core](references/core.md) · [Automation](references/automation.md) · [Architecture](references/architecture.md) · [Designing Audio Apps](references/designing-audio-apps.md) · [Choosing Playback](references/choosing-playback.md) · [Clock](references/clock.md) · [Effects](references/effects.md) · [React](references/react.md) · [three.js](references/threejs.md) · [PlayCanvas](references/playcanvas.md) · [PixiJS](references/pixijs.md) · [Server-rendered frameworks](references/client-boundary.md) · [Overview](references/overview.md) · [Changelog](references/changelog.md)

@@ -6,20 +6,20 @@ Which `@audiorective/*` packages to install, what they pull in, and how to keep 
 
 ## Packages
 
-| Package                    | Install when you need…                                                                               | Peer dependency         |
-| -------------------------- | ---------------------------------------------------------------------------------------------------- | ----------------------- |
-| `@audiorective/core`       | Reactive audio state — `AudioProcessor`, `Param`, `Cell`, `createEngine`, `defineGraph`, the players | —                       |
-| `@audiorective/clock`      | Transport, tempo, look-ahead scheduling, rulers (sequencers, drum machines, loopers)                 | —                       |
-| `@audiorective/effects`    | DSP effects, channel strips, send buses, offline rendering of an effects chain                       | —                       |
-| `@audiorective/widgets`    | Waveform/MIDI piano-roll display, range selection and audio audition without a UI framework          | —                       |
-| `@audiorective/blocks`     | Headless audio capture, WavePlayer and cancellable grouped sample hits                               | —                       |
-| `@audiorective/midi`       | MIDI file parsing, shared note data, playback event projection and browser MIDI take recording       | —                       |
-| `@audiorective/workspace`  | Audio/MIDI project ownership, browser playback and DAWproject save/open                              | —                       |
-| `@audiorective/host`       | WebCLAP plug-in hosting through the `./webclap` entry                                                | —                       |
-| `@audiorective/react`      | React hooks and an engine context                                                                    | `react` `^18 \|\| ^19`  |
-| `@audiorective/threejs`    | Spatial audio that follows three.js objects                                                          | `three` `>=0.150.0`     |
-| `@audiorective/playcanvas` | A shared `AudioContext` and spatial sound bound to PlayCanvas entity transforms                      | `playcanvas` `>=2.18.1` |
-| `@audiorective/devtools`   | Measuring and asserting a processor's latency in tests (dev dependency)                              | —                       |
+| Package                    | Install when you need…                                                                                                          | Peer dependency         |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
+| `@audiorective/core`       | Reactive audio state — `AudioProcessor`, `Param`, `Cell`, `createEngine`, `defineGraph`, the players                            | —                       |
+| `@audiorective/clock`      | Transport, tempo, look-ahead scheduling, rulers (sequencers, drum machines, loopers)                                            | —                       |
+| `@audiorective/effects`    | DSP effects, channel strips, send buses, offline rendering of an effects chain                                                  | —                       |
+| `@audiorective/widgets`    | Waveform/MIDI piano-roll display, range selection and audio audition without a UI framework                                     | —                       |
+| `@audiorective/blocks`     | Headless capabilities by subpath: `player`, `recorder`, `samples`, `instrument-events`, `sequencer`, `launcher` (no root entry) | —                       |
+| `@audiorective/midi`       | MIDI file parsing, shared note data, playback event projection and browser MIDI take recording                                  | —                       |
+| `@audiorective/daw`        | Audio/MIDI project (`daw/project`), DAWproject codec (`daw/dawproject`) and browser playback (`daw/runtime`)                    | —                       |
+| `@audiorective/host`       | WebCLAP plug-in hosting through the `./webclap` entry                                                                           | —                       |
+| `@audiorective/react`      | React hooks and an engine context                                                                                               | `react` `^18 \|\| ^19`  |
+| `@audiorective/threejs`    | Spatial audio that follows three.js objects                                                                                     | `three` `>=0.150.0`     |
+| `@audiorective/playcanvas` | A shared `AudioContext` and spatial sound bound to PlayCanvas entity transforms                                                 | `playcanvas` `>=2.18.1` |
+| `@audiorective/devtools`   | Measuring and asserting a processor's latency in tests (dev dependency)                                                         | —                       |
 
 Every package depends on `@audiorective/core`; installing any of them installs core. `core` brings `alien-signals` (the reactive primitive) and `immer` (for `Cell.update`) along with it — you do not install those yourself unless you call `signal`/`computed`/`effect` from `alien-signals` directly in your own code.
 
@@ -50,9 +50,11 @@ Browser waveform display and selection:
 npm install @audiorective/widgets
 ```
 
-Use `@audiorective/widgets` for the complete selector or `@audiorective/widgets/waveform` for audio-independent rendering and plugins. See [Widgets](./widgets.md). For MIDI parsing/shared note state use `@audiorective/midi`; for browser recording use `@audiorective/midi/web`; for audio-independent piano-roll rendering use `@audiorective/widgets/piano-roll`. See [MIDI and Piano Roll](./midi.md). Check the [changelog](../CHANGELOG.md) against the installed package: APIs listed under Unreleased require a workspace build or packed artifact until a release includes them.
+Use `@audiorective/widgets` for the complete selector or `@audiorective/widgets/waveform` for audio-independent rendering and plugins. See [Widgets](./widgets.md). For MIDI parsing/shared note state use `@audiorective/midi`; for browser recording use `@audiorective/midi/web`; for audio-independent piano-roll rendering use `@audiorective/widgets/piano-roll`. See [MIDI and Piano Roll](./midi.md). Check the [changelog](../CHANGELOG.md) against the installed package: APIs listed under Unreleased require a repository build or packed artifact until a release includes them.
 
-For a small persistent audio/MIDI arrangement, install `@audiorective/workspace` and see [Workspace and DAWproject](./workspace.md). Its `Project` and codec work without an AudioContext; the browser `Workspace` runtime borrows one from the app and uses `@audiorective/host` for WebCLAP devices. See [WebCLAP host](./host.md) for serving its worklet and bundle assets.
+Import `@audiorective/blocks` by subpath, for example `@audiorective/blocks/player` or `@audiorective/blocks/sequencer`; each subpath depends only on core. See [Blocks](./blocks.md).
+
+For a small persistent audio/MIDI arrangement, install `@audiorective/daw` and see [DAW project, runtime and DAWproject](./daw.md). `@audiorective/daw/project` and `@audiorective/daw/dawproject` work in Node.js without an AudioContext; the browser `Workspace` in `@audiorective/daw/runtime` borrows one from the app and uses `@audiorective/host` for WebCLAP devices. See [WebCLAP host](./host.md) for serving its worklet and bundle assets.
 
 Latency tests for your own processors:
 
