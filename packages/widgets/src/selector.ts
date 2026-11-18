@@ -1,6 +1,5 @@
 /** Default waveform controls bound to a headless WavePlayer. */
-import { WavePlayer, type PlaybackVersion } from "@audiorective/blocks";
-import type { MountWaveformSelector, WaveformSelectorHandle, WaveformHandle, Selection } from "./types";
+import type { MountWaveformSelector, SelectorVersion, WaveformSelectorOptions, WaveformSelectorHandle, WaveformHandle, Selection } from "./types";
 import { mountWaveform } from "./waveform";
 import { createSelectionPlugin, type SnapMode } from "./selection";
 import { styles } from "./style";
@@ -21,12 +20,12 @@ export const mountWaveformSelector: MountWaveformSelector = (root, options) => {
   const url = query<HTMLInputElement>("source-url"),
     file = query<HTMLInputElement>("source-file");
   const ownsPlayer = !options.player;
-  let player: WavePlayer;
+  let player: NonNullable<WaveformSelectorOptions["player"]>;
   let waveform: WaveformHandle;
   try {
     waveform = mountWaveform(container.querySelector<HTMLElement>(".ar-wave-mount")!, { renderer: options.renderer });
     try {
-      player = options.player ?? new WavePlayer(options.context!);
+      player = options.player ?? options.createPlayer!();
     } catch (error) {
       waveform.destroy();
       throw error;
@@ -38,7 +37,7 @@ export const mountWaveformSelector: MountWaveformSelector = (root, options) => {
   let destroyed = false,
     playbackError: string | null = null,
     animation = 0;
-  let displayed: PlaybackVersion | null | undefined;
+  let displayed: SelectorVersion | undefined;
   let previous: Selection | null = player.getSelection();
   const disposers: Array<() => void> = [];
   const selection = createSelectionPlugin({

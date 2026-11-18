@@ -1,5 +1,6 @@
 import { effect, untracked, type Readable } from "@audiorective/core";
-import type { WaveStretchAnchor } from "@audiorective/blocks";
+/** A source-frame to output-frame correspondence. */
+type WaveStretchAnchor = Readonly<{ sourceFrame: number; outputFrame: number }>;
 import type { TimeViewPlugin } from "./types";
 
 export interface WarpMarkerOptions {

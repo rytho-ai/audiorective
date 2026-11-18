@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { WavePlayer, type WavePlayerOptions, type WaveSourceLoader } from "../src";
+import { WavePlayer, type WavePlayerOptions, type WaveSourceLoader } from "../src/WavePlayer";
 
 const cleanups: Array<() => void | Promise<unknown>> = [];
 afterEach(async () => {

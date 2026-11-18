@@ -1,13 +1,20 @@
-import { AudioProcessor, Voice, cell, readonlyCell, type Cell, type ReadonlyCell, type SchedulableParam } from "@audiorective/core";
+import {
+  AudioProcessor,
+  Voice,
+  cell,
+  readonlyCell,
+  type CancellableEvent,
+  type Cell,
+  type ReadonlyCell,
+  type SchedulableParam,
+} from "@audiorective/core";
 
 export type EventPad = Readonly<{ id: string; buffer: AudioBuffer; group?: string; gate?: boolean }>;
 
 /** One hit and all of its future policy effects. Clock can own this structural handle. */
-export interface InstrumentEvent {
-  cancel(): void;
+export interface InstrumentEvent extends CancellableEvent {
   /** Same operation as cancel, for callers treating the event as a voice. */
   stop(): void;
-  onEnded(listener: () => void): void;
 }
 
 type Hit = {

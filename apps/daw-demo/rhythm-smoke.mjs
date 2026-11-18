@@ -18,7 +18,7 @@ const server = await createServer({
             tag: "script",
             attrs: { type: "module" },
             children:
-              'import { InstrumentEvents, StepSequencer } from "@audiorective/blocks"; window.rhythmFixture = { InstrumentEvents, StepSequencer };',
+              'import { InstrumentEvents } from "@audiorective/blocks/instrument-events"; import { StepSequencer } from "@audiorective/blocks/sequencer"; window.rhythmFixture = { InstrumentEvents, StepSequencer };',
           },
         ],
       },

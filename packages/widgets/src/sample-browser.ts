@@ -1,8 +1,16 @@
 import { effect } from "@audiorective/core";
-import type { SampleLibrary, SampleRow } from "@audiorective/blocks";
+import type { Readable } from "@audiorective/core";
+
+type SampleRow = Readonly<{ id: string; name: string; status: "loading" | "ready" | "error"; duration?: number; error?: string }>;
+type SampleBrowserState = Readonly<{ rows: readonly SampleRow[]; previewId: string | null; previewPlaying: boolean }>;
 
 export type SampleBrowserOptions = {
-  library: Pick<SampleLibrary, "state" | "preview" | "stopPreview" | "remove">;
+  library: {
+    state: Readable<SampleBrowserState>;
+    preview(id: string): Promise<void>;
+    stopPreview(): void;
+    remove(id: string): void;
+  };
   choose(id: string): void | Promise<void>;
   onError(error: unknown): void;
   labels?: Partial<{ preview: string; stop: string; use: string; remove: string; loading: string }>;

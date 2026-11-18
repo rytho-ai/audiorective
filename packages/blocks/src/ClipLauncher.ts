@@ -1,4 +1,4 @@
-import { batch, cell, readonlyCell } from "@audiorective/core";
+import { batch, cell, readonlyCell, type BeatTiming } from "@audiorective/core";
 
 export type ClipLaunch = Readonly<{ trackId: string; clipId: string | null; mode?: "loop" | "one-shot" }>;
 export type QueuedClipLaunch = Readonly<{ beat: number; when: number; changes: readonly ClipLaunch[] }>;
@@ -9,13 +9,12 @@ export type ClipLaunchTransition = Readonly<{
   /** Absolute audio time at which each finite override naturally ends. */
   endsAt?: ReadonlyMap<string, number>;
 }>;
-export type ClipLaunchTransport = Readonly<{
-  now(): number;
-  timeToBeat(time: number): number;
-  beatToTime(beat: number): number;
-  schedule(changes: readonly ClipLaunch[], when: number): ClipLaunchTransition;
-  reset(): void;
-}>;
+export type ClipLaunchTransport = BeatTiming &
+  Readonly<{
+    now(): number;
+    schedule(changes: readonly ClipLaunch[], when: number): ClipLaunchTransition;
+    reset(): void;
+  }>;
 
 const empty: ClipLauncherState = Object.freeze({ active: Object.freeze([]), queued: null });
 

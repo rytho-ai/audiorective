@@ -2,7 +2,7 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { userEvent } from "vitest/browser";
 import { MidiSequence } from "@audiorective/midi";
-import { WavePlayer } from "@audiorective/blocks";
+import { WavePlayer } from "@audiorective/blocks/player";
 import { cell } from "@audiorective/core";
 import type { AutomationPoint } from "@audiorective/core/automation";
 import { createAutomationOverlay, mountWaveformSelector, type TimeViewPlugin } from "../src";

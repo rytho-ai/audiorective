@@ -1,8 +1,16 @@
-import { effect } from "@audiorective/core";
-import type { StepSequencer } from "@audiorective/blocks";
+import { effect, type Readable } from "@audiorective/core";
+
+type StepPattern = Readonly<{
+  steps: number;
+  lanes: readonly Readonly<{ id: string; label: string; velocities: readonly number[] }>[];
+}>;
 
 export type StepGridOptions = {
-  sequencer: Pick<StepSequencer, "pattern" | "currentStep" | "setVelocity">;
+  sequencer: {
+    pattern: Readable<StepPattern>;
+    currentStep: Readable<number | null>;
+    setVelocity(laneId: string, step: number, velocity: number): void;
+  };
   formatStep?(label: string, step: number): string;
   velocityLabel?: string;
 };

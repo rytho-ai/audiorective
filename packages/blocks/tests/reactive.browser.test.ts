@@ -1,8 +1,8 @@
 import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
 import { effect, type Readable } from "@audiorective/core";
 import type { PCMData } from "@audiorective/core/peaks";
-import { WavePlayer } from "../src";
-import type { PlaybackVersion, WaveLoadProgress, WaveSourceLoader, WaveStretchProcessor } from "../src";
+import { WavePlayer } from "../src/WavePlayer";
+import type { PlaybackVersion, WaveLoadProgress, WaveSourceLoader, WaveStretchProcessor } from "../src/WavePlayer";
 
 const disposers: Array<() => void | Promise<unknown>> = [];
 afterEach(async () => {

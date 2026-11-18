@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { effect } from "@audiorective/core";
-import { AudioRecorder, InstrumentEvents, WavePlayer } from "../src";
+import { AudioRecorder } from "../src/AudioRecorder";
+import { InstrumentEvents } from "../src/InstrumentEvents";
+import { WavePlayer } from "../src/WavePlayer";
 
 const disposers: Array<() => void | Promise<unknown>> = [];
 afterEach(async () => {

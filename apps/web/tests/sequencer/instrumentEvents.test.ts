@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { InstrumentEvents } from "@audiorective/blocks";
+import { InstrumentEvents } from "@audiorective/blocks/instrument-events";
 import { Clock, LinearBarRuler, ManualTickSource, Timeline } from "@audiorective/clock";
 
 test("a Clock-owned future choke is cancellable while a manual pad hit keeps sounding", async () => {

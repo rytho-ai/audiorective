@@ -1,5 +1,10 @@
 import { effect, type Readable } from "@audiorective/core";
-import type { ClipLaunch, ClipLauncherState } from "@audiorective/blocks";
+
+type ClipLaunch = Readonly<{ trackId: string; clipId: string | null; mode?: "loop" | "one-shot" }>;
+type ClipLauncherState = Readonly<{
+  active: readonly ClipLaunch[];
+  queued: Readonly<{ beat: number; changes: readonly ClipLaunch[] }> | null;
+}>;
 
 export type ClipGridLayout = Readonly<{
   tracks: readonly Readonly<{ id: string; label: string }>[];

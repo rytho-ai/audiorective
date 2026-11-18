@@ -1,7 +1,7 @@
 import { afterEach, expect, test, vi } from "vitest";
 import type { PCMData } from "@audiorective/core/peaks";
-import { WavePlayer } from "../src";
-import type { WaveStretchProcessor } from "../src";
+import { WavePlayer } from "../src/WavePlayer";
+import type { WaveStretchProcessor } from "../src/WavePlayer";
 
 // These fakes test version ownership and transactions, not pitch preservation.
 interface Job {

@@ -1,13 +1,14 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { userEvent } from "vitest/browser";
+import { WavePlayer } from "@audiorective/blocks/player";
 import { mountWaveformSelector, type WaveformSelectorOptions } from "../src";
 import { bandsFile, cleanup, delay, drag, element, host, own, pointer } from "./helpers";
 
-function fixture(options: Omit<WaveformSelectorOptions, "context"> = {}) {
+function fixture(options: Partial<Omit<WaveformSelectorOptions, "player" | "createPlayer">> = {}) {
   const context = new AudioContext();
   own(() => context.close());
   const root = host();
-  const handle = mountWaveformSelector(root, { context, ...options });
+  const handle = mountWaveformSelector(root, { createPlayer: () => new WavePlayer(context), ...options });
   own(() => handle.destroy());
   const click = (id: string) => element<HTMLButtonElement>(root, id).click();
   return { root, context, handle, click };

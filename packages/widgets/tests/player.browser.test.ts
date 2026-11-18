@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { BufferPlayer, cell, FilePlayer } from "@audiorective/core";
-import { WavePlayer } from "@audiorective/blocks";
+import { WavePlayer } from "@audiorective/blocks/player";
 import { silentWavUrl } from "./player-wav";
 import { fromBufferPlayer, fromFilePlayer, fromWavePlayer, mountPlayer } from "../src/player";
 import type { PlayerActions, PlayerFrame, PlayerLike, PlayerRenderer } from "../src/player";

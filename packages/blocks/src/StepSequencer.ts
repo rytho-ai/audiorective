@@ -1,5 +1,4 @@
-import { cell, readonlyCell } from "@audiorective/core";
-import type { InstrumentEvent } from "./InstrumentEvents";
+import { cell, readonlyCell, type BeatTiming, type CancellableEvent } from "@audiorective/core";
 
 export type StepLane = Readonly<{ id: string; label: string; velocities: readonly number[] }>;
 export type StepPattern = Readonly<{ steps: number; beatsPerStep: number; lanes: readonly StepLane[] }>;
@@ -7,21 +6,20 @@ export type StepHit = Readonly<{ laneId: string; step: number; velocity: number;
 export type StepWindow = Readonly<{
   beat: { start: number; end: number };
   time: { current: number };
-  own(event: InstrumentEvent, when: number): void;
+  own(event: CancellableEvent, when: number): void;
 }>;
-export type StepTiming = Readonly<{ beatToTime(beat: number): number; timeToBeat(time: number): number }>;
 
 /** An editable looping pattern over a borrowed beat transport and instrument trigger. */
 export class StepSequencer {
   private readonly data;
   private readonly step = cell<number | null>(null);
-  private readonly events = new Set<InstrumentEvent>();
+  private readonly events = new Set<CancellableEvent>();
   readonly pattern;
   readonly currentStep = readonlyCell(this.step);
 
   constructor(
     pattern: StepPattern,
-    private readonly trigger: (hit: StepHit) => InstrumentEvent | null,
+    private readonly trigger: (hit: StepHit) => CancellableEvent | null,
   ) {
     if (
       !Number.isSafeInteger(pattern.steps) ||
@@ -57,7 +55,7 @@ export class StepSequencer {
     this.data.value = Object.freeze({ ...pattern, lanes: Object.freeze(pattern.lanes.map((item) => (item === lane ? changed : item))) });
   }
 
-  schedule(window: StepWindow, timing: StepTiming): void {
+  schedule(window: StepWindow, timing: BeatTiming): void {
     const { steps, beatsPerStep, lanes } = this.data.value;
     const absoluteStep = Math.floor(timing.timeToBeat(window.time.current) / beatsPerStep + 1e-9);
     this.step.value = ((absoluteStep % steps) + steps) % steps;

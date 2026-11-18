@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { AutomationBinding, AutomationCurve, audioParamTarget } from "@audiorective/core/automation";
-import { WavePlayer } from "../src";
+import { WavePlayer } from "../src/WavePlayer";
 
 const disposers: Array<() => void | Promise<unknown>> = [];
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

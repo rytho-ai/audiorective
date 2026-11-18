@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { WavePlayer, type WaveSourceLoader } from "@audiorective/blocks";
+import { WavePlayer, type WaveSourceLoader } from "@audiorective/blocks/player";
 import { mountWaveformSelector } from "../src";
 import { cleanup, element, host, own, bandsFile } from "./helpers";
 
@@ -76,7 +76,7 @@ test("owned selector cancellation stops its request and a retry succeeds", async
     }),
   );
   const root = host(),
-    selector = mountWaveformSelector(root, { context });
+    selector = mountWaveformSelector(root, { createPlayer: () => new WavePlayer(context) });
   own(() => selector.destroy());
   const pending = selector.load("/pending.wav");
   selector.cancelLoad();

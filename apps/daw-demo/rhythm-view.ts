@@ -1,5 +1,7 @@
 import { effect } from "@audiorective/core";
-import { InstrumentEvents, StepSequencer, type SampleLease, type SampleLibrary } from "@audiorective/blocks";
+import { InstrumentEvents } from "@audiorective/blocks/instrument-events";
+import type { SampleLease, SampleLibrary } from "@audiorective/blocks/samples";
+import { StepSequencer } from "@audiorective/blocks/sequencer";
 import { mountPadGrid, mountStepGrid } from "@audiorective/widgets";
 import type { Workspace } from "@audiorective/daw";
 

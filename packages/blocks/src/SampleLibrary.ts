@@ -1,5 +1,4 @@
-import { batch, cell, readonlyCell } from "@audiorective/core";
-import { WavePlayer } from "./WavePlayer";
+import { BufferPlayer, batch, cell, effect, readonlyCell, untracked } from "@audiorective/core";
 
 export type SampleRow = Readonly<{
   id: string;
@@ -36,7 +35,7 @@ export class SampleLibrary {
   private nextId = 0;
   private working = false;
   private destroyed = false;
-  private previewVoice?: { id: string; player: WavePlayer; lease: SampleLease; unsubscribe(): void };
+  private previewVoice?: { id: string; player: BufferPlayer; lease: SampleLease; unsubscribe(): void };
 
   constructor(
     private readonly context: AudioContext,
@@ -155,19 +154,25 @@ export class SampleLibrary {
   async preview(id: string): Promise<void> {
     const lease = this.acquire(id);
     this.stopPreview();
-    const player = new WavePlayer(this.context);
+    const player = new BufferPlayer(this.context, { buffer: lease.buffer });
     player.output.connect(this.output);
-    const voice = { id, player, lease, unsubscribe: player.subscribe(() => this.publish()) };
+    const voice = {
+      id,
+      player,
+      lease,
+      unsubscribe: effect(() => {
+        void player.cells.isPlaying.value;
+        this.publish();
+      }),
+    };
     this.previewVoice = voice;
-    this.publish();
     try {
-      await player.load(lease.buffer);
-      if (this.previewVoice === voice) await player.play();
+      player.start();
     } catch (error) {
-      if (this.previewVoice !== voice) return;
       this.stopPreview();
       throw error;
     }
+    this.publish();
   }
 
   stopPreview(): void {
@@ -203,7 +208,7 @@ export class SampleLibrary {
       ),
       decodedBytes: this.bytes,
       previewId: this.previewVoice?.id ?? null,
-      previewPlaying: this.previewVoice?.player.isPlaying ?? false,
+      previewPlaying: untracked(() => this.previewVoice?.player.cells.isPlaying.value) ?? false,
     });
   }
 

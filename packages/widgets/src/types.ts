@@ -1,4 +1,7 @@
-import type { WavePlayer, WavePlayerState } from "@audiorective/blocks";
+import type { WavePlayer, WavePlayerState } from "@audiorective/blocks/player";
+
+/** The playback version a selector currently displays. */
+export type SelectorVersion = WavePlayer["version"];
 
 /** Selection boundaries in the currently committed buffer's output seconds. */
 export type Selection = { start: number; end: number };
@@ -9,14 +12,14 @@ export type WaveformSelectorState = WavePlayerState & {
 
 export type WaveformSelectorOptions = (
   | {
-      /** The caller owns this context and connects the returned output. */
-      context: AudioContext;
+      /** The selector creates its own player through this factory, owns it and destroys it. */
+      createPlayer: () => WavePlayer;
       player?: never;
     }
   | {
       /** Shared player belongs to the caller; destroying a view leaves it alive. */
       player: WavePlayer;
-      context?: never;
+      createPlayer?: never;
     }
 ) & {
   /** Optional initial URL or local file. No audio is loaded when omitted. */

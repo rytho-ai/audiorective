@@ -4,16 +4,10 @@ import { batch, cell, effect, readonlyCell, untracked, type Cell, type Readable 
 import { AutomationBinding, AutomationCurve, audioParamTarget } from "@audiorective/core/automation";
 import type { AutomationPoint } from "@audiorective/core/automation";
 import { WebClapHost } from "@audiorective/host/webclap";
-import {
-  AudioRecorder,
-  ClipLauncher,
-  type ClipLaunch,
-  type ClipLauncherState,
-  type QueuedClipLaunch,
-  type StepSequencer,
-  type WaveStretchAnchor,
-  type WaveStretchProcessor,
-} from "@audiorective/blocks";
+import { AudioRecorder } from "@audiorective/blocks/recorder";
+import { ClipLauncher, type ClipLaunch, type ClipLauncherState, type QueuedClipLaunch } from "@audiorective/blocks/launcher";
+import type { StepSequencer } from "@audiorective/blocks/sequencer";
+import type { WaveStretchAnchor, WaveStretchProcessor } from "@audiorective/blocks/player";
 import { EffectRack, retainRackMacroTargets, type RackEffect, type RackMacroSettings } from "@audiorective/effects/rack";
 import { AudioTrackSession } from "./audio-track-session";
 import { clipGainAt } from "./clip-envelope";

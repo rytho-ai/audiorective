@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { userEvent } from "vitest/browser";
+import { WavePlayer } from "@audiorective/blocks/player";
 import { mountWaveformSelector, type WaveformRenderer as SelectorRenderer, type WaveformRenderFrame as SelectorFrame } from "../src";
 import {
   createSelectionPlugin,
@@ -290,7 +291,12 @@ describe("public custom waveform renderers", () => {
     const root = host();
     const custom = canvasRenderer();
     const onSelectionChange = vi.fn();
-    const selector = mountWaveformSelector(root, { context, source: bandsFile(), renderer: custom.renderer, onSelectionChange });
+    const selector = mountWaveformSelector(root, {
+      createPlayer: () => new WavePlayer(context),
+      source: bandsFile(),
+      renderer: custom.renderer,
+      onSelectionChange,
+    });
     own(() => selector.destroy());
     await selector.ready;
     const frame = custom.frames.at(-1)!;
@@ -361,7 +367,7 @@ describe("public custom waveform renderers", () => {
     };
     expect(() => mountWaveform(root, { renderer })).toThrow(error);
     expect(Array.from(root.children)).toEqual([sentinel]);
-    expect(() => mountWaveformSelector(root, { context, renderer })).toThrow(error);
+    expect(() => mountWaveformSelector(root, { createPlayer: () => new WavePlayer(context), renderer })).toThrow(error);
     expect(Array.from(root.children)).toEqual([sentinel]);
     expect(disconnect).toHaveBeenCalledTimes(2);
     for (const observer of observe.mock.contexts) expect(disconnect.mock.contexts).toContain(observer);
@@ -441,7 +447,7 @@ describe("public custom waveform renderers", () => {
     custom.destroy.mockImplementation(() => {
       throw destroyError;
     });
-    const selector = mountWaveformSelector(root, { context, source: bandsFile(), renderer: custom.renderer });
+    const selector = mountWaveformSelector(root, { createPlayer: () => new WavePlayer(context), source: bandsFile(), renderer: custom.renderer });
     own(() => selector.destroy());
     await selector.ready;
     const analyser = context.createAnalyser();
