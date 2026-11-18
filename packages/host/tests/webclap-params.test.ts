@@ -88,4 +88,33 @@ describe("WebClapHost params", () => {
     expect(host.params["7"].value).toBe(0.25);
     expect(port.sent).toEqual([]);
   });
+
+  it("parameterInfo and cells.parameterInfo are tracked and follow plug-in rescans", async () => {
+    const { host, port } = await load();
+    const viaGetter: unknown[] = [];
+    const viaCell: unknown[] = [];
+    const stopGetter = effect(() => void viaGetter.push(host.parameterInfo));
+    const stopCell = effect(() => void viaCell.push(host.cells.parameterInfo.value));
+    port.onmessage?.({ data: { type: "params", params: [info(7, 0.6), info(9, 0.1)] } });
+    stopGetter();
+    stopCell();
+    expect(viaGetter).toHaveLength(2);
+    expect(viaCell).toHaveLength(2);
+    expect(viaGetter[1]).toBe(host.parameterInfo);
+    expect(host.parameterInfo[0].value).toBe(0.6);
+    expect(Object.isFrozen(host.parameterInfo)).toBe(true);
+    expect(host.params["7"].value).toBe(0.6);
+  });
+
+  it("a rescan updates metadata and values in one change", async () => {
+    const { host, port } = await load();
+    const seen: Array<[number, number]> = [];
+    const stop = effect(() => void seen.push([host.parameterInfo[0].value, host.params["7"].value]));
+    port.onmessage?.({ data: { type: "params", params: [info(7, 0.8), info(9, 0.5)] } });
+    stop();
+    expect(seen).toEqual([
+      [0.25, 0.25],
+      [0.8, 0.8],
+    ]);
+  });
 });

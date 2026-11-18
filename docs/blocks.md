@@ -115,7 +115,7 @@ const stop = effect(() => {
 
 The cells are read-only from outside: assigning `.value` is a type error and throws, and `$` takes no argument. Change state through the owner's methods (`setSelection`, `setLooping`, `load`, `cancelLoad`, `setStretch`, `play`, `pause`). An operation that changes several fields commits them as one batch, so an effect sees one coherent state, never a half-applied one: a finished load updates `version`, `selection`, `looping`, `loading`, `loadProgress` and `error` together, and a finished stretch updates `version`, the scaled `selection` and `processing` together. Calling owner methods inside an effect does not subscribe that effect to the state those methods read.
 
-The reading methods are tracked too: `getState()`, `getSelection()`, `isLooping`, `isPlaying` and `version` re-run an effect that calls them. `buffer`, `duration`, `sourceBuffer` and the time-mapping helpers are plain reads that change together with `version`; observe `cells.version` (or `getState()`) to follow them.
+The reading methods are tracked too: `getState()`, `getSelection()`, `isLooping`, `isPlaying` and `version` re-run an effect that calls them. `buffer`, `duration` and `sourceBuffer` are tracked too and change together with `version`. The time-mapping helpers `sourceToOutput` and `outputToSource` are plain calculations that never subscribe an effect.
 
 `cells.isPlaying` follows the transport: it turns true when a start is issued, including one queued for a future `when`, and false when playback stops. `position` is derived from the audio clock and stays a plain getter; read it per animation frame instead of observing it. `volume` is `params.volume`, a standard `SchedulableParam`.
 
@@ -345,7 +345,7 @@ rack.setEffects(rack.effects.map((slot) => (slot.id === "delay" ? { ...slot, ena
 // On teardown, disconnect your source from rack.input and call rack.destroy().
 ```
 
-`setEffects()` takes a complete ordered snapshot, validates it, and preserves processors with the same slot ID and type. An empty chain passes audio through. Bypass sets the effective mix to dry while preserving the configured mix. Filter accepts lowpass or highpass, 20–20,000 Hz and Q 0.1–20. Delay accepts 0.01–1 second and feedback 0–0.95. Both accept a mix from 0–1. [Workspace](./workspace.md#effect-rack) connects these settings to a project and playback.
+`setEffects()` takes a complete ordered snapshot, validates it, and preserves processors with the same slot ID and type. An empty chain passes audio through. Bypass sets the effective mix to dry while preserving the configured mix. Filter accepts lowpass or highpass, 20–20,000 Hz and Q 0.1–20. Delay accepts 0.01–1 second and feedback 0–0.95. Both accept a mix from 0–1. `rack.effects` and `rack.cells.effects` are the tracked, frozen settings snapshot; an effect or `useValue` that reads either re-runs after `setEffects()`, the only writer. [Workspace](./workspace.md#effect-rack) connects these settings to a project and playback.
 
 ## Common errors
 

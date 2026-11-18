@@ -1,4 +1,4 @@
-import { AudioProcessor, cell } from "@audiorective/core";
+import { AudioProcessor, batch, cell, readonlyCell, untracked, type Cell, type ReadonlyCell } from "@audiorective/core";
 import { Filter, PingPongDelay } from "@audiorective/effects";
 
 type EffectSlot = Readonly<{ id: string; enabled: boolean; wet: number }>;
@@ -44,17 +44,22 @@ export function normalizeRackEffects(effects: readonly RackEffect[]): readonly R
 
 type RackNode = { type: "filter"; processor: Filter } | { type: "delay"; processor: PingPongDelay };
 
-/** Ordered built-in inserts. The rack owns its nodes and borrows its context. */
-export class EffectRack extends AudioProcessor<Record<never, never>, Record<never, never>> {
+/**
+ * Ordered built-in inserts. The rack owns its nodes and borrows its context.
+ * `cells.effects` (and the `effects` getter) is the tracked settings snapshot; it changes only through `setEffects`.
+ */
+export class EffectRack extends AudioProcessor<Record<never, never>, { effects: ReadonlyCell<readonly RackEffect[]> }> {
   private readonly rackInput: GainNode;
   private readonly rackOutput: GainNode;
-  private settings: readonly RackEffect[] = Object.freeze([]);
+  private readonly settings: Cell<readonly RackEffect[]>;
   private nodes = new Map<string, RackNode>();
   private readonly chain = cell<readonly RackNode[]>([]);
   private destroyed = false;
 
   constructor(context: BaseAudioContext, effects: readonly RackEffect[] = []) {
-    super(context, () => ({ params: {}, cells: {} }));
+    const settings = cell<readonly RackEffect[]>(Object.freeze([]));
+    super(context, () => ({ params: {}, cells: { effects: readonlyCell(settings) } }));
+    this.settings = settings;
     this.rackInput = context.createGain();
     this.rackOutput = context.createGain();
     this.defineGraph(
@@ -88,7 +93,7 @@ export class EffectRack extends AudioProcessor<Record<never, never>, Record<neve
   }
 
   get effects(): readonly RackEffect[] {
-    return this.settings;
+    return this.cells.effects.value;
   }
 
   /** Existing slots retain their processors across parameter, bypass and order changes. */
@@ -135,11 +140,13 @@ export class EffectRack extends AudioProcessor<Record<never, never>, Record<neve
       }
     }
     const chain = [...next.values()];
-    const previous = this.chain.value;
-    if (previous.length !== chain.length || chain.some((node, index) => node !== previous[index])) this.chain.value = chain;
+    const previous = untracked(() => this.chain.value);
+    batch(() => {
+      if (previous.length !== chain.length || chain.some((node, index) => node !== previous[index])) this.chain.value = chain;
+      this.settings.value = settings;
+    });
     for (const [id, node] of this.nodes) if (next.get(id) !== node) node.processor.destroy();
     this.nodes = next;
-    this.settings = settings;
   }
 
   override destroy(): void {

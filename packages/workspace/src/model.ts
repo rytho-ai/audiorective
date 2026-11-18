@@ -1,6 +1,6 @@
 import type { RecordedAudio } from "@audiorective/blocks";
 import { normalizeRackEffects, type RackEffect } from "@audiorective/blocks/effect-rack";
-import { Cell, readonlyCell } from "@audiorective/core";
+import { batch, Cell, readonlyCell, untracked } from "@audiorective/core";
 import type { AutomationPoint } from "@audiorective/core/automation";
 import { compileMidiPlaybackEvents, MidiSequence } from "@audiorective/midi";
 import type { MidiData, MidiPlaybackEvent, RecordedMidi, RecordedMidiEvent } from "@audiorective/midi";
@@ -40,7 +40,8 @@ export interface MediaAudioClip extends AudioClipBase {
 export type AudioClip = PcmAudioClip | MediaAudioClip;
 export const audioChannelCount = (clip: AudioClip): number => (clip.media ? clip.media.channelCount : clip.channels.length);
 
-const midiClipTimes = new WeakMap<MidiClip, number>();
+/** Position owner per clip; Project writes it through `moveClip`. */
+const midiClipTimes = new WeakMap<MidiClip, Cell<number>>();
 
 /** One owner for editable notes and ordered events; position, duration and content share timeUnit. */
 export class MidiClip {
@@ -55,7 +56,7 @@ export class MidiClip {
     readonly timeUnit: MidiTimeUnit = "seconds",
   ) {
     if (timeUnit !== "seconds" && timeUnit !== "beats") throw new RangeError("Project MIDI time unit must be seconds or beats.");
-    midiClipTimes.set(this, time);
+    midiClipTimes.set(this, new Cell(time));
     this.sourceEvents = Object.freeze(
       (data.events ?? []).map((event) => {
         if (!Number.isFinite(event.time) || event.time < 0 || !(event.data instanceof Uint8Array) || event.data.length === 0)
@@ -66,12 +67,14 @@ export class MidiClip {
     this.sequence = new MidiSequence(data);
   }
 
+  /** Tracked: follows `sequence` edits. */
   get duration(): number {
-    return this.sequence.getState().duration;
+    return this.sequence.cells.duration.value;
   }
 
+  /** Tracked: changes when the owning Project moves the clip. */
   get time(): number {
-    return midiClipTimes.get(this)!;
+    return midiClipTimes.get(this)!.value;
   }
 
   /** Copies preserve the clip's event owner when a caller edits returned bytes. */
@@ -140,6 +143,11 @@ export class Project {
   readonly cells = Object.freeze({ revision: readonlyCell(this.revision) });
   private nextId = 1;
 
+  /** Internal write: reads the counter untracked so a mutator called inside an effect never subscribes to itself. */
+  private bump(): void {
+    this.revision.value = untracked(() => this.revision.value) + 1;
+  }
+
   constructor(options: ProjectOptions = {}) {
     this._title = options.title ?? "Untitled";
     this.bpm = options.bpm ?? 120;
@@ -157,11 +165,15 @@ export class Project {
     this._tempoMap = new TempoMap(this.bpm);
   }
 
+  /** Tracked: reading it in an effect re-runs on every Project edit. */
   get tracks(): readonly ProjectTrack[] {
+    void this.revision.value;
     return this._tracks;
   }
 
+  /** Tracked. */
   get tempoMap(): TempoMap {
+    void this.revision.value;
     return this._tempoMap;
   }
 
@@ -172,22 +184,24 @@ export class Project {
   }
 
   private sortClips(clips: ProjectClip[]): readonly ProjectClip[] {
-    return Object.freeze(clips.sort((a, b) => this.clipTimeSeconds(a) - this.clipTimeSeconds(b)));
+    return Object.freeze(untracked(() => clips.sort((a, b) => this.clipTimeSeconds(a) - this.clipTimeSeconds(b))));
   }
 
   setTempoChanges(changes: readonly TempoChange[]): void {
     this._tempoMap = new TempoMap(this.bpm, changes);
     this._tracks = Object.freeze(this._tracks.map((track) => Object.freeze({ ...track, clips: this.sortClips([...track.clips]) })));
-    this.revision.value++;
+    this.bump();
   }
 
+  /** Tracked. */
   get markers(): readonly ProjectMarker[] {
+    void this.revision.value;
     return this._markers;
   }
 
   /** Stable content snapshot for a separate render runtime. File-backed media remains borrowed. */
   snapshot(): Project {
-    const copy = new Project({ title: this.title, bpm: this.bpm, signature: this.signature });
+    const copy = new Project({ title: this._title, bpm: this.bpm, signature: this.signature });
     copy._tempoMap = this._tempoMap;
     copy._markers = this._markers;
     copy._tracks = Object.freeze(
@@ -222,17 +236,19 @@ export class Project {
     if (sorted.some((marker, index) => !validTime(marker.time) || !marker.name || (index > 0 && sorted[index - 1].time === marker.time)))
       throw new RangeError("Project markers need unique non-negative times and names.");
     this._markers = Object.freeze(sorted);
-    this.revision.value++;
+    this.bump();
   }
 
+  /** Tracked. */
   get title(): string {
+    void this.revision.value;
     return this._title;
   }
 
   setTitle(title: string): void {
     if (!title.trim()) throw new RangeError("Project title must not be empty.");
     this._title = title.trim();
-    this.revision.value++;
+    this.bump();
   }
 
   private reserve(id: string | undefined, prefix: string): string {
@@ -277,7 +293,7 @@ export class Project {
       clips: Object.freeze([]),
     });
     this._tracks = Object.freeze([...this._tracks, track]);
-    this.revision.value++;
+    this.bump();
     return track;
   }
 
@@ -289,7 +305,7 @@ export class Project {
 
   private replace(track: ProjectTrack, patch: Partial<ProjectTrack>): void {
     this._tracks = Object.freeze(this._tracks.map((item) => (item.id === track.id ? Object.freeze({ ...item, ...patch }) : item)));
-    this.revision.value++;
+    this.bump();
   }
 
   setTrackVolume(trackId: string, value: number): void {
@@ -340,7 +356,7 @@ export class Project {
     for (const device of track.devices) this.ids.delete(device.id);
     this.ids.delete(track.id);
     this._tracks = Object.freeze(this._tracks.filter((item) => item.id !== trackId));
-    this.revision.value++;
+    this.bump();
   }
 
   addWebClapDevice(trackId: string, details: Omit<WebClapDevice, "kind" | "id" | "state"> & { id?: string; state?: Uint8Array }): WebClapDevice {
@@ -479,7 +495,7 @@ export class Project {
     if (!validTime(time)) throw new RangeError("Project clip time must be finite and non-negative.");
     const beats = options.timeUnit === "beats";
     const startBeat = beats ? this._tempoMap.secondsToBeat(time) : 0;
-    const convert = (relative: number) => beats ? this._tempoMap.secondsToBeat(time + relative) - startBeat : relative;
+    const convert = (relative: number) => (beats ? this._tempoMap.secondsToBeat(time + relative) - startBeat : relative);
     return this.addMidiClip(
       trackId,
       {
@@ -499,16 +515,18 @@ export class Project {
     const clip = source?.clips.find((item) => item.id === clipId);
     if (!source || !target || !clip || target.kind !== clip.kind) throw new Error("Project clip needs a matching track.");
     const moved = clip.kind === "midi" ? clip : Object.freeze({ ...clip, time });
-    if (clip.kind === "midi") midiClipTimes.set(clip, time);
-    this._tracks = Object.freeze(
-      this._tracks.map((track) => {
-        if (track.id !== source.id && track.id !== target.id) return track;
-        const clips = track.clips.filter((item) => item.id !== clipId);
-        if (track.id === target.id) clips.push(moved);
-        return Object.freeze({ ...track, clips: this.sortClips(clips) });
-      }),
-    );
-    this.revision.value++;
+    batch(() => {
+      if (clip.kind === "midi") midiClipTimes.get(clip)!.value = time;
+      this._tracks = Object.freeze(
+        this._tracks.map((track) => {
+          if (track.id !== source.id && track.id !== target.id) return track;
+          const clips = track.clips.filter((item) => item.id !== clipId);
+          if (track.id === target.id) clips.push(moved);
+          return Object.freeze({ ...track, clips: this.sortClips(clips) });
+        }),
+      );
+      this.bump();
+    });
   }
 
   duplicateClip(clipId: string, time: number, trackId?: string): ProjectClip {

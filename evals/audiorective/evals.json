@@ -603,7 +603,7 @@
       "expectations": [
         "Edits Project directly for the tempo change and clip move and does not call a commit method (none exists) or sync() for them",
         "Treats the added track and device as a structural edit: reads workspace.cells.needsSync and calls await workspace.sync() (for example behind a rebuild action), noting that sync stops transport and reloads hosts",
-        "Observes workspace.cells.error (a read-only cell) in an effect or framework binding to show failed applications instead of relying on unhandled rejections",
+        "Observes workspace.cells.error (a read-only cell) in an effect or framework binding to show failed applications instead of relying on unhandled rejections, and reads workspace.warnings or workspace.cells.warnings (a frozen array, never mutated in place) for unresolved-device notices",
         "Uses await workspace.flush() where it must wait for the runtime, and knows save() already waits for pending edits",
         "Does not poll Project.cells.revision or write its own debounce around Project edits"
       ]

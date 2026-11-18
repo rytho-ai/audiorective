@@ -69,19 +69,20 @@ export type PortabilityReport = Readonly<{
 export class Workspace {
   readonly context: AudioContext;
   readonly output: GainNode;
-  readonly warnings: string[] = [];
   readonly timeline: Timeline;
   readonly clock: Clock;
   readonly player: WorkspacePlayer;
   /**
    * Observable runtime state. `needsSync` is true when the Project's track/device topology differs from the
    * loaded runtime; call `sync()` to rebuild. `error` holds the message of the latest failed application.
+   * `warnings` is a frozen snapshot of non-fatal notices (unresolved devices, unreadable media, import fidelity); each change replaces it.
    */
-  readonly cells: Readonly<{ needsSync: ReadonlyCell<boolean>; error: ReadonlyCell<string | null> }>;
+  readonly cells: Readonly<{ needsSync: ReadonlyCell<boolean>; error: ReadonlyCell<string | null>; warnings: ReadonlyCell<readonly string[]> }>;
 
   private readonly projectSource: Cell<Project>;
   private readonly needsSyncSource = cell(false);
   private readonly errorSource = cell<string | null>(null);
+  private readonly warningsSource = cell<readonly string[]>(Object.freeze([]));
   private readonly options: WorkspaceOptions;
   private readonly tracks = new Map<string, TrackRuntime>();
   private readonly scheduledAudio = new Map<string, AudioHandle>();
@@ -113,7 +114,11 @@ export class Workspace {
     if (options.destination) this.output.connect(options.destination);
     this.timeline = new Timeline({ audioContext: context, bpm: project.bpm });
     this.clock = new Clock({ timeline: this.timeline, lookAhead: 0.15, tickInterval: 0.025, onTick: (window) => this.schedule(window) });
-    this.cells = Object.freeze({ needsSync: readonlyCell(this.needsSyncSource), error: readonlyCell(this.errorSource) });
+    this.cells = Object.freeze({
+      needsSync: readonlyCell(this.needsSyncSource),
+      error: readonlyCell(this.errorSource),
+      warnings: readonlyCell(this.warningsSource),
+    });
     this.player = Object.freeze({
       isPlaying: readonlyCell(() => this.clock.state.value === "playing"),
       play: () => this.play(),
@@ -128,6 +133,17 @@ export class Workspace {
         seek: (seconds: number) => this.seek(seconds),
       }),
     });
+  }
+
+  /** Frozen snapshot of non-fatal notices; tracked. The same value as `cells.warnings`. */
+  get warnings(): readonly string[] {
+    return this.cells.warnings.value;
+  }
+
+  private addWarnings(notices: readonly string[], position: "start" | "end" = "end"): void {
+    if (!notices.length) return;
+    const current = untracked(() => this.warningsSource.value);
+    this.warningsSource.value = Object.freeze(position === "start" ? [...notices, ...current] : [...current, ...notices]);
   }
 
   get project(): Project {
@@ -154,7 +170,7 @@ export class Workspace {
     const opened = openDawProject(bytes);
     try {
       const workspace = await Workspace.create(context, opened.project, options);
-      workspace.warnings.unshift(...opened.warnings);
+      workspace.addWarnings(opened.warnings, "start");
       return workspace;
     } catch (error) {
       opened.project.destroy();
@@ -166,7 +182,7 @@ export class Workspace {
     const opened = await openDawProjectBlob(blob);
     try {
       const workspace = await Workspace.create(context, opened.project, options);
-      workspace.warnings.unshift(...opened.warnings);
+      workspace.addWarnings(opened.warnings, "start");
       return workspace;
     } catch (error) {
       opened.project.destroy();
@@ -368,14 +384,14 @@ export class Workspace {
         for (const device of track.devices) {
           const bundleUrl = (await this.options.resolveBundle?.(device)) ?? device.bundleUrl;
           if (!bundleUrl) {
-            this.warnings.push(`Device ${device.name} has no WebCLAP bundle.`);
+            this.addWarnings([`Device ${device.name} has no WebCLAP bundle.`]);
             continue;
           }
           try {
             const host = await WebClapHost.load(this.context, { url: bundleUrl, workletUrl: this.options.workletUrl });
             if (host.descriptor?.id !== device.pluginId) {
               host.destroy();
-              this.warnings.push(`Device ${device.name} has a different CLAP ID in its bundle.`);
+              this.addWarnings([`Device ${device.name} has a different CLAP ID in its bundle.`]);
               continue;
             }
             if (device.state.length) await host.loadState(device.state);
@@ -384,7 +400,7 @@ export class Workspace {
             if (previous) previous.output.connect(host.input);
             previous = host;
           } catch (error) {
-            this.warnings.push(`Device ${device.name} could not load: ${String(error)}`);
+            this.addWarnings([`Device ${device.name} could not load: ${String(error)}`]);
           }
         }
         if (previous) {
@@ -669,7 +685,7 @@ export class Workspace {
         "Editable import in a specific DAW needs an actual open-and-save test.",
         "A separate audio fallback is needed to hear hosted plug-ins without matching CLAP binaries.",
         ...(this.project.tracks.length > 15 ? ["Audio fallback includes a mix only when a project has more than 15 tracks."] : []),
-        ...this.warnings,
+        ...untracked(() => this.warningsSource.value),
       ],
     };
   }
@@ -930,7 +946,7 @@ export class Workspace {
         source.stop(start + buffer.duration - adjustedOffset);
       })
       .catch((error: unknown) => {
-        this.warnings.push(`Audio clip ${clip.id} could not read its media: ${String(error)}`);
+        this.addWarnings([`Audio clip ${clip.id} could not read its media: ${String(error)}`]);
         end();
       });
     return {

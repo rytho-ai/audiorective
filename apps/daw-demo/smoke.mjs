@@ -485,6 +485,82 @@ try {
   assert.deepEqual(state.warnings, []);
   assert.ok(state.archiveSize > 100_000);
 
+  // Plug-in editor -> JS readback: a knob dragged in the plug-in's own webview editor reaches host.params through `paramOut`.
+  await page.evaluate(async () => {
+    const workspace = window.__daw.workspace;
+    const device = workspace.project.tracks[0].devices[0];
+    const Host = workspace.host(device.id).constructor;
+    const url = (await workspace.options.resolveBundle?.(device)) ?? device.bundleUrl;
+    const host = await Host.load(workspace.context, { url, workletUrl: workspace.options.workletUrl });
+    const worklet = { paramOut: [], echoed: [] };
+    const receive = host.node.port.onmessage;
+    host.node.port.onmessage = (event) => {
+      if (event.data.type === "paramOut") worklet.paramOut.push({ id: event.data.id, value: event.data.value });
+      receive(event);
+    };
+    const send = host.node.port.postMessage.bind(host.node.port);
+    host.node.port.postMessage = (message, transfer) => {
+      if (message.type === "param") worklet.echoed.push(message);
+      return send(message, transfer);
+    };
+    const frame = document.createElement("iframe");
+    frame.id = "editor-readback";
+    frame.style.cssText = "position:fixed;left:0;top:0;width:770px;height:560px;z-index:99999;border:0;background:#fff";
+    document.body.append(frame);
+    const unmount = await host.mountEditor(frame);
+    const seen = [];
+    const stop = host.effect(() => void seen.push(host.params["2"].value));
+    window.__editorReadback = {
+      host,
+      worklet,
+      seen,
+      stop,
+      unmount,
+      frame,
+      before: Object.fromEntries(Object.entries(host.params).map(([id, param]) => [id, param.value])),
+    };
+  });
+  const editorFrame = await (await page.$("#editor-readback")).contentFrame();
+  await editorFrame.waitForSelector(".knob");
+  await page.waitForTimeout(500);
+  // Drag the third knob upward the way a user would; the editor sends begin/set/end over postMessage.
+  const knob = await editorFrame.locator(".knob").nth(3).boundingBox();
+  await page.mouse.move(knob.x + knob.width / 2, knob.y + knob.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(knob.x + knob.width / 2, knob.y + knob.height / 2 - 40, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForFunction(() => window.__editorReadback.worklet.paramOut.length > 1 && window.__editorReadback.seen.length > 1);
+  await page.waitForTimeout(300);
+  const readback = await page.evaluate(() => {
+    const { host, worklet, seen, stop, unmount, frame, before } = window.__editorReadback;
+    const changed = Object.entries(host.params)
+      .filter(([id, param]) => param.value !== before[id])
+      .map(([id, param]) => ({ id, before: before[id], after: param.value }));
+    const last = worklet.paramOut[worklet.paramOut.length - 1];
+    const result = {
+      changed,
+      lastOut: last,
+      paramNow: host.params[String(last.id)].value,
+      effectRuns: seen.length,
+      effectLast: seen[seen.length - 1],
+      echoed: worklet.echoed.length,
+    };
+    stop();
+    unmount();
+    frame.remove();
+    host.destroy();
+    delete window.__editorReadback;
+    return result;
+  });
+  assert.equal(readback.changed.length, 1, JSON.stringify(readback));
+  assert.equal(readback.changed[0].id, String(readback.lastOut.id));
+  assert.equal(readback.changed[0].id, "2", "the fourth editor knob drives CLAP parameter 2");
+  assert.notEqual(readback.changed[0].after, readback.changed[0].before);
+  assert.equal(readback.paramNow, readback.lastOut.value);
+  assert.equal(readback.effectLast, readback.paramNow);
+  assert.ok(readback.effectRuns > 1);
+  assert.equal(readback.echoed, 0, "plug-in originated changes must not be echoed back to the worklet");
+
   const audioPause = await page.evaluate(async () => {
     const current = window.__daw.workspace;
     const Project = current.project.constructor;

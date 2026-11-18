@@ -26,6 +26,7 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Changed
 
+- **workspace / blocks / host:** Public stateful readers are tracked, so an `effect()`, `computed()` or `useValue` that reads them re-runs on change. `Project.tracks`, `tempoMap`, `markers`, `title`, `MidiClip.time` and `MidiClip.duration` follow `Project` edits; `WavePlayer.buffer`, `duration` and `sourceBuffer` follow `cells.version`. `Workspace.warnings` is a frozen snapshot array (not mutable in place) mirrored by the new `workspace.cells.warnings`; `EffectRack` exposes `cells.effects` behind its `effects` getter; `WebClapHost` exposes `cells.parameterInfo` behind its `parameterInfo` getter.
 - **host:** WebCLAP plug-in parameters are reactive `Param<number>`s in `host.params`, keyed by CLAP id as a string (`host.params["7"].value = 0.5`). Plug-in-side changes, such as editor edits, update the same Params without echoing back. `host.parameterInfo` replaces `host.parameters` as the frozen metadata snapshot, and `setParameter(id, value)` is removed. `WebClapHost.load` resolves with `descriptor` and `hasEditor` always set.
 - **host / workspace:** `WebClapHost.getState()` / `setState()` are renamed `saveState()` / `loadState()` (opaque CLAP state bytes) so `getState()` stays the name for synchronous block snapshots.
 - **blocks:** `AudioRecorder` fills short browser render gaps with silence and reports their absolute frame ranges in optional `dropouts`; a gap beyond two seconds fails the take.

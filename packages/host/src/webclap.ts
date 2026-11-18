@@ -1,4 +1,4 @@
-import { AudioProcessor, type Param } from "@audiorective/core";
+import { AudioProcessor, batch, cell, readonlyCell, type Cell, type Param, type ReadonlyCell } from "@audiorective/core";
 
 export type WebClapDescriptor = Readonly<{ id: string; name: string; vendor: string; version: string; features: readonly string[] }>;
 export type WebClapParameter = Readonly<{ id: number; name: string; min: number; max: number; defaultValue: number; value: number; text: string }>;
@@ -26,12 +26,10 @@ const modules = new WeakMap<AudioContext, Map<string, Promise<void>>>();
  * Browser host for one WebCLAP plug-in. The audio graph sees a latency-declared processor.
  * Each CLAP parameter is a `Param<number>` in `params`, keyed by its CLAP id (`host.params["7"].value`).
  */
-export class WebClapHost extends AudioProcessor<WebClapParams, Record<never, never>> {
+export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: ReadonlyCell<readonly WebClapParameter[]> }> {
   readonly node: AudioWorkletNode;
   readonly bundleUrl: string;
   readonly descriptor: WebClapDescriptor;
-  /** Frozen parameter metadata (id, name, min, max, default, text) as last reported by the plug-in. Live values are in `params`. */
-  parameterInfo: readonly WebClapParameter[];
   readonly hasEditor: boolean;
 
   private stateWaiters: Waiter<Uint8Array>[] = [];
@@ -43,10 +41,17 @@ export class WebClapHost extends AudioProcessor<WebClapParams, Record<never, nev
   private readonly pending = new Map<number, Set<() => void>>();
   /** Last value known to both sides, per CLAP id. Param writes equal to it are not echoed to the worklet. */
   private readonly synced: Map<number, number>;
+  private readonly infoStore: Cell<readonly WebClapParameter[]>;
   private disposed = false;
+
+  /** Tracked frozen parameter metadata (id, name, min, max, default, text) as last reported by the plug-in; the same value as `cells.parameterInfo`. Live values are in `params`. */
+  get parameterInfo(): readonly WebClapParameter[] {
+    return this.cells.parameterInfo.value;
+  }
 
   private constructor(context: AudioContext, node: AudioWorkletNode, bundleUrl: string, loaded: LoadedMessage, early: HostMessage[]) {
     const synced = new Map<number, number>();
+    const infoStore = cell<readonly WebClapParameter[]>(Object.freeze(loaded.params));
     super(context, ({ param }) => {
       const params: Record<string, Param<number>> = {};
       for (const info of loaded.params) {
@@ -69,13 +74,13 @@ export class WebClapHost extends AudioProcessor<WebClapParams, Record<never, nev
           },
         });
       }
-      return { params: params as WebClapParams, cells: {}, latency: 0 };
+      return { params: params as WebClapParams, cells: { parameterInfo: readonlyCell(infoStore) }, latency: 0 };
     });
     this.synced = synced;
     this.node = node;
     this.bundleUrl = bundleUrl.replace(/\/$/, "");
     this.descriptor = loaded.descriptor;
-    this.parameterInfo = Object.freeze(loaded.params);
+    this.infoStore = infoStore;
     this.hasEditor = loaded.hasGui;
     this.latency.value = (loaded.latencySamples ?? 0) / context.sampleRate;
     node.port.onmessage = (event: MessageEvent<HostMessage>) => this.receive(event.data);
@@ -239,8 +244,10 @@ export class WebClapHost extends AudioProcessor<WebClapParams, Record<never, nev
         break;
       case "params": {
         const infos = message.params as WebClapParameter[];
-        this.parameterInfo = Object.freeze(infos);
-        for (const info of infos) this.applyParam(info.id, info.value);
+        batch(() => {
+          this.infoStore.value = Object.freeze(infos);
+          for (const info of infos) this.applyParam(info.id, info.value);
+        });
         break;
       }
       case "executed": {

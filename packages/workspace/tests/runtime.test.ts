@@ -72,6 +72,7 @@ vi.mock("@audiorective/clock", async () => {
   return { Clock, Timeline };
 });
 
+import { effect } from "@audiorective/core";
 import { Project, Workspace } from "../src";
 
 const node = () => {
@@ -252,5 +253,78 @@ describe("workspace automatic application", () => {
     await expect(workspace.sync()).rejects.toThrow("Workspace is destroyed.");
     project.destroy();
     other.destroy();
+  });
+});
+
+/** Public stateful readers are tracked: an effect over each re-runs, seeing the new value, when the owner changes it. */
+describe("workspace readers are tracked", () => {
+  const rows: Array<{
+    name: string;
+    read: (workspace: Workspace) => unknown;
+    mutate: (ctx: { project: Project; workspace: Workspace; device: { id: string } }) => Promise<void>;
+  }> = [
+    {
+      name: "warnings getter",
+      read: (workspace) => workspace.warnings,
+      mutate: async ({ project, workspace }) => {
+        const track = project.addTrack("Orphan", "midi");
+        project.addWebClapDevice(track.id, { pluginId: "x", name: "NoBundle", vendor: "t", version: "1", bundleUrl: "" });
+        await workspace.sync();
+      },
+    },
+    {
+      name: "cells.warnings",
+      read: (workspace) => workspace.cells.warnings.value,
+      mutate: async ({ project, workspace }) => {
+        const track = project.addTrack("Orphan", "midi");
+        project.addWebClapDevice(track.id, { pluginId: "x", name: "NoBundle", vendor: "t", version: "1", bundleUrl: "" });
+        await workspace.sync();
+      },
+    },
+    {
+      name: "cells.needsSync",
+      read: (workspace) => workspace.cells.needsSync.value,
+      mutate: async ({ project, workspace }) => {
+        project.addTrack("Drums", "audio");
+        await workspace.flush();
+      },
+    },
+    {
+      name: "cells.error",
+      read: (workspace) => workspace.cells.error.value,
+      mutate: async ({ project, workspace, device }) => {
+        fakes.loadStateImpl = async () => {
+          throw new Error("bad state");
+        };
+        project.setDeviceState(device.id, new Uint8Array([1]));
+        await workspace.flush().catch(() => undefined);
+      },
+    },
+  ];
+  test.each(rows)("$name", async ({ read, mutate }) => {
+    const { project, workspace, device } = await setup({ withDevice: true });
+    const seen: unknown[] = [];
+    const stop = effect(() => void seen.push(read(workspace)));
+    const first = seen[0];
+    await mutate({ project, workspace, device: device! });
+    stop();
+    expect(seen.length).toBeGreaterThan(1);
+    expect(Object.is(seen[seen.length - 1], first)).toBe(false);
+    workspace.destroy();
+    project.destroy();
+  });
+
+  test("warnings are a frozen snapshot that replaces on every write", async () => {
+    const { project, workspace } = await setup();
+    const before = workspace.warnings;
+    expect(Object.isFrozen(before)).toBe(true);
+    const track = project.addTrack("Orphan", "midi");
+    project.addWebClapDevice(track.id, { pluginId: "x", name: "NoBundle", vendor: "t", version: "1", bundleUrl: "" });
+    await workspace.sync();
+    expect(workspace.warnings).not.toBe(before);
+    expect(workspace.warnings).toEqual(["Device NoBundle has no WebCLAP bundle."]);
+    expect(before).toEqual([]);
+    workspace.destroy();
+    project.destroy();
   });
 });
