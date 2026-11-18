@@ -194,7 +194,7 @@ Then load only what the task needs:
 | PCM min/max summaries and source-frame/time metadata                                       | `references/core.md` → PCM peak summaries           |
 | MIDI files, piano-roll layout/drawing/plugins, note drag/resize and caller-owned audition  | `references/midi.md`                                |
 | Capturing Web MIDI messages and projecting a note take against the audio clock             | `references/midi.md` → Record a MIDI take           |
-| Takes, tempo, beat-locked MIDI, clip editing/stretch, Session launch, step sequencing, bus routing and DAWproject save/open          | `references/workspace.md`                           |
+| Takes, tempo, beat MIDI, clip editing/stretch/warp, Session launch, step sequencing, bus routing and DAWproject save/open            | `references/workspace.md`                           |
 | Edit a running Project, wait with `flush()`, or rebuild with `sync()` | `references/workspace.md` → Apply Project edits to the live graph |
 | Host a WebCLAP device, choose a CLAP ID from a bundle, bind a Param or save a patch | `references/host.md` + `references/workspace.md` |
 | Observing block state (`cells`), loading phases, cancel, cached sources, audition          | `references/blocks.md` + `references/widgets.md`    |
@@ -282,7 +282,7 @@ Every other thrown message is listed, with cause and fix, in the reference for i
 
 | Message starts with or mentions                                                                                                                                                                                                                   | Read                                        |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| `Waveform…`, `Zoom…`, `Timeline zoom needs a positive increasing scale range.`, `Playhead…`, `Plugin…`, `Selection plugin…`, `Parameter control…`, `Level meter…`, `Frequency plot…`, `Spectrum…`, `EQ editor…`, `Automation overlay…` | `references/widgets.md` → Common errors |
+| `Waveform…`, `Zoom…`, `Timeline zoom needs a positive increasing scale range.`, `Playhead…`, `Plugin…`, `Selection plugin…`, `Parameter control…`, `Level meter…`, `Frequency plot…`, `Spectrum…`, `EQ editor…`, `Automation overlay…`, `Warp markers…` | `references/widgets.md` → Common errors |
 | `No track is loaded.`, `No audio is loaded.`, `Audio is still loading.`, `The audio context is closed.`                                                                                                                                           | `references/widgets.md` → Common errors     |
 | `WavePlayer is destroyed.`, `Audio request…`, `Audio download…`, `Audio file…`, `Enter an audio URL.`, `Load progress…`, `Position…`, `Start time…`, `Selection must satisfy…`, `Source automation…`, `Instrument…`, `Unknown instrument…`, `AudioRecorder…` | `references/blocks.md` → Common errors      |
 | `Clock owned event time…`                                                                                                                                                                                                                         | `references/clock.md` → Common errors       |

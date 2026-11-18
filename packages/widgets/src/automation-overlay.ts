@@ -7,6 +7,8 @@ export interface AutomationOverlayOptions {
   onCommit(points: readonly AutomationPoint[]): void;
   fromView(time: number): number;
   toView(time: number): number;
+  /** Interior times where the view-to-source slope changes. Affects drawing only. */
+  viewBreakpoints?: readonly number[];
   maxValue: number;
   defaultValue: number;
   snap?(time: number): number;
@@ -96,7 +98,18 @@ export function createAutomationOverlay(options: AutomationOverlayOptions): Time
         const startValue = curve?.valueAt(sourceStart) ?? defaultValue;
         let line = `M0,${y(startValue)}`;
         let previous = visible.findLast((point) => point.time <= sourceStart);
-        for (const point of visible) {
+        const breakpoints =
+          curve && options.viewBreakpoints?.length
+            ? options.viewBreakpoints.flatMap((viewTime): AutomationPoint[] => {
+                if (!(viewTime > 0 && viewTime < ctx.duration)) return [];
+                const time = fromView(viewTime);
+                if (visible.some((point) => point.time === time)) return [];
+                const shape = visible.findLast((point) => point.time < time)?.shape ?? "hold";
+                return [{ time, value: curve.valueAt(time), shape }];
+              })
+            : [];
+        const drawingPoints = breakpoints.length ? [...visible, ...breakpoints].sort((a, b) => a.time - b.time) : visible;
+        for (const point of drawingPoints) {
           if (point.time <= sourceStart || point.time > sourceEnd) continue;
           if (previous?.shape === "hold") line += ` H${x(point.time)}`;
           line += ` L${x(point.time)},${y(point.value)}`;

@@ -814,6 +814,18 @@
         "Uses implicit endpoints and requires strictly increasing interior frame pairs",
         "Passes a caller-supplied compiled WASM module supporting rb_set_key_frame_map and keeps the original buffer intact"
       ]
+    },
+    {
+      "id": 61,
+      "prompt": "Add draggable warp markers to a Workspace audio clip. Save and reopen the result, keep the original source, and make the clip gain automation follow the warped sound.",
+      "expected_output": "Uses the borrowed Warp marker widget, a Workspace prepared edit and the same piecewise time map for source gain and the view.",
+      "files": [],
+      "expectations": [
+        "Attaches createWarpMarkers to the waveform and supplies a source frame conversion via audioClipTimeMap",
+        "Passes increasing interior frame anchors to prepareAudioClipStretch and calls the deferred apply as one undoable edit",
+        "Preserves source gain points and uses the piecewise source/output conversion and viewBreakpoints for the automation overlay",
+        "Saves the rendered WAV plus retained original and anchors and reopens playback without the render engine"
+      ]
     }
   ]
 }

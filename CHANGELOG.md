@@ -19,6 +19,8 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Added
 
+- **workspace / widgets:** Project clips retain warp anchors alongside the rendered playback and original source. The DAW waveform marker editor uses the same mapping for drag edits, trimming, source-relative gain and saved projects.
+
 - **effects:** `TimeStretch.process` accepts interior source/output frame anchors for local pitch-preserving warp with an explicit total duration and a compatible caller-supplied WASM module.
 
 - **blocks / workspace:** EffectRack macros map one control to several built-in insert parameters using native linear or exponential scheduling. Rack presets restore their slots and controls together. Workspace persists track macros and applies live knob edits without a transport rebuild.

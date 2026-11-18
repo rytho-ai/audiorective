@@ -1,5 +1,7 @@
 export type { ClipEnvelope } from "@audiorective/blocks";
-export { Project, MidiClip, audioClipSourceDuration } from "./model";
+export { Project, MidiClip, audioClipSourceDuration, audioClipTimeMap } from "./model";
+export type { ClipTimeMap } from "./clip-time-map";
+export type { WaveStretchAnchor } from "@audiorective/blocks";
 export type { RackEffect, RackFilter, RackDelay, RackEq, RackMacroMapping, RackMacroParameter, RackMacroSettings, RackPreset } from "@audiorective/blocks/effect-rack";
 export type { MidiTimeUnit } from "./model";
 export { TempoMap } from "./tempo-map";

@@ -1,7 +1,7 @@
-import { createClipStretchEngine, mountClipStretchView } from "./clip-stretch-view";
+import { createClipStretchEngine, mountClipStretchView, type AudioClipEditorTool } from "./clip-stretch-view";
 import { unityClipEnvelope } from "@audiorective/blocks";
 import type { WebClapDescriptor } from "@audiorective/host/webclap";
-import { audioClipSourceDuration, type AudioClip, type MidiClip, type ProjectClip, type ProjectTrack, type BusRole, type TrackRouting, type Workspace } from "@audiorective/workspace";
+import { audioClipTimeMap, type AudioClip, type MidiClip, type ProjectClip, type ProjectTrack, type BusRole, type TrackRouting, type Workspace } from "@audiorective/workspace";
 import type { MidiNote } from "@audiorective/midi";
 import { mountPianoRoll } from "@audiorective/widgets/piano-roll";
 import {
@@ -12,7 +12,7 @@ import { EditHistory } from "./edit-history";
 import { mountEffectRackView } from "./effect-rack-view";
 import { ArrangementOverview } from "./arrangement-overview";
 import { ClipWaveforms } from "./clip-waveforms";
-import { effect, readonlyCell } from "@audiorective/core";
+import { cell, effect, readonlyCell, untracked } from "@audiorective/core";
 import { createAutomationOverlay, mountMixer, mountAutomationLane, mountClipEnvelopeEditor, mountParameter, type AutomationLaneHandle } from "@audiorective/widgets";
 import type { AutomationPoint } from "@audiorective/core/automation";
 
@@ -76,7 +76,8 @@ export class StudioView {
     scrollTo(seconds: number): void;
   };
   private editorClipId?: string;
-  private showClipAutomation = false;
+  private readonly clipEditingTool = cell<AudioClipEditorTool>(null);
+  private stopGainView?: () => void;
   private stopAuditionView?: () => void;
   private envelopeView?: ReturnType<typeof mountClipEnvelopeEditor>;
   private stretchView?: ReturnType<typeof mountClipStretchView>;
@@ -1019,6 +1020,8 @@ export class StudioView {
   }
 
   private renderEditor(): void {
+    this.stopGainView?.();
+    this.stopGainView = undefined;
     this.stopAuditionView?.();
     this.stopAuditionView = undefined;
     this.stretchView?.destroy();
@@ -1189,7 +1192,7 @@ export class StudioView {
         return current?.kind === "audio" && current.id === clip.id ? current : clip;
       };
       const points = readonlyCell(() => currentAudio().gainAutomation?.points ?? emptyAutomation);
-      const sourcePerSecond = audioClipSourceDuration(clip) / clip.duration;
+      const timeMap = audioClipTimeMap(clip);
       const start = () => currentAudio().gainAutomation?.sourceStart ?? 0;
       const commit = (next: readonly AutomationPoint[]) => {
         try {
@@ -1201,30 +1204,31 @@ export class StudioView {
       };
       let attachment: ReturnType<typeof wave.attach> | undefined;
       const toggleAutomation = button("片段自動化", () => {
-        this.showClipAutomation = !this.showClipAutomation;
-        updateAutomation();
+        this.clipEditingTool.value = this.clipEditingTool.value === "gain" ? null : "gain";
       }, "在波形上雙擊新增控制點，拖曳調整。Enter 切換線性或保持，Delete 刪除。");
-      function updateAutomation(): void {
-        toggleAutomation.setAttribute("aria-pressed", String(visible()));
-        if (visible()) {
-          attachment = wave.attach(createAutomationOverlay({
-            points,
-            fromView: (time) => start() + time * sourcePerSecond,
-            toView: (time) => (time - start()) / sourcePerSecond,
-            defaultValue: 1,
-            maxValue: points.value.reduce((maximum, point) => Math.max(maximum, point.value), 2),
-            label: "片段增益點",
-            snap: (time) => Math.round(time * 100) / 100,
-            onCommit: commit,
-          }));
-        } else {
-          attachment?.destroy();
-          attachment = undefined;
-        }
-      }
-      const visible = () => this.showClipAutomation;
+      this.stopGainView = effect(() => {
+        const active = this.clipEditingTool.value === "gain";
+        untracked(() => {
+          toggleAutomation.setAttribute("aria-pressed", String(active));
+          if (active && !attachment) {
+            attachment = wave.attach(createAutomationOverlay({
+              points,
+              fromView: (time) => start() + timeMap.outputToSource(time),
+              toView: (time) => timeMap.sourceToOutput(time - start()),
+              viewBreakpoints: clip.stretch?.anchors?.map(({ outputFrame }) => outputFrame / clip.sampleRate),
+              defaultValue: 1,
+              maxValue: points.value.reduce((maximum, point) => Math.max(maximum, point.value), 2),
+              label: "片段增益點",
+              snap: (time) => Math.round(time * 100) / 100,
+              onCommit: commit,
+            }));
+          } else if (!active && attachment) {
+            attachment.destroy();
+            attachment = undefined;
+          }
+        });
+      });
       top.insertBefore(toggleAutomation, spacer);
-      updateAutomation();
       const audition = button("試聽片段", async () => {
         try {
           if (workspace.auditioningClip.value === clip.id) workspace.stopClipAudition();
@@ -1261,6 +1265,8 @@ export class StudioView {
         clip,
         workspace,
         engine: this.stretchEngine,
+        waveform: wave,
+        tool: this.clipEditingTool,
         report: this.actions.error,
         commit: (prepared) => {
           this.history.record("伸縮音訊片段", () => prepared.apply());
@@ -1647,7 +1653,9 @@ export class StudioView {
     this.clipView = undefined;
     this.editorClipId = undefined;
     this.editorViewStates.clear();
-    this.showClipAutomation = false;
+    this.stopGainView?.();
+    this.stopGainView = undefined;
+    this.clipEditingTool.value = null;
     for (const detach of this.editorDetachers) detach();
     this.editorDetachers.clear();
   }

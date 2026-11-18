@@ -1,6 +1,10 @@
-import { cell, effect, readonlyCell } from "@audiorective/core";
+import { cell, effect, readonlyCell, untracked, type Cell } from "@audiorective/core";
 import type { TimeStretch } from "@audiorective/effects/time-stretch";
-import type { AudioClip, PreparedClipStretch, Workspace } from "@audiorective/workspace";
+import { audioClipTimeMap, type AudioClip, type PreparedClipStretch, type WaveStretchAnchor, type Workspace } from "@audiorective/workspace";
+import { createWarpMarkers } from "@audiorective/widgets";
+import type { WaveformHandle } from "@audiorective/widgets/waveform";
+
+export type AudioClipEditorTool = "gain" | "warp" | null;
 
 export function createClipStretchEngine() {
   const source = cell<{ name: string; processor: TimeStretch } | undefined>(undefined);
@@ -28,11 +32,13 @@ type ClipStretchViewOptions = {
   clip: AudioClip;
   workspace: Workspace;
   engine: ReturnType<typeof createClipStretchEngine>;
+  waveform: WaveformHandle;
+  tool: Cell<AudioClipEditorTool>;
   commit(render: PreparedClipStretch): void;
   report(error: unknown): void;
 };
 
-export function mountClipStretchView(root: HTMLElement, { clip, workspace, engine, commit, report }: ClipStretchViewOptions) {
+export function mountClipStretchView(root: HTMLElement, { clip, workspace, engine, waveform, tool, commit, report }: ClipStretchViewOptions) {
   const doc = root.ownerDocument;
   const row = doc.createElement("div");
   row.className = "clip-stretch";
@@ -71,6 +77,39 @@ export function mountClipStretchView(root: HTMLElement, { clip, workspace, engin
   cancel.hidden = true;
   let job: AbortController | undefined;
   let destroyed = false;
+  const busy = cell(false);
+  const map = audioClipTimeMap(clip);
+  const anchors = clip.stretch?.anchors ?? [];
+  const warp = doc.createElement("button");
+  warp.type = "button";
+  warp.textContent = "Warp 標記";
+  warp.title = "雙擊波形新增標記 · 拖曳調整時間 · Delete 刪除";
+  warp.addEventListener("click", () => {
+    tool.value = tool.value === "warp" ? null : "warp";
+  });
+  let attachment: ReturnType<WaveformHandle["attach"]> | undefined;
+  const stopWarp = effect(() => {
+    const visible = tool.value === "warp";
+    untracked(() => {
+      warp.setAttribute("aria-pressed", String(visible));
+      if (visible && !attachment && clip.duration > 0) {
+        attachment = waveform.attach(
+          createWarpMarkers({
+            sampleRate: clip.sampleRate,
+            sourceFrames: Math.round(map.sourceDuration * clip.sampleRate),
+            anchors: readonlyCell(() => anchors),
+            sourceFrameAt: (time) => map.outputToSource(time) * clip.sampleRate,
+            disabled: readonlyCell(() => busy.value || !engine.active.value),
+            label: "Warp 標記",
+            onCommit: (points) => void render(clip.duration / map.sourceDuration, points),
+          }),
+        );
+      } else if (!visible && attachment) {
+        attachment.destroy();
+        attachment = undefined;
+      }
+    });
+  });
 
   function update(): void {
     const current = engine.active.value;
@@ -79,36 +118,66 @@ export function mountClipStretchView(root: HTMLElement, { clip, workspace, engin
     const value = ratio.valueAsNumber;
     apply.disabled = !!job || !Number.isFinite(value) || value <= 0 || (value !== 1 && !current) || value === (clip.stretch?.ratio ?? 1);
     restore.disabled = !!job;
+    warp.disabled = !!job || clip.duration <= 0;
+    if (!current) warp.title = "先載入伸縮引擎";
+    else warp.title = "雙擊波形新增標記 · 拖曳調整時間 · Delete 刪除";
     ratio.disabled = !!job;
     cancel.hidden = !job;
   }
-  async function render(value: number): Promise<void> {
+  async function render(value: number, points: readonly WaveStretchAnchor[] = []): Promise<void> {
+    if (job) return;
+    const editor = root.parentElement;
+    const focused = doc.activeElement;
+    const focusedMarker =
+      focused instanceof HTMLButtonElement && focused.classList.contains("ar-warp-marker") && editor?.contains(focused)
+        ? focused.dataset.sourceFrame
+        : undefined;
     const request = new AbortController();
     job = request;
+    busy.value = true;
     apply.textContent = "處理中…";
     update();
     try {
-      const prepared = await workspace.prepareAudioClipStretch(clip.id, value, engine.active.value?.processor, { signal: request.signal });
-      if (!destroyed && !request.signal.aborted) commit(prepared);
+      const prepared = await workspace.prepareAudioClipStretch(clip.id, value, engine.active.value?.processor, {
+        signal: request.signal,
+        anchors: points,
+      });
+      if (!destroyed && !request.signal.aborted) {
+        commit(prepared);
+        if (focusedMarker !== undefined)
+          editor
+            ?.querySelector<HTMLButtonElement>(`.ar-warp-marker[data-source-frame="${CSS.escape(focusedMarker)}"]`)
+            ?.focus({ preventScroll: true });
+      }
     } catch (error) {
       if (!destroyed && !request.signal.aborted) report(error);
     } finally {
       job = undefined;
+      busy.value = false;
       apply.textContent = "套用倍率";
       update();
     }
   }
   ratio.addEventListener("input", update);
-  apply.addEventListener("click", () => void render(ratio.valueAsNumber));
+  apply.addEventListener("click", () => {
+    const outputFrames = Math.round(map.sourceDuration * clip.sampleRate * ratio.valueAsNumber);
+    const scale = outputFrames / Math.round(clip.duration * clip.sampleRate);
+    void render(
+      ratio.valueAsNumber,
+      anchors.map((point) => ({ ...point, outputFrame: Math.round(point.outputFrame * scale) })),
+    );
+  });
   restore.addEventListener("click", () => void render(1));
   cancel.addEventListener("click", () => job?.abort());
   const stop = effect(update);
-  row.append(button, engineFile, label, apply, restore, cancel);
+  row.append(button, engineFile, label, apply, warp, restore, cancel);
   root.append(row);
   return {
     destroy() {
       destroyed = true;
       job?.abort();
+      stopWarp();
+      attachment?.destroy();
       stop();
       row.remove();
     },

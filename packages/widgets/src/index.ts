@@ -11,6 +11,8 @@ export * from "./level-meter";
 export * from "./automation-lane";
 export { createAutomationOverlay } from "./automation-overlay";
 export type { AutomationOverlayOptions } from "./automation-overlay";
+export { createWarpMarkers } from "./warp-markers";
+export type { WarpMarkerOptions } from "./warp-markers";
 export { attachClipGesture, attachTimeRangeGesture, attachTimelineZoom } from "./arrangement";
 export type {
   ArrangementTimeMap, ClipGestureHandle, ClipGestureOptions, ClipMove, TimeRangeGestureOptions, TimelineRange, TimelineZoomHandle, TimelineZoomOptions,

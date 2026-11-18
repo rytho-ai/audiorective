@@ -1,4 +1,4 @@
-import { normalizeClipEnvelope, unityClipEnvelope, type ClipEnvelope, type RecordedAudio } from "@audiorective/blocks";
+import { normalizeClipEnvelope, unityClipEnvelope, type ClipEnvelope, type RecordedAudio, type WaveStretchAnchor } from "@audiorective/blocks";
 import { normalizeRackEffects, normalizeRackPreset, retainRackMacroTargets, type RackEffect, type RackMacroSettings, type RackPreset } from "@audiorective/blocks/effect-rack";
 import { batch, Cell, readonlyCell, untracked } from "@audiorective/core";
 import { AutomationCurve, type AutomationPoint } from "@audiorective/core/automation";
@@ -7,6 +7,7 @@ import type { MidiData, MidiPlaybackEvent, RecordedMidi, RecordedMidiEvent } fro
 import { AudioMedia } from "./media";
 import { TempoMap } from "./tempo-map";
 import type { TempoChange } from "./tempo-map";
+import { ClipTimeMap, normalizeClipAnchors } from "./clip-time-map";
 
 export type TrackKind = "audio" | "midi" | "bus";
 export type BusRole = "submix" | "effect";
@@ -28,7 +29,7 @@ export type MediaAudioSource = Readonly<{
   channels?: never;
 }>;
 export type AudioClipSource = PcmAudioSource | MediaAudioSource;
-export type AudioClipStretch = Readonly<{ ratio: number; source: AudioClipSource }>;
+export type AudioClipStretch = Readonly<{ ratio: number; source: AudioClipSource; anchors?: readonly WaveStretchAnchor[] }>;
 export type AudioClipGainAutomation = Readonly<{
   /** Original source seconds at the start of this clip's current window. */
   sourceStart: number;
@@ -57,6 +58,10 @@ export const audioFrameCount = (source: AudioClipSource): number => source.media
 /** Seconds in the source before stretch, for this clip's current window. */
 export function audioClipSourceDuration(clip: AudioClip): number {
   return clip.stretch ? audioFrameCount(clip.stretch.source) / clip.sampleRate : clip.duration;
+}
+
+export function audioClipTimeMap(clip: AudioClip): ClipTimeMap {
+  return new ClipTimeMap(audioClipSourceDuration(clip), clip.duration, clip.stretch?.anchors ?? [], clip.sampleRate);
 }
 
 export function normalizeClipGainAutomation(automation: AudioClipGainAutomation | undefined): AudioClipGainAutomation | undefined {
@@ -88,7 +93,7 @@ function validPcm(audio: ProjectAudio): boolean {
       channel instanceof Float32Array && channel.length === audio.channels[0].length && channel.every(Number.isFinite));
 }
 
-function normalizeClipStretch(stretch: AudioClipStretch | undefined, sampleRate: number, channels: number): AudioClipStretch | undefined {
+function normalizeClipStretch(stretch: AudioClipStretch | undefined, sampleRate: number, channels: number, outputFrames: number): AudioClipStretch | undefined {
   if (!stretch) return;
   const { source, ratio } = stretch;
   if (
@@ -99,7 +104,8 @@ function normalizeClipStretch(stretch: AudioClipStretch | undefined, sampleRate:
         !(source.media instanceof AudioMedia) || source.media.sampleRate !== sampleRate
       : !validPcm(source) || audioFrameCount(source) < 1)
   ) throw new RangeError("Project clip stretch needs a compatible original audio window and positive ratio.");
-  return Object.freeze({ ratio, source: snapshotAudioSource(source) });
+  const anchors = normalizeClipAnchors(stretch.anchors ?? [], audioFrameCount(source), outputFrames);
+  return Object.freeze({ ratio, source: snapshotAudioSource(source), ...(anchors.length ? { anchors } : {}) });
 }
 
 function snapshotAudioSource(source: AudioClipSource): AudioClipSource {
@@ -110,7 +116,7 @@ function snapshotAudioSource(source: AudioClipSource): AudioClipSource {
 
 function snapshotAudioClip(clip: AudioClip): AudioClip {
   const stretch = clip.stretch && !clip.stretch.source.media
-    ? Object.freeze({ ratio: clip.stretch.ratio, source: snapshotAudioSource(clip.stretch.source) })
+    ? Object.freeze({ ...clip.stretch, source: snapshotAudioSource(clip.stretch.source) })
     : clip.stretch;
   if (clip.media && stretch === clip.stretch) return clip;
   return Object.freeze({ kind: "audio", id: clip.id, time: clip.time, duration: clip.duration, ...snapshotAudioSource(clip),
@@ -578,7 +584,7 @@ export class Project {
   ): AudioClip {
     const track = this.track(trackId, "audio");
     if (!validTime(time) || !validPcm(audio)) throw new RangeError("Project audio clips need a time, sample rate and equal-length PCM channels.");
-    const stretch = normalizeClipStretch(options.stretch, audio.sampleRate, audio.channels.length);
+    const stretch = normalizeClipStretch(options.stretch, audio.sampleRate, audio.channels.length, audio.channels[0].length);
     const duration = audio.channels[0].length / audio.sampleRate;
     const envelope = normalizeClipEnvelope(options.envelope ?? unityClipEnvelope, duration);
     const gainAutomation = normalizeClipGainAutomation(options.gainAutomation);
@@ -618,7 +624,7 @@ export class Project {
     )
       throw new RangeError("Project media clip needs a valid frame window and time.");
     const duration = frameCount / media.sampleRate;
-    const stretch = normalizeClipStretch(options.stretch, media.sampleRate, media.channelCount);
+    const stretch = normalizeClipStretch(options.stretch, media.sampleRate, media.channelCount, frameCount);
     const envelope = normalizeClipEnvelope(options.envelope ?? unityClipEnvelope, duration);
     const gainAutomation = normalizeClipGainAutomation(options.gainAutomation);
     const clip: MediaAudioClip = Object.freeze({
@@ -751,18 +757,21 @@ export class Project {
   }
 
   /** Apply a prepared render only to the exact clip revision the processor borrowed. */
-  applyAudioClipStretch(expected: AudioClip, ratio: number, rendered?: ProjectAudio): AudioClip {
+  applyAudioClipStretch(expected: AudioClip, ratio: number, rendered?: ProjectAudio, warp: readonly WaveStretchAnchor[] = []): AudioClip {
     const { track, clip } = this.clipAndTrack(expected.id);
     if (clip !== expected) throw new Error("Audio clip changed while rendering stretch.");
     const original = expected.stretch?.source ?? audioSource(expected);
+    const outputFrames = Math.round(audioFrameCount(original) * ratio);
+    const anchors = normalizeClipAnchors(warp, audioFrameCount(original), outputFrames);
+    const usesRender = ratio !== 1 || anchors.length > 0;
     if (
       !Number.isFinite(ratio) || ratio <= 0 ||
-      (ratio !== 1 && (!rendered || !validPcm(rendered) || rendered.sampleRate !== original.sampleRate ||
+      (usesRender && (!rendered || !validPcm(rendered) || rendered.sampleRate !== original.sampleRate ||
         rendered.channels.length !== audioChannelCount(original) || rendered.channels[0].length < 1 ||
-        rendered.channels[0].length !== Math.round(audioFrameCount(original) * ratio)))
+        rendered.channels[0].length !== outputFrames))
     ) throw new RangeError("Project clip stretch needs a positive ratio and matching rendered audio.");
-    if (ratio === 1 && !expected.stretch) return expected;
-    const playback: AudioClipSource = ratio === 1 ? original : Object.freeze({
+    if (!usesRender && !expected.stretch) return expected;
+    const playback: AudioClipSource = !usesRender ? original : Object.freeze({
       sampleRate: rendered!.sampleRate,
       channels: Object.freeze(rendered!.channels.map((channel) => channel.slice())),
     });
@@ -777,7 +786,7 @@ export class Project {
       ...playback,
       duration,
       ...(envelope === unityClipEnvelope ? {} : { envelope }),
-      ...(ratio === 1 ? {} : { stretch: Object.freeze({ ratio, source: original }) }),
+      ...(usesRender ? { stretch: Object.freeze({ ratio, source: original, ...(anchors.length ? { anchors } : {}) }) } : {}),
       ...(expected.gainAutomation ? { gainAutomation: expected.gainAutomation } : {}),
     });
     this.replace(track, { clips: this.sortClips(track.clips.map((item) => item === expected ? next : item)) });
@@ -804,10 +813,16 @@ export class Project {
       if (clip.stretch) {
         const source = clip.stretch.source;
         const frames = audioFrameCount(source);
-        const sourceFrom = Math.round(first * frames / endFrame);
-        const sourceTo = Math.round(last * frames / endFrame);
+        const map = audioClipTimeMap(clip);
+        const sr = clip.sampleRate;
+        const sourceFrom = Math.min(frames - 1, Math.round(map.outputToSource(first / sr) * sr));
+        const sourceTo = Math.min(frames, Math.max(sourceFrom + 1, Math.round(map.outputToSource(last / sr) * sr)));
         sourceFirst = sourceFrom;
-        stretch = Object.freeze({ ratio: clip.stretch.ratio, source: sliceAudioSource(source, sourceFrom, sourceTo) });
+        const anchors = clip.stretch.anchors?.filter((point) =>
+          point.sourceFrame > sourceFrom && point.sourceFrame < sourceTo && point.outputFrame > first && point.outputFrame < last,
+        ).map((point) => Object.freeze({ sourceFrame: point.sourceFrame - sourceFrom, outputFrame: point.outputFrame - first }));
+        const ratio = clip.stretch.anchors?.length ? (last - first) / (sourceTo - sourceFrom) : clip.stretch.ratio;
+        stretch = Object.freeze({ ratio, source: sliceAudioSource(source, sourceFrom, sourceTo), ...(anchors?.length ? { anchors: Object.freeze(anchors) } : {}) });
       }
       const gainAutomation = clip.gainAutomation &&
         Object.freeze({ sourceStart: clip.gainAutomation.sourceStart + sourceFirst / clip.sampleRate, points: clip.gainAutomation.points });

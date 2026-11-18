@@ -13,9 +13,10 @@ import { summarizePeaks, type PCMData, type PeakSummary } from "@audiorective/co
 import type { AutomationBinding } from "@audiorective/core/automation";
 import { loadSource, type WaveLoadProgress, type WaveSourceLoader } from "./source";
 
+export type WaveStretchAnchor = Readonly<{ sourceFrame: number; outputFrame: number }>;
 /** A processor is borrowed; its lifetime belongs to the caller. */
 export interface WaveStretchProcessor {
-  process(input: PCMData, options: { ratio: number; signal?: AbortSignal }): Promise<PCMData>;
+  process(input: PCMData, options: { ratio: number; anchors?: readonly WaveStretchAnchor[]; signal?: AbortSignal }): Promise<PCMData>;
 }
 export interface WavePlayerOptions {
   stretch?: WaveStretchProcessor;

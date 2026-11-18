@@ -103,7 +103,7 @@ Playback applies the same envelope to in-memory clips and file-backed windows, i
 
 `project.setAudioClipGainAutomation(clipId, points)` edits a clip's own linear gain curve. Point times are seconds in the original source before stretch. The curve multiplies the clip's constant gain and fades, and track automation runs separately. A gain-only edit updates playing Arrangement voices at their current source position. Use `await workspace.flush()` when a following operation needs the applied change.
 
-Moving or stretching a clip preserves its points. Trimming or splitting updates `clip.gainAutomation.sourceStart` to the first retained source frame in seconds. Points outside the visible window still guide interpolation. Map a waveform's playback time to `sourceStart + playbackTime * audioClipSourceDuration(clip) / clip.duration`. Invert that mapping to draw a source point on the waveform. Pass an empty array to clear the curve.
+Moving, stretching or warping a clip preserves its points. Trimming or splitting updates `clip.gainAutomation.sourceStart` to the first retained source frame in seconds. Points outside the visible window still guide interpolation. Use `audioClipTimeMap(clip)` to convert waveform seconds with `sourceStart + map.outputToSource(playbackTime)` and use `map.sourceToOutput(sourceTime - sourceStart)` for the inverse. Pass the clip's warp output times as the overlay's `viewBreakpoints` so the drawing follows the same slopes as playback. Pass an empty array to clear the curve.
 
 PCM, file-backed playback, clip and range audition, and newly launched Session PCM apply the curve. An already launched Session clip uses the curve from its launch. Audiorective stores editable points in its DAWproject metadata. Use the rendered audio fallback for other DAWs that need the audible result.
 
@@ -121,7 +121,7 @@ Observe `workspace.auditioningRange` for the active or loading range, and call `
 
 ### Pitch-preserving clip stretch
 
-`Workspace.prepareAudioClipStretch(clipId, ratio, processor, { signal? })` borrows a `WaveStretchProcessor`. Pass the desired length divided by original length. Call `apply()` on the prepared result inside the app's undo transaction, then await `workspace.flush()` if the next action depends on the applied render. Preparation leaves Project unchanged. Moving, trimming, deleting or replacing the clip invalidates a prepared edit. Preparing a newer result for that clip, cancelling the supplied signal and destroying Workspace all cancel outstanding work. Apply a prepared result once.
+`Workspace.prepareAudioClipStretch(clipId, ratio, processor, { anchors?, signal? })` borrows a `WaveStretchProcessor`. Pass the desired length divided by original length. Call `apply()` on the prepared result inside the app's undo transaction, then await `workspace.flush()` if the next action depends on the applied render. Preparation leaves Project unchanged. Moving, trimming, deleting or replacing the clip invalidates a prepared edit. Preparing a newer result for that clip, cancelling the supplied signal and destroying Workspace all cancel outstanding work. Apply a prepared result once.
 
 ```ts
 import { TimeStretch } from "@audiorective/effects/time-stretch";
@@ -136,9 +136,11 @@ try {
 }
 ```
 
-A clip stores its rendered playback plus the original audio window. A later ratio always uses that original window. Pass ratio `1` to restore it, with no processor required. Clip position and ID stay in place. Fade lengths scale with the clip, and trimming or splitting maps each cut back to the retained source at a sample boundary. Offline processing loads the selected source window into memory.
+A clip stores its rendered playback plus the original audio window. A later ratio always uses that original window. Pass ratio `1` without anchors to restore it without a processor. Clip position and ID stay in place. Fade lengths scale with the clip. Offline processing loads the selected source window into memory.
 
-DAWproject stores the rendered WAV as the playable clip. Audiorective retains the original window and ratio in private project entries. The file opens and plays without a stretch engine. Restretching requires the caller's processor. Use `project.hasFileBackedAudio` to choose a streaming save when either the playback or a retained source is file-backed.
+To warp a clip, pass strictly increasing interior `{ sourceFrame, outputFrame }` anchors and an anchor-capable processor. For 48 kHz PCM, `{ ratio: 1, anchors: [{ sourceFrame: 48000, outputFrame: 62400 }] }` moves the point from 1.0 to 1.3 seconds while holding total length. Trimming or splitting projects each cut back to a retained source frame and rebases interior anchors. `audioClipTimeMap(clip)` exposes `sourceDuration`, `outputDuration`, `sourceToOutput(seconds)` and `outputToSource(seconds)`. Its piecewise-linear conversion also projects source-relative gain into playback time.
+
+DAWproject stores the rendered WAV as the playable clip. Audiorective retains the original window, ratio and anchors in private project entries. The file opens and plays without a stretch engine. Re-rendering requires the caller's processor. Use `project.hasFileBackedAudio` to choose a streaming save when either the playback or a retained source is file-backed.
 
 ## Mixer buses and sends
 
@@ -301,6 +303,7 @@ A small [Cubase 14 export shared on the Steinberg forum](https://forums.steinber
 | `Project clip envelope needs an audio clip.` | Pass an ID from a current audio track. |
 | `Project audio fades need seconds.` | Import clip fades in seconds. |
 | `Project clip gain automation needs an audio clip.` | Pass the ID of an existing audio clip. |
+| `Project clip warp needs strictly increasing interior source and output frames.` | Keep each anchor inside both frame windows and in increasing order on both axes. |
 | `Audio clip gain automation needs a non-negative source start and non-negative finite gains.` | Use original source seconds and non-negative linear gain. |
 | `Clip gain must be non-negative and fades must fit its duration.` | Keep the combined fade lengths within the clip duration. |
 

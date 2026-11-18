@@ -4,13 +4,14 @@ import { batch, cell, effect, readonlyCell, untracked, type Cell, type Readable 
 import { AutomationBinding, AutomationCurve, audioParamTarget } from "@audiorective/core/automation";
 import type { AutomationPoint } from "@audiorective/core/automation";
 import { WebClapHost } from "@audiorective/host/webclap";
-import { AudioRecorder, ClipLauncher, clipGainAt, scheduleClipEnvelope, type ClipLaunch, type ClipLauncherState, type QueuedClipLaunch, type StepSequencer, type WaveStretchProcessor } from "@audiorective/blocks";
+import { AudioRecorder, ClipLauncher, clipGainAt, scheduleClipEnvelope, type ClipLaunch, type ClipLauncherState, type QueuedClipLaunch, type StepSequencer, type WaveStretchAnchor, type WaveStretchProcessor } from "@audiorective/blocks";
 import { EffectRack, retainRackMacroTargets, type RackEffect, type RackMacroSettings } from "@audiorective/blocks/effect-rack";
 import { AudioTrackSession } from "./audio-track-session";
 import { openDawProject, openDawProjectBlob, saveDawProject, saveDawProjectTo } from "./dawproject";
 import { soloRouting } from "./mixer-routing";
 import { createOpfsAudioMediaWriter } from "./media";
-import { MidiClip, Project, audioClipSourceDuration, audioFrameCount } from "./model";
+import { MidiClip, Project, audioClipTimeMap, audioFrameCount } from "./model";
+import { normalizeClipAnchors } from "./clip-time-map";
 import type { TempoMap } from "./tempo-map";
 import { writeStoredZip } from "./stored-zip";
 import type { StoredZipEntry } from "./stored-zip";
@@ -1080,16 +1081,20 @@ export class Workspace {
     clipId: string,
     ratio: number,
     processor?: WaveStretchProcessor,
-    options: { signal?: AbortSignal } = {},
+    options: { signal?: AbortSignal; anchors?: readonly WaveStretchAnchor[] } = {},
   ): Promise<PreparedClipStretch> {
     if (this.destroyed) throw new Error("Workspace is destroyed.");
     options.signal?.throwIfAborted();
     const clip = this.findAudioClip(clipId);
     if (!clip) throw new Error("Workspace clip stretch needs an audio clip.");
     const source = clip.stretch?.source ?? clip;
-    if (!Number.isFinite(ratio) || ratio <= 0 || Math.round(audioFrameCount(source) * ratio) < 1 || !Number.isSafeInteger(Math.round(audioFrameCount(source) * ratio)))
+    const frames = audioFrameCount(source);
+    const outputFrames = Math.round(frames * ratio);
+    if (!Number.isFinite(ratio) || ratio <= 0 || outputFrames < 1 || !Number.isSafeInteger(outputFrames))
       throw new RangeError("Workspace clip stretch ratio must produce at least one sample.");
-    if (ratio !== 1 && !processor) throw new Error("Workspace clip stretch needs a processor.");
+    const anchors = normalizeClipAnchors(options.anchors ?? [], frames, outputFrames);
+    const usesRender = ratio !== 1 || anchors.length > 0;
+    if (usesRender && !processor) throw new Error("Workspace clip stretch needs a processor.");
 
     this.clipStretchJobs.get(clipId)?.abort();
     const job = new AbortController();
@@ -1108,19 +1113,19 @@ export class Workspace {
     try {
       check();
       let rendered: Awaited<ReturnType<WaveStretchProcessor["process"]>> | undefined;
-      if (ratio !== 1) {
+      if (usesRender) {
         const channels = source.media
           ? await source.media.readFrames(source.startFrame, source.frameCount)
           : source.channels.map((channel) => channel.slice());
         check();
-        rendered = await processor!.process({ sampleRate: source.sampleRate, channels }, { ratio, signal });
+        rendered = await processor!.process({ sampleRate: source.sampleRate, channels }, { ratio, signal, ...(anchors.length ? { anchors } : {}) });
         check();
       }
       return Object.freeze({
         apply: () => {
           try {
             check();
-            return this.project.applyAudioClipStretch(clip, ratio, rendered);
+            return this.project.applyAudioClipStretch(clip, ratio, rendered, anchors);
           } finally {
             release();
           }
@@ -1458,10 +1463,9 @@ export class Workspace {
       output = source.connect(envelopeGain);
     }
     output.connect(destination);
-    const secondsPerUnit = clip.duration / audioClipSourceDuration(clip);
+    let timeMap: ReturnType<typeof audioClipTimeMap> | undefined;
     let gain: GainNode | undefined;
     let binding: AutomationBinding | undefined;
-    let sourceStart: number | undefined;
     const setAutomation = (automation: AudioClipGainAutomation | undefined) => {
       if (!automation) {
         binding?.destroy();
@@ -1469,9 +1473,11 @@ export class Workspace {
         gain?.gain.setValueAtTime(1, this.context.currentTime);
         return;
       }
-      if (!(length > 0) || !(secondsPerUnit > 0)) return;
-      if (binding && sourceStart === automation.sourceStart) {
-        binding.curve.value = automation.points;
+      if (!(length > 0)) return;
+      timeMap ??= audioClipTimeMap(clip);
+      const points = timeMap.projectGain(automation.points, automation.sourceStart);
+      if (binding) {
+        binding.curve.value = points;
         return;
       }
       if (!gain) {
@@ -1479,13 +1485,10 @@ export class Workspace {
         output.disconnect(destination);
         output.connect(gain).connect(destination);
       }
-      binding?.destroy();
-      binding = new AutomationBinding(this.context, new AutomationCurve(automation.points), audioParamTarget(gain.gain));
-      sourceStart = automation.sourceStart;
-      const from = sourceStart + offset / secondsPerUnit;
+      binding = new AutomationBinding(this.context, new AutomationCurve(points), audioParamTarget(gain.gain));
       const elapsed = Math.max(0, this.context.currentTime - when);
-      const to = from + length / secondsPerUnit;
-      binding.start({ when, from: Math.min(to, from + elapsed / secondsPerUnit), to, secondsPerUnit });
+      const to = offset + length;
+      binding.start({ when, from: Math.min(to, offset + elapsed), to });
     };
     return {
       setAutomation,
@@ -1577,12 +1580,11 @@ export class Workspace {
     if (!buffer) {
       buffer = this.context.createBuffer(clip.channels.length, clip.channels[0].length, clip.sampleRate);
       const output = clip.channels.map((_, index) => buffer!.getChannelData(index));
-      const curve = gainAutomation && new AutomationCurve(gainAutomation.points);
-      const sourceRate = audioClipSourceDuration(clip) / clip.duration;
+      const curve = gainAutomation && new AutomationCurve(audioClipTimeMap(clip).projectGain(gainAutomation.points, gainAutomation.sourceStart));
       for (let frame = 0; frame < buffer.length; frame++) {
         const time = frame / clip.sampleRate;
         const gain = (envelope ? clipGainAt(envelope, clip.duration, time) : 1) *
-          (curve?.valueAt(gainAutomation!.sourceStart + time * sourceRate) ?? 1);
+          (curve?.valueAt(time) ?? 1);
         for (let channel = 0; channel < output.length; channel++) output[channel][frame] = clip.channels[channel][frame] * gain;
       }
       this.sessionAudioBuffers.set(clip, buffer);

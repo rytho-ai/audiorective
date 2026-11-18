@@ -63,6 +63,119 @@ try {
   if (process.env.DAW_STRETCH_SCREENSHOT) await page.screenshot({ path: process.env.DAW_STRETCH_SCREENSHOT });
   await row.getByRole("button", { name: "還原原始長度" }).click();
   await page.waitForFunction(changed, { ...target, scale: 1 });
+  await row.getByRole("button", { name: "Warp 標記", exact: true }).click();
+  const wave = page.locator("#editor-panel [data-testid=waveform]");
+  const box = await wave.boundingBox();
+  await wave.dblclick({ position: { x: box.width * 0.35, y: box.height * 0.35 } });
+  const marker = page.getByRole("slider", { name: "Warp 標記 1", exact: true });
+  await marker.waitFor({ state: "visible" });
+  const firstPosition = Number(await marker.getAttribute("aria-valuenow"));
+  const grip = await marker.boundingBox();
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + 9);
+  await page.mouse.down();
+  await page.mouse.move(grip.x + grip.width / 2 + box.width * 0.15, grip.y + 9, { steps: 4 });
+  await page.mouse.up();
+  const warpState = ({ id, value }) => {
+    const clip = window.__daw.project.tracks.flatMap(({ clips }) => clips).find((item) => item.id === id);
+    return Math.abs((clip.stretch?.anchors?.[0]?.outputFrame ?? NaN) / clip.sampleRate - value) < 0.015;
+  };
+  await page.waitForFunction(warpState, { id: target.id, value: firstPosition + target.duration * 0.15 });
+  await page.locator("#undo").click();
+  await page.waitForFunction(warpState, { id: target.id, value: firstPosition });
+  await page.locator("#redo").click();
+  await page.waitForFunction(warpState, { id: target.id, value: firstPosition + target.duration * 0.15 });
+  const beforeNudge = Number(await marker.getAttribute("aria-valuenow"));
+  await marker.press("ArrowRight");
+  await page.waitForFunction(
+    ({ id, value }) => {
+      const clip = window.__daw.project.tracks.flatMap(({ clips }) => clips).find((item) => item.id === id);
+      return (
+        Math.abs((clip.stretch?.anchors?.[0]?.outputFrame ?? NaN) / clip.sampleRate - value) < 0.001 &&
+        document.activeElement?.classList.contains("ar-warp-marker")
+      );
+    },
+    { id: target.id, value: beforeNudge + 0.01 },
+  );
+  await page.getByRole("button", { name: "片段自動化", exact: true }).click();
+  await marker.waitFor({ state: "detached" });
+  await row.getByRole("button", { name: "Warp 標記", exact: true }).click();
+  await marker.waitFor({ state: "visible" });
+
+  const warped = await page.evaluate(
+    async (wasm) => {
+      const { Project, Workspace, TimeStretch, openDawProject } = window.stretchFixture;
+      const rate = 48000;
+      const source = Float32Array.from({ length: 2 * rate }, (_, i) => {
+        const time = i / rate;
+        return (0.125 + 0.65 * Math.exp(-0.5 * ((time - 1) / 0.012) ** 2)) * Math.sin(2 * Math.PI * 440 * time);
+      });
+      const project = new Project();
+      const track = project.addTrack("Warped transient", "audio", { pan: -1 });
+      const clip = project.addAudioClip(track.id, { sampleRate: rate, channels: [source] }, 0);
+      const workspace = await Workspace.create(window.__daw.workspace.context, project);
+      const engine = new TimeStretch(await WebAssembly.compile(Uint8Array.from(wasm)));
+      const point = { sourceFrame: rate, outputFrame: 1.3 * rate };
+      const prepared = await workspace.prepareAudioClipStretch(clip.id, 1, engine, { anchors: [point] });
+      const committed = prepared.apply();
+      const automated = project.addTrack("Same PCM with source gain", "audio", { pan: 1 });
+      project.duplicateClip(clip.id, 0, automated.id);
+      project.setAudioClipGainAutomation(project.tracks[1].clips[0].id, [
+        { time: 0, value: 0.25, shape: "linear" },
+        { time: 2, value: 1, shape: "hold" },
+      ]);
+      const archive = await workspace.save();
+      const saved = openDawProject(archive).project;
+      const reopened = saved.tracks[0].clips[0];
+      const same = (left, right) => left.length === right.length && left.every((value, i) => value === right[i]);
+
+      const context = new OfflineAudioContext(2, rate * 2, rate);
+      context.resume = async () => {};
+      const restored = await Workspace.open(context, archive, { destination: context.destination });
+      await restored.play();
+      const buffer = await context.startRendering();
+      const samples = buffer.getChannelData(0);
+      const withGain = buffer.getChannelData(1);
+      let gainError = 0;
+      for (let i = rate * 0.1; i < rate * 1.9; i++) {
+        const outputTime = i / rate;
+        const sourceTime = outputTime < 1.3 ? outputTime / 1.3 : 1 + (outputTime - 1.3) / 0.7;
+        gainError = Math.max(gainError, Math.abs(withGain[i] - samples[i] * (0.25 + (0.75 * sourceTime) / 2)));
+      }
+      let max = 0,
+        time = 0;
+      for (let i = Math.round(0.85 * rate); i < Math.round(1.6 * rate); i += 24) {
+        let energy = 0;
+        for (let j = -128; j < 128; j++) energy += samples[i + j] ** 2;
+        if (energy > max) {
+          max = energy;
+          time = i / rate;
+        }
+      }
+      const answer = {
+        time,
+        gainError,
+        duration: reopened.duration,
+        anchor: reopened.stretch.anchors[0],
+        original: same(reopened.stretch.source.channels[0], source),
+        rendered: same(reopened.channels[0], committed.channels[0]),
+      };
+      restored.destroy();
+      restored.project.destroy();
+      workspace.destroy();
+      saved.destroy();
+      project.destroy();
+      engine.destroy();
+      return answer;
+    },
+    [...(await readFile(enginePath))],
+  );
+  assert.ok(Math.abs(warped.time - 1.3) < 0.06, JSON.stringify(warped));
+  assert.ok(warped.gainError < 0.001, JSON.stringify(warped));
+  assert.deepEqual(
+    { ...warped, time: undefined, gainError: undefined },
+    { time: undefined, gainError: undefined, duration: 2, anchor: { sourceFrame: 48000, outputFrame: 62400 }, original: true, rendered: true },
+  );
+  console.log("Warp markers passed drag, undo/redo and reopened PCM timing", warped);
 
   const proof = await page.evaluate(
     async (wasm) => {

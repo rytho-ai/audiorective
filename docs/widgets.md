@@ -66,7 +66,11 @@ For app-owned commands, supply a structural getter that reads the current tracke
 
 `view.attach(createAutomationOverlay({ points, fromView, toView, defaultValue, maxValue, onCommit }))` layers a borrowed curve over a waveform or other time view. Supply a reactive `points` reader and increasing inverse time conversions. The overlay follows zoom and scroll. Double-click to add a point, drag to move it, or use the arrow keys on a focused point. Enter switches between linear and hold. Delete removes the point. An optional `snap` function receives view time, and Alt bypasses it. Dragging commits once on release and cancels on Escape or data replacement.
 
-The attachment owns its gesture and drawing. The caller owns the points and playback. For a project clip, derive the conversion from [the clip's source window](./workspace.md#clip-gain-automation) and pass updates to Project in `onCommit`.
+The attachment owns its gesture and drawing. The caller owns the points and playback. For a project clip, derive the conversion from [the clip's source window](./workspace.md#clip-gain-automation) and pass updates to Project in `onCommit`. Supply optional `viewBreakpoints` at slope changes in a piecewise mapping.
+
+## Warp markers
+
+`view.attach(createWarpMarkers({ anchors, sampleRate, sourceFrames, sourceFrameAt, onCommit }))` mounts a seconds-view marker editor. `anchors` is a reactive reader of source/output frame pairs. Supply a conversion from waveform seconds to source frames for new markers. Double-click to add a marker, drag it to change its output position, or move a focused marker with the arrow keys. Shift increases the keyboard step. Delete removes a marker and Escape cancels a drag. The view commits on release and renders neighboring markers in order. It borrows the anchors and leaves audio processing and undo to the caller.
 
 ## Spectrum and EQ editor
 
@@ -474,6 +478,8 @@ DOM classes use the `ar-` prefix to scope widget presentation. Internal class na
 | `Parameter control needs a finite increasing range and a positive minimum for log scale.` | Provide a finite increasing range, above zero for log scale. |
 | `Parameter control step must be positive.` | Supply a finite positive step, or omit it. |
 | `Automation overlay needs a positive maximum and an in-range default.` | Provide a positive finite maximum and a default between zero and that maximum. |
+| `Warp markers need a positive sample rate and source frame count.` | Supply both from the clip's source. |
+| `Warp markers need a seconds time view.` | Mount on a seconds-based waveform. |
 | `Level meter sample count must be a positive integer.` | Supply the length of the float buffer your reader needs. |
 
 Messages thrown by the plain player adapters, waveform view, its plugins and the complete selector. Waveform loading and playback messages come from the borrowed player: see [Blocks](./blocks.md#common-errors).

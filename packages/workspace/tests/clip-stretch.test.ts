@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import { unzipSync, zipSync } from "fflate";
-import { AudioMedia, Project, openDawProject, openDawProjectBlob, saveDawProject, saveDawProjectTo } from "../src";
+import { AudioMedia, Project, audioClipTimeMap, openDawProject, openDawProjectBlob, saveDawProject, saveDawProjectTo } from "../src";
+import { AutomationCurve } from "@audiorective/core/automation";
 
 const original = Float32Array.from({ length: 40 }, (_, index) => index / 40);
 const frames = (count: number) => ({ sampleRate: 100, channels: [new Float32Array(count).fill(0.5)] });
@@ -70,4 +71,48 @@ test("streams the original file-backed window even when the current rendered cli
   const restored = reopened.applyAudioClipStretch(stretched, 1);
   expect(restored.duration).toBe(0.2);
   expect(await restored.media?.readFrames(0, 20)).toEqual([original.subarray(10, 30)]);
+});
+
+test("warp windows preserve source history, anchor interpolation and gain after splitting and saving", () => {
+  const project = new Project();
+  const track = project.addTrack("Warp", "audio");
+  const pcm = Float32Array.from({ length: 200 }, (_, i) => i / 200);
+  const start = project.addAudioClip(track.id, { sampleRate: 100, channels: [pcm] }, 0, {
+    gainAutomation: {
+      sourceStart: 0,
+      points: [
+        { time: 0, value: 0, shape: "linear" },
+        { time: 2, value: 1, shape: "hold" },
+      ],
+    },
+  });
+  const anchors = [{ sourceFrame: 100, outputFrame: 130 }];
+  expect(() => project.applyAudioClipStretch(start, 1, frames(200), [{ sourceFrame: 1, outputFrame: 200 }])).toThrow(/warp needs/);
+  const warped = project.applyAudioClipStretch(start, 1, frames(200), anchors);
+  anchors[0].outputFrame = 150;
+  expect(warped.stretch?.anchors).toEqual([{ sourceFrame: 100, outputFrame: 130 }]);
+  const map = audioClipTimeMap(warped);
+  expect(map.outputToSource(0.65)).toBeCloseTo(0.5);
+  expect(map.sourceToOutput(1.5)).toBeCloseTo(1.65);
+  const gain = new AutomationCurve(map.projectGain(warped.gainAutomation!.points, 0));
+  expect(gain.valueAt(0.65)).toBeCloseTo(0.25);
+  expect(gain.valueAt(1.65)).toBeCloseTo(0.75);
+
+  const [, tail] = project.splitClip(warped.id, 0.65);
+  if (tail.kind !== "audio") throw new Error("Expected audio clip.");
+  const properties = {
+    duration: 1.35,
+    gainAutomation: { sourceStart: 0.5 },
+    stretch: { ratio: 0.9, anchors: [{ sourceFrame: 50, outputFrame: 65 }] },
+  };
+  expect(tail).toMatchObject(properties);
+  expect(tail.stretch?.source.channels?.[0]).toEqual(pcm.subarray(50));
+  expect(project.duplicateClip(tail.id, 3)).toMatchObject(properties);
+  const reopened = openDawProject(saveDawProject(project)).project;
+  const reopenedTail = reopened.tracks[0].clips[1];
+  expect(reopenedTail).toEqual(tail);
+  if (reopenedTail.kind !== "audio") throw new Error("Expected audio clip.");
+  const restored = reopened.applyAudioClipStretch(reopenedTail, 1);
+  expect(restored.channels?.[0]).toEqual(pcm.subarray(50));
+  expect(restored.duration).toBe(1.5);
 });

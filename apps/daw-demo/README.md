@@ -43,6 +43,8 @@ Select an audio clip and open **編輯** to change **片段音量**, **淡入** 
 
 In the audio clip editor, choose **載入伸縮引擎** and supply a compatible Rubber Band 3.3 ABI `.wasm` file. Enter **長度倍率** and select **套用倍率** to render with the original pitch. The original audio stays in the project. Use **還原原始長度** to return to it and the standard undo and redo controls to reverse an edit. Saved rendered clips play without loading an engine. To run the real-engine check, set `DAW_STRETCH_WASM` to a compatible local fixture and run `pnpm --filter @audiorective/daw-demo smoke:stretch`.
 
+Turn on **Warp 標記** and double-click the waveform to pin a point in the source. Drag its marker to move that sound while holding the clip length. The edit renders on release. Use the arrow keys on a focused marker to move it or Delete to remove it. The project saves the rendered audio, original source and markers.
+
 ## DAW v1 reference song
 
 Open **步進鼓機** to edit a 16-step pattern, adjust velocity and assign loaded samples to pads. The pattern follows the project clock after you enable it. Manual pad presses work separately. The groove and its pad assignments are live session controls. Run `pnpm --filter @audiorective/daw-demo smoke:rhythm` to check grid edits and rendered cancellation.

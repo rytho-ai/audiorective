@@ -13,6 +13,7 @@ export type {
   WavePlayerOptions,
   WavePlayOptions,
   WaveStretchProcessor,
+  WaveStretchAnchor,
   PlaybackVersion,
 } from "./WavePlayer";
 export { ClipLauncher } from "./ClipLauncher";

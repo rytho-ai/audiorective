@@ -3,6 +3,7 @@ import type { Document, Element } from "@xmldom/xmldom";
 import { unzipSync, zipSync, Unzip, UnzipInflate } from "fflate";
 import type { MidiNote } from "@audiorective/midi";
 import type { RackEffect, RackMacroSettings } from "@audiorective/blocks/effect-rack";
+import type { WaveStretchAnchor } from "@audiorective/blocks";
 import { MidiClip, Project, audioChannelCount, normalizeClipGainAutomation } from "./model";
 import type { AudioClip, AudioClipGainAutomation, AudioClipSource, AudioClipStretch, ProjectMidiEvent, ProjectTrack } from "./model";
 import { decodeWav, encodeWav, mediaFromWav, wavMediaEntry } from "./wav";
@@ -19,6 +20,7 @@ type StoredClip = {
   events?: StoredEvent[];
   audioGain?: number;
   stretchRatio?: number;
+  warpAnchors?: readonly WaveStretchAnchor[];
   gainAutomation?: AudioClipGainAutomation;
 };
 type PrivateState = { version: 1 | 2; clips: StoredClip[]; rackMacros?: Record<string, readonly RackMacroSettings[]> };
@@ -170,6 +172,7 @@ function writeClip(
       fingerprint: clip.stretch || clip.gainAutomation || gain !== 1 ? path : "",
       ...(gain === 1 ? {} : { audioGain: gain }),
       ...(clip.stretch ? { stretchRatio: clip.stretch.ratio } : {}),
+      ...(clip.stretch?.anchors?.length ? { warpAnchors: clip.stretch.anchors } : {}),
       ...(clip.gainAutomation ? { gainAutomation: clip.gainAutomation } : {}),
     });
     return;
@@ -800,7 +803,7 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
             let stretch: AudioClipStretch | undefined;
             if (aligned && match.stretchRatio !== undefined) {
               if (!original) throw new Error("Project clip stretch source is missing.");
-              stretch = { ratio: match.stretchRatio, source: readAudioSource(original) };
+              stretch = { ratio: match.stretchRatio, source: readAudioSource(original), anchors: match.warpAnchors };
             } else if (original) {
               warnings.push("A rendered audio clip was opened without its Audiorective stretch settings.");
             }
