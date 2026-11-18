@@ -2,12 +2,16 @@ import {
   Project,
   Workspace,
   createOpfsAudioMediaWriter,
+  openWorkspaceBlob,
+  openWorkspace,
+  saveWorkspace,
+  saveWorkspaceTo,
   type AudioMedia,
   type AudioMediaWriter,
   type MidiClip,
   type ProjectTrack,
   type TakeAnchor,
-} from "@audiorective/workspace";
+} from "@audiorective/daw";
 import { mountStudioSession } from "./session-view";
 import { mountRhythmView } from "./rhythm-view";
 import { StudioView } from "./studio-view";
@@ -353,14 +357,15 @@ async function save(): Promise<void> {
   ).showSaveFilePicker;
   if (hasMedia && picker) {
     const file = await picker({ suggestedName: "audiorective-daw.dawproject" });
-    await workspace.saveTo(await file.createWritable());
+    await saveWorkspaceTo(workspace, await file.createWritable());
     status(`已串流儲存 ${workspace.project.tracks.length} 軌 · 插件音色需收件者安裝相同 CLAP；可另匯出音訊`);
     return;
   }
   let archive: Blob;
   if (hasMedia) {
     const parts: Uint8Array[] = [];
-    await workspace.saveTo(
+    await saveWorkspaceTo(
+      workspace,
       new WritableStream({
         write: (chunk) => {
           parts.push(chunk);
@@ -369,7 +374,7 @@ async function save(): Promise<void> {
     );
     archive = new Blob(parts as BlobPart[], { type: "application/zip" });
   } else {
-    const bytes = await workspace.save();
+    const bytes = await saveWorkspace(workspace);
     archive = new Blob([new Uint8Array(bytes).buffer], { type: "application/zip" });
   }
   const url = URL.createObjectURL(archive);
@@ -461,7 +466,7 @@ async function replaceProject(next: Workspace): Promise<void> {
 
 async function open(file: File, recovered = false): Promise<void> {
   if (!canReplaceProject()) return;
-  const next = await Workspace.openBlob(context, file, options);
+  const next = await openWorkspaceBlob(context, file, options);
   if (!canReplaceProject()) {
     next.destroy();
     next.project.destroy();
@@ -920,5 +925,6 @@ Object.assign(window, {
     get samples() {
       return samples;
     },
+    api: { openWorkspace, openWorkspaceBlob, saveWorkspace, saveWorkspaceTo },
   },
 });

@@ -1,8 +1,8 @@
 import { createClipStretchEngine, mountClipStretchView, type AudioClipEditorTool } from "./clip-stretch-view";
-import { unityClipEnvelope } from "@audiorective/blocks";
 import type { WebClapDescriptor } from "@audiorective/host/webclap";
 import {
   audioClipTimeMap,
+  unityClipEnvelope,
   type AudioClip,
   type MidiClip,
   type ProjectClip,
@@ -10,7 +10,7 @@ import {
   type BusRole,
   type TrackRouting,
   type Workspace,
-} from "@audiorective/workspace";
+} from "@audiorective/daw";
 import type { MidiNote } from "@audiorective/midi";
 import { mountPianoRoll } from "@audiorective/widgets/piano-roll";
 import {

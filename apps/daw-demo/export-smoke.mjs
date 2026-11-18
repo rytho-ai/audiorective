@@ -71,7 +71,7 @@ try {
       { id: "delay", type: "delay", enabled: true, wet: 1, delayTime: 0.25, feedback: 0 },
     ];
     workspace.setTrackEffects(track.id, effects);
-    const restored = await Workspace.open(context, await workspace.save());
+    const restored = await window.__daw.api.openWorkspace(context, await window.__daw.api.saveWorkspace(workspace));
     const reopenedMaster = restored.project.masterVolume;
     let effectOutput;
     try {

@@ -32,6 +32,9 @@ importers:
       '@audiorective/core':
         specifier: workspace:^
         version: link:../../packages/core
+      '@audiorective/daw':
+        specifier: workspace:^
+        version: link:../../packages/daw
       '@audiorective/effects':
         specifier: workspace:^
         version: link:../../packages/effects
@@ -44,9 +47,6 @@ importers:
       '@audiorective/widgets':
         specifier: workspace:^
         version: link:../../packages/widgets
-      '@audiorective/workspace':
-        specifier: workspace:^
-        version: link:../../packages/workspace
     devDependencies:
       playwright:
         specifier: ^1.58.2
@@ -157,9 +157,6 @@ importers:
       '@audiorective/core':
         specifier: workspace:^
         version: link:../core
-      '@audiorective/effects':
-        specifier: workspace:^
-        version: link:../effects
     devDependencies:
       '@types/node':
         specifier: ^24.9.1
@@ -222,6 +219,55 @@ importers:
       immer:
         specifier: ^11.1.4
         version: 11.1.4
+    devDependencies:
+      '@types/node':
+        specifier: ^24.9.1
+        version: 24.10.0
+      '@vitest/browser':
+        specifier: ^4.0.18
+        version: 4.0.18(vite@6.4.1(@types/node@24.10.0)(jiti@2.6.1)(lightningcss@1.32.0)(yaml@2.8.1))(vitest@4.0.18)
+      '@vitest/browser-playwright':
+        specifier: ^4.0.18
+        version: 4.0.18(playwright@1.58.2)(vite@6.4.1(@types/node@24.10.0)(jiti@2.6.1)(lightningcss@1.32.0)(yaml@2.8.1))(vitest@4.0.18)
+      playwright:
+        specifier: ^1.58.2
+        version: 1.58.2
+      tsdown:
+        specifier: ^0.15.9
+        version: 0.15.12(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.2)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.0.18
+        version: 4.0.18(@types/node@24.10.0)(@vitest/browser-playwright@4.0.18)(jiti@2.6.1)(jsdom@28.1.0(canvas@3.2.1))(lightningcss@1.32.0)(yaml@2.8.1)
+
+  packages/daw:
+    dependencies:
+      '@audiorective/blocks':
+        specifier: workspace:^
+        version: link:../blocks
+      '@audiorective/clock':
+        specifier: workspace:^
+        version: link:../clock
+      '@audiorective/core':
+        specifier: workspace:^
+        version: link:../core
+      '@audiorective/effects':
+        specifier: workspace:^
+        version: link:../effects
+      '@audiorective/host':
+        specifier: workspace:^
+        version: link:../host
+      '@audiorective/midi':
+        specifier: workspace:^
+        version: link:../midi
+      '@xmldom/xmldom':
+        specifier: ^0.9.8
+        version: 0.9.12
+      fflate:
+        specifier: ^0.8.2
+        version: 0.8.2
     devDependencies:
       '@types/node':
         specifier: ^24.9.1
@@ -480,43 +526,6 @@ importers:
       playwright:
         specifier: ^1.58.2
         version: 1.58.2
-      tsdown:
-        specifier: ^0.15.9
-        version: 0.15.12(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.2)(typescript@5.9.3)
-      typescript:
-        specifier: ^5.9.3
-        version: 5.9.3
-      vitest:
-        specifier: ^4.0.18
-        version: 4.0.18(@types/node@24.10.0)(@vitest/browser-playwright@4.0.18)(jiti@2.6.1)(jsdom@28.1.0(canvas@3.2.1))(lightningcss@1.32.0)(yaml@2.8.1)
-
-  packages/workspace:
-    dependencies:
-      '@audiorective/blocks':
-        specifier: workspace:^
-        version: link:../blocks
-      '@audiorective/clock':
-        specifier: workspace:^
-        version: link:../clock
-      '@audiorective/core':
-        specifier: workspace:^
-        version: link:../core
-      '@audiorective/host':
-        specifier: workspace:^
-        version: link:../host
-      '@audiorective/midi':
-        specifier: workspace:^
-        version: link:../midi
-      '@xmldom/xmldom':
-        specifier: ^0.9.8
-        version: 0.9.12
-      fflate:
-        specifier: ^0.8.2
-        version: 0.8.2
-    devDependencies:
-      '@types/node':
-        specifier: ^24.9.1
-        version: 24.10.0
       tsdown:
         specifier: ^0.15.9
         version: 0.15.12(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.2)(typescript@5.9.3)

@@ -1,20 +1,7 @@
 import { Param, SchedulableParam, batch, type SignalAccessor } from "@audiorective/core";
+import { isMacroValue, type RackMacroMapping, type RackMacroSettings } from "./rack-preset";
 import { AutomationCurve, type AutomationPoint, type AutomationTarget } from "@audiorective/core/automation";
 
-export type RackMacroParameter = "wet" | "frequency" | "q" | "delayTime" | "feedback";
-export type RackMacroMapping = Readonly<{
-  slotId: string;
-  parameter: RackMacroParameter;
-  min: number;
-  max: number;
-  scale?: "linear" | "exponential";
-}>;
-export type RackMacroSettings = Readonly<{
-  id: string;
-  label?: string;
-  value: number;
-  targets: readonly RackMacroMapping[];
-}>;
 export interface RackMacro {
   readonly id: string;
   readonly param: Param<number>;
@@ -27,7 +14,6 @@ export type MacroTarget = {
   muted: boolean;
 };
 
-export const isMacroValue = (value: number): boolean => Number.isFinite(value) && value >= 0 && value <= 1;
 function project(mapping: RackMacroMapping, value: number): number {
   if (value === 0) return mapping.min;
   if (value === 1) return mapping.max;

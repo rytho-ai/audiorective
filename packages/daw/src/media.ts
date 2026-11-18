@@ -1,4 +1,7 @@
-import type { RecordedAudioChunk, RecordedAudioSpan } from "@audiorective/blocks";
+/** The fields of a recorder chunk that media storage reads; a recorder's output satisfies it. */
+export type AudioMediaChunk = Readonly<{ startFrame: number; channels: readonly Float32Array[] }>;
+/** The fields of a finished recorder span that media storage reads. */
+export type AudioMediaSpan = Readonly<{ sampleRate: number; channelCount: number; startFrame: number; endFrame: number }>;
 
 /** Interleaved little-endian float32 PCM held by a Blob or disk-backed File. */
 export class AudioMedia {
@@ -109,7 +112,7 @@ export class AudioMediaWriter {
       throw new RangeError("AudioMediaWriter needs a sample rate and 1–32 channels.");
   }
 
-  writeChunk(chunk: RecordedAudioChunk): Promise<void> {
+  writeChunk(chunk: AudioMediaChunk): Promise<void> {
     if (this.closed) throw new Error("AudioMediaWriter is closed.");
     if (this.failed) throw this.failed;
     const count = chunk.channels[0]?.length ?? 0;
@@ -135,7 +138,7 @@ export class AudioMediaWriter {
     return this.pending;
   }
 
-  async finish(span: RecordedAudioSpan): Promise<AudioMedia> {
+  async finish(span: AudioMediaSpan): Promise<AudioMedia> {
     if (this.closed) throw new Error("AudioMediaWriter is closed.");
     this.closed = true;
     try {

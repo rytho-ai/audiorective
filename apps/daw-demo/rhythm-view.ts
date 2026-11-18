@@ -1,7 +1,7 @@
 import { effect } from "@audiorective/core";
 import { InstrumentEvents, StepSequencer, type SampleLease, type SampleLibrary } from "@audiorective/blocks";
 import { mountPadGrid, mountStepGrid } from "@audiorective/widgets";
-import type { Workspace } from "@audiorective/workspace";
+import type { Workspace } from "@audiorective/daw";
 
 const lanes = [
   { id: "kick", label: "Kick", key: "a", hits: [0, 8] },

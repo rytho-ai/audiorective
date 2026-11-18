@@ -1,4 +1,4 @@
-import type { AudioClip, MidiTimeUnit, Project, ProjectClip, ProjectMidiEvent, ProjectTrack } from "@audiorective/workspace";
+import type { AudioClip, MidiTimeUnit, Project, ProjectClip, ProjectMidiEvent, ProjectTrack } from "@audiorective/daw";
 import type { MidiNote } from "@audiorective/midi";
 
 type ClipSnapshot =

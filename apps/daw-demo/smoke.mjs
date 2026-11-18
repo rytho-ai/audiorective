@@ -593,8 +593,8 @@ try {
     const before = window.__smokeBefore;
     await new Promise((resolve) => setTimeout(resolve, 200));
     const after = await host.saveState();
-    const bytes = await workspace.save();
-    const reopened = await workspace.constructor.open(workspace.context, bytes, workspace.options);
+    const bytes = await window.__daw.api.saveWorkspace(workspace);
+    const reopened = await window.__daw.api.openWorkspace(workspace.context, bytes, workspace.options);
     const restored = await reopened.host(reopened.project.tracks[0].devices[0].id).saveState();
     const same = (left, right) => left.length === right.length && left.every((value, index) => value === right[index]);
     const result = {
@@ -738,9 +738,9 @@ try {
     const track = project.addTrack("File-backed", "audio");
     project.addAudioClip(track.id, { sampleRate: 48000, channels: [new Float32Array(48000).fill(0.25)] }, 0);
     const source = await window.__daw.workspace.constructor.create(context, project);
-    const archive = await source.save();
+    const archive = await window.__daw.api.saveWorkspace(source);
     source.destroy();
-    const opened = await window.__daw.workspace.constructor.openBlob(context, new Blob([archive]), { destination: context.destination });
+    const opened = await window.__daw.api.openWorkspaceBlob(context, new Blob([archive]), { destination: context.destination });
     const clip = opened.project.tracks[0].clips[0];
     const analyser = context.createAnalyser();
     analyser.fftSize = 2048;

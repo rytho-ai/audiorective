@@ -1,5 +1,7 @@
 import { effect, type Readable } from "@audiorective/core";
-import type { ClipEnvelope } from "@audiorective/blocks";
+
+/** Linear gain and edge fades in clip-local seconds; structurally matches the Project clip envelope. */
+type ClipEnvelope = Readonly<{ gain: number; fadeIn: number; fadeOut: number }>;
 
 export type ClipEnvelopeEditorOptions = Readonly<{
   duration: number;

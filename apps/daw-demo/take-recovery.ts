@@ -1,4 +1,4 @@
-import type { Workspace } from "@audiorective/workspace";
+import { saveWorkspaceTo, type Workspace } from "@audiorective/daw";
 
 function directory(): Promise<FileSystemDirectoryHandle> {
   return navigator.storage.getDirectory().then((root) => root.getDirectoryHandle("audiorective-recovery", { create: true }));
@@ -9,7 +9,7 @@ export async function checkpointTake(workspace: Workspace, name: string): Promis
   const handle = await (await directory()).getFileHandle(name, { create: true });
   const stream = await handle.createWritable();
   try {
-    await workspace.saveTo(stream);
+    await saveWorkspaceTo(workspace, stream);
   } catch (error) {
     await stream.abort().catch(() => undefined);
     throw error;

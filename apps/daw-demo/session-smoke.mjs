@@ -17,7 +17,7 @@ const server = await createServer({
           {
             tag: "script",
             attrs: { type: "module" },
-            children: 'import { Workspace, Project } from "@audiorective/workspace"; window.sessionFixture = { Workspace, Project };',
+            children: 'import { Workspace, Project } from "@audiorective/daw"; window.sessionFixture = { Workspace, Project };',
           },
         ],
       },

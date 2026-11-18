@@ -14,8 +14,8 @@ const fakes = vi.hoisted(() => {
   return state;
 });
 
-vi.mock("@audiorective/blocks/effect-rack", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@audiorective/blocks/effect-rack")>()),
+vi.mock("@audiorective/effects/rack", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@audiorective/effects/rack")>()),
   EffectRack: class {
     effects: readonly unknown[];
     input = { connect: vi.fn() };
@@ -72,7 +72,8 @@ vi.mock("@audiorective/clock", async () => {
 });
 
 import { effect } from "@audiorective/core";
-import { Project, Workspace } from "../src";
+import { Project, Workspace, openWorkspace, saveWorkspace, saveWorkspaceTo } from "../src";
+import { saveDawProject } from "../src/dawproject";
 
 const node = () => {
   const target: Record<string, unknown> = {
@@ -208,7 +209,7 @@ describe("workspace automatic application", () => {
     const loads = fakes.hosts[0].loadState.mock.calls.length;
     const seeks = clock.seek.mock.calls.length;
     const revision = project.cells.revision.value;
-    await workspace.save();
+    await saveWorkspace(workspace);
     expect(project.cells.revision.value).toBeGreaterThan(revision);
     expect([...project.tracks[0].devices.find((item) => item.id === device!.id)!.state]).toEqual([9, 9]);
     await workspace.flush();
@@ -281,6 +282,62 @@ describe("workspace automatic application", () => {
 });
 
 /** Public stateful readers are tracked: an effect over each re-runs, seeing the new value, when the owner changes it. */
+describe("workspace composition", () => {
+  test("saveWorkspace captures device state and reopens through openWorkspace", async () => {
+    const { project, device, workspace } = await setup({ withDevice: true });
+    const bytes = await saveWorkspace(workspace);
+    expect([...project.tracks[0].devices.find((item) => item.id === device!.id)!.state]).toEqual([9, 9]);
+    const reopened = await openWorkspace(context(), bytes);
+    expect(reopened.project.tracks[0].devices[0].pluginId).toBe("fake.synth");
+    expect([...reopened.project.tracks[0].devices[0].state]).toEqual([9, 9]);
+    reopened.destroy();
+    reopened.project.destroy();
+    workspace.destroy();
+    project.destroy();
+  });
+
+  test("saveWorkspaceTo streams the checkpointed project", async () => {
+    const { project, workspace } = await setup({ withDevice: true });
+    const parts: Uint8Array[] = [];
+    await saveWorkspaceTo(workspace, new WritableStream({ write: (chunk) => void parts.push(chunk) }));
+    expect(parts.reduce((total, part) => total + part.length, 0)).toBeGreaterThan(0);
+    workspace.destroy();
+    project.destroy();
+  });
+
+  test("checkpoint rejects once the workspace is destroyed", async () => {
+    const { project, workspace } = await setup();
+    workspace.destroy();
+    await expect(workspace.checkpoint()).rejects.toThrow("Workspace is destroyed.");
+    await expect(saveWorkspace(workspace)).rejects.toThrow("Workspace is destroyed.");
+    project.destroy();
+  });
+
+  test("file warnings and options warnings lead the workspace's own warnings", async () => {
+    const source = new Project();
+    const track = source.addTrack("Keys", "midi");
+    source.addWebClapDevice(track.id, { pluginId: "fake.synth", name: "Synth", vendor: "t", version: "1", bundleUrl: "/fake.wasm" });
+    const bytes = saveDawProject(source);
+    const workspace = await openWorkspace(context(), bytes, { warnings: ["caller note"] });
+    expect(workspace.warnings.slice(0, 1)).toEqual(["caller note"]);
+    workspace.destroy();
+    workspace.project.destroy();
+  });
+
+  test("a failed open destroys the opened project", async () => {
+    const source = new Project();
+    source.addTrack("Keys", "midi");
+    const bytes = saveDawProject(source);
+    const broken = {
+      ...context(),
+      createGain: () => {
+        throw new Error("no audio");
+      },
+    } as unknown as AudioContext;
+    await expect(openWorkspace(broken, bytes)).rejects.toThrow("no audio");
+  });
+});
+
 describe("workspace readers are tracked", () => {
   const rows: Array<{
     name: string;

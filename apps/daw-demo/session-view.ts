@@ -1,7 +1,7 @@
 import { effect, untracked } from "@audiorective/core";
 import type { ClipLaunch } from "@audiorective/blocks";
 import { mountClipGrid, type ClipGridLayout } from "@audiorective/widgets";
-import type { Workspace } from "@audiorective/workspace";
+import type { Workspace } from "@audiorective/daw";
 
 export function mountStudioSession(
   root: HTMLElement,

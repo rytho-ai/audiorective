@@ -2,13 +2,13 @@ import { DOMImplementation, DOMParser, XMLSerializer } from "@xmldom/xmldom";
 import type { Document, Element } from "@xmldom/xmldom";
 import { unzipSync, zipSync, Unzip, UnzipInflate } from "fflate";
 import type { MidiNote } from "@audiorective/midi";
-import type { RackEffect, RackMacroSettings } from "@audiorective/blocks/effect-rack";
-import type { WaveStretchAnchor } from "@audiorective/blocks";
+import type { RackEffect, RackMacroSettings } from "@audiorective/effects/rack-preset";
 import { MidiClip, Project, audioChannelCount, normalizeClipGainAutomation } from "./model";
+import type { ClipStretchAnchor } from "./clip-time-map";
 import type { AudioClip, AudioClipGainAutomation, AudioClipSource, AudioClipStretch, ProjectMidiEvent, ProjectTrack } from "./model";
-import { decodeWav, encodeWav, mediaFromWav, wavMediaEntry } from "./wav";
-import { writeStoredZip } from "./stored-zip";
-import type { StoredZipEntry } from "./stored-zip";
+import { decodeWav, encodeWav, mediaFromWav, wavMediaEntry } from "./internal/wav";
+import { writeStoredZip } from "./internal/stored-zip";
+import type { StoredZipEntry } from "./internal/stored-zip";
 
 type StoredEvent = { time: number; data: number[]; noteId?: string };
 type StoredClip = {
@@ -20,7 +20,7 @@ type StoredClip = {
   events?: StoredEvent[];
   audioGain?: number;
   stretchRatio?: number;
-  warpAnchors?: readonly WaveStretchAnchor[];
+  warpAnchors?: readonly ClipStretchAnchor[];
   gainAutomation?: AudioClipGainAutomation;
 };
 type PrivateState = { version: 1 | 2; clips: StoredClip[]; rackMacros?: Record<string, readonly RackMacroSettings[]> };

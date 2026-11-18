@@ -1,17 +1,19 @@
-import type { WaveStretchAnchor } from "@audiorective/blocks";
 import { AutomationCurve, type AutomationPoint } from "@audiorective/core/automation";
 
+/** A warp marker mapping a source frame to a stretched output frame; structurally the same as the player's anchor. */
+export type ClipStretchAnchor = Readonly<{ sourceFrame: number; outputFrame: number }>;
+
 export function normalizeClipAnchors(
-  anchors: readonly WaveStretchAnchor[],
+  anchors: readonly ClipStretchAnchor[],
   sourceFrames: number,
   outputFrames: number,
-): readonly WaveStretchAnchor[] {
+): readonly ClipStretchAnchor[] {
   const error = () => new RangeError("Project clip warp needs strictly increasing interior source and output frames.");
   if (!Array.isArray(anchors)) throw error();
   let source = 0;
   let output = 0;
   return Object.freeze(
-    Array.from(anchors, (point: WaveStretchAnchor) => {
+    Array.from(anchors, (point: ClipStretchAnchor) => {
       if (
         !point ||
         !Number.isSafeInteger(point.sourceFrame) ||
@@ -51,7 +53,7 @@ export class ClipTimeMap {
   constructor(
     readonly sourceDuration: number,
     readonly outputDuration: number,
-    anchors: readonly WaveStretchAnchor[],
+    anchors: readonly ClipStretchAnchor[],
     sampleRate: number,
   ) {
     this.points = [

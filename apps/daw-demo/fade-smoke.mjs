@@ -17,8 +17,7 @@ const server = await createServer({
           {
             tag: "script",
             attrs: { type: "module" },
-            children:
-              'import { AudioMedia, Project, Workspace } from "@audiorective/workspace"; window.fadeFixture = { AudioMedia, Project, Workspace };',
+            children: 'import { AudioMedia, Project, Workspace } from "@audiorective/daw"; window.fadeFixture = { AudioMedia, Project, Workspace };',
           },
         ],
       },

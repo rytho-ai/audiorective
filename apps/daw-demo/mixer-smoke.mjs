@@ -74,8 +74,8 @@ try {
     const { workspace, project } = window.__daw;
     const track = project.tracks.find((item) => item.id === id);
     const snapshot = { generation: workspace.timeline.generation, playing: workspace.player.isPlaying.value };
-    const archive = await workspace.save();
-    const reopened = await workspace.constructor.open(workspace.context, archive, workspace.options);
+    const archive = await window.__daw.api.saveWorkspace(workspace);
+    const reopened = await window.__daw.api.openWorkspace(workspace.context, archive, workspace.options);
     try {
       const restored = reopened.project.tracks.find((item) => item.id === id);
       const magnitudes = new Float32Array(1);
@@ -120,9 +120,9 @@ try {
     project.setTrackRouting(keys.id, { outputBusId: null, sends: [{ busId: wet.id, gain: 0.25 }] });
     project.setTrackEffects(wet.id, [{ id: "filter", type: "filter", mode: "lowpass", frequency: 1800, q: 0.7, wet: 1, enabled: true }]);
     const originalWorkspace = await Workspace.create(context, project);
-    const saved = await originalWorkspace.save();
+    const saved = await window.__daw.api.saveWorkspace(originalWorkspace);
     originalWorkspace.destroy();
-    const render = await Workspace.open(context, saved, { destination: context.destination });
+    const render = await window.__daw.api.openWorkspace(context, saved, { destination: context.destination });
     const active = render.project;
     await render.play();
     const generation = render.timeline.generation;

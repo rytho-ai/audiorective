@@ -1,4 +1,4 @@
-# @audiorective/workspace
+# @audiorective/daw
 
 Project ownership, browser playback and a narrow DAWproject 1.0 save/open workflow for audio, MIDI and WebCLAP devices. The `Project` model and codec work without browser audio; `Workspace` borrows an `AudioContext` for playback. See [Workspace and DAWproject](../../docs/workspace.md) for the API, file contents and supported scope.
 

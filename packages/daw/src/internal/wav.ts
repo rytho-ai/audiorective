@@ -1,5 +1,5 @@
-import type { ProjectAudio } from "./model";
-import { AudioMedia } from "./media";
+import type { ProjectAudio } from "../model";
+import { AudioMedia } from "../media";
 import type { StoredZipEntry } from "./stored-zip";
 
 const ascii = (view: DataView, at: number, value: string) => {

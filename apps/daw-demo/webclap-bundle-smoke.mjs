@@ -119,10 +119,10 @@ try {
       const dry = await peak();
       mix.value = 1;
       const wet = await peak();
-      const saved = await workspace.save();
+      const saved = await window.__daw.api.saveWorkspace(workspace);
       const stateBytes = project.tracks.find(({ id }) => id === result.id).devices[0].state.byteLength;
       workspace.destroy();
-      reopened = await Workspace.open(context, saved, { destination: analyser, workletUrl });
+      reopened = await window.__daw.api.openWorkspace(context, saved, { destination: analyser, workletUrl });
       await reopened.play();
       const replay = await peak();
       const restoredHost = reopened.host(device.id);

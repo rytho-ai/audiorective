@@ -22,5 +22,3 @@ export { SampleLibrary } from "./SampleLibrary";
 export type { SampleLibraryOptions, SampleLibraryState, SampleLease, SampleRow } from "./SampleLibrary";
 export { StepSequencer } from "./StepSequencer";
 export type { StepHit, StepLane, StepPattern, StepTiming, StepWindow } from "./StepSequencer";
-export { clipGainAt, normalizeClipEnvelope, scheduleClipEnvelope, unityClipEnvelope } from "./clip-envelope";
-export type { ClipEnvelope } from "./clip-envelope";

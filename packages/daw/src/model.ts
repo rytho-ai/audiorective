@@ -1,4 +1,3 @@
-import { normalizeClipEnvelope, unityClipEnvelope, type ClipEnvelope, type RecordedAudio, type WaveStretchAnchor } from "@audiorective/blocks";
 import {
   normalizeRackEffects,
   normalizeRackPreset,
@@ -6,7 +5,8 @@ import {
   type RackEffect,
   type RackMacroSettings,
   type RackPreset,
-} from "@audiorective/blocks/effect-rack";
+} from "@audiorective/effects/rack-preset";
+import type { PCMData } from "@audiorective/core";
 import { batch, Cell, readonlyCell, untracked } from "@audiorective/core";
 import { AutomationCurve, type AutomationPoint } from "@audiorective/core/automation";
 import { compileMidiPlaybackEvents, MidiSequence } from "@audiorective/midi";
@@ -14,7 +14,8 @@ import type { MidiData, MidiPlaybackEvent, RecordedMidi, RecordedMidiEvent } fro
 import { AudioMedia } from "./media";
 import { TempoMap } from "./tempo-map";
 import type { TempoChange } from "./tempo-map";
-import { ClipTimeMap, normalizeClipAnchors } from "./clip-time-map";
+import { ClipTimeMap, normalizeClipAnchors, type ClipStretchAnchor } from "./clip-time-map";
+import { normalizeClipEnvelope, unityClipEnvelope, type ClipEnvelope } from "./clip-envelope";
 
 export type TrackKind = "audio" | "midi" | "bus";
 export type BusRole = "submix" | "effect";
@@ -24,7 +25,7 @@ const masterRouting: TrackRouting = Object.freeze({ outputBusId: null, sends: Ob
 export type MidiTimeUnit = "seconds" | "beats";
 /** A message at a clip-relative time in its owning MidiClip.timeUnit. */
 export type ProjectMidiEvent = Readonly<{ time: number; data: Uint8Array; noteId?: string }>;
-export type ProjectAudio = Pick<RecordedAudio, "sampleRate" | "channels">;
+export type ProjectAudio = Pick<PCMData, "sampleRate" | "channels">;
 export type ProjectMarker = Readonly<{ time: number; name: string }>;
 
 export type PcmAudioSource = ProjectAudio & Readonly<{ media?: never }>;
@@ -36,7 +37,7 @@ export type MediaAudioSource = Readonly<{
   channels?: never;
 }>;
 export type AudioClipSource = PcmAudioSource | MediaAudioSource;
-export type AudioClipStretch = Readonly<{ ratio: number; source: AudioClipSource; anchors?: readonly WaveStretchAnchor[] }>;
+export type AudioClipStretch = Readonly<{ ratio: number; source: AudioClipSource; anchors?: readonly ClipStretchAnchor[] }>;
 export type AudioClipGainAutomation = Readonly<{
   /** Original source seconds at the start of this clip's current window. */
   sourceStart: number;
@@ -789,7 +790,7 @@ export class Project {
   }
 
   /** Apply a prepared render only to the exact clip revision the processor borrowed. */
-  applyAudioClipStretch(expected: AudioClip, ratio: number, rendered?: ProjectAudio, warp: readonly WaveStretchAnchor[] = []): AudioClip {
+  applyAudioClipStretch(expected: AudioClip, ratio: number, rendered?: ProjectAudio, warp: readonly ClipStretchAnchor[] = []): AudioClip {
     const { track, clip } = this.clipAndTrack(expected.id);
     if (clip !== expected) throw new Error("Audio clip changed while rendering stretch.");
     const original = expected.stretch?.source ?? audioSource(expected);

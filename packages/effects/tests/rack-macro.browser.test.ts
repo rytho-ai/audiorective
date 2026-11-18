@@ -1,8 +1,8 @@
 import { effect, ParamSync } from "@audiorective/core";
 import { AutomationBinding, AutomationCurve } from "@audiorective/core/automation";
-import { Filter } from "@audiorective/effects";
+import { Filter } from "../src";
 import { expect, test, vi } from "vitest";
-import { EffectRack, type RackFilter, type RackMacroSettings } from "../src/effect-rack";
+import { EffectRack, type RackFilter, type RackMacroSettings } from "../src/rack";
 
 const low: RackFilter = { id: "low", type: "filter", mode: "lowpass", enabled: true, wet: 1, frequency: 120, q: 0.7 };
 const high: RackFilter = { id: "high", type: "filter", mode: "highpass", enabled: true, wet: 0, frequency: 1800, q: 0.7 };

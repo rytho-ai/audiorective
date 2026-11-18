@@ -1,6 +1,6 @@
 import { summarizePeaks, type PeakSummary } from "@audiorective/core/peaks";
 import type { WaveformPeaks } from "@audiorective/widgets/waveform";
-import type { AudioClip, AudioMedia } from "@audiorective/workspace";
+import type { AudioClip, AudioMedia } from "@audiorective/daw";
 
 type WaveformView = { clip: AudioClip; element: HTMLDivElement; canvas: HTMLCanvasElement };
 type FramePeaks = Pick<PeakSummary, "min" | "max" | "framesPerPeak">;

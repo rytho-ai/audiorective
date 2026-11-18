@@ -1,17 +1,17 @@
 {
-  "name": "@audiorective/workspace",
+  "name": "@audiorective/daw",
   "version": "2.3.2",
-  "description": "DAWproject-backed audio and MIDI projects with a browser playback runtime",
+  "description": "Audio and MIDI projects, the DAWproject codec and a browser playback runtime",
   "type": "module",
   "license": "MIT",
-  "homepage": "https://github.com/audiorective/audiorective/tree/main/packages/workspace#readme",
+  "homepage": "https://github.com/audiorective/audiorective/tree/main/packages/daw#readme",
   "bugs": {
     "url": "https://github.com/audiorective/audiorective/issues"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/audiorective/audiorective.git",
-    "directory": "packages/workspace"
+    "directory": "packages/daw"
   },
   "files": [
     "dist"
@@ -23,6 +23,18 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./project": {
+      "types": "./dist/project.d.ts",
+      "import": "./dist/project.js"
+    },
+    "./dawproject": {
+      "types": "./dist/dawproject.d.ts",
+      "import": "./dist/dawproject.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime.d.ts",
+      "import": "./dist/runtime.js"
     },
     "./package.json": "./package.json"
   },
@@ -36,6 +48,7 @@
     "@audiorective/blocks": "workspace:^",
     "@audiorective/core": "workspace:^",
     "@audiorective/clock": "workspace:^",
+    "@audiorective/effects": "workspace:^",
     "@audiorective/host": "workspace:^",
     "@audiorective/midi": "workspace:^",
     "@xmldom/xmldom": "^0.9.8",
@@ -43,6 +56,9 @@
   },
   "devDependencies": {
     "@types/node": "^24.9.1",
+    "@vitest/browser": "^4.0.18",
+    "@vitest/browser-playwright": "^4.0.18",
+    "playwright": "^1.58.2",
     "tsdown": "^0.15.9",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"

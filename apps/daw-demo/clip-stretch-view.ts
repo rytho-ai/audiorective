@@ -1,6 +1,6 @@
 import { cell, effect, readonlyCell, untracked, type Cell } from "@audiorective/core";
 import type { TimeStretch } from "@audiorective/effects/time-stretch";
-import { audioClipTimeMap, type AudioClip, type PreparedClipStretch, type WaveStretchAnchor, type Workspace } from "@audiorective/workspace";
+import { audioClipTimeMap, type AudioClip, type PreparedClipStretch, type ClipStretchAnchor, type Workspace } from "@audiorective/daw";
 import { createWarpMarkers } from "@audiorective/widgets";
 import type { WaveformHandle } from "@audiorective/widgets/waveform";
 
@@ -124,7 +124,7 @@ export function mountClipStretchView(root: HTMLElement, { clip, workspace, engin
     ratio.disabled = !!job;
     cancel.hidden = !job;
   }
-  async function render(value: number, points: readonly WaveStretchAnchor[] = []): Promise<void> {
+  async function render(value: number, points: readonly ClipStretchAnchor[] = []): Promise<void> {
     if (job) return;
     const editor = root.parentElement;
     const focused = doc.activeElement;

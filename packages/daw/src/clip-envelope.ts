@@ -21,19 +21,3 @@ export function clipGainAt(envelope: ClipEnvelope, duration: number, seconds: nu
   const t = Math.max(0, Math.min(duration, seconds));
   return envelope.gain * Math.min(1, envelope.fadeIn ? t / envelope.fadeIn : 1, envelope.fadeOut ? (duration - t) / envelope.fadeOut : 1);
 }
-
-export function scheduleClipEnvelope(
-  target: Pick<AudioParam, "setValueAtTime" | "linearRampToValueAtTime">,
-  envelope: ClipEnvelope,
-  duration: number,
-  window: Readonly<{ when: number; offset: number; length: number }>,
-): void {
-  const { when, offset, length } = window;
-  const end = Math.min(duration, offset + length);
-  target.setValueAtTime(clipGainAt(envelope, duration, offset), when);
-  if (envelope.fadeIn > offset && envelope.fadeIn < end) target.linearRampToValueAtTime(envelope.gain, when + envelope.fadeIn - offset);
-  const fadeOutStart = duration - envelope.fadeOut;
-  if (fadeOutStart > Math.max(offset, envelope.fadeIn) && fadeOutStart < end)
-    target.linearRampToValueAtTime(envelope.gain, when + fadeOutStart - offset);
-  if (end > offset) target.linearRampToValueAtTime(clipGainAt(envelope, duration, end), when + end - offset);
-}

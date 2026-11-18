@@ -7,8 +7,6 @@ import { WebClapHost } from "@audiorective/host/webclap";
 import {
   AudioRecorder,
   ClipLauncher,
-  clipGainAt,
-  scheduleClipEnvelope,
   type ClipLaunch,
   type ClipLauncherState,
   type QueuedClipLaunch,
@@ -16,20 +14,22 @@ import {
   type WaveStretchAnchor,
   type WaveStretchProcessor,
 } from "@audiorective/blocks";
-import { EffectRack, retainRackMacroTargets, type RackEffect, type RackMacroSettings } from "@audiorective/blocks/effect-rack";
+import { EffectRack, retainRackMacroTargets, type RackEffect, type RackMacroSettings } from "@audiorective/effects/rack";
 import { AudioTrackSession } from "./audio-track-session";
-import { openDawProject, openDawProjectBlob, saveDawProject, saveDawProjectTo } from "./dawproject";
+import { clipGainAt } from "./clip-envelope";
+import { scheduleClipEnvelope } from "./schedule-clip-envelope";
 import { soloRouting } from "./mixer-routing";
 import { createOpfsAudioMediaWriter } from "./media";
 import { MidiClip, Project, audioClipTimeMap, audioFrameCount } from "./model";
 import { normalizeClipAnchors } from "./clip-time-map";
 import type { TempoMap } from "./tempo-map";
-import { writeStoredZip } from "./stored-zip";
-import type { StoredZipEntry } from "./stored-zip";
-import { wavMediaStereoPairEntry } from "./wav";
+import { writeStoredZip } from "./internal/stored-zip";
+import type { StoredZipEntry } from "./internal/stored-zip";
+import { wavMediaStereoPairEntry } from "./internal/wav";
 import type { AudioMedia } from "./media";
 import type { AudioClip, AudioClipGainAutomation, PcmAudioClip, ProjectTrack, TrackRouting, WebClapDevice } from "./model";
 
+export { scheduleClipEnvelope } from "./schedule-clip-envelope";
 export type PreparedClipStretch = Readonly<{ apply(): AudioClip }>;
 
 type AudioHandle = {
@@ -106,6 +106,8 @@ export type WorkspaceOptions = {
   destination?: AudioNode;
   workletUrl?: string;
   resolveBundle?: (device: WebClapDevice) => string | Promise<string | undefined> | undefined;
+  /** Messages produced before the workspace existed, such as file-open warnings; they precede the workspace's own. */
+  warnings?: readonly string[];
 };
 /** A borrowed transport view that can be passed directly to a player widget. */
 export type WorkspacePlayer = Readonly<{
@@ -253,6 +255,7 @@ export class Workspace {
     const workspace = new Workspace(context, project, options);
     try {
       await workspace.sync();
+      if (options.warnings?.length) workspace.warningMessages.value = Object.freeze([...options.warnings, ...workspace.warnings]);
       workspace.stopWatchingProject = effect(() => {
         const current = workspace.project;
         const revision = current.cells.revision.value;
@@ -262,30 +265,6 @@ export class Workspace {
       return workspace;
     } catch (error) {
       workspace.destroy();
-      throw error;
-    }
-  }
-
-  static async open(context: AudioContext, bytes: Uint8Array, options: WorkspaceOptions = {}): Promise<Workspace> {
-    const opened = openDawProject(bytes);
-    try {
-      const workspace = await Workspace.create(context, opened.project, options);
-      if (opened.warnings.length) workspace.warningMessages.value = Object.freeze([...opened.warnings, ...workspace.warnings]);
-      return workspace;
-    } catch (error) {
-      opened.project.destroy();
-      throw error;
-    }
-  }
-
-  static async openBlob(context: AudioContext, blob: Blob, options: WorkspaceOptions = {}): Promise<Workspace> {
-    const opened = await openDawProjectBlob(blob);
-    try {
-      const workspace = await Workspace.create(context, opened.project, options);
-      if (opened.warnings.length) workspace.warningMessages.value = Object.freeze([...opened.warnings, ...workspace.warnings]);
-      return workspace;
-    } catch (error) {
-      opened.project.destroy();
       throw error;
     }
   }
@@ -1174,39 +1153,15 @@ export class Workspace {
     }
   }
 
-  async save(): Promise<Uint8Array> {
+  /**
+   * Wait for queued Project edits and fold live device state into the Project, serialized with sync.
+   * Returns the Project, which is then safe to hand to a file codec.
+   */
+  async checkpoint(): Promise<Project> {
     if (this.destroyed) throw new Error("Workspace is destroyed.");
     await this.flush();
     await this.serialize(() => this.captureStates());
-    if (this.project.hasFileBackedAudio) {
-      const chunks: Uint8Array[] = [];
-      let length = 0;
-      await saveDawProjectTo(
-        this.project,
-        new WritableStream({
-          write: (chunk) => {
-            chunks.push(chunk);
-            length += chunk.length;
-          },
-        }),
-      );
-      const bytes = new Uint8Array(length);
-      let at = 0;
-      for (const chunk of chunks) {
-        bytes.set(chunk, at);
-        at += chunk.length;
-      }
-      return bytes;
-    }
-    return saveDawProject(this.project);
-  }
-
-  /** Stream the project to a caller-owned file or other WritableStream. */
-  async saveTo(destination: WritableStream<Uint8Array>): Promise<void> {
-    if (this.destroyed) throw new Error("Workspace is destroyed.");
-    await this.flush();
-    await this.serialize(() => this.captureStates());
-    await saveDawProjectTo(this.project, destination);
+    return this.project;
   }
 
   /** Describe what another DAW receives; an audio fallback is a separate export. */

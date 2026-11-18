@@ -21,7 +21,7 @@ const server = await createServer({
             tag: "script",
             attrs: { type: "module" },
             children:
-              'import { Project, Workspace, openDawProject } from "@audiorective/workspace"; import { TimeStretch } from "@audiorective/effects/time-stretch"; window.stretchFixture = { Project, Workspace, TimeStretch, openDawProject };',
+              'import { Project, Workspace, openDawProject } from "@audiorective/daw"; import { TimeStretch } from "@audiorective/effects/time-stretch"; window.stretchFixture = { Project, Workspace, TimeStretch, openDawProject };',
           },
         ],
       },
@@ -123,14 +123,14 @@ try {
         { time: 0, value: 0.25, shape: "linear" },
         { time: 2, value: 1, shape: "hold" },
       ]);
-      const archive = await workspace.save();
+      const archive = await window.__daw.api.saveWorkspace(workspace);
       const saved = openDawProject(archive).project;
       const reopened = saved.tracks[0].clips[0];
       const same = (left, right) => left.length === right.length && left.every((value, i) => value === right[i]);
 
       const context = new OfflineAudioContext(2, rate * 2, rate);
       context.resume = async () => {};
-      const restored = await Workspace.open(context, archive, { destination: context.destination });
+      const restored = await window.__daw.api.openWorkspace(context, archive, { destination: context.destination });
       await restored.play();
       const buffer = await context.startRendering();
       const samples = buffer.getChannelData(0);
@@ -198,7 +198,7 @@ try {
         if (slice[index - 1] <= 0 && slice[index] > 0) crossings++;
       }
       const pitch = crossings / 0.4;
-      const archive = await workspace.save();
+      const archive = await window.__daw.api.saveWorkspace(workspace);
       const reopened = openDawProject(archive).project;
       const saved = reopened.tracks[0].clips[0];
       const sameSource = saved.stretch.source.channels[0].every((value, index) => value === original[index]);
