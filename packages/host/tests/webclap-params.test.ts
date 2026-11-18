@@ -1,0 +1,91 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { effect } from "@audiorective/core";
+import { WebClapHost } from "../src/webclap";
+
+const info = (id: number, value: number) => ({ id, name: `p${id}`, min: 0, max: 1, defaultValue: 0, value, text: "" });
+
+class FakeGain {
+  gain = { value: 1 };
+  connect() {}
+  disconnect() {}
+}
+class FakeAudioParam {}
+class FakePort {
+  sent: { type: string; [key: string]: unknown }[] = [];
+  onmessage?: (event: { data: unknown }) => void;
+  postMessage(message: { type: string }) {
+    this.sent.push(message);
+    if (message.type === "load") {
+      queueMicrotask(() =>
+        this.onmessage?.({
+          data: {
+            type: "loaded",
+            descriptor: { id: "x", name: "x", vendor: "", version: "", features: [] },
+            params: [info(7, 0.25), info(9, 0.5)],
+            hasGui: false,
+            latencySamples: 48,
+            audioInputs: [],
+            audioOutputs: [],
+          },
+        }),
+      );
+    }
+  }
+  close() {}
+}
+class FakeNode {
+  port = new FakePort();
+  connect() {}
+  disconnect() {}
+}
+
+describe("WebClapHost params", () => {
+  beforeEach(() => {
+    vi.stubGlobal("GainNode", FakeGain);
+    vi.stubGlobal("AudioParam", FakeAudioParam);
+    vi.stubGlobal("AudioWorkletNode", FakeNode);
+    vi.stubGlobal("fetch", async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) }));
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  const load = async () => {
+    const context = { sampleRate: 48000, destination: {}, audioWorklet: { addModule: async () => {} } } as unknown as AudioContext;
+    const host = await WebClapHost.load(context, { url: "http://localhost/bundle.wclap", workletUrl: "http://localhost/w.js" });
+    const port = host.node.port as unknown as FakePort;
+    port.sent.length = 0;
+    return { host, port };
+  };
+
+  it("exposes CLAP parameters as reactive Params keyed by id", async () => {
+    const { host } = await load();
+    expect(Object.keys(host.params).sort()).toEqual(["7", "9"]);
+    expect(host.params["7"].value).toBe(0.25);
+    expect(host.params["7"].label).toBe("p7");
+    expect(host.params["7"].max).toBe(1);
+    expect(host.parameterInfo).toHaveLength(2);
+    expect(host.latency.value).toBeCloseTo(48 / 48000);
+  });
+
+  it("forwards writes to the worklet", async () => {
+    const { host, port } = await load();
+    host.params["7"].value = 0.75;
+    expect(port.sent).toEqual([{ type: "param", id: 7, value: 0.75 }]);
+  });
+
+  it("applies plug-in changes without echoing and notifies effects", async () => {
+    const { host, port } = await load();
+    const seen: number[] = [];
+    effect(() => void seen.push(host.params["9"].value));
+    (host.node.port as unknown as FakePort).onmessage?.({ data: { type: "paramOut", id: 9, value: 0.9, text: "" } });
+    expect(host.params["9"].value).toBe(0.9);
+    expect(seen).toEqual([0.5, 0.9]);
+    expect(port.sent).toEqual([]);
+  });
+
+  it("rejects non-finite writes and keeps the last good value", async () => {
+    const { host, port } = await load();
+    expect(() => (host.params["7"].value = Number.NaN)).toThrow("WebCLAP parameter needs a finite value.");
+    expect(host.params["7"].value).toBe(0.25);
+    expect(port.sent).toEqual([]);
+  });
+});

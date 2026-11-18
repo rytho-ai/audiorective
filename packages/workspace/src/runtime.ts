@@ -244,7 +244,7 @@ export class Workspace {
               this.warnings.push(`Device ${device.name} has a different CLAP ID in its bundle.`);
               continue;
             }
-            if (device.state.length) await host.setState(device.state);
+            if (device.state.length) await host.loadState(device.state);
             runtime.hosts.set(device.id, host);
             if (track.kind === "midi" && !runtime.midiHost) runtime.midiHost = host;
             if (previous) previous.output.connect(host.input);
@@ -310,7 +310,7 @@ export class Workspace {
       for (const device of track.devices) {
         if (runtime.deviceStates.get(device.id) === device.state) continue;
         const host = runtime.hosts.get(device.id);
-        if (host) await host.setState(device.state);
+        if (host) await host.loadState(device.state);
         runtime.deviceStates.set(device.id, device.state);
       }
     }
@@ -520,7 +520,9 @@ export class Workspace {
       pluginDependencies: devices.map((device) => `${device.name} (${device.pluginId}) needs a matching CLAP plug-in in the receiving DAW`),
       limitations: [
         "Other DAWs may not preserve Audiorective-specific MIDI details or WebCLAP bundle locations.",
-        ...(this.project.tracks.some((track) => track.effects.length) ? ["Audiorective built-in inserts require Audiorective or the rendered audio fallback."] : []),
+        ...(this.project.tracks.some((track) => track.effects.length)
+          ? ["Audiorective built-in inserts require Audiorective or the rendered audio fallback."]
+          : []),
         "Editable import in a specific DAW needs an actual open-and-save test.",
         "A separate audio fallback is needed to hear hosted plug-ins without matching CLAP binaries.",
         ...(this.project.tracks.length > 15 ? ["Audio fallback includes a mix only when a project has more than 15 tracks."] : []),
@@ -664,7 +666,7 @@ export class Workspace {
         const host = this.host(device.id);
         const runtime = this.tracks.get(track.id);
         if (host && runtime?.deviceStates.get(device.id) === device.state) {
-          this.project.setDeviceState(device.id, await host.getState());
+          this.project.setDeviceState(device.id, await host.saveState());
           runtime.deviceStates.set(
             device.id,
             this.project.tracks.find((item) => item.id === track.id)!.devices.find((item) => item.id === device.id)!.state,

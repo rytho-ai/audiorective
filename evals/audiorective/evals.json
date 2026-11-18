@@ -429,7 +429,7 @@
         "Imports Project and Workspace from @audiorective/workspace and uses addWebClapDevice on a MIDI track with the Oxo Synth2 CLAP ID and a bundle URL",
         "Creates Workspace with the caller-owned AudioContext, destination and a served WebCLAP worklet URL, then uses its play/stop or seek methods",
         "Passes the MidiClip.sequence to a piano-roll widget and keeps the view separate from the audio runtime",
-        "Mounts the loaded host's editor in an iframe or uses host.setParameter, while preserving state through Workspace.save and Workspace.open",
+        "Mounts the loaded host's editor in an iframe or reads and writes host.params[String(id)].value, while preserving state through Workspace.save and Workspace.open",
         "Inspects reopen warnings and explains that DAWProject stores CLAP identity/state while Audiorective's private host manifest locates the WebCLAP bundle",
         "Destroys the view, Workspace and Project while leaving the borrowed AudioContext to the app",
         "Does not claim that a WebCLAP bundle is embedded in the archive or that another DAW can load the browser bundle directly"
@@ -580,6 +580,19 @@
         "Uses mountPlayer(root, { player: workspace.player }) without adapting Clock state, polling the playhead or copying duration into a new cell",
         "Routes Workspace output to the caller's AudioContext destination on both Workspace.create and Workspace.openBlob or Workspace.open",
         "Destroys the old controls before remounting for the reopened Workspace and tears down the old Workspace and Project separately"
+      ]
+    },
+    {
+      "id": 41,
+      "prompt": "I hosted a WebCLAP synth with @audiorective/host/webclap. Build a small control panel with a slider per plug-in parameter that stays in sync when the user edits the plug-in in its own editor, and a button that snapshots and restores the plug-in patch.",
+      "expected_output": "Parameters are read and written through the reactive host.params registry (Param<number> keyed by CLAP id), metadata comes from host.parameterInfo, and patch snapshots use saveState/loadState.",
+      "files": [],
+      "expectations": [
+        "Reads each parameter through host.params[String(id)] with .value (or $) inside an effect or framework binding, instead of polling or keeping a separate copy of the value",
+        "Writes parameters with host.params[String(id)].value = v; does not call a setParameter method",
+        "Takes labels, min, max and default from host.parameterInfo or the Param's label/min/max, and explains that plug-in-side edits update the same Params",
+        "Uses await host.saveState() and await host.loadState(bytes) for the patch snapshot, not getState()/setState()",
+        "Does not invent a subscribe or onParameterChange API"
       ]
     }
   ]

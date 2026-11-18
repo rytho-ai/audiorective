@@ -148,10 +148,24 @@ try {
     workspace.stop();
     for (const track of others) workspace.setTrackVolume(track.id, track.volume);
     analyser.disconnect();
-    return { peak, position, frozen, id: synth.descriptor.id, params: synth.parameters.length };
+    const [first] = synth.parameterInfo;
+    const param = synth.params[String(first.id)];
+    const target = first.min + (first.max - first.min) * 0.5;
+    param.value = target;
+    return {
+      peak,
+      position,
+      frozen,
+      id: synth.descriptor.id,
+      params: Object.keys(synth.params).length,
+      info: synth.parameterInfo.length,
+      written: param.value === target,
+    };
   });
   assert.equal(playback.id, "com.oxo.music.oxosynth2");
   assert.ok(playback.params >= 99);
+  assert.equal(playback.params, playback.info);
+  assert.ok(playback.written);
   assert.ok(playback.peak > 0.01, `synth was silent: ${playback.peak}`);
   assert.ok(playback.position > 0.5 && Math.abs(playback.frozen - playback.position) < 0.001);
 
@@ -441,7 +455,7 @@ try {
   await page.waitForFunction(() => document.querySelector("iframe")?.contentDocument?.body?.textContent?.includes("Synth2"));
   await page.evaluate(async () => {
     const workspace = window.__daw.workspace;
-    window.__smokeBefore = await workspace.host(workspace.project.tracks[0].devices[0].id).getState();
+    window.__smokeBefore = await workspace.host(workspace.project.tracks[0].devices[0].id).saveState();
   });
   await page.frameLocator("iframe").locator("#next").click();
   await page.frameLocator("iframe").locator("#next").click();
@@ -451,10 +465,10 @@ try {
     const host = workspace.host(workspace.project.tracks[0].devices[0].id);
     const before = window.__smokeBefore;
     await new Promise((resolve) => setTimeout(resolve, 200));
-    const after = await host.getState();
+    const after = await host.saveState();
     const bytes = await workspace.save();
     const reopened = await workspace.constructor.open(workspace.context, bytes, workspace.options);
-    const restored = await reopened.host(reopened.project.tracks[0].devices[0].id).getState();
+    const restored = await reopened.host(reopened.project.tracks[0].devices[0].id).saveState();
     const same = (left, right) => left.length === right.length && left.every((value, index) => value === right[index]);
     const result = {
       changed: !same(before, after),
@@ -788,7 +802,9 @@ try {
   });
   await page.locator("#zoom-in").click(); // Re-render the imported tempo grid through the normal UI.
   await page.waitForFunction(() => document.querySelector(".tempo-grid-segment"));
-  const barPositions = await page.locator(".ruler-row .ruler-mark").evaluateAll((marks) => marks.slice(0, 3).map((mark) => parseFloat(mark.style.left)));
+  const barPositions = await page
+    .locator(".ruler-row .ruler-mark")
+    .evaluateAll((marks) => marks.slice(0, 3).map((mark) => parseFloat(mark.style.left)));
   assert.ok(Math.abs(barPositions[2] - barPositions[1] * 3) < 1, `tempo ruler ignored the step: ${barPositions}`);
   await page.locator(`.clip[data-clip-id="${tempoNoteClipId}"]`).click();
   await page.evaluate(() => window.__daw.workspace.seek(5));
@@ -802,21 +818,33 @@ try {
   const beatClipId = await page.evaluate(async () => {
     const { project, workspace } = window.__daw;
     const track = project.tracks.find((item) => item.kind === "midi");
-    const clip = project.addMidiClip(track.id, {
-      duration: 2,
-      notes: [{ id: "beat-smoke", start: 0, end: 1, pitch: 109, velocity: 90, channel: 0, track: 0 }],
-      events: [{ time: 1, data: new Uint8Array([0xb0, 64, 127]) }],
-    }, 6, { timeUnit: "beats" });
+    const clip = project.addMidiClip(
+      track.id,
+      {
+        duration: 2,
+        notes: [{ id: "beat-smoke", start: 0, end: 1, pitch: 109, velocity: 90, channel: 0, track: 0 }],
+        events: [{ time: 1, data: new Uint8Array([0xb0, 64, 127]) }],
+      },
+      6,
+      { timeUnit: "beats" },
+    );
     await workspace.commit();
     return clip.id;
   });
-  const beatGeometry = async () => page.evaluate((id) => {
-    const { project } = window.__daw;
-    const clip = project.tracks.flatMap((track) => track.clips).find((item) => item.id === id);
-    const element = document.querySelector(`.clip[data-clip-id="${id}"]`);
-    const scale = parseFloat(document.querySelectorAll(".ruler-row .ruler-mark")[1].style.left) / 2;
-    return { unit: clip.timeUnit, start: project.clipTimeSeconds(clip), end: project.clipTimeSeconds(clip, clip.duration), left: parseFloat(element.style.left) / scale, width: parseFloat(element.style.width) / scale };
-  }, beatClipId);
+  const beatGeometry = async () =>
+    page.evaluate((id) => {
+      const { project } = window.__daw;
+      const clip = project.tracks.flatMap((track) => track.clips).find((item) => item.id === id);
+      const element = document.querySelector(`.clip[data-clip-id="${id}"]`);
+      const scale = parseFloat(document.querySelectorAll(".ruler-row .ruler-mark")[1].style.left) / 2;
+      return {
+        unit: clip.timeUnit,
+        start: project.clipTimeSeconds(clip),
+        end: project.clipTimeSeconds(clip, clip.duration),
+        left: parseFloat(element.style.left) / scale,
+        width: parseFloat(element.style.width) / scale,
+      };
+    }, beatClipId);
   const awaitBeatGeometry = async () => {
     await page.waitForFunction((id) => {
       const { project } = window.__daw;
@@ -831,7 +859,10 @@ try {
   };
   await page.locator("#zoom-in").click();
   const beforeStretch = await awaitBeatGeometry();
-  assert.ok(beforeStretch.unit === "beats" && Math.abs(beforeStretch.left - 4) < 0.02 && Math.abs(beforeStretch.width - 2) < 0.02, JSON.stringify(beforeStretch));
+  assert.ok(
+    beforeStretch.unit === "beats" && Math.abs(beforeStretch.left - 4) < 0.02 && Math.abs(beforeStretch.width - 2) < 0.02,
+    JSON.stringify(beforeStretch),
+  );
   await page.locator(`.clip[data-clip-id="${beatClipId}"]`).click();
   assert.match(await page.locator('#editor-panel .ar-pr-note[data-note-id="beat-smoke"]').getAttribute("aria-label"), /beats/);
   await page.evaluate(async () => {
@@ -847,7 +878,7 @@ try {
     const host = workspace.host(project.tracks[0].devices[0].id);
     const original = host.scheduleMidi;
     const captured = [];
-    host.scheduleMidi = function(data, when) {
+    host.scheduleMidi = function (data, when) {
       if ((data[0] & 0xf0) === 0x90 && data[1] === 109) captured.push(when);
       return original.call(this, data, when);
     };
@@ -875,7 +906,10 @@ try {
   assert.equal(editedBeat, 0.25);
   await page.locator(`.clip[data-clip-id="${beatClipId}"]`).focus();
   await page.locator(`.clip[data-clip-id="${beatClipId}"]`).press("ArrowRight");
-  await page.waitForFunction((id) => window.__daw.project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === id)?.time === 7, beatClipId);
+  await page.waitForFunction(
+    (id) => window.__daw.project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === id)?.time === 7,
+    beatClipId,
+  );
   await page.locator("#undo").click();
   await page.waitForFunction((id) => {
     const clip = window.__daw.project.tracks.flatMap((track) => track.clips).find((item) => item.id === id);
@@ -892,13 +926,21 @@ try {
     const ruler = root.querySelector(".ruler-row .ruler");
     const x = root.getBoundingClientRect().left + root.clientWidth / 2;
     const pixelsPerSecond = parseFloat(root.querySelectorAll(".ruler-mark")[1].style.left) / 2;
-    return { x, y: ruler.getBoundingClientRect().top + ruler.clientHeight / 2, time: (x - ruler.getBoundingClientRect().left) / pixelsPerSecond, pixelsPerSecond };
+    return {
+      x,
+      y: ruler.getBoundingClientRect().top + ruler.clientHeight / 2,
+      time: (x - ruler.getBoundingClientRect().left) / pixelsPerSecond,
+      pixelsPerSecond,
+    };
   });
   await page.locator("#timeline-zoom").evaluate((input) => {
     input.value = "800";
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
-  await page.waitForFunction((old) => document.querySelector("#timeline-zoom").getAttribute("aria-valuetext") !== old, `${Math.round(zoomAnchor.pixelsPerSecond)} 像素／秒`);
+  await page.waitForFunction(
+    (old) => document.querySelector("#timeline-zoom").getAttribute("aria-valuetext") !== old,
+    `${Math.round(zoomAnchor.pixelsPerSecond)} 像素／秒`,
+  );
   const sliderAnchor = await page.evaluate((x) => {
     const root = document.querySelector("#tracks");
     const ruler = root.querySelector(".ruler-row .ruler");
@@ -922,7 +964,10 @@ try {
   await page.keyboard.down("Control");
   await page.mouse.wheel(0, -180);
   await page.keyboard.up("Control");
-  await page.waitForFunction((old) => Number(document.querySelector("#timeline-zoom").getAttribute("aria-valuetext").split(" ")[0]) > old, sliderAnchor.pixelsPerSecond);
+  await page.waitForFunction(
+    (old) => Number(document.querySelector("#timeline-zoom").getAttribute("aria-valuetext").split(" ")[0]) > old,
+    sliderAnchor.pixelsPerSecond,
+  );
   const wheelAnchor = await page.evaluate((x) => {
     const root = document.querySelector("#tracks");
     const ruler = root.querySelector(".ruler-row .ruler");
@@ -969,7 +1014,19 @@ try {
   });
   assert.equal(keptRackTransport, true);
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ playback, monitored, state, audioPause, runtime, tempoRuntime, zoom: { sliderAnchor, wheelAnchor }, reopenedTracks: 8, addedTracks: 2 }));
+  console.log(
+    JSON.stringify({
+      playback,
+      monitored,
+      state,
+      audioPause,
+      runtime,
+      tempoRuntime,
+      zoom: { sliderAnchor, wheelAnchor },
+      reopenedTracks: 8,
+      addedTracks: 2,
+    }),
+  );
 } finally {
   await browser?.close();
   await server.close();

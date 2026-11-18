@@ -26,6 +26,8 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Changed
 
+- **host:** WebCLAP plug-in parameters are reactive `Param<number>`s in `host.params`, keyed by CLAP id as a string (`host.params["7"].value = 0.5`). Plug-in-side changes, such as editor edits, update the same Params without echoing back. `host.parameterInfo` replaces `host.parameters` as the frozen metadata snapshot, and `setParameter(id, value)` is removed. `WebClapHost.load` resolves with `descriptor` and `hasEditor` always set.
+- **host / workspace:** `WebClapHost.getState()` / `setState()` are renamed `saveState()` / `loadState()` (opaque CLAP state bytes) so `getState()` stays the name for synchronous block snapshots.
 - **blocks:** `AudioRecorder` fills short browser render gaps with silence and reports their absolute frame ranges in optional `dropouts`; a gap beyond two seconds fails the take.
 - **workspace:** Streaming DAWproject saves use stored ZIP entries with CRC and size in local headers, and stop before classic ZIP limits. This removes reliance on ZIP data descriptors for large file-backed media.
 - **midi:** `MidiRecorder.start()` returns its actual output-clock start time for a Workspace take anchor; existing callers may ignore the return value.

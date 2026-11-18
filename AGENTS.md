@@ -13,13 +13,27 @@ Modular toolkit for web audio development. Independent, composable packages that
 
 ```
 @audiorective/
-├── core         # Reactive state for audio parameters (alien-signals)
+├── core         # Reactive state for audio parameters (alien-signals): Param, AudioProcessor, engine, peaks, automation
+├── clock        # Timing and scheduling: transport, tempo, look-ahead tick windows, rulers
+├── effects      # DSP effects: filter, delay, dynamics, pitch shift, channel strip, send bus
+├── devtools     # Dev-time validators, e.g. impulse-based latency measurement
 ├── blocks       # Headless audio capture, playback and instrument events
-├── midi         # MIDI note data, event projection and browser take recording
-├── widgets      # Browser waveform, player and piano-roll views
+├── midi         # MIDI note data and event projection (root); browser take recording (`/web`)
+├── host         # Browser WebCLAP plug-in host (`/webclap`)
+├── widgets      # Browser waveform, player, piano-roll and arrangement views
+├── workspace    # DAWproject-backed Project model and browser playback runtime
 ├── react        # React bindings
-└── threejs      # Three.js bindings (engine glue, scene transform sync)
+├── threejs      # Three.js bindings (engine glue, scene transform sync)
+└── playcanvas   # PlayCanvas bindings (engine glue, entity-to-panner transform sync)
 ```
+
+`apps/web` (site and demos) and `apps/daw-demo` consume these packages; nothing in `packages/` imports from `apps/`.
+
+## Layering
+
+Dependencies point downward only: `core` / `clock` / `effects` -> `blocks` / `midi` / `host` -> `widgets` -> `workspace`, with `react`, `threejs` and `playcanvas` as sibling bindings that depend on `core` alone. Every package depends on `core`; `effects` and `clock` do not depend on each other, and `blocks` builds on `effects`. `widgets` consumes `blocks` and `midi`; `workspace` consumes `blocks`, `clock`, `host` and `midi` and does not import `widgets` (apps connect the two).
+
+Pure entries stay separate from browser-runtime entries so Node and server code can import them: `core/peaks`, `core/automation` and the `midi` root have no DOM or `AudioContext` dependency, while `midi/web`, `host/webclap` and the widget entries are browser-only. Inside `workspace`, `Project` and the DAWproject codec (`model.ts`, `dawproject.ts`, `media.ts`) avoid `AudioContext` and the DOM, but they share the package root with the browser `Workspace` runtime; the split is by module, not by entry. `widgets/waveform` is a DOM view, not a pure entry.
 
 ## Core Conventions
 
@@ -119,9 +133,20 @@ All processors extend `AudioProcessor<P, C>` with explicit registry generics:
 
 ## Package Dependencies
 
-- `core`: depends on `alien-signals`
-- `react`: depends on `core`, peer-depends on `react`
-- `threejs`: depends on `core`, peer-depends on `three`
+Runtime `dependencies` from each `package.json`:
+
+- `core`: `alien-signals`, `immer`
+- `clock`: `core`, `alien-signals`
+- `effects`: `core`, `signalsmith-stretch` (dev: `devtools`)
+- `devtools`: `core`
+- `blocks`: `core`, `effects`
+- `midi`: `core`
+- `host`: `core`
+- `widgets`: `core`, `blocks`, `midi`
+- `workspace`: `core`, `blocks`, `clock`, `host`, `midi`, `@xmldom/xmldom`, `fflate`
+- `react`: `core`, `alien-signals`; peer-depends on `react`
+- `threejs`: `core`; peer-depends on `three`
+- `playcanvas`: `core`; peer-depends on `playcanvas`
 
 ## Skills
 
