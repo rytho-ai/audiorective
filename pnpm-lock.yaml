@@ -158,6 +158,9 @@ importers:
         specifier: workspace:^
         version: link:../core
     devDependencies:
+      '@audiorective/clock':
+        specifier: workspace:^
+        version: link:../clock
       '@types/node':
         specifier: ^24.9.1
         version: 24.10.0

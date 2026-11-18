@@ -347,6 +347,59 @@ queued?.cancel(); // removes both the hit and its future choke; manual keeps sou
 
 `schedule(window, timing)` reads the caller's transport window and registers its hits via `window.own(event, when)`. `timing` is any `BeatTiming`; pass the same `Timeline` the window came from. On edits, call the clock's `refresh()` to rebuild the unplayed look-ahead horizon. `setVelocity(laneId, step, velocity)` edits one step and `currentStep` exposes the current index. `reset()` clears its playhead and scheduled hits. [the DAW runtime](./daw.md#step-sequencer) wires the scheduling and refresh for an attached pattern.
 
+### Standalone drum machine
+
+A vanilla drum machine with no DAW: your decoded buffers, a `Clock` driving the sequencer, and the step grid for editing. Closed and open hat share a choke `group`, so each pad ID doubles as its lane ID.
+
+```ts
+import { Clock, Timeline } from "@audiorective/clock";
+import { InstrumentEvents } from "@audiorective/blocks/instrument-events";
+import { StepSequencer, type StepPattern } from "@audiorective/blocks/sequencer";
+import { mountStepGrid } from "@audiorective/widgets";
+
+const context = new AudioContext(); // you own it; resume() it from a user gesture
+// kick, snare, closedHat, openHat: AudioBuffers you decoded yourself
+const bank = new InstrumentEvents(context, [
+  { id: "kick", buffer: kick },
+  { id: "snare", buffer: snare },
+  { id: "closed", buffer: closedHat, group: "hat" },
+  { id: "open", buffer: openHat, group: "hat" },
+]);
+bank.output.connect(context.destination);
+
+const steps = (...on: number[]) => Array.from({ length: 16 }, (_, step) => (on.includes(step) ? 1 : 0));
+const pattern: StepPattern = {
+  steps: 16,
+  beatsPerStep: 0.25, // sixteenth notes
+  lanes: [
+    { id: "kick", label: "Kick", velocities: steps(0, 4, 8, 12) },
+    { id: "snare", label: "Snare", velocities: steps(4, 12) },
+    { id: "closed", label: "Closed hat", velocities: steps(0, 4, 8, 12) },
+    { id: "open", label: "Open hat", velocities: steps(2, 10) },
+  ],
+};
+const sequencer = new StepSequencer(pattern, ({ laneId, velocity, when }) => bank.trigger(laneId, velocity, when));
+const timeline = new Timeline({ audioContext: context, bpm: 120 });
+const clock = new Clock({ timeline, onTick: (window) => sequencer.schedule(window, timeline) });
+const grid = mountStepGrid(document.querySelector("#grid")!, { sequencer }); // click toggles, focus adjusts velocity
+
+await context.resume();
+clock.start(); // clock.stop() ends playback and cancels queued hits
+timeline.bpm.value = 140; // takes effect on the next look-ahead window
+
+// Edits in the grid or code apply on the next tick; refresh() re-queues the look-ahead now.
+// A deleted closed-hat step that has not played yet no longer chokes the open hat.
+sequencer.setVelocity("closed", 4, 0);
+clock.refresh();
+
+// Teardown: the caller keeps the AudioContext.
+grid.destroy();
+clock.destroy();
+bank.destroy();
+```
+
+`TickWindow` already has the `beat`, `time` and `own` shape `schedule()` reads, and `Timeline` is the `BeatTiming`. The same wiring runs in `packages/blocks/tests/drum-machine-doc.browser.test.ts`.
+
 ## Sample Library
 
 `SampleLibrary` owns queued File decoding, byte accounting and an audition voice built on core `BufferPlayer`. Create it with the caller's `AudioContext`, connect `library.output` to an audition route and pass Files to `importFiles(files)`. The result contains row IDs in input order. A removed pending import resolves to `null`. Inspect `library.state.value.rows` for per-file readiness and decoding errors.
