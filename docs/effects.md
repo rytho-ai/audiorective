@@ -47,6 +47,32 @@ drive.output.connect(ctx.destination);
 drive.params.wet.linearRampToValueAtTime(0, ctx.currentTime + 1); // fade to bypass over 1s
 ```
 
+### Filter frequency response
+
+`filter.getFrequencyResponse(frequencies, magnitudes, phases)` fills equal-length `Float32Array` results. Use Hz for frequency, linear amplitude for magnitude and radians for phase. The snapshot includes all stages selected by `rolloff` and the phase-sensitive wet/dry sum. It reads the same current parameter values exposed to other observers. Use it with a standalone [EQ editor](./widgets.md#spectrum-and-eq-editor) or through an effect rack.
+
+### Parametric equalizer
+
+`Equalizer(context, { bands, wet? })` chains peaking Filter bands. Give each band a center `frequency` in 20–20,000 Hz, `gain` from −24 to +24 dB and `q` from 0.1 to 20. The band controls on `equalizer.bands` are schedulable Params. Call `setBands()` with the same number of bands to update an existing bank. `params.wet` controls one wet/dry mix around the entire chain.
+
+```ts
+import { Equalizer } from "@audiorective/effects";
+
+const eq = new Equalizer(context, {
+  bands: [
+    { frequency: 250, gain: -3, q: 0.7 },
+    { frequency: 1000, gain: 6, q: 1 },
+    { frequency: 4000, gain: 0, q: 0.8 },
+  ],
+});
+source.connect(eq.input);
+eq.output.connect(context.destination);
+```
+
+`getFrequencyResponse(frequencies, magnitudes, phases)` uses the same equal-length arrays as Filter and includes the phase-sensitive global wet/dry mix. Use these bands and magnitudes with [mountEqEditor](./widgets.md#spectrum-and-eq-editor). The equalizer owns its filters and borrows the context.
+
+If you see `Equalizer frequency response arrays must have the same length.`, allocate one magnitude and one phase entry for each frequency. If `setBands()` rejects a change in band count, create a new equalizer for the new topology.
+
 ### Notes on individual effects
 
 - **Distortion.** The waveshaper curve is Tone's shape normalized to unity peak, so `distortion = 0` is exactly unity gain (no coloration). `oversample` defaults to `"none"` because `"2x"`/`"4x"` add browser-defined latency the effect has no way to declare.
@@ -77,11 +103,11 @@ console.log(stretch.latency.value); // samples, known only after `ready`
 
 ## TimeStretch
 
-`TimeStretch` renders a uniform, pitch-preserving duration change from planar [`PCMData`](./core.md#pcm-peak-summaries). Import `@audiorective/effects/time-stretch` to avoid evaluating the live effects/audio-runtime implementations. Importing it creates no nodes or DOM; processing requires browser Web Workers and WASM support.
+`TimeStretch` renders pitch-preserving duration and timing changes from planar [`PCMData`](./core.md#pcm-peak-summaries). Import `@audiorective/effects/time-stretch` to avoid evaluating the live effects/audio-runtime implementations. Importing it creates no nodes or DOM. Processing requires browser Web Workers and WASM support.
 
 The constructor **requires a caller-supplied compiled `WebAssembly.Module`** implementing the `rubberband-wasm3.3` C ABI. The package includes its adapter, but no Rubber Band WASM binary or third-party GPL wrapper. Obtaining, hosting, loading, and compiling a compatible module belongs to the application; there is no built-in module URL or download.
 
-The pure entry exports `TimeStretch`, `TimeStretchOptions`, and `TimeStretchResult`.
+The pure entry exports `TimeStretch` and the types `TimeStretchOptions`, `TimeStretchResult`, and `TimeStretchAnchor`.
 
 ```typescript
 import { TimeStretch } from "@audiorective/effects/time-stretch";
@@ -97,7 +123,9 @@ async function stretchPCM(pcm: PCMData, compiledModule: WebAssembly.Module) {
 }
 ```
 
-`process(input, { ratio, signal? }): Promise<TimeStretchResult>` uses an offline two-pass study/process render. `ratio` is output duration divided by input duration: `0.75` shortens and `1.5` lengthens. Output channels have exactly `Math.round(inputFrames * ratio)` frames. This is a complete offline render, rather than playback-rate automation or a seamless live warp; it has no fixed processing-time guarantee.
+`process(input, { ratio, anchors?, signal? }): Promise<TimeStretchResult>` uses an offline two-pass study/process render. `ratio` is output duration divided by input duration. Output channels have exactly `Math.round(inputFrames * ratio)` frames. Each job produces a complete render with variable processing time.
+
+Pass interior `{ sourceFrame, outputFrame }` pairs to move transients locally. Both frame columns must be strictly increasing integers. The first and last frames of the whole interval are implicit at `(0, 0)` and `(inputFrames, outputFrames)`. For example, on a two-second 48 kHz input, use `{ ratio: 1, anchors: [{ sourceFrame: 48000, outputFrame: 62400 }] }` to move a transient from 1.0 to 1.3 seconds and keep the output two seconds long. The supplied module must export `rb_set_key_frame_map` for jobs with anchors.
 
 Input requires at least one nonempty `Float32Array` channel, equal channel lengths, finite samples, and an integer sample rate from 8000 through 192000. The ratio must be finite and positive and yield a positive safe-integer frame count. Private source copies are transferred to each job; caller buffers stay attached and unchanged. Output includes `channels`, unchanged `sampleRate`, `inputFrames`, `outputFrames`, and the requested `ratio`.
 
@@ -110,6 +138,8 @@ Each call owns a Worker, so concurrent calls remain independent. An already-abor
 | `TimeStretch needs finite equal-length PCM channels and an integer sampleRate from 8000 to 192000.` | Check channel type, lengths, samples and sample rate.                                                        |
 | `TimeStretch requires Web Workers.`                                                                 | Run processing in a browser environment with Worker support.                                                 |
 | `TimeStretch: unsupported Rubber Band WASM ABI.`                                                    | Supply the compatible C-ABI module, including memory, allocation and `rb_*` exports.                         |
+| `TimeStretch anchors need strictly increasing interior source and output frames.`                  | Supply integer interior frame pairs in increasing order on both axes. |
+| `TimeStretch: Rubber Band WASM does not support warp anchors.`                                     | Supply a compatible module that exports `rb_set_key_frame_map`. |
 | `TimeStretch processing was aborted.` (`AbortError`)                                                | The caller cancelled the job; create a fresh signal to retry.                                                |
 | `TimeStretch is destroyed.`                                                                         | Construct another processor for further jobs.                                                                |
 | `TimeStretch produced an unexpected frame count.` / `TimeStretch produced nonfinite PCM.`           | The supplied module did not produce the required finite output; check module compatibility and input.        |

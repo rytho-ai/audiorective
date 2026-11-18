@@ -1,8 +1,13 @@
 import type { PCMData } from "@audiorective/core/peaks";
 import { TIME_STRETCH_WORKER } from "./stretch/timeStretch.worker";
 
+/** An interior correspondence in frames at the PCM sample rate. */
+export type TimeStretchAnchor = Readonly<{ sourceFrame: number; outputFrame: number }>;
+
 export interface TimeStretchOptions {
   ratio: number;
+  /** Optional increasing interior correspondences. The start and end are implicit. */
+  anchors?: readonly TimeStretchAnchor[];
   signal?: AbortSignal;
 }
 export interface TimeStretchResult extends PCMData {
@@ -19,7 +24,7 @@ export class TimeStretch {
     if (!(module instanceof WebAssembly.Module)) throw new TypeError("TimeStretch requires a compiled WebAssembly.Module.");
   }
   async process(input: PCMData, options: TimeStretchOptions): Promise<TimeStretchResult> {
-    const { ratio, signal } = options;
+    const { ratio, anchors = [], signal } = options;
     const sampleRate = input.sampleRate;
     if (this.destroyed) throw new Error("TimeStretch is destroyed.");
     if (signal?.aborted) throw new DOMException("TimeStretch processing was aborted.", "AbortError");
@@ -37,6 +42,27 @@ export class TimeStretch {
     ) {
       throw new RangeError("TimeStretch needs finite equal-length PCM channels and an integer sampleRate from 8000 to 192000.");
     }
+    let lastSource = 0;
+    let lastOutput = 0;
+    if (!Array.isArray(anchors)) throw new RangeError("TimeStretch anchors need strictly increasing interior source and output frames.");
+    const timeMap = Array.from(anchors, (anchor: TimeStretchAnchor) => {
+      if (
+        !anchor ||
+        !Number.isInteger(anchor.sourceFrame) ||
+        !Number.isInteger(anchor.outputFrame) ||
+        anchor.sourceFrame <= lastSource ||
+        anchor.sourceFrame >= frames ||
+        anchor.sourceFrame > 0xffff_ffff ||
+        anchor.outputFrame <= lastOutput ||
+        anchor.outputFrame >= outputFrames ||
+        anchor.outputFrame > 0xffff_ffff
+      ) {
+        throw new RangeError("TimeStretch anchors need strictly increasing interior source and output frames.");
+      }
+      lastSource = anchor.sourceFrame;
+      lastOutput = anchor.outputFrame;
+      return { sourceFrame: lastSource, outputFrame: lastOutput };
+    });
     if (typeof Worker === "undefined") throw new Error("TimeStretch requires Web Workers.");
     // Transfer private copies: never detach the caller's original PCM buffers.
     const channels = input.channels.map((channel) => channel.slice());
@@ -79,7 +105,7 @@ export class TimeStretch {
       }
       try {
         worker.postMessage(
-          { module: this.module, channels, sampleRate: sampleRate, ratio: ratio, outputFrames },
+          { module: this.module, channels, sampleRate: sampleRate, ratio: ratio, outputFrames, anchors: timeMap },
           channels.map((channel) => channel.buffer),
         );
       } catch (error) {

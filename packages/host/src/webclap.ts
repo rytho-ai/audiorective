@@ -1,8 +1,8 @@
-import { AudioProcessor } from "@audiorective/core";
+import { AudioProcessor, batch, cell, readonlyCell, type Cell, type Param, type ReadonlyCell } from "@audiorective/core";
 
 export type WebClapDescriptor = Readonly<{ id: string; name: string; vendor: string; version: string; features: readonly string[] }>;
-export type WebClapParameter = Readonly<{ id: number; name: string; min: number; max: number; defaultValue: number; value: number; text: string }>;
-export type WebClapBundle = Readonly<{ url: string; pluginIndex?: number; workletUrl?: string }>;
+export type WebClapParameter = Readonly<{ id: number; name: string; min: number; max: number; defaultValue: number; value: number; text: string; flags?: number }>;
+export type WebClapBundle = Readonly<{ url: string; pluginId?: string; pluginIndex?: number; workletUrl?: string }>;
 export type WebClapEvent = { cancel(): void; onEnded(listener: () => void): void };
 
 type LoadedMessage = {
@@ -14,21 +14,24 @@ type LoadedMessage = {
   audioInputs: unknown[];
   audioOutputs: unknown[];
 };
+/** CLAP parameter registry: one `Param<number>` per CLAP parameter id, keyed by the id as a decimal string. */
+export type WebClapParams = Record<`${number}`, Param<number>>;
 type HostMessage = LoadedMessage | { type: string; [key: string]: unknown };
 type Waiter<T> = { resolve(value: T): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> };
 
 const sameBytes = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((value, index) => value === b[index]);
 const modules = new WeakMap<AudioContext, Map<string, Promise<void>>>();
 
-/** Browser host for one WebCLAP plug-in. The audio graph sees a latency-declared processor. */
-export class WebClapHost extends AudioProcessor<Record<never, never>, Record<never, never>> {
+/**
+ * Browser host for one WebCLAP plug-in. The audio graph sees a latency-declared processor.
+ * Each CLAP parameter is a `Param<number>` in `params`, keyed by its CLAP id (`host.params["7"].value`).
+ */
+export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: ReadonlyCell<readonly WebClapParameter[]> }> {
   readonly node: AudioWorkletNode;
   readonly bundleUrl: string;
-  descriptor?: WebClapDescriptor;
-  parameters: readonly WebClapParameter[] = [];
-  hasEditor = false;
+  readonly descriptor: WebClapDescriptor;
+  readonly hasEditor: boolean;
 
-  private loaded?: Waiter<void>;
   private stateWaiters: Waiter<Uint8Array>[] = [];
   private loadStateWaiters: Waiter<void>[] = [];
   private guiWaiter?: Waiter<string>;
@@ -36,19 +39,66 @@ export class WebClapHost extends AudioProcessor<Record<never, never>, Record<nev
   private editorListener?: (event: MessageEvent) => void;
   private nextId = 1;
   private readonly pending = new Map<number, Set<() => void>>();
+  /** Last value known to both sides, per CLAP id. Param writes equal to it are not echoed to the worklet. */
+  private readonly synced: Map<number, number>;
+  private readonly infoStore: Cell<readonly WebClapParameter[]>;
   private disposed = false;
 
-  private constructor(context: AudioContext, node: AudioWorkletNode, bundleUrl: string) {
-    super(context, () => ({ params: {}, cells: {}, latency: 0 }));
+  /** Tracked frozen parameter metadata (id, name, min, max, default, text) as last reported by the plug-in; the same value as `cells.parameterInfo`. Live values are in `params`. */
+  get parameterInfo(): readonly WebClapParameter[] {
+    return this.cells.parameterInfo.value;
+  }
+
+  /** @deprecated Use parameterInfo for metadata and params for live values. */
+  get parameters(): readonly WebClapParameter[] {
+    return this.parameterInfo;
+  }
+
+  private constructor(context: AudioContext, node: AudioWorkletNode, bundleUrl: string, loaded: LoadedMessage, early: HostMessage[]) {
+    const synced = new Map<number, number>();
+    const infoStore = cell<readonly WebClapParameter[]>(Object.freeze(loaded.params));
+    super(context, ({ param }) => {
+      const params: Record<string, Param<number>> = {};
+      for (const info of loaded.params) {
+        synced.set(info.id, info.value);
+        params[String(info.id)] = param<number>({
+          default: info.value,
+          label: info.name,
+          min: info.min,
+          max: info.max,
+          bind: {
+            set: (value) => {
+              if (!Number.isFinite(value)) {
+                params[String(info.id)]!.$(synced.get(info.id) ?? info.value);
+                throw new RangeError("WebCLAP parameter needs a finite value.");
+              }
+              if (synced.get(info.id) === value) return;
+              synced.set(info.id, value);
+              node.port.postMessage({ type: "param", id: info.id, value });
+            },
+          },
+        });
+      }
+      return { params: params as WebClapParams, cells: { parameterInfo: readonlyCell(infoStore) }, latency: 0 };
+    });
+    this.synced = synced;
     this.node = node;
     this.bundleUrl = bundleUrl.replace(/\/$/, "");
+    this.descriptor = loaded.descriptor;
+    this.infoStore = infoStore;
+    this.hasEditor = loaded.hasGui;
+    this.latency.value = (loaded.latencySamples ?? 0) / context.sampleRate;
     node.port.onmessage = (event: MessageEvent<HostMessage>) => this.receive(event.data);
+    for (const message of early) this.receive(message);
   }
 
   static async load(context: AudioContext, bundle: WebClapBundle): Promise<WebClapHost> {
     const workletUrl = bundle.workletUrl ?? new URL("./webclap-worklet.js", import.meta.url).href;
     let contextModules = modules.get(context);
-    if (!contextModules) { contextModules = new Map(); modules.set(context, contextModules); }
+    if (!contextModules) {
+      contextModules = new Map();
+      modules.set(context, contextModules);
+    }
     let moduleLoad = contextModules.get(workletUrl);
     if (!moduleLoad) {
       moduleLoad = context.audioWorklet.addModule(workletUrl);
@@ -57,23 +107,42 @@ export class WebClapHost extends AudioProcessor<Record<never, never>, Record<nev
     }
     await moduleLoad;
     const node = new AudioWorkletNode(context, "clap-host", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2] });
-    const host = new WebClapHost(context, node, new URL(bundle.url, globalThis.location?.href ?? import.meta.url).href);
+    const bundleUrl = new URL(bundle.url, globalThis.location?.href ?? import.meta.url).href;
+    // The plug-in's parameters define the `params` registry, so the host is constructed only after `loaded` arrives.
+    const early: HostMessage[] = [];
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const response = await fetch(new URL("module.wasm", `${host.bundleUrl}/`));
+      const response = await fetch(new URL("module.wasm", `${bundleUrl.replace(/\/$/, "")}/`));
       if (!response.ok) throw new Error(`WebCLAP bundle HTTP ${response.status}.`);
       const bytes = await response.arrayBuffer();
-      const ready = host.wait<void>((waiter) => (host.loaded = waiter));
-      node.port.postMessage({ type: "load", bytes, pluginIndex: bundle.pluginIndex ?? 0 }, [bytes]);
-      await ready;
-      return host;
+      const loaded = new Promise<LoadedMessage>((resolve, reject) => {
+        timer = setTimeout(() => reject(new Error("WebCLAP host response timed out.")), 10_000);
+        node.port.onmessage = (event: MessageEvent<HostMessage>) => {
+          const message = event.data;
+          if (message.type === "loaded") resolve(message as LoadedMessage);
+          else if (message.type === "error") reject(new Error(String(message.message)));
+          else early.push(message);
+        };
+      });
+      node.port.postMessage({ type: "load", bytes, pluginId: bundle.pluginId, pluginIndex: bundle.pluginIndex ?? 0 }, [bytes]);
+      const message = await loaded;
+      return new WebClapHost(context, node, bundleUrl, message, early);
     } catch (error) {
-      host.destroy();
+      node.port.postMessage({ type: "dispose" });
+      node.disconnect();
+      node.port.close();
       throw error;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
-  get input(): AudioNode { return this.node; }
-  get output(): AudioNode { return this.node; }
+  get input(): AudioNode {
+    return this.node;
+  }
+  get output(): AudioNode {
+    return this.node;
+  }
 
   scheduleMidi(data: Uint8Array | readonly number[], when: number): WebClapEvent {
     if (this.disposed || !Number.isFinite(when) || when < 0) throw new RangeError("WebCLAP MIDI needs a finite non-negative audio time.");
@@ -82,8 +151,13 @@ export class WebClapHost extends AudioProcessor<Record<never, never>, Record<nev
     this.pending.set(id, listeners);
     this.node.port.postMessage({ type: "schedule", id, when, data: [...data] });
     return {
-      cancel: () => { if (this.pending.delete(id)) this.node.port.postMessage({ type: "cancelScheduled", id }); },
-      onEnded: (listener) => { if (this.pending.has(id)) listeners.add(listener); else listener(); },
+      cancel: () => {
+        if (this.pending.delete(id)) this.node.port.postMessage({ type: "cancelScheduled", id });
+      },
+      onEnded: (listener) => {
+        if (this.pending.has(id)) listeners.add(listener);
+        else listener();
+      },
     };
   }
 
@@ -94,28 +168,41 @@ export class WebClapHost extends AudioProcessor<Record<never, never>, Record<nev
     this.pending.clear();
   }
 
+  /** @deprecated Write to the parameter's .value instead. */
   setParameter(id: number, value: number): void {
     if (!Number.isFinite(value)) throw new RangeError("WebCLAP parameter needs a finite value.");
-    this.node.port.postMessage({ type: "param", id, value });
+    const param = this.params[`${id}`];
+    if (param) param.value = value;
+    else this.node.port.postMessage({ type: "param", id, value });
   }
 
-  async getState(): Promise<Uint8Array> {
+  async saveState(): Promise<Uint8Array> {
     const result = this.wait<Uint8Array>((waiter) => this.stateWaiters.push(waiter));
     this.node.port.postMessage({ type: "saveState" });
     return result;
   }
 
-  async setState(bytes: Uint8Array): Promise<void> {
+  async loadState(bytes: Uint8Array): Promise<void> {
     if (!(bytes instanceof Uint8Array)) throw new TypeError("WebCLAP state needs bytes.");
     const expected = new Uint8Array(bytes);
     const confirmation = this.wait<void>((waiter) => this.loadStateWaiters.push(waiter));
     this.node.port.postMessage({ type: "loadState", bytes: expected.buffer }, [expected.buffer]);
     await confirmation;
     for (let attempt = 0; attempt < 10; attempt++) {
-      if (sameBytes(await this.getState(), bytes)) return;
+      if (sameBytes(await this.saveState(), bytes)) return;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     throw new Error("WebCLAP state did not settle after load.");
+  }
+
+  /** @deprecated Use saveState(). */
+  getState(): Promise<Uint8Array> {
+    return this.saveState();
+  }
+
+  /** @deprecated Use loadState(). */
+  setState(bytes: Uint8Array): Promise<void> {
+    return this.loadState(bytes);
   }
 
   async mountEditor(frame: HTMLIFrameElement): Promise<() => void> {
@@ -126,7 +213,8 @@ export class WebClapHost extends AudioProcessor<Record<never, never>, Record<nev
     this.editorListener = (event: MessageEvent) => {
       if (event.source !== frame.contentWindow || event.origin !== origin) return;
       const data = event.data;
-      const bytes = data instanceof ArrayBuffer ? data : ArrayBuffer.isView(data) ? data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) : null;
+      const bytes =
+        data instanceof ArrayBuffer ? data : ArrayBuffer.isView(data) ? data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) : null;
       if (bytes) this.node.port.postMessage({ type: "receive", bytes }, [bytes]);
     };
     window.addEventListener("message", this.editorListener);
@@ -164,15 +252,25 @@ export class WebClapHost extends AudioProcessor<Record<never, never>, Record<nev
     waiter.resolve(value);
   }
 
+  /** Plug-in -> JS: update a Param's signal without echoing the value back to the worklet. */
+  private applyParam(id: number, value: number): void {
+    const param = (this.params as Record<string, Param<number> | undefined>)[String(id)];
+    if (!param || !Number.isFinite(value)) return;
+    this.synced.set(id, value);
+    param.value = value;
+  }
+
   private receive(message: HostMessage): void {
     switch (message.type) {
-      case "loaded": {
-        const loaded = message as LoadedMessage;
-        this.descriptor = loaded.descriptor;
-        this.parameters = Object.freeze(loaded.params);
-        this.hasEditor = loaded.hasGui;
-        this.latency.value = (loaded.latencySamples ?? 0) / this.context.sampleRate;
-        this.settle(this.loaded, undefined); this.loaded = undefined;
+      case "paramOut":
+        this.applyParam(message.id as number, message.value as number);
+        break;
+      case "params": {
+        const infos = message.params as WebClapParameter[];
+        batch(() => {
+          this.infoStore.value = Object.freeze(infos);
+          for (const info of infos) this.applyParam(info.id, info.value);
+        });
         break;
       }
       case "executed": {
@@ -181,9 +279,18 @@ export class WebClapHost extends AudioProcessor<Record<never, never>, Record<nev
         if (listeners) for (const listener of listeners) listener();
         break;
       }
-      case "state": this.settle(this.stateWaiters.shift(), message.bytes ? new Uint8Array(message.bytes as ArrayBuffer) : new Uint8Array()); break;
-      case "stateLoaded": this.settle(this.loadStateWaiters.shift(), undefined); break;
-      case "gui": if (typeof message.uri === "string") { this.settle(this.guiWaiter, message.uri); this.guiWaiter = undefined; } break;
+      case "state":
+        this.settle(this.stateWaiters.shift(), message.bytes ? new Uint8Array(message.bytes as ArrayBuffer) : new Uint8Array());
+        break;
+      case "stateLoaded":
+        this.settle(this.loadStateWaiters.shift(), undefined);
+        break;
+      case "gui":
+        if (typeof message.uri === "string") {
+          this.settle(this.guiWaiter, message.uri);
+          this.guiWaiter = undefined;
+        }
+        break;
       case "send": {
         const bytes = message.bytes as ArrayBuffer;
         this.editor?.contentWindow?.postMessage(bytes, new URL(this.bundleUrl, document.baseURI).origin, [bytes]);
@@ -191,8 +298,7 @@ export class WebClapHost extends AudioProcessor<Record<never, never>, Record<nev
       }
       case "error": {
         const error = new Error(String(message.message));
-        if (this.loaded) { clearTimeout(this.loaded.timer); this.loaded.reject(error); this.loaded = undefined; }
-        else console.error(error);
+        console.error(error);
         break;
       }
     }

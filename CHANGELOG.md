@@ -13,7 +13,48 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ## [Unreleased]
 
+### Fixed
+
+- **blocks:** `WavePlayer.buffer`, `.duration` and `.sourceBuffer` track the committed playback version. `EffectRack.effects` and its read-only `cells.effects` update alongside the live chain. A destroyed WavePlayer now reports `WavePlayer is destroyed.`.
+
 ### Added
+
+- **effects:** `TimeStretch.process` accepts interior source/output frame anchors for local pitch-preserving warp with an explicit total duration and a compatible caller-supplied WASM module.
+
+- **blocks / workspace:** EffectRack macros map one control to several built-in insert parameters using native linear or exponential scheduling. Rack presets restore their slots and controls together. Workspace persists track macros and applies live knob edits without a transport rebuild.
+
+- **widgets / workspace:** `createAutomationOverlay` edits a borrowed curve over a time view. Project clip gain curves use original source seconds, follow trim and stretch, and apply to playing Arrangement voices without restarting their sources.
+
+- **host / workspace:** `WebClapHost.load` accepts a CLAP `pluginId` for multi-device bundles. Workspace uses the ID it persists. The worklet supports one imported WASM32 memory, including the shared memory used by the Signalsmith Basics example.
+
+- **clock / workspace:** `RangeLoop` projects one source range onto the audio clock. Workspace range audition uses it for synchronized repeats over selected PCM and file-backed audio tracks, with a borrowed playhead-independent preview in the DAW.
+
+- **blocks / workspace:** Session clips accept a one-shot mode. The audio graph returns that track to Arrangement at the clip's exact end, and the launcher drops the finished override from its read-only state.
+
+- **host:** WebCLAP parameters use `host.params[id].value`. Plug-in editor changes and patch restores update the same Params. `parameterInfo` exposes reactive metadata, and `saveState()` / `loadState()` capture and restore patches.
+
+- **workspace:** Direct Project edits apply automatically to the live graph. `flush()` waits for edits, `cells.needsSync` signals structural changes and `sync()` rebuilds on request. Project and MidiClip getters track their owning state, and `cells.warnings` exposes a read-only warning snapshot.
+
+- **workspace:** `auditionAudioClip()`, `auditioningClip` and `stopClipAudition()` play a project audio clip independently of Arrangement. The waveform editor uses the same cached PCM and streamed media windows as project playback.
+
+- **effects / blocks / workspace:** `Equalizer` provides a standalone peaking-filter bank with schedulable band controls and a compound frequency response. EffectRack and the DAW use an `eq` insert that persists, moves and bypasses as one slot.
+
+- **workspace:** `prepareAudioClipStretch()` borrows a standalone processor to render audio from its original source window. Apply in an undo transaction, restore the original at ratio 1, or save rendered playback and the source together. The DAW audio editor supports an optional user-supplied stretch engine.
+
+- **blocks / workspace / widgets:** Reusable clip envelope helpers schedule clip-local gain and fades. Project persists audio clip envelopes for arrangement and PCM Session playback and the DAW uses `mountClipEnvelopeEditor()` to edit them.
+
+- **effects / blocks / widgets / workspace:** Filter exposes the complex response of its stages and wet/dry mix. EffectRack and Workspace expose live Filter responses by slot. `mountSpectrum()` and `mountEqEditor()` work with borrowed data and power the DAW's effect panel.
+
+- **blocks / workspace / widgets:** `StepSequencer` schedules velocity patterns through a borrowed transport. Workspace attaches patterns to its existing Clock, and the DAW combines `mountStepGrid()`, `mountPadGrid()`, cancellable InstrumentEvents and optional Sample Library assignments.
+
+- **blocks / widgets:** `SampleLibrary` decodes queued local files, shares identical verified content, exposes retained PCM leases and auditions apart from transport. `mountSampleBrowser()` integrates these controls with the DAW's audio track placement.
+
+- **workspace / widgets:** Project persists submix and effect buses, channel output destinations and post-fader sends in DAWproject. Workspace applies bus and routing edits with existing tracks left running. `mountMixer()` binds reactive strip controls and meters to caller-owned settings. The DAW can create buses, edit routing and sends, and open each bus's effect rack.
+
+- **blocks / workspace / widgets:** `ClipLauncher` queues cancellable track changes at the next grid boundary over a borrowed transport. `Workspace.launchClips()` uses the existing timeline and track routing for live PCM loops. `mountClipGrid()` adds clip, scene, cancellation and return controls, wired into the DAW's Session panel.
+- **workspace / widgets / DAW demo:** Persist master volume in the DAWproject main channel and apply it to mix export. Add `mountAutomationLane` and a DAW track-volume lane with undo and redo. Completed microphone takes create local OPFS recovery checkpoints that can be reopened after a page crash.
+- **widgets / DAW demo:** `attachTimeRangeGesture` previews and commits a range on a borrowed timeline surface. The DAW's loop strip selects a beat-based range across the arrangement.
+- **DAW demo:** The arrangement mini-map shows the song, playhead and draggable viewport. Audio clip thumbnails redraw at the viewport's zoom, including fine peaks read from visible file-backed sample windows.
 
 - **workspace:** `workspace.player` plugs directly into `mountPlayer` with play, pause, reactive project duration and seek in project seconds.
 - **blocks / workspace:** `@audiorective/blocks/effect-rack` owns ordered Filter and PingPongDelay inserts. Project stores rack settings and Workspace applies them after WebCLAP without restarting playback. DAWproject saves the inserts as Audiorective built-in devices. The DAW Devices panel supports adding, reordering, bypass, editing and removal.
@@ -82,6 +123,7 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Fixed
 
+- **DAW demo:** Looping a beat-locked clip uses its converted project-second boundaries for playback and the loop readout.
 - **workspace:** A cancelled audio clip's late `onended` callback no longer removes a newer handle for the same clip, preventing duplicate playback after rapid seek or replay.
 
 ## [2.3.2] - 2026-09-16

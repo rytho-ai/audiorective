@@ -58,6 +58,22 @@ The convention is not enforced by the clock — there's no validation API, no gu
 
 If you're an LLM writing an `onTick` callback: always iterate `grid()`/`spans()` rather than hand-computing beat positions, and you get the non-overlap guarantee for free.
 
+## Repeat a source-second range
+
+`new RangeLoop({ start, end }, when)` maps a half-open source interval onto repeated absolute audio times. Every repeat is measured from the original `when` anchor. The projection leaves the supplied Clock running on its own timeline and works without Workspace or any audio source.
+
+```ts
+const loop = new RangeLoop({ start: 1, end: 2.5 }, context.currentTime + 0.05);
+// Inside your Clock's onTick:
+const audioStart = timeline.beatToTime(window.beat.start);
+for (const slice of loop.slices(audioStart, window.time.lookAheadEnd)) {
+  // slice.start / slice.end are source seconds. slice.when is the absolute audio start.
+  scheduleStems(slice, window);
+}
+```
+
+Use `slice.cycle` when identifying scheduled events. Intersect each stem with the common range and let short stems fall silent until the shared repeat. See [Workspace range audition](./workspace.md#audition-a-range-across-audio-tracks) for an implementation.
+
 ## Timeline — the beat↔time mapping
 
 `Timeline` owns the transport anchor and the tempo curve — the only two pieces of stored position state in the package. Beat position is always _derived_, never accumulated, so there's no drift over a long session.
@@ -279,6 +295,8 @@ Two things to remember when writing assertions:
 | Message                                                        | Cause                                                                                                        | Fix                                                                     |
 | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
 | `Clock owned event time must be finite, non-negative seconds.` | `window.own(event, when)` received an invalid audio time; the event is cancelled before the error is thrown. | Pass the same absolute `AudioContext` time used to schedule that event. |
+| `RangeLoop needs increasing finite source seconds and a non-negative audio start.` / `RangeLoop window needs finite audio seconds.` | The time range or window contains an invalid bound. | Use finite seconds and place the source end after its start. |
+| `RangeLoop period is below audio time precision.` | Consecutive repeat boundaries collapse at the current audio time. | Use a longer source range. |
 
 ## Non-goals
 

@@ -58,6 +58,75 @@ const level = mountLevelMeter(meters, {
 
 For app-owned commands, supply a structural getter that reads the current tracked value and a setter that calls the command. `mountLevelMeter()` reports mono sample peak and RMS per snapshot, including samples over full scale. Call `destroy()` to stop the sampling loop. The caller owns the analyser and audio routing.
 
+## Clip envelope editor
+
+`mountClipEnvelopeEditor(root, { duration, envelope, onChange })` exposes linear gain, fade-in and fade-out fields for a caller-owned reactive envelope. It commits changes in clip-local seconds and limits the combined fade length to `duration`. Use its `labels` option to localize the controls. The widget updates when the borrowed state changes and tears down its own observer on `destroy()`.
+
+## Automation overlay
+
+`view.attach(createAutomationOverlay({ points, fromView, toView, defaultValue, maxValue, onCommit }))` layers a borrowed curve over a waveform or other time view. Supply a reactive `points` reader and increasing inverse time conversions. The overlay follows zoom and scroll. Double-click to add a point, drag to move it, or use the arrow keys on a focused point. Enter switches between linear and hold. Delete removes the point. An optional `snap` function receives view time, and Alt bypasses it. Dragging commits once on release and cancels on Escape or data replacement.
+
+The attachment owns its gesture and drawing. The caller owns the points and playback. For a project clip, derive the conversion from [the clip's source window](./workspace.md#clip-gain-automation) and pass updates to Project in `onCommit`.
+
+## Spectrum and EQ editor
+
+`mountSpectrum(root, { sampleRate, fftSize, read })` projects borrowed FFT dB values onto a log-frequency axis. A Web Audio analyser can supply the values through `read: (bins) => analyser.getFloatFrequencyData(bins)`. The reader receives `fftSize / 2` entries. The widget releases its animation frame on destruction. The caller owns the analyser and its audio connection.
+
+`mountEqEditor(root, { bands, readResponse })` edits borrowed numeric controls. Each band has a stable ID, label and reactive `frequency`, with optional `gain` and `q` controls. Pass a response function that fills **linear magnitudes** at the supplied frequencies. Drag or use Left and Right to change frequency. Gain-enabled bands also use vertical movement and Up or Down. Page Up, Page Down and the wheel adjust Q when supplied. The widget can run against standalone Params and generated analysis data, or it can borrow feedback from [Workspace](./workspace.md#effect-rack).
+
+## Step grid and pads
+
+`mountStepGrid(root, { sequencer })` edits the provided pattern's velocities and displays its current step. Click a step to toggle and focus it to adjust its velocity. Destroying the view leaves the borrowed pattern available.
+
+`mountPadGrid(root, { pads, press })` turns pointer or focused keyboard presses into calls to `press(id)`. A one-shot callback returns nothing. For a gated sound, return a release callback for that specific press. The widget releases held inputs on key or pointer release, focus loss and destruction. It leaves the audio engine and pad mapping with the caller.
+
+## Sample browser
+
+`mountSampleBrowser(root, { library, choose, onError, labels? })` renders a borrowed [Sample Library](./blocks.md#sample-library). The caller supplies file input and placement. On `choose(id)`, acquire the buffer, copy or retain it in the destination and release the lease when finished. `destroy()` removes the view, leaving audition and imports available to the caller.
+
+## Mixer controls
+
+`mountMixer(root, { state, editTrack, editMaster, output? })` binds volume, pan, mute and solo controls to an external mixer state. Give it a `Readable<MixerState>` and apply edits in the owner. To display meters, return each track's post-fader `AudioNode` from `output(id)` and the master from `output(null)`. The widget detaches only its own analysis branches and reactive subscription on `destroy()`. Add app-specific routing controls with `appendControls(id, element)`, whose optional return value cleans up that strip.
+
+With Workspace, read `project.cells.revision` when projecting `project.tracks` and `project.masterVolume`. Bind the edit callbacks to [Workspace mixer methods](./workspace.md#mixer-buses-and-sends). The same view can borrow a different mixer as long as it supplies the same state and actions.
+
+## Timeline range gesture
+
+`attachTimeRangeGesture(element, { timeAt, onPreview, onSelect })` from `@audiorective/widgets/arrangement` attaches a drag to an existing time surface. Your `timeAt(clientX, bypassSnap)` resolves scrolling, zoom, bounds and snapping. The widget supplies `bypassSnap` while Alt is pressed. It previews an ordered `[start, end]` and calls `onSelect` once when the pointer releases a nonempty range. Clicks and cancelled gestures clear the preview. Call `destroy()` when replacing the borrowed element.
+
+Use a dedicated surface with `touch-action: none` when dragging also needs to work on touchscreens. The app decides how to store or use the returned bounds. The DAW demo converts project seconds to beats before setting its loop.
+
+## Automation lane
+
+`mountAutomationLane(root, options)` draws and edits an envelope in project seconds. Pass `duration`, `maxValue`, `defaultValue`, `points` and an `onCommit(next)` callback. Click to add a point or drag a point to move it. The point picker and fields allow precise time and value edits, linear or hold interpolation, and deletion. The first pointer edit after time zero anchors the default value at zero. Each completed gesture emits one replacement point list. A cancelled drag keeps the prior points.
+
+```typescript
+import { mountAutomationLane } from "@audiorective/widgets";
+
+const lane = mountAutomationLane(root, {
+  duration: 16,
+  maxValue: 1.5,
+  defaultValue: 1,
+  points: track.volumeAutomation,
+  onCommit(next) {
+    project.setVolumeAutomation(track.id, next);
+    lane.setPoints(project.tracks.find(({ id }) => id === track.id)!.volumeAutomation);
+    void workspace.commit().catch(reportError);
+  },
+});
+// On hide or teardown:
+lane.destroy();
+```
+
+The caller owns the envelope, applies undo and redo, and calls `setPoints()` with the accepted points after each edit or external change. Use a positive finite duration and maximum value. Otherwise the mount reports `Automation lane needs a positive duration and maximum value.` A browser without a 2D canvas reports `Automation lane needs a 2D canvas.`.
+
+## Clip Grid
+
+`mountClipGrid(root, { state, launch, cancel, labels? })` renders buttons for an app-owned scene layout. Supply a reactive `ClipLauncherState` from Blocks or Workspace and a callback that handles the whole launch group. Use `setLayout({ tracks, scenes })` when the grid changes. Give each scene a label and at most one clip per track. The widget exposes `data-clip-state` as `idle`, `queued` or `active` for theming and keeps button state in sync with the borrowed launcher.
+
+The return buttons request `clipId: null` for the affected tracks. The widget's `destroy()` removes its own DOM and subscription. See the [Workspace example](./workspace.md#clip-launcher) for wiring and launch timing.
+
+
 ## Plain player controls
 
 `@audiorective/widgets/player` mounts Play/Pause, position, duration and volume controls on a caller-owned player. It works without waveform decoding, so use `FilePlayer` for long tracks, podcasts and streams. The widget borrows the player: removing the controls leaves playback and the audio graph running.
@@ -394,10 +463,17 @@ DOM classes use the `ar-` prefix to scope widget presentation. Internal class na
 
 ## Common errors
 
+| Frequency widget message | Fix |
+| --- | --- |
+| `Frequency plot needs increasing frequency and decibel ranges.` | Supply positive ordered frequencies and increasing dB limits. |
+| `Spectrum needs a valid FFT size and a range within Nyquist.` | Pass a power-of-two FFT size from 32 through 32768 and limit the upper frequency to half the sample rate. |
+| `EQ editor needs unique band IDs and increasing positive Q limits.` | Supply unique IDs and finite positive Q bounds in increasing order. |
+
 | Control message | Fix |
 | --- | --- |
 | `Parameter control needs a finite increasing range and a positive minimum for log scale.` | Provide a finite increasing range, above zero for log scale. |
 | `Parameter control step must be positive.` | Supply a finite positive step, or omit it. |
+| `Automation overlay needs a positive maximum and an in-range default.` | Provide a positive finite maximum and a default between zero and that maximum. |
 | `Level meter sample count must be a positive integer.` | Supply the length of the float buffer your reader needs. |
 
 Messages thrown by the plain player adapters, waveform view, its plugins and the complete selector. Waveform loading and playback messages come from the borrowed player: see [Blocks](./blocks.md#common-errors).

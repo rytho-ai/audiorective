@@ -31,15 +31,15 @@ reopened.destroy();
 
 The take placement argument is **project seconds**, chosen by the caller. `RecordedMidi.startTime` and `RecordedAudio.startFrame/startTime` are absolute AudioContext capture positions; Project does not infer arrangement placement from them. `addMidiTake` defaults to seconds, or accepts `{ timeUnit: "beats" }` to convert the take's notes, duration and complete ordered message stream at that placement through the current tempo map. The resulting `MidiClip.time`, `duration`, note times and `playbackEvents()` times all use `clip.timeUnit`. `MidiClip.sequence` owns editable notes and may be passed to `mountPianoRoll` with `timeUnit: clip.timeUnit`. `Project.tracks` is a snapshot; read it again after adding a track or clip.
 
-`addAudioClip` copies the take's Float32 PCM. `saveDawProject` writes it as interleaved 32-bit float WAV in the ZIP, preserving sample values. The caller can use `Project.setVolumeAutomation(trackId, points)` for a track-volume curve; points use project seconds and `"linear"`/`"hold"` shapes. `Workspace.commit()` schedules that curve on a separate gain stage so mute, solo and static track volume remain independent. In-memory audio clips reuse a cached `AudioBuffer` while the same clip object is scheduled again; replacing a clip creates a new cache entry. Treat in-memory `AudioClip.channels` as borrowed, read-only PCM: mutating its typed arrays in place bypasses Project revisions and the cache.
+`addAudioClip` copies the take's Float32 PCM. `saveDawProject` writes it as interleaved 32-bit float WAV in the ZIP, preserving sample values. The caller can use `Project.setVolumeAutomation(trackId, points)` for a track-volume curve; points use project seconds and `"linear"`/`"hold"` shapes. Workspace applies that curve on a separate gain stage so mute, solo and static track volume remain independent. In-memory clips reuse a cached `AudioBuffer` for the same PCM channel window. Moving a clip or changing its envelope retains that buffer. Treat in-memory `AudioClip.channels` as borrowed, read-only PCM: mutating its typed arrays in place bypasses Project revisions and the cache.
 
 ### Tempo and arrangement time
 
-`Project.tempoMap` converts musical beats to project seconds and back. The initial `Project.bpm` is beat zero; `setTempoChanges` adds step changes at later beats. Call `await workspace.commit()` after editing the map so playback rebases Clock's absolute AudioContext tempo events. `Workspace.position`, `seek`, audio clips, markers and track-volume automation use **project seconds**. MIDI clips use their declared `timeUnit` (default `seconds`).
+`Project.tempoMap` converts musical beats to project seconds and back. The initial `Project.bpm` is beat zero; `setTempoChanges` adds step changes at later beats. The running Workspace automatically rebases Clock's absolute AudioContext tempo events. Await `workspace.flush()` when a following operation depends on the change. `Workspace.position`, `seek`, audio clips, markers and track-volume automation use **project seconds**. MIDI clips use their declared `timeUnit` (default `seconds`).
 
 ```typescript
 project.setTempoChanges([{ beat: 4, bpm: 60 }]); // 120 BPM until beat 4, then 60 BPM
-await workspace.commit();
+await workspace.flush();
 project.tempoMap.beatToSeconds(8); // 6 seconds
 project.tempoMap.secondsToBeat(4); // beat 6
 project.tempoMap.snapSeconds(4.4); // 4 seconds, the nearest beat
@@ -62,7 +62,7 @@ try {
   const span = await recorder.stopStream();
   const media = await writer.finish(span);
   project.addAudioMediaClip(track.id, media, workspace.takePosition(anchor, span, measuredInputLatencySeconds));
-  await workspace.commit();
+  await workspace.flush();
   // Keep `media` while clips or undo history refer to it. After closing that project:
   // await media.dispose(); // deletes this temporary OPFS take
 } catch (error) {
@@ -79,7 +79,86 @@ Use `await workspace.saveTo(writableStream)` or `saveDawProjectTo(project, writa
 
 `Project.moveClip(clipId, trackId, time)` moves a clip on a matching track using that clip's unit. MIDI moves retain the same `MidiClip.sequence` for an open editor. `duplicateClip(clipId, time, trackId?)` uses the source clip's unit and makes a new ID; `removeClip(clipId)` removes it. `splitClip(clipId, offset)` and `trimClip(clipId, start, end)` use **clip-local units** (seconds for audio and legacy MIDI, beats for beat MIDI). The left split clip keeps the original ID. Audio boundaries round to samples; MIDI notes crossing a cut are shortened and retained on both sides, while control events inside the kept interval stay at their relative time. The latest prior channel-controller value is carried into a trimmed/split segment, and active sustain is released at its end so a cut cannot leave held notes running. These operations replace the affected clip objects and MIDI sequences, so an editor should re-read `Project.tracks` and remount a borrowed clip view. They do not rewrite stored note positions when tempo changes. Rename with `setTitle(title)` and `setTrackName(trackId, name)`, or remove a whole track with `removeTrack(trackId)`. Structural edits update `Project.cells.revision`; read `Project.tracks` again after an edit. `Project.setMarkers([{ time, name }, ...])` stores sorted, unique section markers in project seconds; `Project.markers` exposes the current snapshot. DAWproject stores these under standard arrangement `Markers`.
 
-Tracks have `muted`, `solo` and `pan` (`-1` left, `0` center, `1` right), alongside linear `volume`. Set them through `Project.setTrackMuted`, `setTrackSolo`, `setTrackPan` or through the matching `Workspace` methods while a browser session is active. The workspace applies mixer changes to native Web Audio gain and stereo panner nodes immediately; solo suppresses non-solo tracks, and mute wins over solo. After editing `Project` directly, call `await workspace.commit()`: clip, automation, mixer and device-state edits update the live runtime without reloading hosts; track/device topology changes call `sync()` and stop transport while rebuilding routing. `refreshArrangement()` and `sync()` remain available for callers that explicitly own those narrower operations.
+Tracks have `muted`, `solo` and `pan` (`-1` left, `0` center, `1` right), alongside linear `volume`. Use `Project.setTrackMuted`, `setTrackSolo`, `setTrackPan` or the matching `Workspace` methods. The Workspace methods apply mixer controls immediately. Solo follows the graph to and from a bus, and mute wins over solo.
+
+### Apply Project edits to the live graph
+
+Workspace batches edits made directly to its Project and applies changes to clips, tempo, mixer settings, volume automation, routes, built-in inserts and hosted patch state. It can also add or remove a bus with no new hosted device while preserving other tracks and transport.
+
+- Use `await workspace.flush()` when the caller must wait for application, such as before inspecting a new bus node or triggering a newly added clip. Observe `workspace.cells.error` for application errors. `flush()` rejects with the failed edit's cause.
+- Observe `workspace.cells.needsSync.value` when adding or removing ordinary tracks or changing the hosted device list. Call `await workspace.sync()` to rebuild the graph and stop transport at the current position. Existing audio nodes and hosts remain loaded until the rebuild.
+- `commit()` keeps its existing role for callers that explicitly want edits applied and any needed graph rebuild. `save()` and `saveTo()` wait for light edits before capturing plug-in state.
+
+`Project.title`, `tracks`, `tempoMap`, `markers` and `masterVolume` are reactive reads on the Project revision. `MidiClip.time` and `.duration` are trackable on the clip. `workspace.warnings` and `workspace.cells.warnings.value` expose the same read-only warning snapshot.
+
+`Project.masterVolume` is a linear gain, initialized to `1`. Use `workspace.setMasterVolume(value)` for an immediate change during playback, or set it on the Project and commit. DAWproject stores the value in its main channel. The companion audio export applies it to `mix.wav`. Track stems are tapped before master gain.
+
+### Clip volume and fades
+
+Call `Project.setAudioClipEnvelope(clipId, { gain, fadeIn, fadeOut })` and commit the edit. Use linear gain and clip-local seconds. Gain and fade edits share the original PCM. Trimming and splitting preserve fades on retained edges and start new edges with zero fade. PCM trims share their original backing allocation. File-backed clips continue to read only scheduled windows.
+
+Playback applies the same envelope to in-memory clips and file-backed windows, including after a seek into a fade. Session PCM loops apply the envelope on each pass. Fades are written to DAWproject clip attributes in seconds. Audiorective keeps the constant gain in its project metadata, alongside the unmodified audio.
+
+### Clip gain automation
+
+`project.setAudioClipGainAutomation(clipId, points)` edits a clip's own linear gain curve. Point times are seconds in the original source before stretch. The curve multiplies the clip's constant gain and fades, and track automation runs separately. A gain-only edit updates playing Arrangement voices at their current source position. Use `await workspace.flush()` when a following operation needs the applied change.
+
+Moving or stretching a clip preserves its points. Trimming or splitting updates `clip.gainAutomation.sourceStart` to the first retained source frame in seconds. Points outside the visible window still guide interpolation. Map a waveform's playback time to `sourceStart + playbackTime * audioClipSourceDuration(clip) / clip.duration`. Invert that mapping to draw a source point on the waveform. Pass an empty array to clear the curve.
+
+PCM, file-backed playback, clip and range audition, and newly launched Session PCM apply the curve. An already launched Session clip uses the curve from its launch. Audiorective stores editable points in its DAWproject metadata. Use the rendered audio fallback for other DAWs that need the audible result.
+
+### Audition an arranged audio clip
+
+Call `await workspace.auditionAudioClip(clipId)` to play the current clip window from its start, including trims, stretch and its gain envelope. It works with in-memory and file-backed clips. The audition goes through master volume, bypasses track devices and mixer settings, and leaves the Arrangement playhead and transport alone. Observe `workspace.auditioningClip` for the active or loading clip ID. A new request replaces the old one. Use `stopClipAudition()` to cancel, or let the clip finish. Committing an edit that replaces the clip stops its audition.
+
+For a standalone player over one source, use [WavePlayer](./blocks.md#waveplayer) and its source-local selection. Workspace resolves a project clip's current media window and streams file-backed audio in bounded reads.
+
+### Audition a range across audio tracks
+
+Call `await workspace.auditionRange({ start, end }, { trackIds })` to repeat one project-second selection through master output. Omit `trackIds` to include all audio tracks. The same clock schedules the entire preview. Short tracks stay silent until the next common repeat, and the selected audio uses existing PCM and file chunk caches.
+
+Observe `workspace.auditioningRange` for the active or loading range, and call `stopRangeAudition()` to stop it. A new clip or range audition replaces the previous preview. Changes to the selected tracks' clips stop the preview. Auditions include clip gain and fades, bypass the track mixer and preserve the Arrangement position. MIDI and track device playback remain in Arrangement.
+
+### Pitch-preserving clip stretch
+
+`Workspace.prepareAudioClipStretch(clipId, ratio, processor, { signal? })` borrows a `WaveStretchProcessor`. Pass the desired length divided by original length. Call `apply()` on the prepared result inside the app's undo transaction, then await `workspace.flush()` if the next action depends on the applied render. Preparation leaves Project unchanged. Moving, trimming, deleting or replacing the clip invalidates a prepared edit. Preparing a newer result for that clip, cancelling the supplied signal and destroying Workspace all cancel outstanding work. Apply a prepared result once.
+
+```ts
+import { TimeStretch } from "@audiorective/effects/time-stretch";
+
+const processor = new TimeStretch(compatibleWasmModule);
+try {
+  const edit = await workspace.prepareAudioClipStretch(clipId, 1.5, processor);
+  edit.apply();
+  await workspace.flush();
+} finally {
+  processor.destroy();
+}
+```
+
+A clip stores its rendered playback plus the original audio window. A later ratio always uses that original window. Pass ratio `1` to restore it, with no processor required. Clip position and ID stay in place. Fade lengths scale with the clip, and trimming or splitting maps each cut back to the retained source at a sample boundary. Offline processing loads the selected source window into memory.
+
+DAWproject stores the rendered WAV as the playable clip. Audiorective retains the original window and ratio in private project entries. The file opens and plays without a stretch engine. Restretching requires the caller's processor. Use `project.hasFileBackedAudio` to choose a streaming save when either the playback or a retained source is file-backed.
+
+## Mixer buses and sends
+
+Use `Project.addTrack(name, "bus")` for a submix or pass `{ busRole: "effect" }` for a shared effects return. Both have the same rack, fader and automation as other tracks. Route a track's main output to one bus or to the master, then add separate post-fader, post-pan sends with linear gains. The model rejects unknown targets and feedback cycles before changing the graph.
+
+```ts
+const wet = project.addTrack("Echo return", "bus", { busRole: "effect" });
+project.setTrackEffects(wet.id, [
+  { id: "echo", type: "delay", delayTime: 0.3, feedback: 0.35, enabled: true, wet: 1 },
+]);
+await workspace.flush();
+
+for (const [id, gain] of [[drums.id, 0.3], [keys.id, 0.15]] as const) {
+  workspace.setTrackRouting(id, { outputBusId: null, sends: [{ busId: wet.id, gain }] });
+}
+```
+
+`Workspace.setTrackRouting()` applies a route edit immediately. `Project.setTrackRouting()` works with or without a live Workspace. With a live Workspace, flush for a deterministic routing readback. Removing a destination restores incoming main outputs to master and drops sends to the removed bus. Soloing a return keeps its inputs and suppresses their parallel dry outputs. `workspace.trackMixerOutput(trackId)` borrows a post-fader node for a meter. Exported individual stems are taken there, before downstream bus processing, while the exported mix passes through all buses.
+
+Routing saves to DAWproject channel destinations and post-fader sends. DAWproject files with pre-fader sends, extra send controls or other unsupported routing are rejected. The [DAWproject schema](https://github.com/bitwig/dawproject/blob/main/Project.xsd) defines those wire formats.
 
 ## Live browser workspace
 
@@ -109,7 +188,7 @@ project.setVolumeAutomation(track.id, [
   { time: 0, value: 1, shape: "linear" },
   { time: 2, value: 0.5, shape: "hold" },
 ]);
-await workspace.commit();
+await workspace.flush();
 const bytes = await workspace.save(); // captures live plug-in state
 detachEditor?.();
 workspace.destroy();
@@ -143,11 +222,55 @@ workspace.project.destroy();
 
 The same view works with `Workspace.create()` and `Workspace.open()`. Pass a `destination` in all three paths for audible output, or connect `workspace.output` to your own graph. The widget borrows the transport. Your app still decides when to stop playback at the end or loop a region.
 
+## Step Sequencer
+
+Attach a caller-owned `StepSequencer` with `workspace.attachStepSequencer(sequence)`. Connect the instrument's output to a caller-selected mix path. The attached pattern uses Workspace's Clock windows and tempo mapping. Velocity edits refresh pending steps, and transport pause, stop and seek reset the sequence's scheduled events. Call the returned detach function to remove only this sequence. An attached live pattern belongs to the current app session. Saveable Arrangement clips belong to Project.
+
+## Clip Launcher
+
+Start playback and call `workspace.launchClips([{ trackId, clipId }], quantumBeats)` to launch an in-memory PCM clip on its existing audio track. The default is looping. Set `mode: "one-shot"` to play the current clip once and return that track to Arrangement at its exact audio end. Multiple targets in the same call form one scene and switch at the same audio time. Quantum defaults to one beat. Read the returned `beat` and `when` for the exact deadline or observe `workspace.session` for queued and active clips. `workspace.cancelClipLaunch()` withdraws the pending group before its audio deadline. Queue a new group to replace it.
+
+The affected tracks switch between Arrangement and Session before their shared devices, inserts and mixer. Tracks omitted from the group keep playing as before. Each session clip loops at its original sample rate and length. Use `{ trackId, clipId: null }` to return the track to its current Arrangement position at the next launch boundary.
+
+Pause, Stop, Seek, tempo changes, and full routing rebuilds clear the live overrides. Removing a clip referenced by a live or queued override also clears Session. The launch reads a snapshot of the clip audio. DAWproject stores Arrangement and media; the launcher state and scene layout live in the session. The launcher currently accepts in-memory PCM clips. MIDI and file-backed media remain playable in Arrangement.
+
+```ts
+import { mountClipGrid } from "@audiorective/widgets";
+
+const clips = [
+  { trackId: drums.id, clipId: verseDrums.id, label: "Drum loop" },
+  { trackId: bass.id, clipId: verseBass.id, label: "Bass loop" },
+];
+const grid = mountClipGrid(root, {
+  state: workspace.session,
+  launch: async (changes) => {
+    try {
+      await workspace.play();
+      if (workspace.player.isPlaying.value) workspace.launchClips(changes, 4);
+    } catch (error) {
+      showError(error);
+    }
+  },
+  cancel: () => workspace.cancelClipLaunch(),
+});
+grid.setLayout({
+  tracks: [{ id: drums.id, label: "Drums" }, { id: bass.id, label: "Bass" }],
+  scenes: [{ label: "Verse", clips }],
+});
+// Tear down the DOM view while leaving the borrowed Workspace available.
+grid.destroy();
+```
+
+
 ## Effect rack
 
-`ProjectTrack.effects` is the ordered snapshot of built-in inserts. Use `project.setTrackEffects(trackId, slots)` for headless project edits and `await workspace.commit()` to apply them to a running workspace. For an already loaded track, `workspace.setTrackEffects(trackId, slots)` applies the change synchronously to the rack and Project, preserving transport and loaded WebCLAP hosts. The signal runs from the track's source through its hosted devices, then the rack, then the mixer. `workspace.trackEffectOutput(trackId)` borrows the rack's pre-mixer output for an analyser. Disconnect only the analyser you connected, or remount it if a structural edit rebuilt that track.
+`ProjectTrack.effects` is the ordered snapshot of built-in inserts. Use `project.setTrackEffects(trackId, slots)` for headless project edits and await `workspace.flush()` when you need to wait for the rack to reflect that edit. For an already loaded track, `workspace.setTrackEffects(trackId, slots)` applies the change synchronously to the rack and Project, preserving transport and loaded WebCLAP hosts. The signal runs from the track's source through its hosted devices, then the rack, then the mixer. `workspace.trackEffectOutput(trackId)` borrows the rack's pre-mixer output for an analyser. Disconnect only the analyser you connected, or remount it if a structural edit rebuilt that track.
 
-The DAW's Devices panel inserts, adjusts, bypasses, reorders and removes Filter and Delay slots. DAWproject uses vendor-specific `BuiltinDevice` entries in order and versioned JSON settings in `plugins/`. Open the project in Audiorective to edit the inserts. Use the audio fallback when sharing the processed sound with another DAW.
+`project.setTrackRackPreset(trackId, { effects, macros })` replaces a track's insert setup and macro settings in one edit. Macro settings are in `track.effectMacros` and use the [standalone rack mapping contract](./blocks.md#rack-macros-and-presets). Await `workspace.flush()` after structural rack edits. Bind a UI knob to `workspace.trackMacroValue(trackId, macroId)` for reads and `workspace.setTrackMacroValue(trackId, macroId, value)` for immediate edits. The latter updates the graph and Project together. Use the Project setter for headless editing. Project archives preserve mappings and positions in Audiorective metadata. The rendered audio fallback carries the audible settings to other DAWs.
+
+The DAW's Devices panel inserts, adjusts, bypasses, reorders and removes Filter, Delay and EQ slots. DAWproject uses vendor-specific `BuiltinDevice` entries in order and versioned JSON settings in `plugins/`. Open the project in Audiorective to edit the inserts. Use the audio fallback when sharing the processed sound with another DAW.
+
+Use `workspace.trackEffectOutput(trackId)` to connect a borrowed spectrum analyser. Use `workspace.trackFilterResponse(trackId, slotId, frequencies, magnitudes, phases)` to draw the live response for a Filter or Equalizer slot. Apply editor mutations with `setTrackEffects()` so the controls, audio and saved settings share one owner.
 
 ## File contents and fidelity
 
@@ -159,18 +282,54 @@ Call `workspace.portabilityReport()` before sharing. It lists content represente
 
 `Project.snapshot()` supplies the export runtime with independent MIDI and in-memory PCM clip data plus copied device state. File-backed `AudioMedia` stays borrowed; retain it until the export settles.
 
-This is a narrow native slice. `openDawProject` and `openDawProjectBlob` accept the structure this package writes: regular tracks routed to one master, second-based audio and seconds- or beats-based MIDI clips, CLAP devices, Audiorective Filter and Delay inserts, controller points, volume automation, arrangement markers, channel mute/pan/solo, fixed or step tempo, time signature and 32-bit float WAV. The MIDI writer accepts note on/off and control-change bytes; other message kinds fail on save until a portable mapping is implemented. Unsupported XML structures throw instead of disappearing on the next save. Other DAWs may open the standard content but are not required to preserve Audiorective's private entries or resolve the WebCLAP bundle; cross-DAW round-trip preservation remains to be verified. VST/AU hosting and arbitrary routing remain outside this slice.
+This is a narrow native slice. `openDawProject` and `openDawProjectBlob` accept the structure this package writes: regular tracks, submix and effects buses, post-fader sends, second-based audio and seconds- or beats-based MIDI clips, CLAP devices, Audiorective Filter, Delay and EQ inserts, controller points, volume automation, arrangement markers, channel mute/pan/solo, fixed or step tempo, time signature and 32-bit float WAV. The MIDI writer accepts note on/off and control-change bytes; other message kinds fail on save until a portable mapping is implemented. Unsupported XML structures throw instead of disappearing on the next save. Other DAWs may open the standard content but are not required to preserve Audiorective's private entries or resolve the WebCLAP bundle; cross-DAW round-trip preservation remains to be verified. VST/AU hosting and arbitrary routing remain outside this slice.
 
 A small [Cubase 14 export shared on the Steinberg forum](https://forums.steinberg.net/t/import-and-export-of-media-projects-and-dawprojects/1010846) was probed against both open paths (inner `test.dawproject` SHA-256 `b45bdefe6101b58db1aad86757801d816350c9b6c0eb7b9ff5a9f55edea25708`). After building the workspace package, `pnpm --filter @audiorective/workspace probe:cubase` downloads the public fixture, verifies its hash and repeats the probe. Pass a previously downloaded inner `.dawproject` as an argument to run offline; its hash is checked in the same way. Empty standard metadata fields are accepted. The file still rejects at `Project XML has unsupported Structure content.` because it contains a track folder and a separate master channel; it also carries EQ devices and time-signature automation that the model cannot preserve. This is an observed rejection, not a claim of Cubase import compatibility. Five separately generated Bitwig-shaped fixtures also reject on unsupported structure. Wider import needs explicit model semantics and preservation tests rather than ignoring those elements.
 
 ## Common errors
 
+| Clip message | Fix |
+| --- | --- |
+| `Workspace clip stretch needs an audio clip.` / `Workspace clip stretch ratio must produce at least one sample.` | Choose a current audio clip and a positive ratio yielding at least one output sample. |
+| `Workspace clip stretch needs a processor.` | Supply a `WaveStretchProcessor` for ratios other than 1. |
+| `Workspace audition needs an audio clip.` | Use the ID of a current audio clip in the project. |
+| `Workspace range audition needs a non-negative range at least one audio frame long.` | Choose finite seconds on the project timeline. |
+| `Workspace range audition needs existing audio tracks.` / `Workspace range audition needs audio in the selected range.` | Select existing audio tracks with at least one clip crossing the range. |
+| `Audio clip changed while rendering stretch.` / `Audio clip stretch was cancelled.` | Prepare a new result using the current clip revision and apply it once. |
+| `Project clip stretch needs a positive ratio and matching rendered audio.` / `Project clip stretch needs a compatible original audio window and positive ratio.` | Retain the original sample rate and channel count. Render the requested rounded output frame count. |
+| `Project clip stretch source is missing.` | Reopen an intact Audiorective project archive with its source WAV. |
+| `Project clip envelope needs an audio clip.` | Pass an ID from a current audio track. |
+| `Project audio fades need seconds.` | Import clip fades in seconds. |
+| `Project clip gain automation needs an audio clip.` | Pass the ID of an existing audio clip. |
+| `Audio clip gain automation needs a non-negative source start and non-negative finite gains.` | Use original source seconds and non-negative linear gain. |
+| `Clip gain must be non-negative and fades must fit its duration.` | Keep the combined fade lengths within the clip duration. |
+
+| Routing message | Fix |
+| --- | --- |
+| `Workspace needs a new step sequencer on a live transport.` | Attach each sequence once per live Workspace and keep its detach callback. |
+| `Project bus roles need a bus track and a supported role.` | Use `busRole` on a bus with role `submix` or `effect`. |
+| `Project track routing needs an existing track.` / `Commit new or removed tracks before changing live routing.` | Add the tracks and await `workspace.commit()` before live rewiring. |
+| `Project routes need existing buses, unique sends and non-negative send gain.` | Use current bus IDs, one send per bus and a non-negative linear gain. |
+| `Project track routing cannot form a cycle.` | Remove the feedback edge between buses. |
+| `Project has duplicate channel IDs.` / `Project bus tracks cannot contain clips.` | Use unique channel IDs and put clips on source tracks. |
+| `Project has unsupported send settings.` | Use post-fader sends with linear gain. |
+
+| Clip Launcher message | Fix |
+| --- | --- |
+| `Start Workspace playback before launching clips.` | Await `workspace.play()` after a user gesture and launch while the transport is playing. |
+| `Clip Launcher requires an audio track.` | Pass the ID of a committed audio track. |
+| `Clip Launcher requires an in-memory audio clip on the target track.` | Use a PCM clip on that audio track, or play MIDI and file-backed clips through Arrangement. |
+
+
 | Effect rack message | Fix |
 | --- | --- |
 | `Project effects need an existing track.` / `Workspace effects need a live track.` | Use its current track ID, and commit a new track before calling the Workspace method. |
-| `Project has an unsupported built-in effect.` / `Project built-in effects must follow WebCLAP devices.` | Import supported Audiorective Filter and Delay inserts after the hosted devices. |
+| `Project master volume needs a finite non-negative value.` | Pass a linear gain such as `0.3` or `1` to `setMasterVolume()`. |
+| `Project has an unsupported built-in effect.` / `Project built-in effects must follow WebCLAP devices.` | Import supported Audiorective Filter, Delay and EQ inserts after the hosted devices. |
 | `Project built-in effect state is missing or reused.` / `Project built-in effect state is invalid.` | Restore the matching, versioned insert state entries. |
-| `EffectRack needs unique slot IDs and valid Filter or Delay settings.` | Follow the [rack settings ranges](./blocks.md#effectrack-inserts). |
+| `Project macro needs an existing track and macro.` | Use IDs from the track's current effectMacros. |
+| `Flush the project before setting a live track macro.` | Wait for the pending rack edit, then look up the current macro ID. |
+| `EffectRack needs unique slot IDs and valid Filter, Delay or EQ settings.` | Follow the [rack settings ranges](./blocks.md#effectrack-inserts). |
 
 | Message                                                                                                                                                                                                   | Cause and fix                                                                                                                |
 | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
@@ -206,7 +365,7 @@ A small [Cubase 14 export shared on the Steinberg forum](https://forums.steinber
 | `Project needs DAWproject version 1.0.` / `Project transport needs BPM tempo.` / `Project arrangement needs seconds time.` / `Project track lanes need seconds time.`                                     | Open a version 1.0 project with seconds-based clips and a supported fixed or step tempo map.                                              |
 | `Project tempo needs positive finite BPM.` / `Project tempo changes need unique positive beats and BPM.` / `Project snap needs a positive beat interval.` | Supply a valid initial BPM, unique changes after beat zero, and a positive snap interval. |
 | `Project tempo automation needs beat positions and BPM.` / `Project has unsupported tempo automation target.` / `Project has unsupported tempo interpolation.` / `Project tempo automation disagrees with transport BPM.` | Import beat-based hold points targeting the transport tempo, with beat-zero BPM matching Transport. |
-| `Project has unsupported track routing.` / `Project has unsupported master routing.` / `Project has an unsupported track kind.` / `Project has unsupported track volume units.`                           | This slice stores simple audio/MIDI tracks routed to one master with linear volume.                                          |
+| `Project has unsupported track routing.` / `Project has unsupported master routing.` / `Project has an unsupported track kind.` / `Project has unsupported track volume units.`                           | Use regular audio/MIDI tracks or buses, valid channel destinations and linear volume.                                          |
 | `Project MIDI clip has unsupported audio content.` / `Project MIDI clip content time must match its clip lane.` / `Project MIDI has unsupported control automation.` | Keep placement, notes and controllers in the same seconds or beats lane. |
 | `Project clip lane needs seconds or beats time.` / `Project audio clip has unsupported time unit.` | Use seconds or beats for MIDI and seconds for audio. |
 | `Project audio clip has unsupported content.` / `Project audio asset is missing.` / `Project audio asset does not match its XML metadata.`                                                                | Include the referenced 32-bit float WAV with matching sample rate, channel count and duration.                               |

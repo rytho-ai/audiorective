@@ -94,6 +94,25 @@ describe("TimeStretch validation and worker failures", () => {
     }
   });
 
+  test("rejects non-increasing or endpoint warp anchors before dispatch", async () => {
+    const stretch = processor(unsupported);
+    const input = { channels: [tone()], sampleRate };
+    for (const anchors of [
+      [{ sourceFrame: 0, outputFrame: 400 }],
+      [{ sourceFrame: 300, outputFrame: sampleRate * 2 }],
+      [
+        { sourceFrame: 300, outputFrame: 800 },
+        { sourceFrame: 400, outputFrame: 400 },
+      ],
+      [
+        { sourceFrame: 400, outputFrame: 800 },
+        { sourceFrame: 400, outputFrame: 900 },
+      ],
+      [{ sourceFrame: 0.5, outputFrame: 900 }],
+    ])
+      await expect(stretch.process(input, { ratio: 1, anchors })).rejects.toThrow(/anchors/);
+  });
+
   test("rejects an already-aborted signal without processing", async () => {
     const controller = new AbortController();
     controller.abort();
@@ -104,6 +123,23 @@ describe("TimeStretch validation and worker failures", () => {
 });
 
 describe.skipIf(module === null)("TimeStretch real Rubber Band integration (requires AUDIORECTIVE_RUBBERBAND_WASM)", () => {
+  test("moves an interior transient using the same overall duration and pitch", async () => {
+    const source = tone(440, sampleRate * 2, true);
+    const original = source.slice();
+    const outputTime = 1.15;
+    const result = await processor().process(
+      { sampleRate, channels: [source] },
+      {
+        ratio: 1,
+        anchors: [{ sourceFrame: Math.round(markerTime * sampleRate), outputFrame: Math.round(outputTime * sampleRate) }],
+      },
+    );
+    expect(result.outputFrames).toBe(source.length);
+    expect(Math.abs(markerSeconds(result.channels[0]) - outputTime)).toBeLessThanOrEqual(0.06);
+    expect(Math.abs(carrierHz(result.channels[0]) - 440)).toBeLessThanOrEqual(10);
+    expect(source.every((value, i) => value === original[i])).toBe(true);
+  }, 20000);
+
   test.each([0.75, 1.5])(
     "ratio %s preserves 440 Hz and scales marker timing and exact duration",
     async (ratio) => {

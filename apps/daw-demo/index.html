@@ -25,7 +25,8 @@
               <option value="orchid">蘭紫</option>
             </select></label
           ><button id="portability">分享說明</button><button id="export-audio">匯出音訊</button><button id="new">新建</button><button id="open">開啟</button
-          ><button id="save" class="primary">儲存工程</button><input id="open-file" type="file" accept=".dawproject" />
+          ><button id="save" class="primary">儲存工程</button><button id="recover-take" hidden>復原錄音</button
+          ><input id="open-file" type="file" accept=".dawproject" />
         </div>
       </header>
       <div class="transport">
@@ -36,7 +37,8 @@
         <div class="transport-readout"><span class="sr-only">播放位置</span><strong id="time">0:00.0</strong></div>
         <div class="transport-field"><span class="sr-only">速度</span><strong id="bpm">120</strong><small>BPM</small></div>
         <div class="transport-field"><span class="sr-only">拍號</span><strong id="meter">4/4</strong></div>
-        <button id="loop" class="loop-button" aria-pressed="false" title="循環選取的 clip，未選取則循環全曲">↻ 循環</button>
+        <button id="loop" class="loop-button" aria-pressed="false" title="循環選取區間或片段；未選取時循環全曲">↻ 循環</button>
+        <button id="audition-range" aria-pressed="false" disabled title="循環試聽選區內的音訊軌">試聽選區</button>
         <div class="transport-spacer"></div>
         <div class="transport-record">
           <button id="record-midi"><span class="record-dot">●</span> 錄 MIDI</button
@@ -70,9 +72,9 @@
           <div class="browser-section">
             <span class="section-label">素材</span
             ><button id="browser-import" class="browser-item">
-              <span class="item-icon audio-icon">↑</span><span><strong>匯入音訊</strong><small>放入選取的音訊軌</small></span
+              <span class="item-icon audio-icon">↑</span><span><strong>匯入素材</strong><small>試聽後放入音訊軌</small></span
               ><b>＋</b></button
-            ><input id="audio-file" type="file" accept="audio/*" />
+            ><input id="audio-file" type="file" accept="audio/*" multiple /><div id="sample-browser"></div>
           </div>
           <div class="browser-note">
             <label class="record-latency" for="record-latency"
@@ -92,6 +94,30 @@
               ><button id="redo" title="重做片段與音符編輯 (Ctrl/⌘ Shift Z)" disabled>重做</button>
             </div>
           </div>
+          <div class="arrange-overview">
+            <span>全曲總覽</span>
+            <div id="arrangement-overview" role="slider" tabindex="0" aria-label="編曲視窗" aria-controls="tracks" title="拖曳或點擊以移動編曲視窗"></div>
+          </div>
+          <details id="session-panel" class="session-panel">
+            <summary>片段觸發</summary>
+            <div class="session-content">
+              <label for="launch-quantum">切換時機</label>
+              <select id="launch-quantum">
+                <option value="beat">下一拍</option>
+                <option value="bar">下一小節</option>
+              </select>
+              <label for="launch-mode">片段播放</label>
+              <select id="launch-mode">
+                <option value="loop">循環</option>
+                <option value="one-shot">單次</option>
+              </select>
+              <div id="clip-grid"></div>
+            </div>
+          </details>
+          <details class="session-panel rhythm-panel">
+            <summary>步進鼓機</summary>
+            <div id="rhythm-grid"></div>
+          </details>
           <div id="tracks" class="arrangement" aria-label="編曲時間軸"></div>
           <div class="arrange-footer"><span id="status" role="status">正在載入工程…</span><span id="duration">4.0 s</span></div>
           <section class="lower-panel">
@@ -107,12 +133,13 @@
               tabindex="0"
             ></div>
             <div class="lower-tabs">
-              <button id="tab-editor" class="active">編輯</button><button id="tab-mixer">混音</button><button id="tab-device">裝置</button
+              <button id="tab-editor" class="active">編輯</button><button id="tab-mixer">混音</button><button id="tab-device">裝置</button><button id="tab-automation">自動化</button
               ><span id="selection-caption">選取片段開始編輯</span>
             </div>
             <div id="editor-panel" class="panel-body"></div>
             <div id="mixer-panel" class="panel-body hidden"></div>
             <div id="device-panel" class="panel-body hidden"></div>
+            <div id="automation-panel" class="panel-body hidden"></div>
           </section>
         </main>
       </div>
@@ -122,6 +149,13 @@
         <p>儲存工程會產生可編輯的 DAWproject。其他 DAW 的實際匯入效果取決於它支援的內容與版本。</p>
         <p id="portability-details"></p>
         <p>匯出音訊會另外產生混音與各軌 WAV；沒有相同插件的收件者也能播放這份音訊。</p>
+        <form method="dialog"><button>關閉</button></form>
+      </dialog>
+      <dialog id="recovery-dialog" aria-labelledby="recovery-title">
+        <h2 id="recovery-title">復原錄音</h2>
+        <label>復原時間 <select id="recovery-files"></select></label>
+        <button id="restore-take" type="button">開啟復原點</button>
+        <button id="remove-checkpoint" type="button">刪除復原點</button>
         <form method="dialog"><button>關閉</button></form>
       </dialog>
     </div>

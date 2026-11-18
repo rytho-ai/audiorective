@@ -44,7 +44,7 @@ try {
 | `cancelLoad(): void`                                         | Cancels the active load, clears progress without an error, and ignores late results. Idle calls preserve the committed version.                                                                                                                                                                                                                                           |
 | `getState()`                                                 | Snapshot containing `duration`, copied `selection`, `position`, `isPlaying`, `isLooping`, `loading`, `loadProgress`, `error: string \| null`, `processing`, `stretchRatio`, `sourceDuration`, and `revision`.                                                                                                                                                             |
 | `subscribe(listener: () => void): () => void`                | Change notifications for source, selection, loading and playback; returns unsubscribe. Does not call immediately or tick for clock-only position movement. Render once, subscribe for changes, and read `position` per animation frame when needed. A failing listener is logged without preventing other updates.                                                        |
-| `destroy()`                                                  | Idempotently cancels loads, edits and play requests, stops/disconnects owned audio and releases buffers/listeners. It never destroys the borrowed stretch processor. Leaves the caller context open. Mutating a destroyed player throws `Range player is destroyed.`                                                                                                      |
+| `destroy()`                                                  | Idempotently cancels loads, edits and play requests, stops/disconnects owned audio and releases buffers/listeners. It never destroys the borrowed stretch processor. Leaves the caller context open. Mutating a destroyed player throws `WavePlayer is destroyed.`                                                                                                      |
 
 `AudioRange` is `{ start: number; end: number }`. `WavePlayerSource`, `WavePlayerState`, `WavePlayerOptions`, `WavePlayOptions`, `WaveStretchProcessor`, and `PlaybackVersion` are exported. Playback, selection, seek, and position use **committed output seconds**. Original source seconds remain available through `sourceDuration` and the mapping helpers below. With ratio 1 the timelines coincide.
 
@@ -115,7 +115,7 @@ const stop = effect(() => {
 
 The cells are read-only from outside: assigning `.value` is a type error and throws, and `$` takes no argument. Change state through the owner's methods (`setSelection`, `setLooping`, `load`, `cancelLoad`, `setStretch`, `play`, `pause`). An operation that changes several fields commits them as one batch, so an effect sees one coherent state, never a half-applied one: a finished load updates `version`, `selection`, `looping`, `loading`, `loadProgress` and `error` together, and a finished stretch updates `version`, the scaled `selection` and `processing` together. Calling owner methods inside an effect does not subscribe that effect to the state those methods read.
 
-The reading methods are tracked too: `getState()`, `getSelection()`, `isLooping`, `isPlaying` and `version` re-run an effect that calls them. `buffer`, `duration`, `sourceBuffer` and the time-mapping helpers are plain reads that change together with `version`; observe `cells.version` (or `getState()`) to follow them.
+Effects can read `getState()`, `getSelection()`, `isLooping`, `isPlaying`, `version`, `buffer`, `duration` and `sourceBuffer` directly. The buffer getters and duration track the committed playback version. For an effect that only uses the time-mapping helpers, read `cells.version.value` before mapping so it follows source replacement and stretch.
 
 `cells.isPlaying` follows the transport: it turns true when a start is issued, including one queued for a future `when`, and false when playback stops. `position` is derived from the audio clock and stays a plain getter; read it per animation frame instead of observing it. `volume` is `params.volume`, a standard `SchedulableParam`.
 
@@ -328,9 +328,38 @@ queued?.cancel(); // removes both the hit and its future choke; manual keeps sou
 
 `assign(id, buffer)` replaces that pad's buffer, cancels its current and future hits, and retracts their future choke. `stopAll()` cancels every hit. `cells.activeEvents` is a read-only reactive count; `params.volume` follows the normal schedulable `.value` / `$` contract. The block owns its nodes and event handles, while the caller owns output routing and the `AudioContext`. It has no polyphony cap or voice-stealing policy. For Clock-owned sequenced hits, pass the handle to `window.own(hit, when)` and call `clock.refresh()` after pattern edits; manual hits remain unregistered. See [Clock](./clock.md#own-cancellable-events-when-transport-edits-must-cut-queued-sound).
 
+## Clip envelopes
+
+`ClipEnvelope` holds a linear `gain` and the edge fade lengths `fadeIn` and `fadeOut` in seconds. Validate values with `normalizeClipEnvelope(settings, duration)`. The unity default is `{ gain: 1, fadeIn: 0, fadeOut: 0 }`.
+
+`clipGainAt(envelope, duration, seconds)` evaluates a clip-local position. `scheduleClipEnvelope(gainParam, envelope, duration, { when, offset, length })` installs the linear ramps on a borrowed gain parameter over a playback window. Supply absolute audio-clock seconds for `when` and clip-local seconds for `offset` and `length`. A window starting partway through a fade starts at that fade's existing level. The caller owns PCM, playback scheduling, and the temporary gain node.
+
+## Step Sequencer
+
+`StepSequencer` owns a repeating beat grid and per-step velocities. Give it a fixed `StepPattern` with a step count, beats per step and unique lane IDs. Zero velocity skips a hit. The supplied trigger receives `{ laneId, step, velocity, when }` and returns a cancellable instrument event or `null`. The trigger can delegate to `InstrumentEvents.trigger()`. The sequencer tracks and cancels only events returned by that callback. Use a separate call to the instrument for manual hits.
+
+`schedule(window, timing)` reads the caller's transport window and registers its hits via `window.own(event, when)`. Use the same `Timeline` for timing. On edits, call the clock's `refresh()` to rebuild the unplayed look-ahead horizon. `setVelocity(laneId, step, velocity)` edits one step and `currentStep` exposes the current index. `reset()` clears its playhead and scheduled hits. [Workspace](./workspace.md#step-sequencer) wires the scheduling and refresh for an attached pattern.
+
+## Sample Library
+
+`SampleLibrary` owns queued File decoding, byte accounting and an audition player. Create it with the caller's `AudioContext`, connect `library.output` to an audition route and pass Files to `importFiles(files)`. The result contains row IDs in input order. A removed pending import resolves to `null`. Inspect `library.state.value.rows` for per-file readiness and decoding errors.
+
+In a secure browser context, identical file bytes share a row based on a content hash even when the names differ. Import is sequential. The default file limit is 64 MiB and the default retained PCM limit is 256 MiB. Pass `maxFileBytes` and `maxDecodedBytes` to change those limits. The PCM limit counts the library's decoded buffers, including removed samples with outstanding leases.
+
+Use `library.preview(id)` to audition a ready sample independently of the transport and `stopPreview()` to stop. Use `acquire(id)` to borrow its decoded `AudioBuffer` and `release()` when finished. Treat borrowed PCM as read-only. Removing a row stops its audition and leaves the leased samples available. Destroying the library clears rows and stops preview. Outstanding leases remain valid until released. Projects can copy leased samples into their own clips with `Project.addAudioClip()`.
+
+## Clip Launcher
+
+`ClipLauncher` groups quantized track launches over a borrowed audio transport. Give it `now()`, `timeToBeat()` and `beatToTime()` from the same timing source. The supplied `schedule(changes, when)` driver schedules the full group at the given absolute audio time and returns a transition with `cancel()` and `commit()`. Cancellation must revoke all incoming playback and leave the previous playback intact. Commit releases outgoing resources after the switch time. The driver's `reset()` clears active playback.
+
+Call `queue([{ trackId, clipId }], quantumBeats)` to schedule the next grid boundary. A group has one entry per affected track. Use `clipId: null` to clear that track's override. The latest group replaces the pending group. `cancel()` returns true only while that group can still be withdrawn. Call `advance()` from the borrowed transport's tick to publish the transition in `state.value` after its time arrives. Use `reset()` before discontinuous transport changes. For engine playback and mounting a view, see [Workspace Clip Launcher](./workspace.md#clip-launcher).
+
+Pass `mode: "one-shot"` on a change to request finite playback. The playback driver owns the actual end and may return `endsAt` from its transition, keyed by track ID in absolute audio seconds. The driver schedules its audio and output change at that time. `advance()` removes the expired track from the observable active state.
+
+
 ## EffectRack inserts
 
-Import `EffectRack` from `@audiorective/blocks/effect-rack`. It owns an ordered chain of built-in Filter and PingPongDelay inserts behind stable `input` and `output` nodes, and borrows the caller's audio context.
+Import `EffectRack` from `@audiorective/blocks/effect-rack`. It owns an ordered chain of built-in Filter, PingPongDelay and Equalizer inserts behind stable `input` and `output` nodes, and borrows the caller's audio context.
 
 ```typescript
 import { EffectRack } from "@audiorective/blocks/effect-rack";
@@ -347,18 +376,82 @@ rack.setEffects(rack.effects.map(slot => slot.id === "delay" ? { ...slot, enable
 
 `setEffects()` takes a complete ordered snapshot, validates it, and preserves processors with the same slot ID and type. An empty chain passes audio through. Bypass sets the effective mix to dry while preserving the configured mix. Filter accepts lowpass or highpass, 20–20,000 Hz and Q 0.1–20. Delay accepts 0.01–1 second and feedback 0–0.95. Both accept a mix from 0–1. [Workspace](./workspace.md#effect-rack) connects these settings to a project and playback.
 
+Observe the read-only `rack.cells.effects.value` or `rack.effects` for the current order and settings. Use `setEffects()` to edit that snapshot.
+
+Add `{ id, type: "eq", enabled, wet, bands }` for one Equalizer insert. Each band uses `{ frequency, gain, q }` and follows the [Equalizer ranges](./effects.md#parametric-equalizer). Edits retain a slot's Equalizer when its band count stays the same.
+
+`rack.readFilterResponse(slotId, frequencies, magnitudes, phases)` reads the current response for a Filter or Equalizer by slot ID. It yields `false` for an absent slot or a Delay. In Workspace the same operation is available as `workspace.trackFilterResponse(trackId, slotId, frequencies, magnitudes, phases)`.
+
+### Rack macros and presets
+
+Each macro owns one normalized control and one or more built-in parameter targets. Set its mappings in the third constructor argument or in a complete preset.
+
+```typescript
+rack.setPreset({
+  effects: rack.effects,
+  macros: [{
+    id: "tone", label: "Tone", value: 0.5,
+    targets: [
+      { slotId: "filter", parameter: "frequency", min: 200, max: 8000, scale: "exponential" },
+      { slotId: "delay", parameter: "feedback", min: 0.05, max: 0.65 },
+    ],
+  }],
+});
+const tone = rack.macro("tone")!;
+tone.param.value = 0.7;
+const preset = rack.capturePreset();
+rack.setPreset(preset);
+```
+
+`rack.cells.macros.value` lists the live controls. Bind an ordinary knob to a macro's `param`. For audio-clock automation, pass `macro.automation` to [AutomationBinding](./automation.md). Linear or hold segments in the normalized curve produce native ramps or steps on the mapped parameters. Exponential targets require positive endpoints. Stop a running binding before taking manual control so subsequent curve edits do not reprogram the target.
+
+Only one macro can own a given slot parameter. Use `rackMacroRange(slot, parameter)` for ranges. Supported targets are mix (`wet`) on every insert, Filter `frequency` and `q`, and Delay `delayTime` and `feedback`. Removing a slot drops its mappings. Bypassing a slot keeps its macro phase and makes that insert dry.
+
+`capturePreset()` returns version 1, the ordered slots, mappings and current macro positions. Authored curves belong to their caller. `setPreset()` validates the entire rack and prepares missing nodes before touching existing controls. A successful recall resets the recalled positions and cancels their old schedules. Existing controls retain identity when their IDs and labels match.
+
 ## Common errors
+
+| Clip envelope message | Fix |
+| --- | --- |
+| `Clip gain must be non-negative and fades must fit its duration.` | Pass finite non-negative values whose fade lengths sum to at most the clip duration. |
+
+| Step Sequencer message | Fix |
+| --- | --- |
+| `Step Sequencer needs a positive grid and unique lanes with valid velocities.` | Give each lane a unique ID and one finite velocity from 0 to 1 for each step. |
+| `Step Sequencer needs an existing step and a velocity from zero to one.` | Use a current lane ID and zero-based step index with a velocity from 0 to 1. |
+
+| Sample Library message | Fix |
+| --- | --- |
+| `Sample Library byte limits must be non-negative.` | Supply non-negative byte limits. |
+| `File byte limit exceeded.` | Import a smaller file or configure a larger file limit. |
+| `Decoded PCM budget exceeded.` | Remove unused files, release leases or raise the decoded byte limit. |
+| `Sample Library needs a ready sample.` | Wait for the import and use a ready row ID. |
+| `Sample lease is released.` / `Sample Library is destroyed.` | Keep the lease until use finishes, or create a new library for a new session. |
 
 | Message | Fix |
 | --- | --- |
-| `EffectRack needs unique slot IDs and valid Filter or Delay settings.` | Use distinct nonempty slot IDs and settings inside the ranges above. |
+| `EffectRack needs unique slot IDs and valid Filter, Delay or EQ settings.` | Use distinct nonempty slot IDs and settings inside the ranges above. |
+| `Equalizer needs valid bands with frequency 20–20000 Hz, gain ±24 dB, and Q 0.1–20.` | Supply one or more bands with values in the supported ranges. |
 | `EffectRack is destroyed.` | Construct a new rack before applying settings. |
+| `EffectRack preset version must be 1.` | Pass a version 1 snapshot or omit the version when authoring a preset. |
+| `EffectRack macros need unique IDs, normalized values, and distinct valid targets.` | Use positions from 0 to 1 and assign a supported slot parameter to at most one macro. |
+| `EffectRack macro target is unavailable.` | Rebuild the preset against the current rack slots and supported ranges. |
+| `EffectRack macro value needs a number from 0 to 1.` | Pass a finite normalized position. |
+| `EffectRack macro automation needs a time and a normalized curve starting at zero.` | Use absolute audio seconds for the start and a relative curve beginning at zero. |
+| `EffectRack macro is disposed.` | Look up the replacement control on the live rack. |
+
+| Clip Launcher message | Fix |
+| --- | --- |
+| `Clip Launcher requires a positive launch quantum.` | Use a finite number of beats greater than zero. |
+| `Clip Launcher requires one launch per affected track.` | Supply a non-empty group with unique track IDs. |
+| `Clip Launcher requires a future audio time.` | Use a running transport whose beat-to-time mapping advances past the current audio time. |
+
 
 Loading, selection and playback messages from `WavePlayer`. Stretch and time-mapping messages are listed with [stretch](#committed-versions-and-offline-stretch); waveform view and plugin messages are in [Widgets](./widgets.md#common-errors).
 
 | Message                                                                                                                                            | Cause                                            | Fix                                                                             |
 | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------- |
-| `Range player is destroyed.`                                                                                                                       | Mutating or subscribing after block cleanup      | Create a new WavePlayer; shared views must not destroy their caller's player.   |
+| `WavePlayer is destroyed.`                                                                                                                       | Mutating or subscribing after block cleanup      | Create a new WavePlayer; shared views must not destroy their caller's player.   |
 | `Position must be finite seconds.` / `Start time must be finite, non-negative seconds.`                                                            | Invalid `seek` position or `play({ when })` time | Pass finite seconds; `when` is an absolute `AudioContext` time, clamped to now. |
 | `Enter an audio URL.`                                                                                                                              | Empty URL passed to `load`                       | Supply a URL or File.                                                           |
 | `Audio request failed: HTTP 404.` (status varies)                                                                                                  | URL response is unsuccessful                     | Check the URL, access, and server response; call `load` again to recover.       |

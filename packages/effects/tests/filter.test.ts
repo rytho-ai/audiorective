@@ -40,4 +40,26 @@ describe("Filter", () => {
     });
     expect(db(ramped, Math.SQRT1_2)).toBeGreaterThan(-1);
   });
+  it.each([-12, -24, -48] as const)("reads the rendered wet/dry response at %d dB/octave", async (rolloff) => {
+    const hz = 1200;
+    const frequencies = Float32Array.of(hz);
+    const magnitudes = new Float32Array(1);
+    const phases = new Float32Array(1);
+    let mixed = 0;
+    const actual = await rmsThrough(hz, (ctx) => {
+      const filter = new Filter(ctx, { frequency: hz, Q: 0.7, rolloff });
+      filter.getFrequencyResponse(frequencies, magnitudes, phases);
+      expect(magnitudes[0]).toBeGreaterThan(0);
+      filter.params.wet.value = 0;
+      filter.getFrequencyResponse(frequencies, magnitudes, phases);
+      expect(magnitudes[0]).toBe(1);
+      expect(phases[0]).toBeCloseTo(0, 7);
+      filter.params.wet.value = 0.5;
+      filter.getFrequencyResponse(frequencies, magnitudes, phases);
+      expect(Number.isFinite(phases[0])).toBe(true);
+      mixed = magnitudes[0];
+      return filter;
+    });
+    expect(actual / Math.SQRT1_2).toBeCloseTo(mixed, 4);
+  });
 });

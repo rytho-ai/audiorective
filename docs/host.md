@@ -9,6 +9,7 @@ import { WebClapHost } from "@audiorective/host/webclap";
 
 const host = await WebClapHost.load(context, {
   url: "/plugin/oxo-synth2.wclap",
+  pluginId: "com.oxo.music.oxosynth2",
   // Serve the worklet copied from @audiorective/host/dist.
   workletUrl: "/assets/webclap-worklet.js",
 });
@@ -17,13 +18,32 @@ const noteOn = host.scheduleMidi([0x90, 60, 100], context.currentTime + 0.1);
 host.scheduleMidi([0x80, 60, 0], context.currentTime + 0.5);
 // noteOn.cancel() revokes a future event; host.panic() clears scheduled notes.
 
-const state = await host.getState();
-await host.setState(state);
+const state = await host.saveState();
+await host.loadState(state);
 const detach = host.hasEditor ? await host.mountEditor(iframe) : undefined;
 // On teardown: detach?.(); host.destroy();
 ```
 
-The `workletUrl` above is illustrative; the [DAW demo](../apps/daw-demo/main.ts) uses a relative asset URL from its source file. If omitted, `WebClapHost.load` resolves the worklet beside its published JS module. Serve the worklet and bundle from the same origin as the app. `scheduleMidi` uses absolute `AudioContext` seconds and returns a cancellable handle compatible with Clock's `window.own(handle, when)`. `setParameter(id, value)` changes a CLAP parameter. `getState()` returns opaque bytes; `setState()` waits for state readback to match before resolving. A host declares its CLAP latency through `AudioProcessor.latency`, but applications using raw `.connect()` must perform their own path delay compensation.
+The [DAW demo](../apps/daw-demo/main.ts) uses a relative worklet asset URL. If `workletUrl` is omitted, `WebClapHost.load` resolves it beside its published JS module. Serve the worklet and bundle from the app's origin. `scheduleMidi` takes absolute `AudioContext` seconds and returns a handle for Clock's `window.own(handle, when)`. A host declares plug-in latency through `AudioProcessor.latency`. Applications using raw `.connect()` own any path delay compensation.
+
+## Parameters and state
+
+`host.params` holds one `Param<number>` per known CLAP ID. Read or write the same `.value` from another control, an effect or a framework binding. Direct plug-in editor changes update that Param and its observers. For labels, limits and the plug-in's last reported metadata, read `host.parameterInfo` or `host.cells.parameterInfo.value`. Read live values from the Params. The registry has the parameter IDs reported at load.
+
+```ts
+const amount = host.params["2"]; // An ID provided by the plug-in.
+const detachControl = host.effect(() => { slider.valueAsNumber = amount.value; });
+slider.oninput = () => { amount.value = slider.valueAsNumber; };
+// On teardown: detachControl(); slider.oninput = null;
+```
+
+`saveState()` returns opaque patch bytes. `loadState(bytes)` waits for matching readback and applies reported parameter values to the existing Params so controls reflect the loaded patch. The compatibility methods `setParameter`, `getState` and `setState` delegate to the current API for existing callers.
+
+## Select a device in a bundle
+
+Pass `pluginId` to select the exact CLAP descriptor from one `module.wasm`. Without it, `pluginIndex` selects by factory order and defaults to 0. Workspace uses the saved CLAP ID when it opens a project.
+
+The worklet accepts one imported WASM32 memory alongside function imports and allocates the size and sharing mode declared by the module. The Signalsmith Basics example bundle has been tested in Chromium with its shared memory and more than one descriptor, including patch save and reopen on a Workspace return. This validates the tested bundle and host path. [WebCLAP example bundles](https://github.com/WebCLAP/examples)
 
 This first host covers one AudioWorklet instance per plug-in, MIDI note/control input, stereo audio output, CLAP state and the webview bridge. It has been exercised with Oxo Synth2 and, in a browser compatibility probe, [WebCLAP's Clack Gain Example](https://github.com/WebCLAP/examples/tree/main/clack): a 0.2-amplitude oscillator passed through the effect at volume 1 and fell to zero when its volume parameter was set to 0. Other ports, effect input layouts, multi-bus routing and arbitrary CLAP extensions still require compatibility testing.
 
@@ -40,3 +60,6 @@ This first host covers one AudioWorklet instance per plug-in, MIDI note/control 
 | `WebCLAP MIDI needs a finite non-negative audio time.` | Schedule with an absolute, non-negative `AudioContext` time.                                                 |
 | `WebCLAP parameter needs a finite value.`              | Pass a finite numeric parameter value within the descriptor's range.                                         |
 | `WebCLAP host is destroyed.`                           | Create a new host instance before requesting state or opening an editor.                                     |
+| `WebCLAP bundle has no plug-in with ID …` / `WebCLAP bundle has no plug-in at index …` | Check the bundle's descriptor IDs or the zero-based index. |
+| `WebCLAP supports one imported memory alongside function imports.` / `WebCLAP imported memory must use WASM32 limits.` / `WebCLAP memory import could not be read.` | Use a compatible WebCLAP WASM32 build with its supported imports. |
+| `WebCLAP returned an invalid string pointer.` | The plug-in returned invalid metadata. Check the bundle and try a compatible build. |

@@ -1,4 +1,4 @@
-import type { AudioClip, MidiTimeUnit, Project, ProjectClip, ProjectMidiEvent } from "@audiorective/workspace";
+import type { AudioClip, MidiTimeUnit, Project, ProjectClip, ProjectMidiEvent, ProjectTrack } from "@audiorective/workspace";
 import type { MidiNote } from "@audiorective/midi";
 
 type ClipSnapshot =
@@ -15,7 +15,10 @@ type ClipSnapshot =
       events: readonly ProjectMidiEvent[];
     };
 
-type Edit = { label: string; ids: readonly string[]; before: readonly ClipSnapshot[]; after: readonly ClipSnapshot[] };
+type ClipEdit = { label: string; ids: readonly string[]; before: readonly ClipSnapshot[]; after: readonly ClipSnapshot[] };
+type VolumePoints = ProjectTrack["volumeAutomation"];
+type AutomationEdit = { label: string; trackId: string; before: VolumePoints; after: VolumePoints };
+type Edit = ClipEdit | AutomationEdit;
 
 const capture = (project: Project): Map<string, ClipSnapshot> => {
   const clips = new Map<string, ClipSnapshot>();
@@ -66,6 +69,21 @@ export class EditHistory {
     this.onState(this.undoStack.at(-1)?.label, this.redoStack.at(-1)?.label);
   }
 
+  private push(edit: Edit): void {
+    this.undoStack.push(edit);
+    if (this.undoStack.length > 50) this.undoStack.shift();
+    this.redoStack = [];
+    this.publish();
+  }
+
+  recordVolumeAutomation(trackId: string, points: VolumePoints): void {
+    const project = this.project();
+    const before = project.tracks.find((track) => track.id === trackId)?.volumeAutomation ?? [];
+    project.setVolumeAutomation(trackId, points);
+    const after = project.tracks.find((track) => track.id === trackId)!.volumeAutomation;
+    this.push({ label: "編輯音量自動化", trackId, before, after });
+  }
+
   record<T>(label: string, action: () => T): T {
     const project = this.project();
     const before = capture(project);
@@ -73,23 +91,25 @@ export class EditHistory {
     const after = capture(project);
     const ids = [...new Set([...before.keys(), ...after.keys()])].filter((id) => !same(before.get(id), after.get(id)));
     if (ids.length) {
-      this.undoStack.push({
+      this.push({
         label,
         ids,
         before: ids.flatMap((id) => (before.has(id) ? [before.get(id)!] : [])),
         after: ids.flatMap((id) => (after.has(id) ? [after.get(id)!] : [])),
       });
-      if (this.undoStack.length > 50) this.undoStack.shift();
-      this.redoStack = [];
-      this.publish();
     }
     return result;
   }
 
-  private apply(edit: Edit, target: readonly ClipSnapshot[]): void {
+  private apply(edit: Edit, side: "before" | "after"): void {
     const project = this.project();
+    if ("trackId" in edit) {
+      project.setVolumeAutomation(edit.trackId, edit[side]);
+      this.changed();
+      return;
+    }
     for (const id of edit.ids) if (project.tracks.some((track) => track.clips.some((clip) => clip.id === id))) project.removeClip(id);
-    for (const clip of target) {
+    for (const clip of edit[side]) {
       if (clip.kind === "audio") {
         const audio = clip.source;
         if (audio.media)
@@ -97,8 +117,16 @@ export class EditHistory {
             id: clip.id,
             startFrame: audio.startFrame,
             frameCount: audio.frameCount,
+            envelope: audio.envelope,
+            stretch: audio.stretch,
+            gainAutomation: audio.gainAutomation,
           });
-        else project.addAudioClip(clip.trackId, audio, clip.time, { id: clip.id });
+        else project.addAudioClip(clip.trackId, audio, clip.time, {
+          id: clip.id,
+          envelope: audio.envelope,
+          stretch: audio.stretch,
+          gainAutomation: audio.gainAutomation,
+        });
       } else project.addMidiClip(clip.trackId, { duration: clip.duration, notes: clip.notes, events: clip.events }, clip.time, { id: clip.id, timeUnit: clip.timeUnit });
     }
     this.changed();
@@ -107,7 +135,7 @@ export class EditHistory {
   undo(): string | undefined {
     const edit = this.undoStack.at(-1);
     if (!edit) return;
-    this.apply(edit, edit.before);
+    this.apply(edit, "before");
     this.undoStack.pop();
     this.redoStack.push(edit);
     this.publish();
@@ -117,7 +145,7 @@ export class EditHistory {
   redo(): string | undefined {
     const edit = this.redoStack.at(-1);
     if (!edit) return;
-    this.apply(edit, edit.after);
+    this.apply(edit, "after");
     this.redoStack.pop();
     this.undoStack.push(edit);
     this.publish();

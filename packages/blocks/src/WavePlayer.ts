@@ -181,8 +181,14 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
   }
   /** Borrowed decoded source. Treat its PCM as immutable while in use. */
   get buffer(): AudioBuffer | null {
+    void this.cells.version.value;
     return this.player.buffer;
   }
+  /** Internal untracked read of the committed duration. */
+  private get length(): number {
+    return this.player.buffer?.duration ?? 0;
+  }
+  /** Tracked. */
   get duration(): number {
     return this.buffer?.duration ?? 0;
   }
@@ -191,6 +197,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
     return this.cells.version.value;
   }
   get sourceBuffer(): AudioBuffer | null {
+    void this.cells.version.value;
     return this.original;
   }
   private pcm(buffer: AudioBuffer): PCMData {
@@ -198,11 +205,11 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
   }
   sourceToOutput(seconds: number): number {
     if (!Number.isFinite(seconds)) throw new RangeError("Time must be finite seconds.");
-    return this.original ? (Math.max(0, Math.min(this.original.duration, seconds)) * this.duration) / this.original.duration : 0;
+    return this.original ? (Math.max(0, Math.min(this.original.duration, seconds)) * this.length) / this.original.duration : 0;
   }
   outputToSource(seconds: number): number {
     if (!Number.isFinite(seconds)) throw new RangeError("Time must be finite seconds.");
-    return this.duration ? (Math.max(0, Math.min(this.duration, seconds)) * (this.original?.duration ?? 0)) / this.duration : 0;
+    return this.length ? (Math.max(0, Math.min(this.length, seconds)) * (this.original?.duration ?? 0)) / this.length : 0;
   }
   get position(): number {
     if (!this.anchor) return this.held;
@@ -275,11 +282,11 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
       when,
       from: this.outputToSource(offset),
       to: this.outputToSource(end),
-      secondsPerUnit: this.duration / source.duration,
+      secondsPerUnit: this.length / source.duration,
     });
   }
   private assertAlive(): void {
-    if (this.disposed) throw new Error("Range player is destroyed.");
+    if (this.disposed) throw new Error("WavePlayer is destroyed.");
   }
   private notify(): void {
     if (this.depth) return;
@@ -288,7 +295,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
       try {
         untracked(listener);
       } catch (error) {
-        console.error("Range player listener failed.", error);
+        console.error("WavePlayer listener failed.", error);
       }
     }
   }
@@ -301,7 +308,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
     }
   }
   private bounds(): AudioRange {
-    return this.range ?? { start: 0, end: this.duration };
+    return this.range ?? { start: 0, end: this.length };
   }
   /** The audio time a restart must keep: a queued start's `when`, otherwise now. */
   private startTime(): number {
@@ -350,10 +357,10 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
     this.assertAlive();
     const when = options.when ?? 0;
     if (!Number.isFinite(when) || when < 0) throw new RangeError("Start time must be finite, non-negative seconds.");
-    if (!this.buffer || untracked(() => this.isPlaying)) return null;
+    if (!this.player.buffer || untracked(() => this.isPlaying)) return null;
     const command = ++this.command;
     await this.audioContext.resume();
-    if (this.disposed || command !== this.command || !this.buffer) return null;
+    if (this.disposed || command !== this.command || !this.player.buffer) return null;
     // Fix this start's identity inside the change: observers notified by it may pause, seek or play again.
     let started = 0,
       time: number | null = null;
@@ -381,7 +388,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
       const playing = this.isPlaying,
         when = this.startTime();
       this.halt();
-      this.held = Math.max(0, Math.min(this.duration, position));
+      this.held = Math.max(0, Math.min(this.length, position));
       if (playing) this.begin(this.held, when);
     });
   }
@@ -393,7 +400,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
         !Number.isFinite(selection.end) ||
         selection.start < 0 ||
         selection.start >= selection.end ||
-        selection.end > this.duration)
+        selection.end > this.length)
     ) {
       throw new RangeError("Selection must satisfy 0 <= start < end <= duration (finite seconds).");
     }
@@ -479,7 +486,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
       const buffer = ratio === 1 ? original : this.audioContext.createBuffer(pcm.channels.length, expected, pcm.sampleRate);
       if (buffer !== original) for (let c = 0; c < pcm.channels.length; c++) buffer.getChannelData(c).set(pcm.channels[c]);
       this.change(() => {
-        const scale = buffer.duration / this.duration,
+        const scale = buffer.duration / this.length,
           position = this.position;
         const selection = this.getSelection();
         this.halt();

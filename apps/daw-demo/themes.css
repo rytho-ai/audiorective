@@ -318,7 +318,7 @@ html[data-skin] .arrangement {
 html[data-skin] .timeline-row {
   border-color: var(--border);
 }
-html[data-skin] .timeline-row:not(.ruler-row):not(.marker-row) {
+html[data-skin] .timeline-row:not(.ruler-row):not(.loop-row):not(.marker-row) {
   min-height: 55px;
 }
 html[data-skin] .lane {
@@ -422,7 +422,7 @@ html[data-skin] .timeline-row.marker-row {
   height: 28px;
   min-height: 28px;
   position: sticky;
-  top: 32px;
+  top: 54px;
   z-index: 5;
   background: var(--ruler);
 }

@@ -56,6 +56,20 @@ Classes that only hold structured state should **not** extend `AudioProcessor`. 
 - Calling audio-layer methods (`synth.filterSweep()`, `sequencer.rampBpm(180, 4)`)
 - Layout, styling, conditional rendering
 
+## Standalone modules and Workspace
+
+Keep an operation in a standalone module when a caller can supply the source, timing or destination it needs without a project. Workspace connects those operations to project tracks, its shared clock, an audio graph and persistence. A standalone module can have a Workspace adapter and still be useful in a sampler, editor or small player.
+
+| Capability | Standalone entry | Workspace connection |
+| --- | --- | --- |
+| Source playback and audition | Blocks `WavePlayer` plays a caller-owned source or selection. `SampleLibrary` decodes, leases and auditions assets. | Workspace resolves the current placed clip and borrows its cached or file-backed window for audition. Project owns clip placement and retained media. |
+| Capture and editing | Blocks `AudioRecorder`, MIDI `MidiRecorder`, clip-envelope scheduling and Effects `TimeStretch` work with caller-supplied input, time or PCM. | Workspace places takes and prepares stretch edits. Project stores the clip envelope, source window and rendered audio. |
+| Live performance | Blocks `InstrumentEvents`, `StepSequencer` and `ClipLauncher` borrow playback targets or a clock. | `attachStepSequencer()` supplies project timing. `launchClips()` resolves clip IDs and switches the affected routes. |
+| Effects and hosting | Effects `Filter` and `Equalizer` own DSP and response. Blocks `EffectRack` owns an ordered built-in chain. Host runs individual WebCLAP devices over Web Audio. | Workspace connects track devices and built-in inserts. Project saves device identity, state and ordered rack settings. |
+| Mixing and editing UI | Effects `Channel` and `SendBus` can form a mixer graph. Widgets take borrowed audio or edit data for meters, EQ, mixer and timeline interactions. | Project describes track routing, sends and automation. Workspace applies those choices to the running graph and transport. |
+
+Keep the dependency direction from Workspace to reusable audio capabilities. Bind widgets to the module that already owns the value. Store project data once, and keep temporary runtime state where it is used.
+
 ## Examples
 
 ### Wrong — audio scheduling in React

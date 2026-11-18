@@ -429,7 +429,7 @@
         "Imports Project and Workspace from @audiorective/workspace and uses addWebClapDevice on a MIDI track with the Oxo Synth2 CLAP ID and a bundle URL",
         "Creates Workspace with the caller-owned AudioContext, destination and a served WebCLAP worklet URL, then uses its play/stop or seek methods",
         "Passes the MidiClip.sequence to a piano-roll widget and keeps the view separate from the audio runtime",
-        "Mounts the loaded host's editor in an iframe or uses host.setParameter, while preserving state through Workspace.save and Workspace.open",
+        "Mounts the loaded host's editor in an iframe or writes host.params[id].value, while preserving state through Workspace.save and Workspace.open",
         "Inspects reopen warnings and explains that DAWProject stores CLAP identity/state while Audiorective's private host manifest locates the WebCLAP bundle",
         "Destroys the view, Workspace and Project while leaving the borrowed AudioContext to the app",
         "Does not claim that a WebCLAP bundle is embedded in the archive or that another DAW can load the browser bundle directly"
@@ -441,9 +441,9 @@
       "expected_output": "Project owns persistent arrangement and mixer state; Workspace applies runtime mixer controls and refreshes clip edits; the UI owns only transient selection and viewport.",
       "files": [],
       "expectations": [
-        "Uses Project.moveClip, duplicateClip and removeClip with project seconds and matching track kinds",
+        "Uses Project.moveClip, duplicateClip and removeClip with the clip time unit and matching track kinds",
         "Stores named section markers through Project.setMarkers and renders Project.markers on the shared time axis",
-        "Calls await Workspace.commit after Project edits; explains that it refreshes clip/mixer/automation changes without reloading hosts and rebuilds routing after track or device topology changes",
+        "Explains that Workspace applies clip, mixer and automation edits automatically without reloading hosts, flush waits for them, and sync handles a track or hosted device topology change",
         "Uses Workspace.setTrackMuted, setTrackSolo and setTrackPan for live changes and saves via Workspace.save",
         "Renders one shared time axis with per-track lanes and keeps selection and zoom in the UI rather than duplicating clip or mixer state",
         "Explains that DAWproject standard Channel fields carry mute, normalized pan and solo, while WebCLAP bundle lookup remains private",
@@ -459,7 +459,7 @@
         "Calls Project.splitClip with a clip-local offset rather than an absolute song position",
         "Calls Project.trimClip with clip-local start/end and recognizes that the left split clip keeps its ID",
         "Re-reads Project.tracks and remounts a borrowed piano-roll after a split or trim because MIDI sequence objects are replaced",
-        "Calls Workspace.commit after clip edits so the live arrangement refreshes without reloading plug-in hosts",
+        "Explains that clip edits refresh the arrangement automatically without reloading hosts; waits with workspace.flush when a follow-up depends on the applied edit",
         "Explains that audio cuts round to samples and crossing MIDI notes are clipped into each retained segment",
         "Saves through Workspace.save or saveDawProject and does not invent time-stretch behavior"
       ]
@@ -524,12 +524,12 @@
       "expected_output": "Uses Project's step tempo map as the single beat/project-seconds owner, the arrangement widget for reusable clip gestures, and the app for edit history, runtime commit and continuous zoom presentation.",
       "files": [],
       "expectations": [
-        "Calls project.setTempoChanges([{ beat: 4, bpm: 60 }]) and awaits workspace.commit() after the edit",
+        "Calls project.setTempoChanges([{ beat: 4, bpm: 60 }]) and uses workspace.flush() when an action needs the updated runtime",
         "Uses project.tempoMap beatToSeconds, secondsToBeat or snapSeconds for ruler and snapping; beat 8 maps to project second 6",
         "Imports attachClipGesture from @audiorective/widgets/arrangement and passes project.tempoMap as timeMap",
         "Uses attachTimelineZoom from the arrangement entry for continuous anchored slider and Ctrl/Meta+wheel zoom, with the app providing redraw in onScale",
         "Lets the widget own pointer preview, cancellation and keyboard nudge but applies Project.moveClip and undo history in onMove",
-        "Calls workspace.commit() after the Project clip move and destroys the gesture before removing its clip element",
+        "Relies on automatic clip application and destroys the gesture before removing its clip element",
         "Keeps zoom as a view scale in pixels per second and anchors the visible time while it changes",
         "Distinguishes legacy seconds clips from new beat-locked MIDI clips; only beat MIDI placement, notes and controls stretch after tempo edits"
       ]
@@ -543,7 +543,7 @@
         "Uses Project.addMidiTake(trackId, take, 1.5, { timeUnit: \"beats\" }) so all notes and captured controls convert through the tempo map",
         "Passes clip.timeUnit to mountPianoRoll and supplies grid and playhead in clip-local beats",
         "Passes clip.time and clip.timeUnit to attachClipGesture; its onMove time already uses that unit and can go directly to Project.moveClip",
-        "Calls workspace.commit after tempo or clip edits and treats Workspace.position as project seconds",
+        "Relies on automatic application after tempo or clip edits and treats Workspace.position as project seconds",
         "Saves and reopens DAWproject with beat Clips lanes and explains that legacy seconds clips stay fixed when BPM changes"
       ]
     },
@@ -580,6 +580,239 @@
         "Uses mountPlayer(root, { player: workspace.player }) without adapting Clock state, polling the playhead or copying duration into a new cell",
         "Routes Workspace output to the caller's AudioContext destination on both Workspace.create and Workspace.openBlob or Workspace.open",
         "Destroys the old controls before remounting for the reopened Workspace and tears down the old Workspace and Project separately"
+      ]
+    },
+    {
+      "id": 41,
+      "prompt": "Add a drag-editable track volume curve to a Workspace app and let the user set the master gain to 0.3. The edited curve and mix level should survive DAWproject save and reopen. Use the current widgets and Workspace APIs.",
+      "expected_output": "Uses an automation lane over Project-owned points, with a project-owned master gain.",
+      "files": [],
+      "expectations": [
+        "Mounts mountAutomationLane over the track volumeAutomation points and commits a final drag with Project.setVolumeAutomation and uses workspace.flush when a follow-up depends on runtime application",
+        "Calls the lane's setPoints with accepted or externally changed points and destroys the view on teardown",
+        "Uses Workspace.setMasterVolume instead of setting output.gain directly and explains that the mixed WAV includes master gain while per-track stems are tapped earlier"
+      ]
+    },
+    {
+      "id": 42,
+      "prompt": "Add a draggable loop-selection strip to an Audiorective arrangement. Keep the existing ruler for seeking. Preview selection from either direction and keep the selected musical range after BPM changes.",
+      "expected_output": "Uses the shared range gesture and keeps musical loop state in the app.",
+      "files": [],
+      "expectations": [
+        "Uses attachTimeRangeGesture from @audiorective/widgets/arrangement on a separate borrowed element with pointer coordinates resolved through a time map",
+        "Renders onPreview and commits only onSelect, including Alt snap bypass; destroys the interaction when replacing the element",
+        "Converts selected project seconds to beats and uses the current tempo map to resolve them for playback"
+      ]
+    },
+    {
+      "id": 43,
+      "prompt": "Add a browser Session grid to my Audiorective Workspace with Drum and Bass PCM clips. Start a scene together at the next 4-beat boundary, switch Bass on its own, let me cancel a queued launch and return Bass to Arrangement. Use current APIs and describe what survives saving.",
+      "expected_output": "Uses the existing Workspace transport and the borrowed Clip Grid widget for a live quantized audio session.",
+      "files": [],
+      "expectations": [
+        "Calls Workspace.play before launch and passes both clip changes in one Workspace.launchClips call with a four-beat quantum",
+        "Specifies only the Bass track when switching or returning and passes clipId null for return to Arrangement",
+        "Uses workspace.session and cancelClipLaunch to drive mountClipGrid without creating another Clock or audio graph",
+        "Describes PCM audio support and keeps live overrides and grid layout out of the DAWproject save"
+      ]
+    },
+    {
+      "id": 44,
+      "prompt": "In an Audiorective DAW, let Drums and Keys share one delay return while both tracks keep their dry mix to Master. Save the routes, change a send while the song plays, and show mix levels without building a second mixer. Use current APIs.",
+      "expected_output": "Authors a single effect bus in Project, sends both tracks to it in parallel, and mounts a mixer over Workspace state.",
+      "files": [],
+      "expectations": [
+        "Creates an effect bus via Project.addTrack, puts one fully wet delay on the return and waits with workspace.flush before using the live bus",
+        "Uses Workspace.setTrackRouting with outputBusId null and one post-fader send per source and explains that live routing preserves transport",
+        "Wires mountMixer to reactive state, Workspace edit actions, trackMixerOutput and the master output, with proper destruction",
+        "Uses DAWproject save and reopen for routes and avoids claiming untested third-party compatibility"
+      ]
+    },
+    {
+      "id": 45,
+      "prompt": "Add a local samples browser to my Audiorective Workspace. Preview a WAV without starting the project, then place it at the playhead. If I remove it from the library, keep the placed clip audible. Use current packages and explain what the decoded budget counts.",
+      "expected_output": "Uses the shared SampleLibrary and borrowed widget, then copies the decoded PCM into Project under a scoped lease.",
+      "files": [],
+      "expectations": [
+        "Imports local Files through SampleLibrary, connects its output to a caller-owned audition route and uses mountSampleBrowser",
+        "Acquires the selected decoded buffer, places it through Project.addAudioClip and releases the lease after copying",
+        "Applies Project edits through Workspace.commit and destroys the view and library when their owners are done",
+        "Explains that the retained PCM budget includes outstanding leases and that the placed Project clip survives library removal"
+      ]
+    },
+    {
+      "id": 46,
+      "prompt": "Make a 16-step drum grid tied to my Audiorective Workspace, then add manual pads that keep sounding when I remove a queued step. The closed hat should still choke the open hat when it actually plays. Use current APIs.",
+      "expected_output": "Uses StepSequencer and InstrumentEvents under the Workspace Clock, with separate manual pad triggers and borrowed widgets.",
+      "files": [],
+      "expectations": [
+        "Constructs a velocity pattern and passes each returned InstrumentEvents handle from the step trigger",
+        "Uses Workspace.attachStepSequencer with cleanup and keeps manual hits outside the scheduled ownership",
+        "Assigns both hats the same choke group and calls mountStepGrid and mountPadGrid over the borrowed model/actions",
+        "Explains that pending hits and their chokes are revoked together and live patterns are session state"
+      ]
+    },
+    {
+      "id": 47,
+      "prompt": "Show a live spectrum and a draggable low-pass response for an Audiorective Filter. I need the same widgets to work by themselves and on a Workspace effect slot. Use current APIs.",
+      "expected_output": "Separates FFT and frequency response drawing from the audio processor and Workspace ownership.",
+      "files": [],
+      "expectations": [
+        "Uses one borrowed analyser with mountSpectrum and documents caller cleanup",
+        "Passes actual linear magnitudes from Filter.getFrequencyResponse into mountEqEditor with no magnitude-only wet/dry interpolation",
+        "Binds Workspace rendering to trackFilterResponse and edits to setTrackEffects, so settings remain project-owned",
+        "Keeps the standalone UI independent of Workspace and destroys both mounted views"
+      ]
+    },
+    {
+      "id": 48,
+      "prompt": "Add editable gain and edge fades to audio clips in my Audiorective Workspace. Seeking halfway into a fade should resume at the right volume. Also show how to reuse that scheduling logic in a standalone player.",
+      "expected_output": "Uses shared clip-local envelope scheduling and project-owned settings without mutating PCM.",
+      "files": [],
+      "expectations": [
+        "Uses Project.setAudioClipEnvelope and Workspace.commit with clip-local seconds and linear gain",
+        "Binds mountClipEnvelopeEditor to borrowed state and describes DAWproject fades plus Audiorective gain metadata",
+        "For a standalone player passes absolute audio time, clip-local offset and window length to scheduleClipEnvelope",
+        "Preserves the fade value at a seek offset and leaves the media data unchanged"
+      ]
+    },
+    {
+      "id": 49,
+      "prompt": "Add an undoable pitch-preserving time stretch for an audio clip in my Audiorective Workspace. Reopen it, play it without the engine and keep the original source for further edits.",
+      "expected_output": "Uses a borrowed independent stretch processor, a deferred revision-checked Workspace edit and the archive containing source and rendered WAVs.",
+      "files": [],
+      "expectations": [
+        "Uses prepareAudioClipStretch with a caller-owned TimeStretch or compatible processor and an optional AbortSignal",
+        "Calls the prepared apply only when committing the undoable edit; uses workspace.flush if a following action needs applied playback",
+        "Explains that ratios apply to original length and ratio 1 restores the source without a processor",
+        "Explains rendered DAWproject playback, private source data and the streamed save path for retained file-backed audio"
+      ]
+    },
+    {
+      "id": 50,
+      "prompt": "Use the same three-band parametric EQ as a standalone effect and as a saveable Audiorective Workspace insert. Plot the response while changing the middle gain.",
+      "expected_output": "Uses Equalizer in both roles with one shared band contract and one wet/dry mix around the chain.",
+      "files": [],
+      "expectations": [
+        "Uses Equalizer with frequency, gain and q for each peaking band and passes linear magnitudes to mountEqEditor",
+        "Uses one eq RackEffect with a stable ID and Workspace.setTrackEffects for saved edits",
+        "Reads the actual slot response using Workspace.trackFilterResponse and retains all band values when bypassed",
+        "Explains Audiorective BuiltinDevice persistence without claiming that third-party DAWs support the same editable slot"
+      ]
+    },
+    {
+      "id": 51,
+      "prompt": "Add a button to audition a trimmed audio clip in my Audiorective Workspace, including file-backed microphone takes. Keep the arrangement playhead where it is.",
+      "expected_output": "Uses independent Workspace clip audition and observes its state without starting or seeking Arrangement.",
+      "files": [],
+      "expectations": [
+        "Passes the current Project clip ID to Workspace.auditionAudioClip, observes auditioningClip, and calls stopClipAudition to cancel",
+        "Explains that audition follows the clip window and envelope on the master route and streams file-backed PCM",
+        "Uses standalone WavePlayer for a caller-owned source rather than requiring a Workspace for a standalone range player"
+      ]
+    },
+    {
+      "id": 52,
+      "prompt": "In a vanilla Audiorective editor, update the total duration and source preview after replacing or stretching the loaded audio, and list effect slots as I add or reorder them. Keep audio state on its owners.",
+      "expected_output": "Observes WavePlayer playback and source getters and the EffectRack settings snapshot directly.",
+      "files": [],
+      "expectations": [
+        "Reads WavePlayer.buffer, duration and sourceBuffer in an effect, or reads the tracked version and distinguishes the original source from committed output",
+        "Reads rack.cells.effects or rack.effects in an effect, edits from a snapshot via setEffects and never assigns the read-only cell",
+        "Disposes the UI observers, preserves caller audio ownership and avoids a duplicate state store"
+      ]
+    },
+    {
+      "id": 53,
+      "prompt": "Add a slider for a WebCLAP instrument parameter and buttons to snapshot and restore a patch. Keep the slider in sync when the user changes the plug-in's own editor.",
+      "expected_output": "Reuses one reactive Param and the Host patch APIs.",
+      "files": [],
+      "expectations": [
+        "Reads and writes the same host.params entry through .value and renders changes in an effect or a framework binding",
+        "Uses host.parameterInfo metadata and disposes the observer without destroying the borrowed host",
+        "Uses host.saveState and host.loadState and explains that editor and patch updates feed back into the same Param"
+      ]
+    },
+    {
+      "id": 54,
+      "prompt": "I change Project tempo, move a clip, add send automation later, and add an instrument track. Show what applies automatically right now, how I can wait reliably before playing a newly added clip, and how to apply structural changes.",
+      "expected_output": "Uses direct Project edits, flush for dependent operations, and explicit structural sync over the same runtime.",
+      "files": [],
+      "expectations": [
+        "Describes auto application of tempo, clip and mixer edits, without promising send automation",
+        "Uses workspace.flush for operations dependent on the applied edit and explains that save waits for pending edits",
+        "Uses workspace.cells.needsSync and workspace.sync for track or hosted device topology changes and explains the transport effect",
+        "Surfaces workspace.cells.error or handles a rejected flush"
+      ]
+    },
+    {
+      "id": 55,
+      "prompt": "At the next bar, launch a transition hit once and a separate bass loop on two Workspace tracks. If I cancel a replacement, let the hit still finish naturally and let bass loop. What happens to the arrangement on the one-shot track?",
+      "expected_output": "Launches a single quantized group with a finite mode for the hit and leaves normal loops and cancellation intact.",
+      "files": [],
+      "expectations": [
+        "Passes mode one-shot for the hit in Workspace.launchClips while the bass uses the default loop",
+        "Uses cancelClipLaunch only for the pending replacement and describes the existing one-shot and loop continuing",
+        "Says that the one-shot track returns to Arrangement at the audio end and observes workspace.session to show remaining active clips"
+      ]
+    },
+    {
+      "id": 56,
+      "prompt": "Audition the same time selection across two audio tracks in a Workspace. The shorter stem should leave silence until the shared repeat. Show what supplies timing, what owns the clips and how to stop the preview.",
+      "expected_output": "Uses a Workspace range audition over existing clips and separates shared timing from the individual audio source windows.",
+      "files": [],
+      "expectations": [
+        "Uses workspace.auditionRange with project-second bounds and optional selected track IDs",
+        "Observes auditioningRange and calls stopRangeAudition without moving the Arrangement playhead",
+        "Explains that a shared RangeLoop maps scheduling windows to source time and the shorter stem remains silent instead of independently looping",
+        "Does not append silent PCM or re-decode each track per cycle"
+      ]
+    },
+    {
+      "id": 57,
+      "prompt": "A WebCLAP bundle contains chorus at index 0 and a frequency shifter at another index. Load the shifter by its stable CLAP ID both independently and on a Workspace effects return, then save and reopen the project.",
+      "expected_output": "Uses the same exact CLAP identity in Host and Project with an editable, persisted effect return.",
+      "files": [],
+      "expectations": [
+        "Passes pluginId to WebClapHost.load and describes index selection as the fallback",
+        "Stores the bundle URL and exact pluginId with Project.addWebClapDevice on an effect bus, routes a source send and uses Workspace.save/open",
+        "Explains that Workspace uses the saved identity and state on reopen and checks for unresolved devices",
+        "Separates the tested WASM32 imported memory support from claiming that every native CLAP binary runs in the browser"
+      ]
+    },
+    {
+      "id": 58,
+      "prompt": "Draw and edit a gain curve over a trimmed, pitch-stretched audio clip in my Audiorective DAW. Keep its automation attached to the original source, let edits take effect during playback, and save the result.",
+      "expected_output": "Uses a borrowed automation overlay, Project source-local points and Workspace's existing live playback and save path.",
+      "files": [],
+      "expectations": [
+        "Calls Project.setAudioClipGainAutomation with linear or hold points in original source seconds; uses workspace.flush for a dependent runtime operation or lets save wait automatically",
+        "Attaches createAutomationOverlay to the waveform and projects times using gainAutomation.sourceStart and the source-duration to output-duration ratio",
+        "Explains trim, stretch and playback behavior and keeps clip gain distinct from track volume automation",
+        "Saves the editable curve in Audiorective metadata and uses the rendered audio fallback for other DAWs that need to hear the result"
+      ]
+    },
+    {
+      "id": 59,
+      "prompt": "Make a Tone knob automate Filter frequency and Delay feedback on an EffectRack, and add a second independent macro. Take a preset snapshot and show how to keep both knobs when saving a Workspace track.",
+      "expected_output": "Uses one standalone rack with macro Params, native automation fanout, whole-rack preset recall and Project-owned track settings.",
+      "files": [],
+      "expectations": [
+        "Declares two distinct macro IDs with nonoverlapping slot parameter targets and reads or writes rack.macro(id).param.value",
+        "Targets AutomationBinding at macro.automation and uses positive endpoints for exponential mappings",
+        "Uses capturePreset and setPreset with the entire rack and explains that a recalled position and mapping are distinct from the authored automation curve",
+        "Uses Project.setTrackRackPreset and Workspace.setTrackMacroValue to retain track macro settings in saved projects"
+      ]
+    },
+    {
+      "id": 60,
+      "prompt": "Move a transient from 1.0 to 1.3 seconds inside a two-second 48 kHz PCM asset. Keep its pitch, total duration and original samples.",
+      "expected_output": "Uses the data-only TimeStretch entry point and an interior frame mapping with ratio 1 and a compatible borrowed WASM module.",
+      "files": [],
+      "expectations": [
+        "Passes ratio 1 and anchors [{ sourceFrame: 48000, outputFrame: 62400 }] to TimeStretch.process",
+        "Uses implicit endpoints and requires strictly increasing interior frame pairs",
+        "Passes a caller-supplied compiled WASM module supporting rb_set_key_frame_map and keeps the original buffer intact"
       ]
     }
   ]

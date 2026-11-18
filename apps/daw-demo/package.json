@@ -9,10 +9,21 @@
     "typecheck": "tsc --noEmit",
     "smoke": "node smoke.mjs",
     "smoke:export": "node export-smoke.mjs",
-    "smoke:reference": "node reference-song.mjs"
+    "smoke:reference": "node reference-song.mjs",
+    "smoke:recovery": "node recovery-smoke.mjs",
+    "smoke:session": "node session-smoke.mjs",
+    "smoke:mixer": "node mixer-smoke.mjs",
+    "smoke:samples": "node sample-smoke.mjs",
+    "smoke:rhythm": "node rhythm-smoke.mjs",
+    "smoke:fades": "node fade-smoke.mjs",
+    "smoke:stretch": "node stretch-smoke.mjs",
+    "smoke:webclap": "node webclap-bundle-smoke.mjs"
   },
   "dependencies": {
     "@audiorective/blocks": "workspace:^",
+    "@audiorective/core": "workspace:^",
+    "@audiorective/effects": "workspace:^",
+    "@audiorective/host": "workspace:^",
     "@audiorective/midi": "workspace:^",
     "@audiorective/widgets": "workspace:^",
     "@audiorective/workspace": "workspace:^"

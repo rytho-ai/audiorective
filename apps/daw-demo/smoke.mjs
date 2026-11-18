@@ -5,10 +5,11 @@ import { createServer } from "vite";
 import { chromium } from "playwright";
 
 const root = dirname(fileURLToPath(import.meta.url));
+const port = Number(process.env.DAW_SMOKE_PORT ?? 18772);
 const server = await createServer({
   configFile: false,
   root,
-  server: { host: "127.0.0.1", port: 18772, strictPort: true },
+  server: { host: "127.0.0.1", port, strictPort: true },
   plugins: [
     {
       name: "mount-player-in-smoke",
@@ -39,12 +40,82 @@ try {
   });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto("http://127.0.0.1:18772/");
+  await page.goto(`http://127.0.0.1:${port}/`);
   await page.waitForFunction(() => window.__daw?.workspace?.host(window.__daw.project.tracks[0].devices[0].id));
   await page.waitForFunction(() => typeof window.mountPlayerForSmoke === "function");
   assert.match(await page.locator("#status").innerText(), /工程已就緒/);
   assert.equal(await page.locator("#tracks > section").count(), 8);
   assert.equal(await page.locator(".marker-block").count(), 4);
+  const overview = page.getByRole("slider", { name: "編曲視窗" });
+  assert.equal(await overview.locator(".overview-clip").count(), await page.locator(".clip").count());
+  const firstWave = page.locator(".clip.audio").first().locator("canvas");
+  await page.waitForFunction(() => Number(document.querySelector(".clip.audio canvas")?.dataset.framesPerPeak) > 0);
+  const zoom = page.locator("#timeline-zoom");
+  const overviewScale = await zoom.inputValue();
+  const windowWidthBefore = (await overview.locator(".overview-window").boundingBox()).width;
+  await zoom.fill("800");
+  await page.waitForFunction(() => parseFloat(document.querySelector(".clip.audio").style.width) > 1600);
+  await overview.press("Home");
+  const mapBox = await overview.boundingBox();
+  const windowBox = await overview.locator(".overview-window").boundingBox();
+  assert.ok(windowBox.width < windowWidthBefore);
+  const mapX = windowBox.x + windowBox.width / 2;
+  const mapY = mapBox.y + mapBox.height / 2;
+  await page.mouse.move(mapX, mapY);
+  await page.mouse.down();
+  await page.mouse.move(mapX + mapBox.width * 0.15, mapY, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForFunction(() => {
+    const canvas = document.querySelector(".clip.audio canvas");
+    return canvas && !canvas.hidden && parseFloat(canvas.style.left) > 1000;
+  });
+  const paintedTail = await firstWave.evaluate((canvas) => {
+    const data = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data;
+    return data.some((value, index) => index % 4 === 3 && value > 0);
+  });
+  assert.equal(paintedTail, true);
+  assert.ok(Number(await overview.getAttribute("aria-valuenow")) > 2);
+  await zoom.fill(overviewScale);
+  await page.waitForFunction(() => parseFloat(document.querySelector(".clip.audio").style.width) < 300);
+  await overview.press("Home");
+  assert.equal(await page.evaluate(() => document.querySelector("#tracks").scrollLeft), 0);
+
+  const loopStrip = await page.locator(".loop-strip").boundingBox();
+  const secondsScale = await page.locator(".ruler-row .ruler-mark").nth(1).evaluate((mark) => parseFloat(mark.style.left) / 2);
+  const loopY = loopStrip.y + loopStrip.height / 2;
+  await page.mouse.move(loopStrip.x + 5 * secondsScale, loopY);
+  await page.mouse.down();
+  await page.mouse.move(loopStrip.x + 2 * secondsScale, loopY, { steps: 8 });
+  assert.equal(await page.locator(".loop-strip-region.loop-preview").count(), 1);
+  assert.equal(await page.locator("#loop").getAttribute("aria-pressed"), "false");
+  await page.mouse.up();
+  assert.equal(await page.locator("#loop").getAttribute("title"), "循環 2.00–5.00 秒");
+  assert.equal(await page.evaluate(() => window.__daw.workspace.position), 2);
+  const rangeAudition = page.getByRole("button", { name: "試聽選區", exact: true });
+  await rangeAudition.click();
+  await page.waitForFunction(() => {
+    const { workspace } = window.__daw;
+    const range = workspace.auditioningRange.value;
+    return range?.start === 2 && range.end === 5 && range.trackIds.length > 1 && workspace.position === 2;
+  });
+  assert.equal(await rangeAudition.getAttribute("aria-pressed"), "true");
+  await rangeAudition.click();
+  await page.waitForFunction(() => window.__daw.workspace.auditioningRange.value === null);
+  assert.equal(await rangeAudition.getAttribute("aria-pressed"), "false");
+  await page.evaluate(() => window.__daw.workspace.seek(4.9));
+  await page.locator("#play").click();
+  await page.waitForFunction(() => {
+    const workspace = window.__daw.workspace;
+    return workspace.clock.state.value === "playing" && workspace.position >= 2 && workspace.position < 2.8;
+  });
+  await page.locator("#stop").click();
+  await page.locator("#loop").click();
+  assert.equal(await page.locator(".loop-region").count(), 0);
+  await page.locator("#loop").click();
+  assert.equal(await page.locator("#loop").getAttribute("title"), "循環 2.00–5.00 秒");
+  await page.getByRole("button", { name: "清除自訂循環區間" }).click();
+  assert.equal(await page.locator("#loop").getAttribute("aria-pressed"), "false");
+  await page.locator("#stop").click();
   const workspacePlayer = await page.evaluate(async () => {
     const Workspace = window.__daw.workspace.constructor;
     const Project = window.__daw.project.constructor;
@@ -148,7 +219,7 @@ try {
     workspace.stop();
     for (const track of others) workspace.setTrackVolume(track.id, track.volume);
     analyser.disconnect();
-    return { peak, position, frozen, id: synth.descriptor.id, params: synth.parameters.length };
+    return { peak, position, frozen, id: synth.descriptor.id, params: synth.parameterInfo.length };
   });
   assert.equal(playback.id, "com.oxo.music.oxosynth2");
   assert.ok(playback.params >= 99);
@@ -238,6 +309,9 @@ try {
 
   const firstClip = page.locator(".clip.midi").first();
   const firstClipId = await firstClip.getAttribute("data-clip-id");
+  await page.locator("#tracks").evaluate((view) => {
+    view.scrollTop = 0;
+  });
   const clipBox = await firstClip.boundingBox();
   await page.mouse.move(clipBox.x + 20, clipBox.y + 25);
   await page.mouse.down();
@@ -437,12 +511,59 @@ try {
   assert.ok(recordedMedia.frames > 4096 && recordedMedia.fileBacked, JSON.stringify(recordedMedia));
 
   await page.locator("#tab-device").click();
-  await page.locator("details summary").first().click();
+  await page.locator("#device-panel details summary").first().click();
   await page.waitForFunction(() => document.querySelector("iframe")?.contentDocument?.body?.textContent?.includes("Synth2"));
   await page.evaluate(async () => {
     const workspace = window.__daw.workspace;
-    window.__smokeBefore = await workspace.host(workspace.project.tracks[0].devices[0].id).getState();
+    const host = workspace.host(workspace.project.tracks[0].devices[0].id);
+    window.__smokeBefore = await host.saveState();
+    const port = host.node.port;
+    const receive = port.onmessage;
+    const send = port.postMessage;
+    const readback = { emitted: [], observed: [], echoCount: 0 };
+    port.onmessage = (event) => {
+      if (event.data.type === "paramOut" && event.data.id === 2) readback.emitted.push(event.data.value);
+      receive.call(port, event);
+    };
+    port.postMessage = (message, transfer) => {
+      if (message.type === "param") readback.echoCount++;
+      return send.call(port, message, transfer);
+    };
+    const stop = host.effect(() => void readback.observed.push(host.params["2"].value));
+    window.__editorReadback = { readback, cleanup: () => {
+      stop();
+      port.onmessage = receive;
+      port.postMessage = send;
+      delete window.__editorReadback;
+    }};
   });
+  const knob = page.frameLocator("iframe").locator(".knob").nth(3);
+  await knob.scrollIntoViewIfNeeded();
+  const knobBox = await knob.boundingBox();
+  const x = knobBox.x + knobBox.width / 2;
+  const y = knobBox.y + knobBox.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x, y - 40, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForFunction(() => window.__editorReadback.readback.emitted.length > 1);
+  const editorReadback = await page.evaluate(async () => {
+    const { readback, cleanup } = window.__editorReadback;
+    cleanup();
+    const workspace = window.__daw.workspace;
+    const host = workspace.host(workspace.project.tracks[0].devices[0].id);
+    const edited = host.params["2"].value;
+    const patch = await host.saveState();
+    host.params["2"].value = 0;
+    await host.loadState(patch);
+    return { ...readback, edited, restored: host.params["2"].value };
+  });
+  assert.ok(editorReadback.observed.length > 1);
+  assert.notEqual(editorReadback.edited, editorReadback.observed[0]);
+  assert.equal(editorReadback.edited, editorReadback.emitted.at(-1));
+  assert.equal(editorReadback.edited, editorReadback.observed.at(-1));
+  assert.equal(editorReadback.restored, editorReadback.edited);
+  assert.equal(editorReadback.echoCount, 0);
   await page.frameLocator("iframe").locator("#next").click();
   await page.frameLocator("iframe").locator("#next").click();
   await page.frameLocator("iframe").locator("#pname").filter({ hasNotText: "INIT" }).waitFor();
@@ -451,10 +572,10 @@ try {
     const host = workspace.host(workspace.project.tracks[0].devices[0].id);
     const before = window.__smokeBefore;
     await new Promise((resolve) => setTimeout(resolve, 200));
-    const after = await host.getState();
+    const after = await host.saveState();
     const bytes = await workspace.save();
     const reopened = await workspace.constructor.open(workspace.context, bytes, workspace.options);
-    const restored = await reopened.host(reopened.project.tracks[0].devices[0].id).getState();
+    const restored = await reopened.host(reopened.project.tracks[0].devices[0].id).saveState();
     const same = (left, right) => left.length === right.length && left.every((value, index) => value === right[index]);
     const result = {
       changed: !same(before, after),
@@ -834,6 +955,16 @@ try {
   assert.ok(beforeStretch.unit === "beats" && Math.abs(beforeStretch.left - 4) < 0.02 && Math.abs(beforeStretch.width - 2) < 0.02, JSON.stringify(beforeStretch));
   await page.locator(`.clip[data-clip-id="${beatClipId}"]`).click();
   assert.match(await page.locator('#editor-panel .ar-pr-note[data-note-id="beat-smoke"]').getAttribute("aria-label"), /beats/);
+  await page.locator("#loop").click();
+  assert.equal(await page.locator("#loop").getAttribute("title"), "循環 4.0–6.0 秒");
+  await page.evaluate(() => window.__daw.workspace.seek(5.9));
+  await page.locator("#play").click();
+  await page.waitForFunction(() => {
+    const workspace = window.__daw.workspace;
+    return workspace.clock.state.value === "playing" && workspace.position >= 4 && workspace.position < 4.7;
+  });
+  await page.locator("#stop").click();
+  await page.locator("#loop").click();
   await page.evaluate(async () => {
     const { project, workspace } = window.__daw;
     project.setTempoChanges([{ beat: 4, bpm: 120 }]);
@@ -949,6 +1080,15 @@ try {
   await rack.getByRole("button", { name: "加入 Delay" }).click();
   await rack.getByRole("combobox", { name: "Filter 模式" }).selectOption("highpass");
   const cutoff = rack.getByRole("slider", { name: "Filter 頻率" });
+  const spectrum = rack.getByRole("img", { name: "效果鏈輸出頻譜" });
+  assert.ok((await spectrum.locator(".ar-frequency-curve").getAttribute("d"))?.startsWith("M"));
+  const response = rack.getByRole("group", { name: "Filter 頻率響應" });
+  const curve = response.locator(".ar-frequency-curve");
+  const initialCurve = await curve.getAttribute("d");
+  const handle = response.getByRole("button", { name: "截止頻率" });
+  await handle.press("ArrowRight");
+  assert.notEqual(await curve.getAttribute("d"), initialCurve);
+  assert.notEqual(await cutoff.getAttribute("aria-valuetext"), "1200 Hz");
   await cutoff.press("Home");
   assert.equal(await cutoff.getAttribute("aria-valuetext"), "20 Hz");
   const filterBypass = rack.getByRole("button", { name: "Filter 旁通" });
@@ -960,6 +1100,19 @@ try {
   await rack.getByRole("button", { name: "移除 Delay" }).click();
   assert.deepEqual(await slotTypes(), ["filter"]);
   assert.equal(await cutoff.getAttribute("aria-valuetext"), "20 Hz");
+  await rack.getByRole("button", { name: "加入 EQ" }).click();
+  assert.deepEqual(await slotTypes(), ["filter", "eq"]);
+  const eq = rack.getByRole("group", { name: "EQ 頻率響應" });
+  assert.equal(await eq.locator(".ar-eq-band").count(), 3);
+  const eqCurve = eq.locator(".ar-frequency-curve");
+  const flat = await eqCurve.getAttribute("d");
+  const mid = eq.getByRole("button", { name: "中頻", exact: true });
+  await mid.press("ArrowUp");
+  assert.notEqual(await eqCurve.getAttribute("d"), flat);
+  await rack.getByRole("button", { name: "EQ 旁通" }).click();
+  assert.equal(await eqCurve.getAttribute("d"), flat);
+  await rack.getByRole("button", { name: "EQ 往前" }).click();
+  assert.deepEqual(await slotTypes(), ["eq", "filter"]);
   const keptRackTransport = await page.evaluate(() => {
     const workspace = window.__daw.workspace;
     const { id, host } = window.rackHost;

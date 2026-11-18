@@ -1,5 +1,6 @@
-export { Project, MidiClip } from "./model";
-export type { RackEffect, RackFilter, RackDelay } from "@audiorective/blocks/effect-rack";
+export type { ClipEnvelope } from "@audiorective/blocks";
+export { Project, MidiClip, audioClipSourceDuration } from "./model";
+export type { RackEffect, RackFilter, RackDelay, RackEq, RackMacroMapping, RackMacroParameter, RackMacroSettings, RackPreset } from "@audiorective/blocks/effect-rack";
 export type { MidiTimeUnit } from "./model";
 export { TempoMap } from "./tempo-map";
 export type { TempoChange } from "./tempo-map";
@@ -10,9 +11,17 @@ export type {
   ProjectAudio,
   ProjectMidiEvent,
   AudioClip,
+  AudioClipSource,
+  AudioClipStretch,
+  AudioClipGainAutomation,
+  PcmAudioSource,
+  MediaAudioSource,
   PcmAudioClip,
   MediaAudioClip,
   TrackKind,
+  BusRole,
+  TrackRouting,
+  ProjectSend,
   ProjectDevice,
   WebClapDevice,
 } from "./model";
@@ -21,5 +30,5 @@ export type { OpenDawProjectResult } from "./dawproject";
 export { AudioMedia, AudioMediaWriter, createOpfsAudioMediaWriter } from "./media";
 export type { AudioMediaStorage } from "./media";
 export { Workspace } from "./runtime";
-export type { TakeAnchor, AudioFallbackOptions, PortabilityReport } from "./runtime";
+export type { TakeAnchor, AudioFallbackOptions, PortabilityReport, PreparedClipStretch, RangeAuditionState } from "./runtime";
 export type { WorkspaceOptions, WorkspacePlayer } from "./runtime";

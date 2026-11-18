@@ -14,12 +14,20 @@ Modular toolkit for web audio development. Independent, composable packages that
 ```
 @audiorective/
 ├── core         # Reactive state for audio parameters (alien-signals)
-├── blocks       # Headless audio capture, playback and instrument events
+├── clock        # Transport, tempo and scheduling windows
+├── effects      # DSP and reusable mixer nodes
+├── devtools     # Audio test and latency measurement
+├── blocks       # Standalone audio capture, playback and performance
 ├── midi         # MIDI note data, event projection and browser take recording
+├── host         # WebCLAP execution and editor bridge
 ├── widgets      # Browser waveform, player and piano-roll views
+├── workspace    # DAWproject model and browser project runtime
 ├── react        # React bindings
-└── threejs      # Three.js bindings (engine glue, scene transform sync)
+├── threejs      # Three.js bindings
+└── playcanvas   # PlayCanvas bindings
 ```
+
+When placing a capability, consult [Standalone modules and Workspace](docs/architecture.md#standalone-modules-and-workspace). Workspace consumes standalone audio operations, and the app binds Widgets to their existing owners.
 
 ## Core Conventions
 
@@ -106,6 +114,7 @@ The `schedulableParam` helper (without `bind`) creates a `SchedulableParam` back
 8. **No state duplication** — AudioProcessor owns all state. UI frameworks observe/mutate directly. No separate store.
 9. **Unified SchedulableParam** — one type regardless of backing. `bind` with AudioParam is an internal optimization, not a type distinction.
 10. **Observable state lives in `cells` or `params`** — for blocks as for core processors. A cell is the only store: no private field mirrored by `subscribe`. State whose change involves validation, playback or cancellation is registered as `readonlyCell(...)` over a private `Cell` and written only through the owner's methods; multi-field operations commit in one `batch`. Public readers are tracked, the owner's internal reads are `untracked`. Clock-derived values such as `position` stay plain getters. `getState()`/`subscribe()`, where a block has them, are thin wrappers over the cells.
+11. **Live edits preserve transport when possible** — Workspace applies compatible Project edits in place. Changes that require rebuilding tracks or hosted devices set `cells.needsSync`. Run an explicit `sync()` for a rebuild. See [Project edits](docs/workspace.md#apply-project-edits-to-the-live-graph) for the waiting and error contract.
 
 ## AudioProcessor Base Class
 
@@ -119,9 +128,7 @@ All processors extend `AudioProcessor<P, C>` with explicit registry generics:
 
 ## Package Dependencies
 
-- `core`: depends on `alien-signals`
-- `react`: depends on `core`, peer-depends on `react`
-- `threejs`: depends on `core`, peer-depends on `three`
+Check the owning package's `package.json` for runtime dependencies. Packages can depend on their audio foundations. The app may compose Workspace and Widgets, and Workspace has no Widgets dependency.
 
 ## Skills
 

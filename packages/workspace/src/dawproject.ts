@@ -2,17 +2,26 @@ import { DOMImplementation, DOMParser, XMLSerializer } from "@xmldom/xmldom";
 import type { Document, Element } from "@xmldom/xmldom";
 import { unzipSync, zipSync, Unzip, UnzipInflate } from "fflate";
 import type { MidiNote } from "@audiorective/midi";
-import type { RackEffect } from "@audiorective/blocks/effect-rack";
-import { MidiClip, Project, audioChannelCount } from "./model";
-import { AudioMedia } from "./media";
-import type { AudioClip, ProjectMidiEvent, ProjectTrack } from "./model";
+import type { RackEffect, RackMacroSettings } from "@audiorective/blocks/effect-rack";
+import { MidiClip, Project, audioChannelCount, normalizeClipGainAutomation } from "./model";
+import type { AudioClip, AudioClipGainAutomation, AudioClipSource, AudioClipStretch, ProjectMidiEvent, ProjectTrack } from "./model";
 import { decodeWav, encodeWav, mediaFromWav, wavMediaEntry } from "./wav";
 import { writeStoredZip } from "./stored-zip";
 import type { StoredZipEntry } from "./stored-zip";
 
 type StoredEvent = { time: number; data: number[]; noteId?: string };
-type StoredClip = { track: string; index: number; id: string; fingerprint: string; noteIds?: string[]; events?: StoredEvent[] };
-type PrivateState = { version: 1 | 2; clips: StoredClip[] };
+type StoredClip = {
+  track: string;
+  index: number;
+  id: string;
+  fingerprint: string;
+  noteIds?: string[];
+  events?: StoredEvent[];
+  audioGain?: number;
+  stretchRatio?: number;
+  gainAutomation?: AudioClipGainAutomation;
+};
+type PrivateState = { version: 1 | 2; clips: StoredClip[]; rackMacros?: Record<string, readonly RackMacroSettings[]> };
 type HostManifest = { version: 1; devices: Record<string, { kind: "webclap"; bundleUrl: string }> };
 type ControlPoint = { time: number; channel: number; controller: number; value: number };
 type MediaEntry = { blob: Blob; header: Uint8Array };
@@ -22,6 +31,9 @@ export type OpenDawProjectResult = Readonly<{ project: Project; warnings: readon
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
 const rackDevicePrefix = "audiorective.insert.";
+const rackDeviceNames: Record<RackEffect["type"], string> = { filter: "Filter", delay: "Ping Pong Delay", eq: "Equalizer" };
+const sourcePrefix = "audiorective/source/";
+const isAudioPath = (path: string) => path.startsWith("audio/") || path.startsWith(sourcePrefix);
 
 function append(parent: Element, name: string, attrs: Record<string, string | number | boolean> = {}): Element {
   const node = parent.ownerDocument!.createElement(name);
@@ -111,11 +123,22 @@ function controlsFromEvents(events: readonly ProjectMidiEvent[]): ControlPoint[]
   });
 }
 
+function writeAudioSource(path: string, source: AudioClipSource, entries: Record<string, Uint8Array>, mediaEntries: Map<string, AudioClipSource>): void {
+  if (source.media) mediaEntries.set(path, source);
+  else entries[path] = encodeWav(source);
+}
+
+function readAudioSource(asset: Uint8Array | MediaEntry): AudioClipSource {
+  if (asset instanceof Uint8Array) return decodeWav(asset);
+  const media = mediaFromWav(asset.blob, asset.header);
+  return { media, sampleRate: media.sampleRate, startFrame: 0, frameCount: media.frameCount };
+}
+
 function writeClip(
   clip: AudioClip | MidiClip,
   clips: Element,
   entries: Record<string, Uint8Array>,
-  mediaEntries: Map<string, AudioClip>,
+  mediaEntries: Map<string, AudioClipSource>,
   state: PrivateState,
   track: ProjectTrack,
   index: number,
@@ -124,6 +147,12 @@ function writeClip(
   const element = append(clips, "Clip", { time: clip.time, duration: clip.duration, contentTimeUnit: unit });
   if (clip.kind === "audio") {
     const path = `audio/${clip.id}.wav`;
+    const { gain = 1, fadeIn = 0, fadeOut = 0 } = clip.envelope ?? {};
+    if (fadeIn || fadeOut) {
+      element.setAttribute("fadeTimeUnit", "seconds");
+      if (fadeIn) element.setAttribute("fadeInTime", String(fadeIn));
+      if (fadeOut) element.setAttribute("fadeOutTime", String(fadeOut));
+    }
     const audio = append(element, "Audio", {
       id: `${clip.id}-audio`,
       timeUnit: "seconds",
@@ -132,9 +161,17 @@ function writeClip(
       duration: clip.duration,
     });
     append(audio, "File", { path });
-    if (clip.media) mediaEntries.set(path, clip);
-    else entries[path] = encodeWav(clip);
-    state.clips.push({ track: track.id, index, id: clip.id, fingerprint: "" });
+    writeAudioSource(path, clip, entries, mediaEntries);
+    if (clip.stretch) writeAudioSource(sourcePrefix + `${clip.id}.wav`, clip.stretch.source, entries, mediaEntries);
+    state.clips.push({
+      track: track.id,
+      index,
+      id: clip.id,
+      fingerprint: clip.stretch || clip.gainAutomation || gain !== 1 ? path : "",
+      ...(gain === 1 ? {} : { audioGain: gain }),
+      ...(clip.stretch ? { stretchRatio: clip.stretch.ratio } : {}),
+      ...(clip.gainAutomation ? { gainAutomation: clip.gainAutomation } : {}),
+    });
     return;
   }
   const content = append(element, "Lanes", { id: `${clip.id}-content`, timeUnit: unit });
@@ -172,7 +209,7 @@ function writeClip(
   });
 }
 
-function prepareDawProject(project: Project): { entries: Record<string, Uint8Array>; mediaEntries: Map<string, AudioClip> } {
+function prepareDawProject(project: Project): { entries: Record<string, Uint8Array>; mediaEntries: Map<string, AudioClipSource> } {
   const document = new DOMImplementation().createDocument(null, "Project", null);
   const root = document.documentElement!;
   root.setAttribute("version", "1.0");
@@ -182,15 +219,15 @@ function prepareDawProject(project: Project): { entries: Record<string, Uint8Arr
   append(transport, "TimeSignature", { id: "transportSignature", numerator: project.signature[0], denominator: project.signature[1] });
   const structure = append(root, "Structure");
   const entries: Record<string, Uint8Array> = {};
-  const mediaEntries = new Map<string, AudioClip>();
+  const mediaEntries = new Map<string, AudioClipSource>();
   const manifest: HostManifest = { version: 1, devices: {} };
   let insertIndex = 0;
   for (const track of project.tracks) {
     const element = append(structure, "Track", { id: track.id, name: track.name, contentType: track.kind === "midi" ? "notes" : "audio" });
     const channel = append(element, "Channel", {
       id: `${track.id}-channel`,
-      role: "regular",
-      destination: "masterChannel",
+      role: track.busRole ?? "regular",
+      destination: track.routing.outputBusId === null ? "masterChannel" : `${track.routing.outputBusId}-channel`,
       solo: track.solo,
       audioChannels: track.kind === "audio" && track.clips[0]?.kind === "audio" ? audioChannelCount(track.clips[0]) : 2,
     });
@@ -216,7 +253,7 @@ function prepareDawProject(project: Project): { entries: Record<string, Uint8Arr
       for (const effect of track.effects) {
         const device = append(devices, "BuiltinDevice", {
           deviceID: rackDevicePrefix + effect.type,
-          deviceName: effect.type === "filter" ? "Filter" : "Ping Pong Delay",
+          deviceName: rackDeviceNames[effect.type],
           deviceVendor: "Audiorective",
           deviceRole: "audioFX",
           loaded: true,
@@ -228,14 +265,23 @@ function prepareDawProject(project: Project): { entries: Record<string, Uint8Arr
     }
     append(channel, "Mute", { id: `${track.id}-mute`, value: track.muted });
     append(channel, "Pan", { id: `${track.id}-pan`, unit: "normalized", value: (track.pan + 1) / 2, min: 0, max: 1 });
+    if (track.routing.sends.length) {
+      const sends = append(channel, "Sends");
+      for (const { busId, gain } of track.routing.sends) {
+        const send = append(sends, "Send", { destination: `${busId}-channel`, type: "post" });
+        append(send, "Volume", { unit: "linear", value: gain });
+      }
+    }
     append(channel, "Volume", { id: `${track.id}-volume`, unit: "linear", value: track.volume });
   }
   const master = append(structure, "Track", { id: "masterTrack", name: "Master", contentType: "audio" });
   const masterChannel = append(master, "Channel", { id: "masterChannel", role: "master", audioChannels: 2 });
-  append(masterChannel, "Volume", { id: "masterVolume", unit: "linear", value: 1 });
+  append(masterChannel, "Volume", { id: "masterVolume", unit: "linear", value: project.masterVolume });
   const arrangement = append(root, "Arrangement", { id: "arrangement" });
   const lanes = append(arrangement, "Lanes", { id: "projectLanes", timeUnit: "seconds" });
   const state: PrivateState = { version: 2, clips: [] };
+  const racks = project.tracks.filter((track) => track.effectMacros.length);
+  if (racks.length) state.rackMacros = Object.fromEntries(racks.map((track) => [track.id, track.effectMacros]));
   for (const track of project.tracks) {
     const lane = append(lanes, "Lanes", { id: `${track.id}-lane`, track: track.id, timeUnit: "seconds" });
     let index = 0;
@@ -440,7 +486,7 @@ export async function openDawProjectBlob(blob: Blob): Promise<OpenDawProjectResu
       failure = new Error("Project archive has duplicate or unsafe paths.");
       return;
     }
-    const media = file.name.startsWith("audio/");
+    const media = isAudioPath(file.name);
     const record = { chunks: [] as (Uint8Array | Blob)[], size: 0, media };
     files.set(file.name, record);
     file.ondata = (error, chunk, final) => {
@@ -535,26 +581,33 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
     if (entries["audiorective/host.json"]) usedPaths.add("audiorective/host.json");
     const structure = one(root, "Structure")!;
     childrenOnly(structure, ["Track"]);
-    let masterSeen = false;
+    let masterChannelId: string | undefined;
+    const channelTracks = new Map<string, string>();
+    const routes: Array<{ trackId: string; destination: string | null; sends: Array<{ destination: string; gain: number }> }> = [];
     for (const element of direct(structure, "Track")) {
       attributesOnly(element, ["id", "name", "contentType"]);
       childrenOnly(element, ["Channel"]);
       const channel = one(element, "Channel")!;
       attributesOnly(channel, ["id", "role", "destination", "audioChannels", "solo"]);
-      childrenOnly(channel, ["Devices", "Mute", "Pan", "Volume"]);
+      childrenOnly(channel, ["Devices", "Mute", "Pan", "Sends", "Volume"]);
+      const channelId = attr(channel, "id");
+      const destination = channel.getAttribute("destination");
+      if (channelTracks.has(channelId) || channelId === masterChannelId) throw new Error("Project has duplicate channel IDs.");
       const volumeElement = one(channel, "Volume")!;
       attributesOnly(volumeElement, ["id", "unit", "value"]);
       childrenOnly(volumeElement, []);
       if (attr(volumeElement, "unit") !== "linear") throw new Error("Project has unsupported track volume units.");
       const role = attr(channel, "role");
       if (role === "master") {
-        if (masterSeen || attr(channel, "id") !== "masterChannel" || attr(element, "id") !== "masterTrack")
-          throw new Error("Project has unsupported master routing.");
-        masterSeen = true;
+        if (masterChannelId || destination || one(channel, "Sends", false)) throw new Error("Project has unsupported master routing.");
+        masterChannelId = channelId;
+        project.setMasterVolume(numberAttr(volumeElement, "value"));
         continue;
       }
-      if (role !== "regular" || attr(channel, "destination") !== "masterChannel") throw new Error("Project has unsupported track routing.");
-      const kind = attr(element, "contentType") === "notes" ? "midi" : attr(element, "contentType") === "audio" ? "audio" : null;
+      const busRole = role === "submix" || role === "effect" ? role : undefined;
+      if (role !== "regular" && !busRole) throw new Error("Project has unsupported track routing.");
+      const content = attr(element, "contentType");
+      const kind = content === "audio" ? (busRole ? "bus" : "audio") : content === "notes" && !busRole ? "midi" : null;
       if (!kind) throw new Error("Project has an unsupported track kind.");
       const volume = numberAttr(volumeElement, "value");
       const muteElement = one(channel, "Mute", false);
@@ -576,7 +629,24 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
         if (normalized > 1) throw new Error("Project has invalid track pan.");
         pan = normalized * 2 - 1;
       }
-      const track = project.addTrack(attr(element, "name"), kind, { id: attr(element, "id"), volume, muted, solo, pan });
+      const track = project.addTrack(attr(element, "name"), kind, { id: attr(element, "id"), volume, muted, solo, pan, busRole });
+      channelTracks.set(channelId, track.id);
+      const sends = one(channel, "Sends", false);
+      const route = { trackId: track.id, destination, sends: [] as Array<{ destination: string; gain: number }> };
+      if (sends) {
+        attributesOnly(sends, []);
+        childrenOnly(sends, ["Send"]);
+        for (const send of direct(sends, "Send")) {
+          attributesOnly(send, ["id", "type", "destination"]);
+          childrenOnly(send, ["Volume"]);
+          const level = one(send, "Volume")!;
+          attributesOnly(level, ["id", "unit", "value", "min", "max"]);
+          childrenOnly(level, []);
+          if (attr(send, "type") !== "post" || attr(level, "unit") !== "linear") throw new Error("Project has unsupported send settings.");
+          route.sends.push({ destination: attr(send, "destination"), gain: numberAttr(level, "value") });
+        }
+      }
+      routes.push(route);
       const devices = one(channel, "Devices", false);
       if (devices) {
         childrenOnly(devices, ["ClapPlugin", "BuiltinDevice"]);
@@ -589,7 +659,7 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
             childrenOnly(plugin, ["State"]);
             const deviceId = attr(plugin, "deviceID");
             if (attr(plugin, "deviceRole") !== "audioFX" ||
-                (deviceId !== rackDevicePrefix + "filter" && deviceId !== rackDevicePrefix + "delay"))
+                !Object.keys(rackDeviceNames).some((type) => deviceId === rackDevicePrefix + type))
               throw new Error("Project has an unsupported built-in effect.");
             const stateRef = one(plugin, "State")!;
             attributesOnly(stateRef, ["path"]);
@@ -640,8 +710,29 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
         }
         if (effects.length) project.setTrackEffects(track.id, effects);
       }
+      if (stored?.rackMacros && Object.hasOwn(stored.rackMacros, track.id)) {
+        try {
+          const macros = stored.rackMacros[track.id];
+          if (!Array.isArray(macros)) throw new Error();
+          const effects = project.tracks.find(({ id }) => id === track.id)!.effects;
+          project.setTrackRackPreset(track.id, { effects, macros });
+        } catch {
+          warnings.push(`Invalid Audiorective rack macros on ${track.name} were skipped.`);
+        }
+      }
     }
-    if (!masterSeen) throw new Error("Project has unsupported master routing.");
+    if (!masterChannelId) throw new Error("Project has unsupported master routing.");
+    const busFor = (destination: string): string => {
+      const trackId = channelTracks.get(destination);
+      const track = trackId && project.tracks.find((item) => item.id === trackId);
+      if (!track || track.kind !== "bus") throw new Error("Project has unsupported track routing.");
+      return track.id;
+    };
+    for (const route of routes) {
+      const outputBusId = route.destination && route.destination !== masterChannelId ? busFor(route.destination) : null;
+      const sends = route.sends.map(({ destination, gain }) => ({ busId: busFor(destination), gain }));
+      if (outputBusId !== null || sends.length) project.setTrackRouting(route.trackId, { outputBusId, sends });
+    }
     const arrangement = one(root, "Arrangement")!;
     attributesOnly(arrangement, ["id"]);
     childrenOnly(arrangement, ["Lanes", "Markers", "TempoAutomation"]);
@@ -663,6 +754,7 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
         attributesOnly(clips, ["id", "timeUnit"]);
         const unit = attr(clips, "timeUnit");
         if (unit !== "seconds" && unit !== "beats") throw new Error("Project clip lane needs seconds or beats time.");
+        if (track.kind === "bus" && direct(clips, "Clip").length) throw new Error("Project bus tracks cannot contain clips.");
         if (unit === "beats" && track.kind !== "midi") throw new Error("Project audio clip has unsupported time unit.");
         childrenOnly(clips, ["Clip"]);
         for (const clip of direct(clips, "Clip")) {
@@ -671,7 +763,9 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
             const midi = readMidi(clip, trackId, index, unit, stored, warnings);
             project.addMidiClip(trackId, midi, midi.time, { id: midi.id, timeUnit: midi.timeUnit });
           } else {
-            attributesOnly(clip, ["time", "duration", "contentTimeUnit"]);
+            attributesOnly(clip, ["time", "duration", "contentTimeUnit", "fadeTimeUnit", "fadeInTime", "fadeOutTime"]);
+            if (clip.hasAttribute("fadeTimeUnit") && attr(clip, "fadeTimeUnit") !== "seconds")
+              throw new Error("Project audio fades need seconds.");
             if (attr(clip, "contentTimeUnit") !== "seconds" || direct(clip, "Lanes").length)
               throw new Error("Project audio clip has unsupported content.");
             const audio = one(clip, "Audio")!;
@@ -685,9 +779,9 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
               asset = entries[path];
             if (!path.startsWith("audio/") || !asset) throw new Error("Project audio asset is missing.");
             usedPaths.add(path);
-            const decoded = asset instanceof Uint8Array ? decodeWav(asset) : mediaFromWav(asset.blob, asset.header);
-            const channels = decoded instanceof AudioMedia ? decoded.channelCount : decoded.channels.length;
-            const frames = decoded instanceof AudioMedia ? decoded.frameCount : decoded.channels[0].length;
+            const decoded = readAudioSource(asset);
+            const channels = audioChannelCount(decoded);
+            const frames = decoded.media ? decoded.frameCount : decoded.channels[0].length;
             if (
               decoded.sampleRate !== integerAttr(audio, "sampleRate", 1) ||
               channels !== integerAttr(audio, "channels", 1) ||
@@ -696,8 +790,33 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
             )
               throw new Error("Project audio asset does not match its XML metadata.");
             const match = stored?.clips.find((item) => item.track === trackId && item.index === index);
-            if (decoded instanceof AudioMedia) project.addAudioMediaClip(trackId, decoded, numberAttr(clip, "time"), { id: match?.id });
-            else project.addAudioClip(trackId, decoded, numberAttr(clip, "time"), { id: match?.id });
+            const aligned = match?.fingerprint === path;
+            const storedGain = aligned ? match.audioGain : undefined;
+            const gain = typeof storedGain === "number" && Number.isFinite(storedGain) && storedGain >= 0 ? storedGain : 1;
+            const fadeIn = clip.hasAttribute("fadeInTime") ? numberAttr(clip, "fadeInTime") : 0;
+            const fadeOut = clip.hasAttribute("fadeOutTime") ? numberAttr(clip, "fadeOutTime") : 0;
+            const originalPath = sourcePrefix + path.slice("audio/".length);
+            const original = entries[originalPath];
+            let stretch: AudioClipStretch | undefined;
+            if (aligned && match.stretchRatio !== undefined) {
+              if (!original) throw new Error("Project clip stretch source is missing.");
+              stretch = { ratio: match.stretchRatio, source: readAudioSource(original) };
+            } else if (original) {
+              warnings.push("A rendered audio clip was opened without its Audiorective stretch settings.");
+            }
+            if (original) usedPaths.add(originalPath);
+            let gainAutomation: AudioClipGainAutomation | undefined;
+            if (aligned && match.gainAutomation !== undefined) {
+              try {
+                gainAutomation = normalizeClipGainAutomation(match.gainAutomation);
+              } catch {
+                warnings.push("Invalid Audiorective clip gain automation was skipped.");
+              }
+            }
+            const options = { id: match?.id, envelope: { gain, fadeIn, fadeOut }, stretch, gainAutomation };
+            const time = numberAttr(clip, "time");
+            if (decoded.media) project.addAudioMediaClip(trackId, decoded.media, time, options);
+            else project.addAudioClip(trackId, decoded, time, options);
           }
           index++;
         }

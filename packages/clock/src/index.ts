@@ -7,6 +7,8 @@ export type { CoreTickWindow, TransportState, TimeSource } from "./types";
 
 export { WorkerTickSource, IntervalTickSource, ManualTickSource } from "./TickSource";
 export type { TickSource } from "./TickSource";
+export { RangeLoop } from "./RangeLoop";
+export type { LoopRange, LoopSlice } from "./RangeLoop";
 
 export { renderTimeline } from "./renderTimeline";
 export type { RenderTimelineOptions } from "./renderTimeline";

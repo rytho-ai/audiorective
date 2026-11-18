@@ -26,9 +26,14 @@ try {
     const track = project.addTrack("Sine", "audio");
     const samples = new Float32Array(4800);
     for (let i = 0; i < samples.length; i++) samples[i] = Math.sin((i * Math.PI * 2 * 440) / 48000) * 0.25;
-    project.addAudioClip(track.id, { sampleRate: 48000, channels: [samples] }, 0);
+    const clip = project.addAudioClip(track.id, { sampleRate: 48000, channels: [samples] }, 0);
     const context = new AudioContext({ sampleRate: 48000 });
     const workspace = await Workspace.create(context, project);
+    workspace.setMasterVolume(0.3);
+    project.setAudioClipGainAutomation(clip.id, [
+      { time: 0, value: 0.25, shape: "hold" },
+      { time: 0.05, value: 1, shape: "hold" },
+    ]);
     const report = workspace.portabilityReport();
     const parts = [];
     await workspace.exportAudioFallbackTo(new WritableStream({ write: (chunk) => parts.push(chunk) }), { tailSeconds: 0.1 });
@@ -43,9 +48,14 @@ try {
       const name = new TextDecoder().decode(bytes.subarray(at + 30, at + 30 + nameSize));
       const dataAt = at + 30 + nameSize;
       let peak = 0;
+      let earlyPeak = 0;
       if (name.endsWith(".wav"))
-        for (let offset = dataAt + 44; offset < dataAt + size; offset += 4) peak = Math.max(peak, Math.abs(view.getFloat32(offset, true)));
-      entries.push({ name, flags, crc: view.getUint32(at + 14, true), peak, size });
+        for (let offset = dataAt + 44; offset < dataAt + size; offset += 4) {
+          const sample = Math.abs(view.getFloat32(offset, true));
+          peak = Math.max(peak, sample);
+          if (offset < dataAt + 44 + 0.04 * 48000 * 8) earlyPeak = Math.max(earlyPeak, sample);
+        }
+      entries.push({ name, flags, crc: view.getUint32(at + 14, true), peak, earlyPeak, size });
       at = dataAt + size;
     }
     const aborted = new AbortController();
@@ -62,6 +72,7 @@ try {
     ];
     workspace.setTrackEffects(track.id, effects);
     const restored = await Workspace.open(context, await workspace.save());
+    const reopenedMaster = restored.project.masterVolume;
     let effectOutput;
     try {
       const parts = [];
@@ -87,21 +98,24 @@ try {
     workspace.destroy();
     project.destroy();
     await context.close();
-    return { entries, report, cancellation, effectOutput };
+    return { entries, report, cancellation, effectOutput, reopenedMaster };
   });
   assert.deepEqual(
     result.entries.map((entry) => entry.name),
     ["mix.wav", "tracks/track1.wav", "manifest.json"],
   );
   assert.ok(result.entries.every((entry) => entry.flags === 0 && entry.crc !== 0));
-  assert.ok(result.entries[0].peak > 0.15, `mix is silent: ${JSON.stringify(result.entries)}`);
-  assert.ok(Math.abs(result.entries[0].peak - result.entries[1].peak) < 0.001);
+  assert.equal(result.reopenedMaster, 0.3);
+  assert.ok(result.entries[1].peak > 0.15, `stem is silent: ${JSON.stringify(result.entries)}`);
+  assert.ok(Math.abs(result.entries[0].peak / result.entries[1].peak - 0.3) < 0.002);
+  assert.ok(Math.abs(result.entries[1].earlyPeak / result.entries[1].peak - 0.25) < 0.01, JSON.stringify(result.entries[1]));
   assert.equal(result.cancellation, "AbortError");
   assert.equal(result.report.pluginDependencies.length, 0);
+  assert.ok(result.report.limitations.some((line) => line.startsWith("Audio clip gain automation")));
   assert.deepEqual(result.effectOutput.effects.map(({ type }) => type), ["filter", "delay"]);
   assert.equal(result.effectOutput.effects[0].frequency, 100);
   assert.equal(result.effectOutput.effects[1].delayTime, 0.25);
-  assert.ok(result.effectOutput.early < 0.001 && result.effectOutput.echo > 0.002 && result.effectOutput.echo < 0.07, JSON.stringify(result.effectOutput));
+  assert.ok(result.effectOutput.early < 0.001 && result.effectOutput.echo > 0.002 && result.effectOutput.echo < 0.025, JSON.stringify(result.effectOutput));
   const pluginResult = await page.evaluate(async () => {
     const original = window.__daw.workspace;
     const project = new original.project.constructor({ title: "Plugin export probe" });

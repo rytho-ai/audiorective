@@ -143,8 +143,12 @@ test("source automation maps a stretched output selection and follows a queued s
   expect(program.mock.calls.at(-1)![1]).toBe(when);
   expect(program.mock.calls.at(-1)![0][0].value).toBeCloseTo(0.25, 5); // source second 0.5 on a 0..2 ramp
   expect(hold).toHaveBeenCalled();
+  const previousHolds = hold.mock.calls.length;
+  const beforeDetach = context.currentTime;
   detach();
-  expect(hold.mock.calls.at(-1)![0]).toBeGreaterThanOrEqual(context.currentTime);
+  expect(hold).toHaveBeenCalledTimes(previousHolds + 1);
+  expect(hold.mock.calls.at(-1)![0]).toBeGreaterThanOrEqual(beforeDetach);
+  expect(hold.mock.calls.at(-1)![0]).toBeLessThanOrEqual(context.currentTime);
   expect(player.isPlaying).toBe(true); // detaching automation leaves borrowed playback alive
 });
 

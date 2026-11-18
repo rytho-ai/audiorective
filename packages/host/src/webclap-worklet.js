@@ -89,7 +89,7 @@ function trampoline(params, results, fn) {
 
 // WASI preview1: console output, clocks, random. No files: no preopened directories (Rust's and wasi-libc's
 // startup asks for them until EBADF), every other file call fails.
-function wasiImports(module, memory, log) {
+function wasiImports(entries, memory, log) {
     const view = () => new DataView(memory().buffer)
     const lines = ["", "", ""]
     const shim = {
@@ -131,16 +131,68 @@ function wasiImports(module, memory, log) {
         },
         sched_yield: () => 0
     }
-    const imports = {}
-    for (const entry of WebAssembly.Module.imports(module)) {
+    const imports = Object.create(null)
+    for (const entry of entries) {
         if (entry.kind !== "function") continue
-        const ns = imports[entry.module] || (imports[entry.module] = {})
-        ns[entry.name] = shim[entry.name] || (() => {
+        const ns = imports[entry.module] || (imports[entry.module] = Object.create(null))
+        ns[entry.name] = Object.hasOwn(shim, entry.name) ? shim[entry.name] : (() => {
             log(`unsupported import ${entry.module}.${entry.name}`)
             return 52 // ENOSYS
         })
     }
     return imports
+}
+
+// WebAssembly.compile validates the module before this reads the import section. Module.imports()
+// supplies the name and kind, but the binary still supplies the memory limits.
+function importedMemory(entries, bytes, imports) {
+    const memory = entries.find(entry => entry.kind === "memory")
+    if (!memory) return null
+    if (entries.filter(entry => entry.kind !== "function").length !== 1)
+        throw new Error("WebCLAP supports one imported memory alongside function imports.")
+    const binary = new Uint8Array(bytes)
+    let offset = 8 // magic and version
+    const uint = () => {
+        let value = 0
+        for (let shift = 0; ; shift += 7) {
+            const byte = binary[offset++]
+            value += (byte & 0x7f) * 2 ** shift
+            if ((byte & 0x80) === 0) return value
+        }
+    }
+    const skipName = () => {
+        const length = uint()
+        offset += length
+    }
+    while (offset < binary.length) {
+        const section = binary[offset++]
+        const size = uint()
+        if (section !== 2) {
+            offset += size
+            continue
+        }
+        const count = uint()
+        for (let index = 0; index < count; index++) {
+            skipName()
+            skipName()
+            const kind = binary[offset++]
+            if (kind === 0) {
+                uint() // function type index
+                continue
+            }
+            const flags = uint()
+            if (kind !== 2 || flags > 3) throw new Error("WebCLAP imported memory must use WASM32 limits.")
+            const descriptor = {initial: uint()}
+            if (flags & 1) descriptor.maximum = uint()
+            if (flags & 2) descriptor.shared = true
+            const supplied = new WebAssembly.Memory(descriptor)
+            imports[memory.module] ??= Object.create(null)
+            imports[memory.module][memory.name] = supplied
+            return supplied
+        }
+        break
+    }
+    throw new Error("WebCLAP memory import could not be read.")
 }
 
 class ClapHost extends AudioWorkletProcessor {
@@ -178,8 +230,10 @@ class ClapHost extends AudioWorkletProcessor {
     fn(ptr) { return this.table.get(this.u32(ptr)) }
     cstr(ptr) {
         const bytes = this.u8
+        if (ptr === 0) return ""
         let end = ptr
-        while (bytes[end] !== 0) end++
+        while (end < bytes.length && bytes[end] !== 0) end++
+        if (end >= bytes.length) throw new Error("WebCLAP returned an invalid string pointer.")
         return decodeUtf8(bytes.subarray(ptr, end))
     }
     alloc(size) { return this.malloc(size) }
@@ -232,7 +286,11 @@ class ClapHost extends AudioWorkletProcessor {
                 this.scheduled = []
                 break
             case "saveState": return this.port.postMessage({type: "state", bytes: this.saveState()})
-            case "loadState": this.loadState(m.bytes); this.port.postMessage({type: "stateLoaded"}); break
+            case "loadState":
+                this.loadState(m.bytes)
+                this.port.postMessage({type: "params", params: this.paramInfos()})
+                this.port.postMessage({type: "stateLoaded"})
+                break
             case "dispose":
                 if (this.ready) {
                     this.fn(this.plugin + 28)(this.plugin)
@@ -253,12 +311,15 @@ class ClapHost extends AudioWorkletProcessor {
         this.afterMainThreadCall()
     }
 
-    async load({bytes, pluginIndex = 0}) {
+    async load({bytes, pluginIndex = 0, pluginId}) {
         const module = await WebAssembly.compile(bytes)
+        const entries = WebAssembly.Module.imports(module)
         let memory = null
-        const instance = await WebAssembly.instantiate(module, wasiImports(module, () => memory, line => this.log(line)))
+        const imports = wasiImports(entries, () => memory, line => this.log(line))
+        memory = importedMemory(entries, bytes, imports)
+        const instance = await WebAssembly.instantiate(module, imports)
         const exports = instance.exports
-        memory = exports.memory
+        memory = exports.memory ?? memory
         if (!memory || !exports.__indirect_function_table || !exports.malloc || !exports.clap_entry)
             throw new Error("module lacks memory, __indirect_function_table, malloc or clap_entry")
         if (exports._initialize) exports._initialize()
@@ -270,7 +331,22 @@ class ClapHost extends AudioWorkletProcessor {
         if (!this.fn(entry + 12)(this.allocString("/"))) throw new Error("clap_entry.init failed")
         const factory = this.fn(entry + 20)(this.allocString("clap.plugin-factory"))
         if (!factory) throw new Error("no plugin factory")
-        const descriptor = this.fn(factory + 4)(factory, pluginIndex)
+        const count = this.fn(factory)(factory) >>> 0
+        const descriptorAt = this.fn(factory + 4)
+        let descriptor = 0
+        if (pluginId !== undefined) {
+            for (let index = 0; index < count; index++) {
+                const entry = descriptorAt(factory, index)
+                if (entry && this.cstr(this.u32(entry + 12)) === pluginId) {
+                    descriptor = entry
+                    break
+                }
+            }
+            if (!descriptor) throw new Error(`WebCLAP bundle has no plug-in with ID ${pluginId}.`)
+        } else {
+            if (Number.isInteger(pluginIndex) && pluginIndex >= 0 && pluginIndex < count) descriptor = descriptorAt(factory, pluginIndex)
+            if (!descriptor) throw new RangeError(`WebCLAP bundle has no plug-in at index ${pluginIndex}.`)
+        }
         const id = this.cstr(this.u32(descriptor + 12))
 
         this.createHost()

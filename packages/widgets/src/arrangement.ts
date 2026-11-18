@@ -45,6 +45,66 @@ export interface TimelineZoomHandle {
   destroy(): void;
 }
 
+export type TimelineRange = readonly [start: number, end: number];
+
+export type TimeRangeGestureOptions = Readonly<{
+  /** Map pointer X to project time, including any duration limits and grid snapping. */
+  timeAt(clientX: number, bypassSnap: boolean): number;
+  onPreview(range: TimelineRange | undefined): void;
+  onSelect(range: TimelineRange): void;
+}>;
+
+/** Select a nonempty interval, with an ordered preview regardless of drag direction. */
+export function attachTimeRangeGesture(element: HTMLElement, options: TimeRangeGestureOptions): ClipGestureHandle {
+  let drag: { pointerId: number; startX: number; time: number } | undefined;
+  const candidate = (event: PointerEvent): TimelineRange | undefined => {
+    if (!drag || Math.abs(event.clientX - drag.startX) <= 3) return;
+    const from = drag.time;
+    const to = options.timeAt(event.clientX, event.altKey);
+    if (Number.isFinite(from) && Number.isFinite(to) && from !== to) return [Math.min(from, to), Math.max(from, to)];
+  };
+  const clear = () => {
+    if (!drag) return;
+    const { pointerId } = drag;
+    drag = undefined;
+    if (element.hasPointerCapture(pointerId)) element.releasePointerCapture(pointerId);
+    options.onPreview(undefined);
+  };
+  const down = (event: PointerEvent) => {
+    if (event.button !== 0 || drag) return;
+    event.preventDefault();
+    element.setPointerCapture(event.pointerId);
+    drag = { pointerId: event.pointerId, startX: event.clientX, time: options.timeAt(event.clientX, event.altKey) };
+  };
+  const move = (event: PointerEvent) => {
+    if (drag?.pointerId === event.pointerId) options.onPreview(candidate(event));
+  };
+  const up = (event: PointerEvent) => {
+    if (drag?.pointerId !== event.pointerId) return;
+    const range = candidate(event);
+    clear();
+    if (range) options.onSelect(range);
+  };
+  const cancel = (event: PointerEvent) => {
+    if (drag?.pointerId === event.pointerId) clear();
+  };
+  element.addEventListener("pointerdown", down);
+  element.addEventListener("pointermove", move);
+  element.addEventListener("pointerup", up);
+  element.addEventListener("pointercancel", cancel);
+  element.addEventListener("lostpointercapture", cancel);
+  return {
+    destroy() {
+      clear();
+      element.removeEventListener("pointerdown", down);
+      element.removeEventListener("pointermove", move);
+      element.removeEventListener("pointerup", up);
+      element.removeEventListener("pointercancel", cancel);
+      element.removeEventListener("lostpointercapture", cancel);
+    },
+  };
+}
+
 /** Continuous time-axis zoom with pointer anchoring and one redraw per animation frame. */
 export function attachTimelineZoom(options: TimelineZoomOptions): TimelineZoomHandle {
   const { viewport, slider } = options;

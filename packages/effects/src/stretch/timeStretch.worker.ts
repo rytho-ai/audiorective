@@ -2,7 +2,7 @@
  * No third-party wrapper or WASM binary is included in this package. */
 export const TIME_STRETCH_WORKER = String.raw`
 self.onmessage = async function(event) {
-  const {module, channels, sampleRate, ratio, outputFrames} = event.data;
+  const {module, channels, sampleRate, ratio, outputFrames, anchors} = event.data;
   let api, memory, state; const allocations = [];
   try {
     const instance = await WebAssembly.instantiate(module, {
@@ -17,6 +17,7 @@ self.onmessage = async function(event) {
     api = instance.exports; memory = api.memory;
     const required = ['wasm_malloc','wasm_free','rb_new','rb_delete','rb_study','rb_process','rb_available','rb_retrieve','rb_set_expected_input_duration','rb_set_max_process_size'];
     if(!(memory instanceof WebAssembly.Memory) || required.some(name=>typeof api[name]!=='function')) throw Error('TimeStretch: unsupported Rubber Band WASM ABI.');
+    if(anchors.length && typeof api.rb_set_key_frame_map !== 'function') throw Error('TimeStretch: Rubber Band WASM does not support warp anchors.');
     api._initialize?.();
     const count=channels.length, frames=channels[0].length, block=1024;
     const allocate = bytes => {const p=api.wasm_malloc(bytes);if(!p)throw Error('TimeStretch allocation failed.');allocations.push(p);return p;};
@@ -32,6 +33,16 @@ self.onmessage = async function(event) {
     if(!state)throw Error('TimeStretch could not create a Rubber Band state.');
     api.rb_set_expected_input_duration(state,frames);
     api.rb_set_max_process_size(state,block);
+    if(anchors.length) {
+      const sourceFrames = allocate(anchors.length * 4);
+      const outputFrames = allocate(anchors.length * 4);
+      const view = new DataView(memory.buffer);
+      anchors.forEach(({sourceFrame, outputFrame}, index) => {
+        view.setUint32(sourceFrames + index * 4, sourceFrame, true);
+        view.setUint32(outputFrames + index * 4, outputFrame, true);
+      });
+      api.rb_set_key_frame_map(state, anchors.length, sourceFrames, outputFrames);
+    }
     const result=Array.from({length:count},()=>new Float32Array(outputFrames));
     let produced=0;
     for(const phase of ['study','process']){

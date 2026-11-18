@@ -1,6 +1,7 @@
 import type { Param, SchedulableParam } from "@audiorective/core";
 import { Effect, type EffectOptions } from "./Effect";
 import { fanout } from "./internal/fanout";
+import { mixFrequencyResponse } from "./internal/frequency-response";
 
 export interface FilterOptions extends EffectOptions {
   frequency?: number;
@@ -13,6 +14,8 @@ export interface FilterOptions extends EffectOptions {
 
 export class Filter extends Effect<{ frequency: SchedulableParam; Q: SchedulableParam; gain: SchedulableParam; type: Param<BiquadFilterType> }> {
   private readonly sources: ConstantSourceNode[];
+  private readonly stageCount: number;
+  private responseBiquad?: BiquadFilterNode;
 
   constructor(ctx: BaseAudioContext, opts: FilterOptions = {}) {
     const stageCount = Math.abs(opts.rolloff ?? -12) / 12;
@@ -60,6 +63,24 @@ export class Filter extends Effect<{ frequency: SchedulableParam; Q: Schedulable
       opts,
     );
     this.sources = [freq, q, gain];
+    this.stageCount = stageCount;
+  }
+
+  /** Snapshot the combined wet and dry response. Frequencies outside Nyquist follow the native NaN convention. */
+  getFrequencyResponse(
+    frequencies: Float32Array<ArrayBuffer>,
+    magnitudes: Float32Array<ArrayBuffer>,
+    phases: Float32Array<ArrayBuffer>,
+  ): void {
+    // Audio-rate fanout drives the live stages. A disconnected calculator reads the same parameter snapshot.
+    const node = (this.responseBiquad ??= new BiquadFilterNode(this.context));
+    const { frequency, Q, gain, type, wet } = this.params;
+    node.type = type.value;
+    node.frequency.value = frequency.value;
+    node.Q.value = Q.value;
+    node.gain.value = gain.value;
+    node.getFrequencyResponse(frequencies, magnitudes, phases);
+    mixFrequencyResponse(magnitudes, phases, wet.value, this.stageCount);
   }
 
   override destroy(): void {

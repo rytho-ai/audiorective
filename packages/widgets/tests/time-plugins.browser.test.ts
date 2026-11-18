@@ -3,7 +3,9 @@ import { afterEach, expect, test, vi } from "vitest";
 import { userEvent } from "vitest/browser";
 import { MidiSequence } from "@audiorective/midi";
 import { WavePlayer } from "@audiorective/blocks";
-import { mountWaveformSelector, type TimeViewPlugin } from "../src";
+import { cell } from "@audiorective/core";
+import type { AutomationPoint } from "@audiorective/core/automation";
+import { createAutomationOverlay, mountWaveformSelector, type TimeViewPlugin } from "../src";
 import { mountPianoRoll, type WaveformPlugin, type WaveformPluginContext } from "../src/piano-roll";
 import { mountWaveform } from "../src/waveform";
 import { bandsFile, cleanup, element, host, own, pointer } from "./helpers";
@@ -11,6 +13,45 @@ import { bandsFile, cleanup, element, host, own, pointer } from "./helpers";
 afterEach(async () => {
   await cleanup();
   vi.restoreAllMocks();
+});
+
+test("an automation overlay edits a shared curve with output-to-source time projection and independent lifetimes", () => {
+  const root = host();
+  const peer = host();
+  const model = new MidiSequence({ notes: [], duration: 2 });
+  const waveform = mountWaveform(root, { data: { peaks: Float32Array.of(0.2, 0.8), duration: 2 } });
+  const notes = mountPianoRoll(peer, { model });
+  own(() => model.destroy());
+  own(() => waveform.destroy());
+  own(() => notes.destroy());
+  const points = cell<readonly AutomationPoint[]>([
+    { time: 0, value: 0.2, shape: "hold" },
+    { time: 3, value: 1, shape: "linear" },
+    { time: 4.5, value: 0.5, shape: "hold" },
+  ]);
+  const fromView = vi.fn((time: number) => 2 + time * 2);
+  const commit = vi.fn((next: readonly AutomationPoint[]) => { points.value = next; });
+  const plugin = createAutomationOverlay({
+    points, fromView, toView: (time) => (time - 2) / 2, maxValue: 2, defaultValue: 1, onCommit: commit,
+  });
+  const detach = waveform.attach(plugin);
+  notes.attach(plugin);
+  expect(root.querySelectorAll(".ar-automation-point:not([hidden])")).toHaveLength(2);
+  const handle = root.querySelector<HTMLButtonElement>(".ar-automation-point[data-index='1']")!;
+  const original = parseFloat(handle.style.left);
+  waveform.setZoom(2);
+  expect(parseFloat(handle.style.left)).toBeCloseTo(original * 2);
+  handle.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  expect(commit).toHaveBeenCalledTimes(1);
+  expect(peer.querySelector(".ar-automation-point[data-index='1']")?.getAttribute("title")).toBe("hold");
+  detach.destroy();
+  expect(root.querySelector(".ar-automation-overlay")).toBeNull();
+  points.value = points.value.slice(0, 2);
+  expect(peer.querySelectorAll(".ar-automation-point:not([hidden])")).toHaveLength(1);
+  notes.destroy();
+  fromView.mockClear();
+  points.value = [];
+  expect(fromView).not.toHaveBeenCalled();
 });
 
 test("one time plugin mounts on all three views, follows units and cleans up each attachment", async () => {

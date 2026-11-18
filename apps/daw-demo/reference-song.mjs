@@ -104,6 +104,23 @@ try {
   assert.equal(await page.locator(".clip.audio").count(), 1);
   const audioFrames = await page.evaluate(() => window.__daw.project.tracks[1].clips[0].frameCount);
   assert.ok(audioFrames > 24_000, `audio take was too short: ${audioFrames}`);
+  const scale = await page.locator("#timeline-zoom").inputValue();
+  await page.waitForFunction(() => Number(document.querySelector(".clip.audio canvas")?.dataset.framesPerPeak) >= 100);
+  const coarse = await page.locator(".clip.audio canvas").getAttribute("data-frames-per-peak");
+  const overview = page.getByRole("slider", { name: "編曲視窗" });
+  await page.locator("#timeline-zoom").fill("800");
+  await page.waitForFunction(() => parseFloat(document.querySelector(".clip.audio").style.width) > 240);
+  await overview.press("Home");
+  await page.waitForFunction(() => {
+    const bin = Number(document.querySelector(".clip.audio canvas")?.dataset.framesPerPeak);
+    return bin > 0 && bin < 64;
+  });
+  const fine = await page.locator(".clip.audio canvas").getAttribute("data-frames-per-peak");
+  assert.ok(Number(fine) < Number(coarse));
+  await page.locator("#timeline-zoom").fill(scale);
+  await page.waitForFunction(() => parseFloat(document.querySelector(".clip.audio").style.width) < 240);
+  await overview.press("Home");
+  await page.waitForFunction(() => Number(document.querySelector(".clip.audio canvas")?.dataset.framesPerPeak) >= 100);
   await page.locator(".clip.audio").click();
   await page.evaluate(() => window.__daw.workspace.seek(0.5));
   await page.locator("#split").click();
@@ -116,20 +133,32 @@ try {
   await page.locator("#tab-mixer").click();
   await page.locator('.mixer-strip input[aria-label="MIDI 1 mixer 音量"]').fill("0.6");
   await page.locator('.mixer-strip input[aria-label="Audio 2 pan"]').fill("-0.25");
+  await page.getByRole("slider", { name: "Master 音量" }).fill("0.3");
   assert.equal(await page.evaluate(() => window.__daw.project.tracks[0].volume), 0.6);
   assert.equal(await page.evaluate(() => window.__daw.project.tracks[1].pan), -0.25);
-  // Automation has a Workspace API but no lane editor yet; keep that gap visible in the report.
-  await page.evaluate(async () => {
-    const { workspace, project } = window.__daw;
-    project.setVolumeAutomation(project.tracks[1].id, [
-      { time: 0, value: 0, shape: "linear" },
-      { time: 0.5, value: 1, shape: "hold" },
-    ]);
-    await workspace.commit();
-  });
+  const readCurve = (page) => page.evaluate(() => window.__daw.project.tracks[1].volumeAutomation);
+  await page.locator("#tab-automation").click();
+  const graph = await page.locator(".ar-automation-graph").boundingBox();
+  assert.ok(graph);
+  await page.mouse.move(graph.x + graph.width * 0.45, graph.y + graph.height * 0.6);
+  await page.mouse.down();
+  await page.mouse.move(graph.x + graph.width * 0.5, graph.y + graph.height * 0.95, { steps: 8 });
+  assert.deepEqual(await readCurve(page), [], "drag preview must keep the Project unchanged");
+  await page.mouse.up();
+  const curve = await readCurve(page);
+  assert.equal(curve.length, 2);
+  assert.equal(curve[0].value, 1);
+  assert.ok(curve[1].value < 0.15);
+  await page.locator("#undo").click();
+  assert.deepEqual(await readCurve(page), []);
+  await page.locator("#redo").click();
+  assert.deepEqual(await readCurve(page), curve);
+  await page.getByRole("combobox", { name: "插值" }).selectOption("hold");
+  assert.equal((await readCurve(page))[0].shape, "hold");
   const before = await page.evaluate(() => ({
     title: window.__daw.project.title,
     bpm: window.__daw.project.bpm,
+    masterVolume: window.__daw.project.masterVolume,
     tracks: window.__daw.project.tracks.map((track) => ({
       id: track.id,
       kind: track.kind,
@@ -142,6 +171,7 @@ try {
     })),
   }));
   assert.equal(before.tracks[1].frames, audioFrames);
+  assert.equal(before.masterVolume, 0.3);
   const saved = page.waitForEvent("download");
   await page.locator("#save").click();
   const projectFile = await saved;
@@ -155,6 +185,7 @@ try {
   const after = await reopened.evaluate(() => ({
     title: window.__daw.project.title,
     bpm: window.__daw.project.bpm,
+    masterVolume: window.__daw.project.masterVolume,
     tracks: window.__daw.project.tracks.map((track) => ({
       id: track.id,
       kind: track.kind,
@@ -188,7 +219,8 @@ try {
     mixPeak,
     midiPeak,
     audioPeak,
-    unsupported: ["bus routing", "WebCLAP effect selection", "automation lane UI", "crash recovery"],
+    unsupported: ["ongoing take recovery"],
+    waveformFramesPerPeak: { coarse: Number(coarse), fine: Number(fine) },
   }, null, 2));
 } finally {
   await browser?.close();

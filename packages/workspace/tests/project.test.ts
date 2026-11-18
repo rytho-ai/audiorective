@@ -129,6 +129,21 @@ describe("project tempo map", () => {
 });
 
 describe("DAWproject native slice", () => {
+  test("round trips an Equalizer as one ordered slot and preserves all bands", () => {
+    const project = new Project();
+    const track = project.addTrack("EQ track", "audio");
+    project.setTrackEffects(track.id, [{
+      id: "three", type: "eq", wet: 0.6, enabled: false,
+      bands: [
+        { frequency: 250, gain: -3, q: 0.7 },
+        { frequency: 1000, gain: 6, q: 1 },
+        { frequency: 4000, gain: 0, q: 0.8 },
+      ],
+    }]);
+    const reopened = openDawProject(saveDawProject(project)).project;
+    expect(reopened.tracks[0].effects).toEqual(project.tracks[0].effects);
+  });
+
   test("round trips ordered Filter and Delay settings and rejects missing state", () => {
     const project = new Project();
     const track = project.addTrack("Keys", "midi");
@@ -150,6 +165,32 @@ describe("DAWproject native slice", () => {
     expect(() => openDawProject(zipSync(files))).toThrow("Project built-in effect state is missing or reused.");
     opened.project.destroy();
     project.destroy();
+  });
+
+  test("saves macro positions and preserves the rack when private mappings are invalid", () => {
+    const project = new Project();
+    const track = project.addTrack("Bus", "bus");
+    const filter = { id: "filter", type: "filter", enabled: true, wet: 0.8, frequency: 480, mode: "highpass", q: 0.8 } as const;
+    const macros = [{ id: "tone", value: 0.4, targets: [{ slotId: filter.id, parameter: "frequency", min: 200, max: 8000, scale: "exponential" }] }] as const;
+    project.setTrackRackPreset(track.id, { effects: [filter], macros });
+    project.setTrackMacroValue(track.id, "tone", 0.65);
+    const changed = project.tracks[0];
+    expect(() => project.setTrackRackPreset(track.id, { effects: [filter], macros: [...macros, { ...macros[0], id: "copy" }] })).toThrow(/distinct valid targets/);
+    expect(project.tracks[0]).toBe(changed);
+    const archive = saveDawProject(project);
+    const reopened = openDawProject(archive);
+    expect(reopened.project.tracks[0].effectMacros).toEqual(changed.effectMacros);
+    expect(reopened.warnings).toEqual([]);
+    reopened.project.setTrackEffects(track.id, []);
+    expect(reopened.project.tracks[0].effectMacros).toEqual([{ id: "tone", value: 0.65, targets: [] }]);
+    const files = unzipSync(archive);
+    const state = JSON.parse(text.decode(files["audiorective/state.json"]));
+    state.rackMacros[track.id][0].targets[0].slotId = "missing";
+    files["audiorective/state.json"] = new TextEncoder().encode(JSON.stringify(state));
+    const fallback = openDawProject(zipSync(files));
+    expect(fallback.warnings).toContain("Invalid Audiorective rack macros on Bus were skipped.");
+    expect(fallback.project.tracks[0].effects).toEqual([filter]);
+    expect(fallback.project.tracks[0].effectMacros).toEqual([]);
   });
 
   test("splits and trims audio at sample boundaries, then saves both pieces", () => {
@@ -451,7 +492,7 @@ describe("DAWproject native slice", () => {
     expect(() => openDawProject(zipSync(routing))).toThrow("Project has unsupported track routing.");
     const fade = unzipSync(saveDawProject(project));
     fade["project.xml"] = bytes.encode(text.decode(fade["project.xml"]).replace("<Clip ", '<Clip fadeInTime="0.01" '));
-    expect(() => openDawProject(zipSync(fade))).toThrow("Project XML has unsupported Clip attributes.");
+    expect(() => openDawProject(zipSync(fade))).toThrow("Clip gain must be non-negative and fades must fit its duration.");
     const tempo = unzipSync(saveDawProject(project));
     tempo["project.xml"] = bytes.encode(text.decode(tempo["project.xml"]).replace(/(<Tempo [^>]+)\/>/, "$1><Points/></Tempo>"));
     expect(() => openDawProject(zipSync(tempo))).toThrow("Project XML has unsupported Tempo content.");
