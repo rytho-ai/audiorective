@@ -1,7 +1,16 @@
 import { AudioProcessor, batch, cell, readonlyCell, type Cell, type Param, type ReadonlyCell } from "@audiorective/core";
 
 export type WebClapDescriptor = Readonly<{ id: string; name: string; vendor: string; version: string; features: readonly string[] }>;
-export type WebClapParameter = Readonly<{ id: number; name: string; min: number; max: number; defaultValue: number; value: number; text: string; flags?: number }>;
+export type WebClapParameter = Readonly<{
+  id: number;
+  name: string;
+  min: number;
+  max: number;
+  defaultValue: number;
+  value: number;
+  text: string;
+  flags?: number;
+}>;
 export type WebClapBundle = Readonly<{ url: string; pluginId?: string; pluginIndex?: number; workletUrl?: string }>;
 export type WebClapEvent = { cancel(): void; onEnded(listener: () => void): void };
 
@@ -47,11 +56,6 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
   /** Tracked frozen parameter metadata (id, name, min, max, default, text) as last reported by the plug-in; the same value as `cells.parameterInfo`. Live values are in `params`. */
   get parameterInfo(): readonly WebClapParameter[] {
     return this.cells.parameterInfo.value;
-  }
-
-  /** @deprecated Use parameterInfo for metadata and params for live values. */
-  get parameters(): readonly WebClapParameter[] {
-    return this.parameterInfo;
   }
 
   private constructor(context: AudioContext, node: AudioWorkletNode, bundleUrl: string, loaded: LoadedMessage, early: HostMessage[]) {
@@ -168,14 +172,6 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
     this.pending.clear();
   }
 
-  /** @deprecated Write to the parameter's .value instead. */
-  setParameter(id: number, value: number): void {
-    if (!Number.isFinite(value)) throw new RangeError("WebCLAP parameter needs a finite value.");
-    const param = this.params[`${id}`];
-    if (param) param.value = value;
-    else this.node.port.postMessage({ type: "param", id, value });
-  }
-
   async saveState(): Promise<Uint8Array> {
     const result = this.wait<Uint8Array>((waiter) => this.stateWaiters.push(waiter));
     this.node.port.postMessage({ type: "saveState" });
@@ -193,16 +189,6 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     throw new Error("WebCLAP state did not settle after load.");
-  }
-
-  /** @deprecated Use saveState(). */
-  getState(): Promise<Uint8Array> {
-    return this.saveState();
-  }
-
-  /** @deprecated Use loadState(). */
-  setState(bytes: Uint8Array): Promise<void> {
-    return this.loadState(bytes);
   }
 
   async mountEditor(frame: HTMLIFrameElement): Promise<() => void> {

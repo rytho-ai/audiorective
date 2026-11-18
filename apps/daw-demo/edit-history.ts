@@ -121,13 +121,18 @@ export class EditHistory {
             stretch: audio.stretch,
             gainAutomation: audio.gainAutomation,
           });
-        else project.addAudioClip(clip.trackId, audio, clip.time, {
+        else
+          project.addAudioClip(clip.trackId, audio, clip.time, {
+            id: clip.id,
+            envelope: audio.envelope,
+            stretch: audio.stretch,
+            gainAutomation: audio.gainAutomation,
+          });
+      } else
+        project.addMidiClip(clip.trackId, { duration: clip.duration, notes: clip.notes, events: clip.events }, clip.time, {
           id: clip.id,
-          envelope: audio.envelope,
-          stretch: audio.stretch,
-          gainAutomation: audio.gainAutomation,
+          timeUnit: clip.timeUnit,
         });
-      } else project.addMidiClip(clip.trackId, { duration: clip.duration, notes: clip.notes, events: clip.events }, clip.time, { id: clip.id, timeUnit: clip.timeUnit });
     }
     this.changed();
   }

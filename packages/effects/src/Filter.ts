@@ -67,11 +67,7 @@ export class Filter extends Effect<{ frequency: SchedulableParam; Q: Schedulable
   }
 
   /** Snapshot the combined wet and dry response. Frequencies outside Nyquist follow the native NaN convention. */
-  getFrequencyResponse(
-    frequencies: Float32Array<ArrayBuffer>,
-    magnitudes: Float32Array<ArrayBuffer>,
-    phases: Float32Array<ArrayBuffer>,
-  ): void {
+  getFrequencyResponse(frequencies: Float32Array<ArrayBuffer>, magnitudes: Float32Array<ArrayBuffer>, phases: Float32Array<ArrayBuffer>): void {
     // Audio-rate fanout drives the live stages. A disconnected calculator reads the same parameter snapshot.
     const node = (this.responseBiquad ??= new BiquadFilterNode(this.context));
     const { frequency, Q, gain, type, wet } = this.params;

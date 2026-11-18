@@ -30,9 +30,16 @@ test("an automation overlay edits a shared curve with output-to-source time proj
     { time: 4.5, value: 0.5, shape: "hold" },
   ]);
   const fromView = vi.fn((time: number) => 2 + time * 2);
-  const commit = vi.fn((next: readonly AutomationPoint[]) => { points.value = next; });
+  const commit = vi.fn((next: readonly AutomationPoint[]) => {
+    points.value = next;
+  });
   const plugin = createAutomationOverlay({
-    points, fromView, toView: (time) => (time - 2) / 2, maxValue: 2, defaultValue: 1, onCommit: commit,
+    points,
+    fromView,
+    toView: (time) => (time - 2) / 2,
+    maxValue: 2,
+    defaultValue: 1,
+    onCommit: commit,
   });
   const detach = waveform.attach(plugin);
   notes.attach(plugin);

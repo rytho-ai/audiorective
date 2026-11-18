@@ -177,8 +177,8 @@ export function attachTimelineZoom(options: TimelineZoomOptions): TimelineZoomHa
 export function attachClipGesture(element: HTMLElement, options: ClipGestureOptions): ClipGestureHandle {
   let drag: { pointerId: number; startX: number; x: number; y: number; moved: boolean; time: number } | undefined;
   let destroyed = false;
-  const toSeconds = (time: number) => options.timeUnit === "beats" ? options.timeMap.beatToSeconds(time) : time;
-  const fromSeconds = (seconds: number) => options.timeUnit === "beats" ? options.timeMap.secondsToBeat(seconds) : seconds;
+  const toSeconds = (time: number) => (options.timeUnit === "beats" ? options.timeMap.beatToSeconds(time) : time);
+  const fromSeconds = (seconds: number) => (options.timeUnit === "beats" ? options.timeMap.secondsToBeat(seconds) : seconds);
   const startSeconds = toSeconds(options.time);
 
   const cleanup = () => {

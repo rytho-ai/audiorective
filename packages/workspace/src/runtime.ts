@@ -4,7 +4,18 @@ import { batch, cell, effect, readonlyCell, untracked, type Cell, type Readable 
 import { AutomationBinding, AutomationCurve, audioParamTarget } from "@audiorective/core/automation";
 import type { AutomationPoint } from "@audiorective/core/automation";
 import { WebClapHost } from "@audiorective/host/webclap";
-import { AudioRecorder, ClipLauncher, clipGainAt, scheduleClipEnvelope, type ClipLaunch, type ClipLauncherState, type QueuedClipLaunch, type StepSequencer, type WaveStretchAnchor, type WaveStretchProcessor } from "@audiorective/blocks";
+import {
+  AudioRecorder,
+  ClipLauncher,
+  clipGainAt,
+  scheduleClipEnvelope,
+  type ClipLaunch,
+  type ClipLauncherState,
+  type QueuedClipLaunch,
+  type StepSequencer,
+  type WaveStretchAnchor,
+  type WaveStretchProcessor,
+} from "@audiorective/blocks";
 import { EffectRack, retainRackMacroTargets, type RackEffect, type RackMacroSettings } from "@audiorective/blocks/effect-rack";
 import { AudioTrackSession } from "./audio-track-session";
 import { openDawProject, openDawProjectBlob, saveDawProject, saveDawProjectTo } from "./dawproject";
@@ -71,10 +82,20 @@ function collectGainAutomationEdits(
     const old = before[index];
     const clip = after[index];
     if (old === clip) continue;
-    if (old.kind !== "audio" || clip.kind !== "audio" || old.id !== clip.id ||
-      old.time !== clip.time || old.duration !== clip.duration || old.sampleRate !== clip.sampleRate ||
-      old.envelope !== clip.envelope || old.stretch !== clip.stretch || old.channels !== clip.channels ||
-      old.media !== clip.media || (old.media && clip.media && old.startFrame !== clip.startFrame)) return false;
+    if (
+      old.kind !== "audio" ||
+      clip.kind !== "audio" ||
+      old.id !== clip.id ||
+      old.time !== clip.time ||
+      old.duration !== clip.duration ||
+      old.sampleRate !== clip.sampleRate ||
+      old.envelope !== clip.envelope ||
+      old.stretch !== clip.stretch ||
+      old.channels !== clip.channels ||
+      old.media !== clip.media ||
+      (old.media && clip.media && old.startFrame !== clip.startFrame)
+    )
+      return false;
     edits.set(clip.id, clip.gainAutomation);
   }
   return true;
@@ -317,7 +338,10 @@ export class Workspace {
 
   private serialize<T>(task: () => Promise<T>): Promise<T> {
     const queued = this.commitTail.then(task);
-    this.commitTail = queued.then(() => undefined, () => undefined);
+    this.commitTail = queued.then(
+      () => undefined,
+      () => undefined,
+    );
     return queued;
   }
 
@@ -350,7 +374,7 @@ export class Workspace {
     if (this.destroyed || this.automaticApply) return;
     this.automaticApply = this.serialize(async () => {
       try {
-        if (!this.destroyed && !this.isCurrentProject()) await this.applyProjectEdit(() => this.commitProject(false));
+        if (!this.destroyed && !this.isCurrentProject()) await this.applyProjectEdit(() => this.applyLight());
       } catch {
         // The caller can observe cells.error or await flush() for the cause.
       } finally {
@@ -483,31 +507,31 @@ export class Workspace {
     }
   }
 
-  /** Apply Project edits through one entry point; clips, routing and bus edits keep unaffected devices alive. */
-  commit(): Promise<void> {
-    return this.serialize(() => this.applyProjectEdit(async () => {
-      if (this.destroyed || !this.isCurrentProject() || this.topologyPending.value || this.failedApplication)
-        await this.commitProject(true);
-    }));
-  }
-
-  private async commitProject(allowRebuild: boolean): Promise<void> {
+  /**
+   * Apply light Project edits in place; clips, routing and empty-bus edits keep every loaded device alive.
+   * A track or device topology change sets `cells.needsSync` and applies nothing until the caller runs `sync()`.
+   */
+  private async applyLight(): Promise<void> {
     if (this.destroyed) throw new Error("Workspace is destroyed.");
     this.recordCurrentProject();
     const project = this.project;
     const tracks = project.tracks;
     const ids = new Set(tracks.map(({ id }) => id));
     const removed = [...this.tracks].filter(([id]) => !ids.has(id));
-    const compatible = removed.every(([, runtime]) => runtime.kind === "bus") && tracks.every((track) => {
-      const runtime = this.tracks.get(track.id);
-      if (!runtime) return track.kind === "bus" && !track.devices.length;
-      const nextKeys = deviceKeys(track);
-      return runtime.kind === track.kind && runtime.deviceKeys.length === nextKeys.length &&
-        runtime.deviceKeys.every((key, index) => key === nextKeys[index]);
-    });
+    const compatible =
+      removed.every(([, runtime]) => runtime.kind === "bus") &&
+      tracks.every((track) => {
+        const runtime = this.tracks.get(track.id);
+        if (!runtime) return track.kind === "bus" && !track.devices.length;
+        const nextKeys = deviceKeys(track);
+        return (
+          runtime.kind === track.kind &&
+          runtime.deviceKeys.length === nextKeys.length &&
+          runtime.deviceKeys.every((key, index) => key === nextKeys[index])
+        );
+      });
     if (!compatible) {
       this.topologyPending.value = true;
-      if (allowRebuild) await this.rebuildTracks();
       return;
     }
 
@@ -520,7 +544,7 @@ export class Workspace {
         if (host) await host.loadState(device.state);
         if (this.destroyed) return;
         runtime.deviceStates.set(device.id, device.state);
-        if (this.project !== project || project.tracks !== tracks) return this.commitProject(allowRebuild);
+        if (this.project !== project || project.tracks !== tracks) return this.applyLight();
       }
     }
 
@@ -535,7 +559,7 @@ export class Workspace {
     }
     if (this.destroyed || this.project !== project || project.tracks !== tracks) {
       for (const runtime of created.values()) this.disposeTrack(runtime);
-      if (!this.destroyed) return this.commitProject(allowRebuild);
+      if (!this.destroyed) return this.applyLight();
       return;
     }
     for (const [id, runtime] of created) this.tracks.set(id, runtime);
@@ -565,8 +589,7 @@ export class Workspace {
     if (tempoChanged) this.seek(position);
     else if (refreshClips) this.refreshArrangement();
     else if (gainEdits.size)
-      for (const handle of this.scheduledAudio.values())
-        if (gainEdits.has(handle.clipId)) handle.setGainAutomation(gainEdits.get(handle.clipId));
+      for (const handle of this.scheduledAudio.values()) if (gainEdits.has(handle.clipId)) handle.setGainAutomation(gainEdits.get(handle.clipId));
     if (tempoChanged && refreshClips) this.bindSequences();
     this.topologyPending.value = false;
   }
@@ -598,11 +621,17 @@ export class Workspace {
     const effectsChanged = runtime.effectSettings !== track.effects;
     if (runtime.macroSettings !== track.effectMacros) {
       const retained = effectsChanged ? retainRackMacroTargets(track.effects, runtime.macroSettings) : runtime.macroSettings;
-      const valuesOnly = retained.length === track.effectMacros.length && retained.every((old, i) => {
-        const macro = track.effectMacros[i];
-        return old.id === macro.id && old.label === macro.label && old.targets.length === macro.targets.length &&
-          old.targets.every((target, j) => target === macro.targets[j]);
-      });
+      const valuesOnly =
+        retained.length === track.effectMacros.length &&
+        retained.every((old, i) => {
+          const macro = track.effectMacros[i];
+          return (
+            old.id === macro.id &&
+            old.label === macro.label &&
+            old.targets.length === macro.targets.length &&
+            old.targets.every((target, j) => target === macro.targets[j])
+          );
+        });
       if (!valuesOnly) {
         runtime.rack.setPreset({ effects: track.effects, macros: track.effectMacros });
       } else {
@@ -737,7 +766,8 @@ export class Workspace {
     const { active, queued } = this.session.value;
     if (
       [...active, ...(queued?.changes ?? [])].some(
-        ({ trackId, clipId }) => clipId !== null && !this.project.tracks.find((track) => track.id === trackId)?.clips.some((clip) => clip.id === clipId),
+        ({ trackId, clipId }) =>
+          clipId !== null && !this.project.tracks.find((track) => track.id === trackId)?.clips.some((clip) => clip.id === clipId),
       )
     ) {
       this.launcher.reset();
@@ -845,7 +875,7 @@ export class Workspace {
   setTrackRouting(trackId: string, routing: TrackRouting): void {
     const tracks = this.project.tracks;
     if (!this.tracks.has(trackId) || tracks.length !== this.tracks.size || tracks.some((track) => !this.tracks.has(track.id)))
-      throw new Error("Commit new or removed tracks before changing live routing.");
+      throw new Error("Sync new or removed tracks before changing live routing.");
     this.reflectProjectEdit(() => {
       this.project.setTrackRouting(trackId, routing);
       this.applyRouting(this.project.tracks);
@@ -859,7 +889,7 @@ export class Workspace {
   }
 
   private applyRouting(tracks: readonly ProjectTrack[]): void {
-    const inputFor = (id: string | null) => id === null ? this.output : this.tracks.get(id)!.input;
+    const inputFor = (id: string | null) => (id === null ? this.output : this.tracks.get(id)!.input);
     // Remove obsolete edges first so reversing a bus chain never introduces a temporary cycle.
     for (const track of tracks) {
       const runtime = this.tracks.get(track.id)!;
@@ -999,9 +1029,10 @@ export class Workspace {
   private stopStaleAudition(): void {
     const audition = this.audition;
     if (!audition) return;
-    const stale = "clip" in audition
-      ? this.findAudioClip(audition.clip.id) !== audition.clip
-      : audition.tracks.some((track) => this.project.tracks.find(({ id }) => id === track.id)?.clips !== track.clips);
+    const stale =
+      "clip" in audition
+        ? this.findAudioClip(audition.clip.id) !== audition.clip
+        : audition.tracks.some((track) => this.project.tracks.find(({ id }) => id === track.id)?.clips !== track.clips);
     if (stale) this.stopAudition();
   }
 
@@ -1024,9 +1055,9 @@ export class Workspace {
     const ids = options.trackIds ? new Set(options.trackIds) : undefined;
     const tracks = this.project.tracks.filter((track) => track.kind === "audio" && (!ids || ids.has(track.id)));
     if (!tracks.length || (ids && tracks.length !== ids.size)) throw new Error("Workspace range audition needs existing audio tracks.");
-    const clips = tracks.flatMap((track) => track.clips.filter((clip): clip is AudioClip =>
-      clip.kind === "audio" && clip.time < end && clip.time + clip.duration > start,
-    ));
+    const clips = tracks.flatMap((track) =>
+      track.clips.filter((clip): clip is AudioClip => clip.kind === "audio" && clip.time < end && clip.time + clip.duration > start),
+    );
     if (!clips.length) throw new Error("Workspace range audition needs audio in the selected range.");
     const state = Object.freeze({ start, end, trackIds: Object.freeze(tracks.map(({ id }) => id)) });
     const audition: RangeAudition = { range: state, tracks };
@@ -1037,11 +1068,13 @@ export class Workspace {
     try {
       await this.context.resume();
       if (this.audition !== audition) return;
-      await Promise.all(clips.map((clip) => {
-        if (!clip.media || clip.time >= start + 0.15) return undefined;
-        const index = Math.floor(Math.max(0, start - clip.time) / audioChunkSeconds);
-        return this.loadMediaBuffer(clip, index);
-      }));
+      await Promise.all(
+        clips.map((clip) => {
+          if (!clip.media || clip.time >= start + 0.15) return undefined;
+          const index = Math.floor(Math.max(0, start - clip.time) / audioChunkSeconds);
+          return this.loadMediaBuffer(clip, index);
+        }),
+      );
       if (this.audition !== audition) return;
       this.stopStaleAudition();
       if (this.audition !== audition) return;
@@ -1049,19 +1082,24 @@ export class Workspace {
       const loop = new RangeLoop(state, this.context.currentTime + 0.025);
       const timeline = new Timeline({ audioContext: this.context });
       const scheduled = new Map<string, AudioHandle>();
-      const clock = new Clock({ timeline, lookAhead: 0.15, tickInterval: 0.025, onTick: (window) => {
-        const audioStart = timeline.beatToTime(window.beat.start);
-        for (const slice of loop.slices(audioStart, window.time.lookAheadEnd)) {
-          const span: AudioClipWindow = {
-            start: slice.start,
-            end: slice.end,
-            stop: end,
-            audioTime: (time) => slice.when + (time - slice.start),
-            keyPrefix: `${slice.cycle}:`,
-          };
-          for (const clip of clips) this.scheduleAudioClipWindow(clip, this.output, span, window, scheduled);
-        }
-      }});
+      const clock = new Clock({
+        timeline,
+        lookAhead: 0.15,
+        tickInterval: 0.025,
+        onTick: (window) => {
+          const audioStart = timeline.beatToTime(window.beat.start);
+          for (const slice of loop.slices(audioStart, window.time.lookAheadEnd)) {
+            const span: AudioClipWindow = {
+              start: slice.start,
+              end: slice.end,
+              stop: end,
+              audioTime: (time) => slice.when + (time - slice.start),
+              keyPrefix: `${slice.cycle}:`,
+            };
+            for (const clip of clips) this.scheduleAudioClipWindow(clip, this.output, span, window, scheduled);
+          }
+        },
+      });
       audition.clock = clock;
       clock.start();
       clock.refresh();
@@ -1106,8 +1144,7 @@ export class Workspace {
     };
     const check = () => {
       signal.throwIfAborted();
-      if (this.clipStretchJobs.get(clipId) !== job || this.destroyed)
-        throw new DOMException("Audio clip stretch was cancelled.", "AbortError");
+      if (this.clipStretchJobs.get(clipId) !== job || this.destroyed) throw new DOMException("Audio clip stretch was cancelled.", "AbortError");
     };
     signal.addEventListener("abort", release, { once: true });
     try {
@@ -1195,7 +1232,9 @@ export class Workspace {
         ...(clips.some((clip) => clip.kind === "audio" && clip.gainAutomation)
           ? ["Audio clip gain automation is stored in Audiorective metadata. Use the rendered fallback to preserve it in other DAWs."]
           : []),
-        ...(this.project.tracks.some((track) => track.effects.length) ? ["Audiorective built-in inserts require Audiorective or the rendered audio fallback."] : []),
+        ...(this.project.tracks.some((track) => track.effects.length)
+          ? ["Audiorective built-in inserts require Audiorective or the rendered audio fallback."]
+          : []),
         ...(clips.some((clip) => clip.kind === "audio" && clip.stretch)
           ? ["Time-stretched clips contain rendered audio for playback. Audiorective stores the original sources separately for re-editing."]
           : []),
@@ -1583,8 +1622,7 @@ export class Workspace {
       const curve = gainAutomation && new AutomationCurve(audioClipTimeMap(clip).projectGain(gainAutomation.points, gainAutomation.sourceStart));
       for (let frame = 0; frame < buffer.length; frame++) {
         const time = frame / clip.sampleRate;
-        const gain = (envelope ? clipGainAt(envelope, clip.duration, time) : 1) *
-          (curve?.valueAt(time) ?? 1);
+        const gain = (envelope ? clipGainAt(envelope, clip.duration, time) : 1) * (curve?.valueAt(time) ?? 1);
         for (let channel = 0; channel < output.length; channel++) output[channel][frame] = clip.channels[channel][frame] * gain;
       }
       this.sessionAudioBuffers.set(clip, buffer);

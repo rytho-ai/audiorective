@@ -429,7 +429,7 @@
         "Imports Project and Workspace from @audiorective/workspace and uses addWebClapDevice on a MIDI track with the Oxo Synth2 CLAP ID and a bundle URL",
         "Creates Workspace with the caller-owned AudioContext, destination and a served WebCLAP worklet URL, then uses its play/stop or seek methods",
         "Passes the MidiClip.sequence to a piano-roll widget and keeps the view separate from the audio runtime",
-        "Mounts the loaded host's editor in an iframe or writes host.params[id].value, while preserving state through Workspace.save and Workspace.open",
+        "Mounts the loaded host's editor in an iframe or reads and writes host.params[String(id)].value, while preserving state through Workspace.save and Workspace.open",
         "Inspects reopen warnings and explains that DAWProject stores CLAP identity/state while Audiorective's private host manifest locates the WebCLAP bundle",
         "Destroys the view, Workspace and Project while leaving the borrowed AudioContext to the app",
         "Does not claim that a WebCLAP bundle is embedded in the archive or that another DAW can load the browser bundle directly"
@@ -443,7 +443,7 @@
       "expectations": [
         "Uses Project.moveClip, duplicateClip and removeClip with the clip time unit and matching track kinds",
         "Stores named section markers through Project.setMarkers and renders Project.markers on the shared time axis",
-        "Explains that Workspace applies clip, mixer and automation edits automatically without reloading hosts, flush waits for them, and sync handles a track or hosted device topology change",
+        "Does not call a commit step; edits Project directly and explains that light clip/mixer/automation edits apply automatically without reloading hosts, while a track or device topology change sets workspace.cells.needsSync and needs an explicit await workspace.sync()",
         "Uses Workspace.setTrackMuted, setTrackSolo and setTrackPan for live changes and saves via Workspace.save",
         "Renders one shared time axis with per-track lanes and keeps selection and zoom in the UI rather than duplicating clip or mixer state",
         "Explains that DAWproject standard Channel fields carry mute, normalized pan and solo, while WebCLAP bundle lookup remains private",
@@ -459,7 +459,7 @@
         "Calls Project.splitClip with a clip-local offset rather than an absolute song position",
         "Calls Project.trimClip with clip-local start/end and recognizes that the left split clip keeps its ID",
         "Re-reads Project.tracks and remounts a borrowed piano-roll after a split or trim because MIDI sequence objects are replaced",
-        "Explains that clip edits refresh the arrangement automatically without reloading hosts; waits with workspace.flush when a follow-up depends on the applied edit",
+        "Edits clips on Project and relies on automatic application so the live arrangement refreshes without reloading plug-in hosts; uses await workspace.flush() only when it must wait for the runtime",
         "Explains that audio cuts round to samples and crossing MIDI notes are clipped into each retained segment",
         "Saves through Workspace.save or saveDawProject and does not invent time-stretch behavior"
       ]
@@ -481,12 +481,12 @@
     {
       "id": 33,
       "prompt": "In an Audiorective browser DAW, record a MIDI take during transport playback, place it with measured input latency, save a track-volume automation curve and make that curve audible, then explain how to record a long audio take without retaining all PCM in the recorder. Use current APIs; do not run anything.",
-      "expected_output": "Uses one Workspace project-time anchor, commits project edits to runtime, and chooses AudioRecorder streaming for caller-owned long-take storage.",
+      "expected_output": "Uses one Workspace project-time anchor, relies on the running Workspace to apply project edits, and chooses AudioRecorder streaming for caller-owned long-take storage.",
       "files": [],
       "expectations": [
         "Uses MidiRecorder.start()'s returned output-clock time with Workspace.takeAnchor and passes the take plus explicit non-negative input latency to Workspace.takePosition",
         "Uses Project.addMidiTake at the returned project-second placement, not at the raw absolute AudioContext time",
-        "Calls Project.setVolumeAutomation with linear or hold points in project seconds and then awaits Workspace.commit to apply the curve during playback",
+        "Calls Project.setVolumeAutomation with linear or hold points in project seconds and and relies on automatic application (optionally await workspace.flush()) to apply the curve during playback",
         "Uses AudioRecorder.startStream with AudioMediaWriter.writeChunk, then stopStream and writer.finish to add a file-backed clip with Project.addAudioMediaClip",
         "Explains that a correction crossing project zero requires preroll rather than silently clamping the clip"
       ]
@@ -521,15 +521,15 @@
     {
       "id": 36,
       "prompt": "I am building an Audiorective DAW arrangement. Tempo steps from 120 to 60 BPM at beat 4. Let users drag a clip between lanes with snapped preview and one undoable commit, nudge it a beat with the keyboard, and zoom the timeline continuously. Explain which package owns the time conversion and which owns the gesture. Use current workspace APIs; do not run anything.",
-      "expected_output": "Uses Project's step tempo map as the single beat/project-seconds owner, the arrangement widget for reusable clip gestures, and the app for edit history, runtime commit and continuous zoom presentation.",
+      "expected_output": "Uses Project's step tempo map as the single beat/project-seconds owner, the arrangement widget for reusable clip gestures, and the app for edit history and continuous zoom presentation, while the running Workspace applies edits automatically.",
       "files": [],
       "expectations": [
-        "Calls project.setTempoChanges([{ beat: 4, bpm: 60 }]) and uses workspace.flush() when an action needs the updated runtime",
+        "Calls project.setTempoChanges([{ beat: 4, bpm: 60 }]) and relies on the running Workspace to rebase playback automatically (optionally await workspace.flush())",
         "Uses project.tempoMap beatToSeconds, secondsToBeat or snapSeconds for ruler and snapping; beat 8 maps to project second 6",
         "Imports attachClipGesture from @audiorective/widgets/arrangement and passes project.tempoMap as timeMap",
         "Uses attachTimelineZoom from the arrangement entry for continuous anchored slider and Ctrl/Meta+wheel zoom, with the app providing redraw in onScale",
         "Lets the widget own pointer preview, cancellation and keyboard nudge but applies Project.moveClip and undo history in onMove",
-        "Relies on automatic clip application and destroys the gesture before removing its clip element",
+        "Applies the Project clip move without a commit call (the Workspace applies it) and destroys the gesture before removing its clip element",
         "Keeps zoom as a view scale in pixels per second and anchors the visible time while it changes",
         "Distinguishes legacy seconds clips from new beat-locked MIDI clips; only beat MIDI placement, notes and controls stretch after tempo edits"
       ]
@@ -636,7 +636,7 @@
       "expectations": [
         "Imports local Files through SampleLibrary, connects its output to a caller-owned audition route and uses mountSampleBrowser",
         "Acquires the selected decoded buffer, places it through Project.addAudioClip and releases the lease after copying",
-        "Applies Project edits through Workspace.commit and destroys the view and library when their owners are done",
+        "Applies Project edits and lets the running Workspace apply them, then destroys the view and library when their owners are done",
         "Explains that the retained PCM budget includes outstanding leases and that the placed Project clip survives library removal"
       ]
     },
@@ -670,7 +670,7 @@
       "expected_output": "Uses shared clip-local envelope scheduling and project-owned settings without mutating PCM.",
       "files": [],
       "expectations": [
-        "Uses Project.setAudioClipEnvelope and Workspace.commit with clip-local seconds and linear gain",
+        "Uses Project.setAudioClipEnvelope with clip-local seconds and linear gain and lets the running Workspace apply it without a commit call",
         "Binds mountClipEnvelopeEditor to borrowed state and describes DAWproject fades plus Audiorective gain metadata",
         "For a standalone player passes absolute audio time, clip-local offset and window length to scheduleClipEnvelope",
         "Preserves the fade value at a seek offset and leaves the media data unchanged"
@@ -825,6 +825,32 @@
         "Passes increasing interior frame anchors to prepareAudioClipStretch and calls the deferred apply as one undoable edit",
         "Preserves source gain points and uses the piecewise source/output conversion and viewBreakpoints for the automation overlay",
         "Saves the rendered WAV plus retained original and anchors and reopens playback without the render engine"
+      ]
+    },
+    {
+      "id": 62,
+      "prompt": "I hosted a WebCLAP synth with @audiorective/host/webclap. Build a small control panel with a slider per plug-in parameter that stays in sync when the user edits the plug-in in its own editor, and a button that snapshots and restores the plug-in patch.",
+      "expected_output": "Parameters are read and written through the reactive host.params registry (Param<number> keyed by CLAP id), metadata comes from host.parameterInfo, and patch snapshots use saveState/loadState.",
+      "files": [],
+      "expectations": [
+        "Reads each parameter through host.params[String(id)] with .value (or $) inside an effect or framework binding, instead of polling or keeping a separate copy of the value",
+        "Writes parameters with host.params[String(id)].value = v; does not call a setParameter method",
+        "Takes labels, min, max and default from host.parameterInfo or the Param's label/min/max, and explains that plug-in-side edits update the same Params",
+        "Uses await host.saveState() and await host.loadState(bytes) for the patch snapshot, not getState()/setState()",
+        "Does not invent a subscribe or onParameterChange API"
+      ]
+    },
+    {
+      "id": 63,
+      "prompt": "My DAW edits a Project directly (change tempo, move a clip, add a MIDI track with a WebCLAP synth). Wire it to a running Audiorective Workspace so edits are audible, surface problems in the UI, and make sure a save includes pending edits. Use current APIs.",
+      "expected_output": "Light edits apply automatically; the added track sets workspace.cells.needsSync and the app calls sync() on a user action; errors come from cells.error and flush().",
+      "files": [],
+      "expectations": [
+        "Edits Project directly for the tempo change and clip move and does not call a commit method (none exists) or sync() for them",
+        "Treats the added track and device as a structural edit: reads workspace.cells.needsSync and calls await workspace.sync() (for example behind a rebuild action), noting that sync stops transport and reloads hosts",
+        "Observes workspace.cells.error (a read-only cell) in an effect or framework binding to show failed applications instead of relying on unhandled rejections, and reads workspace.warnings or workspace.cells.warnings (a frozen array, never mutated in place) for unresolved-device notices",
+        "Uses await workspace.flush() where it must wait for the runtime, and knows save() already waits for pending edits",
+        "Does not poll Project.cells.revision or write its own debounce around Project edits"
       ]
     }
   ]

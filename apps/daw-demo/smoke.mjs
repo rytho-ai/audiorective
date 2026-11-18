@@ -81,7 +81,10 @@ try {
   assert.equal(await page.evaluate(() => document.querySelector("#tracks").scrollLeft), 0);
 
   const loopStrip = await page.locator(".loop-strip").boundingBox();
-  const secondsScale = await page.locator(".ruler-row .ruler-mark").nth(1).evaluate((mark) => parseFloat(mark.style.left) / 2);
+  const secondsScale = await page
+    .locator(".ruler-row .ruler-mark")
+    .nth(1)
+    .evaluate((mark) => parseFloat(mark.style.left) / 2);
   const loopY = loopStrip.y + loopStrip.height / 2;
   await page.mouse.move(loopStrip.x + 5 * secondsScale, loopY);
   await page.mouse.down();
@@ -132,7 +135,7 @@ try {
     try {
       const before = Number(seek.max);
       project.setTempoChanges([{ beat: 2, bpm: 60 }]);
-      await workspace.commit();
+      await workspace.flush();
       const afterTempo = Number(seek.max);
       clip.sequence.setData({ duration: 6, notes: [] });
       const afterClip = Number(seek.max);
@@ -219,10 +222,24 @@ try {
     workspace.stop();
     for (const track of others) workspace.setTrackVolume(track.id, track.volume);
     analyser.disconnect();
-    return { peak, position, frozen, id: synth.descriptor.id, params: synth.parameterInfo.length };
+    const [first] = synth.parameterInfo;
+    const param = synth.params[String(first.id)];
+    const target = first.min + (first.max - first.min) * 0.5;
+    param.value = target;
+    return {
+      peak,
+      position,
+      frozen,
+      id: synth.descriptor.id,
+      params: Object.keys(synth.params).length,
+      info: synth.parameterInfo.length,
+      written: param.value === target,
+    };
   });
   assert.equal(playback.id, "com.oxo.music.oxosynth2");
   assert.ok(playback.params >= 99);
+  assert.equal(playback.params, playback.info);
+  assert.ok(playback.written);
   assert.ok(playback.peak > 0.01, `synth was silent: ${playback.peak}`);
   assert.ok(playback.position > 0.5 && Math.abs(playback.frozen - playback.position) < 0.001);
 
@@ -530,12 +547,15 @@ try {
       return send.call(port, message, transfer);
     };
     const stop = host.effect(() => void readback.observed.push(host.params["2"].value));
-    window.__editorReadback = { readback, cleanup: () => {
-      stop();
-      port.onmessage = receive;
-      port.postMessage = send;
-      delete window.__editorReadback;
-    }};
+    window.__editorReadback = {
+      readback,
+      cleanup: () => {
+        stop();
+        port.onmessage = receive;
+        port.postMessage = send;
+        delete window.__editorReadback;
+      },
+    };
   });
   const knob = page.frameLocator("iframe").locator(".knob").nth(3);
   await knob.scrollIntoViewIfNeeded();
@@ -591,6 +611,82 @@ try {
   assert.ok(state.changed && state.saved && state.restored);
   assert.deepEqual(state.warnings, []);
   assert.ok(state.archiveSize > 100_000);
+
+  // Plug-in editor -> JS readback: a knob dragged in the plug-in's own webview editor reaches host.params through `paramOut`.
+  await page.evaluate(async () => {
+    const workspace = window.__daw.workspace;
+    const device = workspace.project.tracks[0].devices[0];
+    const Host = workspace.host(device.id).constructor;
+    const url = (await workspace.options.resolveBundle?.(device)) ?? device.bundleUrl;
+    const host = await Host.load(workspace.context, { url, workletUrl: workspace.options.workletUrl });
+    const worklet = { paramOut: [], echoed: [] };
+    const receive = host.node.port.onmessage;
+    host.node.port.onmessage = (event) => {
+      if (event.data.type === "paramOut") worklet.paramOut.push({ id: event.data.id, value: event.data.value });
+      receive(event);
+    };
+    const send = host.node.port.postMessage.bind(host.node.port);
+    host.node.port.postMessage = (message, transfer) => {
+      if (message.type === "param") worklet.echoed.push(message);
+      return send(message, transfer);
+    };
+    const frame = document.createElement("iframe");
+    frame.id = "editor-readback";
+    frame.style.cssText = "position:fixed;left:0;top:0;width:770px;height:560px;z-index:99999;border:0;background:#fff";
+    document.body.append(frame);
+    const unmount = await host.mountEditor(frame);
+    const seen = [];
+    const stop = host.effect(() => void seen.push(host.params["2"].value));
+    window.__editorReadback = {
+      host,
+      worklet,
+      seen,
+      stop,
+      unmount,
+      frame,
+      before: Object.fromEntries(Object.entries(host.params).map(([id, param]) => [id, param.value])),
+    };
+  });
+  const readbackFrame = await (await page.$("#editor-readback")).contentFrame();
+  await readbackFrame.waitForSelector(".knob");
+  await page.waitForTimeout(500);
+  // Drag the third knob upward the way a user would; the editor sends begin/set/end over postMessage.
+  const readbackKnob = await readbackFrame.locator(".knob").nth(3).boundingBox();
+  await page.mouse.move(readbackKnob.x + readbackKnob.width / 2, readbackKnob.y + readbackKnob.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(readbackKnob.x + readbackKnob.width / 2, readbackKnob.y + readbackKnob.height / 2 - 40, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForFunction(() => window.__editorReadback.worklet.paramOut.length > 1 && window.__editorReadback.seen.length > 1);
+  await page.waitForTimeout(300);
+  const readback = await page.evaluate(() => {
+    const { host, worklet, seen, stop, unmount, frame, before } = window.__editorReadback;
+    const changed = Object.entries(host.params)
+      .filter(([id, param]) => param.value !== before[id])
+      .map(([id, param]) => ({ id, before: before[id], after: param.value }));
+    const last = worklet.paramOut[worklet.paramOut.length - 1];
+    const result = {
+      changed,
+      lastOut: last,
+      paramNow: host.params[String(last.id)].value,
+      effectRuns: seen.length,
+      effectLast: seen[seen.length - 1],
+      echoed: worklet.echoed.length,
+    };
+    stop();
+    unmount();
+    frame.remove();
+    host.destroy();
+    delete window.__editorReadback;
+    return result;
+  });
+  assert.equal(readback.changed.length, 1, JSON.stringify(readback));
+  assert.equal(readback.changed[0].id, String(readback.lastOut.id));
+  assert.equal(readback.changed[0].id, "2", "the fourth editor knob drives CLAP parameter 2");
+  assert.notEqual(readback.changed[0].after, readback.changed[0].before);
+  assert.equal(readback.paramNow, readback.lastOut.value);
+  assert.equal(readback.effectLast, readback.paramNow);
+  assert.ok(readback.effectRuns > 1);
+  assert.equal(readback.echoed, 0, "plug-in originated changes must not be echoed back to the worklet");
 
   const audioPause = await page.evaluate(async () => {
     const current = window.__daw.workspace;
@@ -789,7 +885,7 @@ try {
     const playingAnchor = workspace.takeAnchor();
     const playingPlacement = workspace.takePosition(playingAnchor, { startTime: playingAnchor.audioTime + 0.2 }, 0.05);
     project.moveClip(project.tracks[0].clips[0].id, project.tracks[0].id, 0.25);
-    await workspace.commit();
+    await workspace.flush();
     const keptHost = workspace.host(project.tracks[0].devices[0].id) === host && workspace.clock.state.value === "playing";
     workspace.stop();
 
@@ -800,7 +896,7 @@ try {
       { time: 0.25, value: 1, shape: "hold" },
       { time: 0.75, value: 0, shape: "hold" },
     ]);
-    await workspace.commit();
+    await workspace.sync();
     for (const other of project.tracks) if (other.id !== track.id) workspace.setTrackVolume(other.id, 0);
     const analyser = workspace.context.createAnalyser();
     analyser.fftSize = 2048;
@@ -835,7 +931,7 @@ try {
       { time: 0, value: 0, shape: "linear" },
       { time: 0.5, value: 1, shape: "hold" },
     ]);
-    await workspace.commit();
+    await workspace.flush();
     workspace.seek(0.25);
     await workspace.play();
     await waitUntil(0.4);
@@ -875,7 +971,7 @@ try {
   const tempoRuntime = await page.evaluate(async () => {
     const { workspace, project } = window.__daw;
     project.setTempoChanges([{ beat: 4, bpm: 60 }]);
-    await workspace.commit();
+    await workspace.flush();
     workspace.seek(0);
     await workspace.play();
     const origin = workspace.timeline.beatToTime(0);
@@ -889,11 +985,11 @@ try {
     const host = workspace.host(project.tracks[0].devices[0].id);
     const beforeEdit = workspace.position;
     project.setTempoChanges([{ beat: 4, bpm: 90 }]);
-    await workspace.commit();
+    await workspace.flush();
     const afterEdit = workspace.position;
     const keptHost = workspace.host(project.tracks[0].devices[0].id) === host && workspace.clock.state.value === "playing";
     project.setTempoChanges([{ beat: 4, bpm: 60 }]);
-    await workspace.commit();
+    await workspace.flush();
     workspace.stop();
     return { step, end, beatAfterSeek, positionAfterSeek, editDrift: afterEdit - beforeEdit, keptHost };
   });
@@ -904,12 +1000,14 @@ try {
     const { project, workspace } = window.__daw;
     const track = project.addTrack("Tempo note", "midi");
     const clip = project.addMidiClip(track.id, { duration: 4, notes: [] }, 3);
-    await workspace.commit();
+    await workspace.sync();
     return clip.id;
   });
   await page.locator("#zoom-in").click(); // Re-render the imported tempo grid through the normal UI.
   await page.waitForFunction(() => document.querySelector(".tempo-grid-segment"));
-  const barPositions = await page.locator(".ruler-row .ruler-mark").evaluateAll((marks) => marks.slice(0, 3).map((mark) => parseFloat(mark.style.left)));
+  const barPositions = await page
+    .locator(".ruler-row .ruler-mark")
+    .evaluateAll((marks) => marks.slice(0, 3).map((mark) => parseFloat(mark.style.left)));
   assert.ok(Math.abs(barPositions[2] - barPositions[1] * 3) < 1, `tempo ruler ignored the step: ${barPositions}`);
   await page.locator(`.clip[data-clip-id="${tempoNoteClipId}"]`).click();
   await page.evaluate(() => window.__daw.workspace.seek(5));
@@ -923,21 +1021,33 @@ try {
   const beatClipId = await page.evaluate(async () => {
     const { project, workspace } = window.__daw;
     const track = project.tracks.find((item) => item.kind === "midi");
-    const clip = project.addMidiClip(track.id, {
-      duration: 2,
-      notes: [{ id: "beat-smoke", start: 0, end: 1, pitch: 109, velocity: 90, channel: 0, track: 0 }],
-      events: [{ time: 1, data: new Uint8Array([0xb0, 64, 127]) }],
-    }, 6, { timeUnit: "beats" });
-    await workspace.commit();
+    const clip = project.addMidiClip(
+      track.id,
+      {
+        duration: 2,
+        notes: [{ id: "beat-smoke", start: 0, end: 1, pitch: 109, velocity: 90, channel: 0, track: 0 }],
+        events: [{ time: 1, data: new Uint8Array([0xb0, 64, 127]) }],
+      },
+      6,
+      { timeUnit: "beats" },
+    );
+    await workspace.flush();
     return clip.id;
   });
-  const beatGeometry = async () => page.evaluate((id) => {
-    const { project } = window.__daw;
-    const clip = project.tracks.flatMap((track) => track.clips).find((item) => item.id === id);
-    const element = document.querySelector(`.clip[data-clip-id="${id}"]`);
-    const scale = parseFloat(document.querySelectorAll(".ruler-row .ruler-mark")[1].style.left) / 2;
-    return { unit: clip.timeUnit, start: project.clipTimeSeconds(clip), end: project.clipTimeSeconds(clip, clip.duration), left: parseFloat(element.style.left) / scale, width: parseFloat(element.style.width) / scale };
-  }, beatClipId);
+  const beatGeometry = async () =>
+    page.evaluate((id) => {
+      const { project } = window.__daw;
+      const clip = project.tracks.flatMap((track) => track.clips).find((item) => item.id === id);
+      const element = document.querySelector(`.clip[data-clip-id="${id}"]`);
+      const scale = parseFloat(document.querySelectorAll(".ruler-row .ruler-mark")[1].style.left) / 2;
+      return {
+        unit: clip.timeUnit,
+        start: project.clipTimeSeconds(clip),
+        end: project.clipTimeSeconds(clip, clip.duration),
+        left: parseFloat(element.style.left) / scale,
+        width: parseFloat(element.style.width) / scale,
+      };
+    }, beatClipId);
   const awaitBeatGeometry = async () => {
     await page.waitForFunction((id) => {
       const { project } = window.__daw;
@@ -952,7 +1062,10 @@ try {
   };
   await page.locator("#zoom-in").click();
   const beforeStretch = await awaitBeatGeometry();
-  assert.ok(beforeStretch.unit === "beats" && Math.abs(beforeStretch.left - 4) < 0.02 && Math.abs(beforeStretch.width - 2) < 0.02, JSON.stringify(beforeStretch));
+  assert.ok(
+    beforeStretch.unit === "beats" && Math.abs(beforeStretch.left - 4) < 0.02 && Math.abs(beforeStretch.width - 2) < 0.02,
+    JSON.stringify(beforeStretch),
+  );
   await page.locator(`.clip[data-clip-id="${beatClipId}"]`).click();
   assert.match(await page.locator('#editor-panel .ar-pr-note[data-note-id="beat-smoke"]').getAttribute("aria-label"), /beats/);
   await page.locator("#loop").click();
@@ -968,7 +1081,7 @@ try {
   await page.evaluate(async () => {
     const { project, workspace } = window.__daw;
     project.setTempoChanges([{ beat: 4, bpm: 120 }]);
-    await workspace.commit();
+    await workspace.flush();
   });
   await page.locator("#zoom-in").click();
   const afterStretch = await awaitBeatGeometry();
@@ -978,7 +1091,7 @@ try {
     const host = workspace.host(project.tracks[0].devices[0].id);
     const original = host.scheduleMidi;
     const captured = [];
-    host.scheduleMidi = function(data, when) {
+    host.scheduleMidi = function (data, when) {
       if ((data[0] & 0xf0) === 0x90 && data[1] === 109) captured.push(when);
       return original.call(this, data, when);
     };
@@ -1006,7 +1119,10 @@ try {
   assert.equal(editedBeat, 0.25);
   await page.locator(`.clip[data-clip-id="${beatClipId}"]`).focus();
   await page.locator(`.clip[data-clip-id="${beatClipId}"]`).press("ArrowRight");
-  await page.waitForFunction((id) => window.__daw.project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === id)?.time === 7, beatClipId);
+  await page.waitForFunction(
+    (id) => window.__daw.project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === id)?.time === 7,
+    beatClipId,
+  );
   await page.locator("#undo").click();
   await page.waitForFunction((id) => {
     const clip = window.__daw.project.tracks.flatMap((track) => track.clips).find((item) => item.id === id);
@@ -1015,7 +1131,7 @@ try {
   await page.evaluate(async () => {
     const { project, workspace } = window.__daw;
     project.setTempoChanges([{ beat: 4, bpm: 60 }]);
-    await workspace.commit();
+    await workspace.flush();
   });
   await page.locator("#zoom-in").click();
   const zoomAnchor = await page.evaluate(() => {
@@ -1023,13 +1139,21 @@ try {
     const ruler = root.querySelector(".ruler-row .ruler");
     const x = root.getBoundingClientRect().left + root.clientWidth / 2;
     const pixelsPerSecond = parseFloat(root.querySelectorAll(".ruler-mark")[1].style.left) / 2;
-    return { x, y: ruler.getBoundingClientRect().top + ruler.clientHeight / 2, time: (x - ruler.getBoundingClientRect().left) / pixelsPerSecond, pixelsPerSecond };
+    return {
+      x,
+      y: ruler.getBoundingClientRect().top + ruler.clientHeight / 2,
+      time: (x - ruler.getBoundingClientRect().left) / pixelsPerSecond,
+      pixelsPerSecond,
+    };
   });
   await page.locator("#timeline-zoom").evaluate((input) => {
     input.value = "800";
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
-  await page.waitForFunction((old) => document.querySelector("#timeline-zoom").getAttribute("aria-valuetext") !== old, `${Math.round(zoomAnchor.pixelsPerSecond)} 像素／秒`);
+  await page.waitForFunction(
+    (old) => document.querySelector("#timeline-zoom").getAttribute("aria-valuetext") !== old,
+    `${Math.round(zoomAnchor.pixelsPerSecond)} 像素／秒`,
+  );
   const sliderAnchor = await page.evaluate((x) => {
     const root = document.querySelector("#tracks");
     const ruler = root.querySelector(".ruler-row .ruler");
@@ -1053,7 +1177,10 @@ try {
   await page.keyboard.down("Control");
   await page.mouse.wheel(0, -180);
   await page.keyboard.up("Control");
-  await page.waitForFunction((old) => Number(document.querySelector("#timeline-zoom").getAttribute("aria-valuetext").split(" ")[0]) > old, sliderAnchor.pixelsPerSecond);
+  await page.waitForFunction(
+    (old) => Number(document.querySelector("#timeline-zoom").getAttribute("aria-valuetext").split(" ")[0]) > old,
+    sliderAnchor.pixelsPerSecond,
+  );
   const wheelAnchor = await page.evaluate((x) => {
     const root = document.querySelector("#tracks");
     const ruler = root.querySelector(".ruler-row .ruler");
@@ -1122,7 +1249,19 @@ try {
   });
   assert.equal(keptRackTransport, true);
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ playback, monitored, state, audioPause, runtime, tempoRuntime, zoom: { sliderAnchor, wheelAnchor }, reopenedTracks: 8, addedTracks: 2 }));
+  console.log(
+    JSON.stringify({
+      playback,
+      monitored,
+      state,
+      audioPause,
+      runtime,
+      tempoRuntime,
+      zoom: { sliderAnchor, wheelAnchor },
+      reopenedTracks: 8,
+      addedTracks: 2,
+    }),
+  );
 } finally {
   await browser?.close();
   await server.close();

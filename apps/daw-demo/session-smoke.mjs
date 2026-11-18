@@ -203,10 +203,20 @@ try {
   });
   assert.equal(oneShot.overlap, 1);
   assert.ok(oneShot.cancel && oneShot.onlyLoopLeft);
-  const expectedOneShot = [[0.2, 0.1], [0.6, 0.3], [0.6, 0.3], [0.6, 0.3], [0.6, 0.3], [0.2, 0.3], [0.2, 0.3]];
-  oneShot.audio.forEach((pair, index) => pair.forEach((sample, ch) => {
-    assert.ok(Math.abs(sample - expectedOneShot[index][ch]) < 0.002, JSON.stringify(oneShot));
-  }));
+  const expectedOneShot = [
+    [0.2, 0.1],
+    [0.6, 0.3],
+    [0.6, 0.3],
+    [0.6, 0.3],
+    [0.6, 0.3],
+    [0.2, 0.3],
+    [0.2, 0.3],
+  ];
+  oneShot.audio.forEach((pair, index) =>
+    pair.forEach((sample, ch) => {
+      assert.ok(Math.abs(sample - expectedOneShot[index][ch]) < 0.002, JSON.stringify(oneShot));
+    }),
+  );
   assert.deepEqual(errors, []);
   console.log("Session UI and PCM passed: quantized scenes, independent loops, cancellation, seek and sample-timed one-shot return.");
 } finally {

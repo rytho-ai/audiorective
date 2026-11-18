@@ -16,8 +16,8 @@ The audio engine owns its state. Your interfaces observe parameters, change valu
 | [Widgets](/docs/widgets)       | Browser waveform/piano-roll display, shared selection, audition and custom drawing                       |
 | [Blocks](/docs/blocks)         | Headless audio capture, WavePlayer and cancellable grouped sample hits                                   |
 | [MIDI](/docs/midi)             | MIDI file parsing, note editing, take recording and ordered playback events                              |
-| [Workspace](/docs/workspace)   | Audio/MIDI project ownership, browser transport and DAWproject save/open for a simple arrangement         |
-| [Host](/docs/host)             | WebCLAP instrument/effect host, MIDI scheduling, state and editor bridge                                  |
+| [Workspace](/docs/workspace)   | Audio/MIDI project ownership, browser transport and DAWproject save/open for a simple arrangement        |
+| [Host](/docs/host)             | WebCLAP instrument/effect host, MIDI scheduling, state and editor bridge                                 |
 | [React](/docs/react)           | Hooks and an engine context for reactive interfaces                                                      |
 | [Three.js](/docs/threejs)      | A shared audio context and spatial sound that follows scene objects                                      |
 | [PlayCanvas](/docs/playcanvas) | Engine integration and entity-to-panner bindings                                                         |

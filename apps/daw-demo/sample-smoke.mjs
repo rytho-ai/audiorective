@@ -49,7 +49,7 @@ try {
   page.once("dialog", (dialog) => dialog.accept());
   await page.locator("#new").click();
   await page.waitForFunction(() => window.__daw.project.tracks.length === 0);
-  if (await page.locator("#toggle-browser").getAttribute("aria-pressed") !== "true") await page.locator("#toggle-browser").click();
+  if ((await page.locator("#toggle-browser").getAttribute("aria-pressed")) !== "true") await page.locator("#toggle-browser").click();
   await page.locator("#add-audio").click();
   await page.waitForFunction(() => window.__daw.project.tracks[0]?.kind === "audio");
   const data = wav(0.3);

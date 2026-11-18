@@ -67,6 +67,15 @@ function status(message: string): void {
   $("status").textContent = message;
   log(message);
 }
+let stopWorkspaceError: (() => void) | undefined;
+/** Surface a failed automatic application of Project edits. */
+function watchWorkspace(next: Workspace): void {
+  stopWorkspaceError?.();
+  stopWorkspaceError = effect(() => {
+    const message = next.cells.error.value;
+    if (message) status(`套用編輯失敗：${message}`);
+  });
+}
 function handleError(error: unknown): void {
   status(error instanceof Error ? error.message : String(error));
 }
@@ -251,9 +260,11 @@ function addNote(clip: MidiClip, placement?: { start: number; pitch: number }): 
   const state = clip.sequence.getState();
   const map = workspace.project.tempoMap;
   const position = clip.timeUnit === "beats" ? map.secondsToBeat(workspace.position) : workspace.position;
-  const proposedStart = placement?.start ?? (clip.timeUnit === "beats"
-    ? Math.max(0, Math.floor(Math.max(clip.time, position)) - clip.time)
-    : Math.max(0, map.beatToSeconds(Math.floor(map.secondsToBeat(Math.max(clip.time, position)))) - clip.time));
+  const proposedStart =
+    placement?.start ??
+    (clip.timeUnit === "beats"
+      ? Math.max(0, Math.floor(Math.max(clip.time, position)) - clip.time)
+      : Math.max(0, map.beatToSeconds(Math.floor(map.secondsToBeat(Math.max(clip.time, position)))) - clip.time));
   const start = Math.max(0, Math.min(Math.max(0, state.duration - 0.01), proposedStart));
   const beatAtNote = clip.timeUnit === "beats" ? clip.time + start : map.secondsToBeat(clip.time + start);
   const length = Math.min(state.duration - start, clip.timeUnit === "beats" ? 1 : map.beatToSeconds(beatAtNote + 1) - (clip.time + start));
@@ -319,14 +330,12 @@ function bindSession(): void {
   };
   sessionView = mountStudioSession($("clip-grid"), workspace, {
     quantum,
-    mode: () => $<HTMLSelectElement>("launch-mode").value === "one-shot" ? "one-shot" : "loop",
+    mode: () => ($<HTMLSelectElement>("launch-mode").value === "one-shot" ? "one-shot" : "loop"),
     report: handleError,
   });
   rhythmView?.destroy();
   const closedHat = hats().slice(0, 2_640);
-  const openHat = Float32Array.from({ length: 12_000 }, (_, index) =>
-    (closedHat[Math.floor(index / 5)] ?? 0) * Math.exp(-index / 5_000),
-  );
+  const openHat = Float32Array.from({ length: 12_000 }, (_, index) => (closedHat[Math.floor(index / 5)] ?? 0) * Math.exp(-index / 5_000));
   const buffers = [rhythm().slice(0, 5_760), openHat, closedHat].map((pcm) => {
     const buffer = context.createBuffer(1, pcm.length, 48_000);
     buffer.copyToChannel(pcm, 0);
@@ -436,6 +445,7 @@ async function replaceProject(next: Workspace): Promise<void> {
   const previous = workspace;
   studio.resetProject();
   workspace = next;
+  watchWorkspace(next);
   bindSession();
   checkpointName = undefined;
   looping = false;
@@ -504,8 +514,10 @@ async function recordMidi(): Promise<void> {
       for (const device of workspace.project.tracks.find((item) => item.id === trackId)?.devices ?? []) workspace.host(device.id)?.panic();
       $("record-midi").textContent = "錄 MIDI";
     }
-    studio.recordClipEdit("錄製 MIDI", () => workspace.project.addMidiTake(trackId, take, workspace.takePosition(anchor, take, latency), { timeUnit: "beats" }));
-    await workspace.commit();
+    studio.recordClipEdit("錄製 MIDI", () =>
+      workspace.project.addMidiTake(trackId, take, workspace.takePosition(anchor, take, latency), { timeUnit: "beats" }),
+    );
+    await workspace.flush();
     renderTracks();
     status(`MIDI take：${take.notes.length} 個音符`);
     return;
@@ -554,13 +566,16 @@ async function recordAudio(): Promise<void> {
         throw error;
       }
       ownedMedia.add(media);
-      await workspace.commit();
+      await workspace.flush();
       renderTracks();
       const lostFrames = take.dropouts?.reduce((sum, gap) => sum + gap.endFrame - gap.startFrame, 0) ?? 0;
       const summary = `音訊 take：${(take.endTime - take.startTime).toFixed(2)} 秒${lostFrames ? ` · 錄音中斷 ${(lostFrames / take.sampleRate).toFixed(3)} 秒，請檢查後重錄` : ""}`;
       status("正在建立錄音復原點…");
       try {
-        const title = workspace.project.title.replace(/[^\p{L}\p{N} _-]/gu, "_").replace(/-+/g, "-").slice(0, 48);
+        const title = workspace.project.title
+          .replace(/[^\p{L}\p{N} _-]/gu, "_")
+          .replace(/-+/g, "-")
+          .slice(0, 48);
         checkpointName ??= `${title || "Untitled"}--${crypto.randomUUID()}.dawproject`;
         await checkpointTake(workspace, checkpointName);
         await refreshCheckpoints();
@@ -735,25 +750,35 @@ $("record-midi").addEventListener("click", () => recordMidi().catch(handleError)
 $("record-audio").addEventListener("click", () => {
   if (audioTransition || !workspace) return;
   audioTransition = true;
-  void recordAudio().catch(handleError).finally(() => { audioTransition = false; });
+  void recordAudio()
+    .catch(handleError)
+    .finally(() => {
+      audioTransition = false;
+    });
 });
 $("recover-take").addEventListener("click", () => {
-  void refreshCheckpoints().then(() => $<HTMLDialogElement>("recovery-dialog").showModal()).catch(handleError);
+  void refreshCheckpoints()
+    .then(() => $<HTMLDialogElement>("recovery-dialog").showModal())
+    .catch(handleError);
 });
 $("restore-take").addEventListener("click", () => {
   if (!canReplaceProject() || !confirm("開啟錄音復原點？目前工程未儲存的變更會遺失。")) return;
   const name = $<HTMLSelectElement>("recovery-files").value;
   $<HTMLDialogElement>("recovery-dialog").close();
-  void listTakeCheckpoints().then((files) => {
-    const file = files.find((entry) => entry.name === name);
-    if (!file) throw new Error("這個錄音復原點已不存在。");
-    return open(file, true);
-  }).catch(handleError);
+  void listTakeCheckpoints()
+    .then((files) => {
+      const file = files.find((entry) => entry.name === name);
+      if (!file) throw new Error("這個錄音復原點已不存在。");
+      return open(file, true);
+    })
+    .catch(handleError);
 });
 $("remove-checkpoint").addEventListener("click", () => {
   const name = $<HTMLSelectElement>("recovery-files").value;
   if (!name || !canReplaceProject() || !confirm("刪除這個錄音復原點？")) return;
-  void removeTakeCheckpoint(name).then(() => refreshCheckpoints()).catch(handleError);
+  void removeTakeCheckpoint(name)
+    .then(() => refreshCheckpoints())
+    .catch(handleError);
 });
 $("browser-synth").addEventListener("click", () => {
   const track = workspace.project.tracks.find((item) => item.id === studio.selectedTrackId && item.kind === "midi");
@@ -848,6 +873,7 @@ function animate(): void {
 Workspace.create(context, demoProject(), options)
   .then((created) => {
     workspace = created;
+    watchWorkspace(created);
     bindSession();
     studio.selectedTrackId = created.project.tracks[0]?.id;
     studio.selectedClipId = created.project.tracks[0]?.clips[0]?.id;

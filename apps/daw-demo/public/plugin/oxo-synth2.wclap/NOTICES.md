@@ -14,12 +14,12 @@ under its own copyright line below. The bundle contains no JUCE.
 
 ## Components
 
-| Component | Copyright | License |
-|---|---|---|
-| [oxo_synth2](https://github.com/chab/oxo_synth2) (the `EngineCore` engine, unmodified, and the `Synth2 Factory` bank the page ships as `ui/patches.json`) | 2025-2026 chab | MIT |
-| WebCLAP port ([open-webclap](https://github.com/andremichelle/open-webclap) `ports/oxo-synth2`) | 2026 André Michelle | MIT |
-| WASI shim ([open-webclap](https://github.com/andremichelle/open-webclap) `modules/webclap/wasi_shim.cpp`) | 2026 André Michelle | MIT |
-| [CLAP](https://github.com/free-audio/clap) headers | 2014-2022 Alexandre Bique | MIT |
+| Component                                                                                                                                                 | Copyright                 | License |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- | ------- |
+| [oxo_synth2](https://github.com/chab/oxo_synth2) (the `EngineCore` engine, unmodified, and the `Synth2 Factory` bank the page ships as `ui/patches.json`) | 2025-2026 chab            | MIT     |
+| WebCLAP port ([open-webclap](https://github.com/andremichelle/open-webclap) `ports/oxo-synth2`)                                                           | 2026 André Michelle       | MIT     |
+| WASI shim ([open-webclap](https://github.com/andremichelle/open-webclap) `modules/webclap/wasi_shim.cpp`)                                                 | 2026 André Michelle       | MIT     |
+| [CLAP](https://github.com/free-audio/clap) headers                                                                                                        | 2014-2022 Alexandre Bique | MIT     |
 
 Oxo Synth2 is an independent recreation of Synth1 by Daichi Laboratory; it is not affiliated with or endorsed by
 Daichi Laboratory, and no Synth1 code, binaries or artwork are used. Synth1 is a trademark of its respective owner;

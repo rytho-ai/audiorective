@@ -101,7 +101,13 @@ function parseXml(bytes: Uint8Array, rootName: string): Element {
 }
 
 /** A cheap change detector for sidecar alignment, not a security hash. */
-function fingerprint(notes: readonly MidiNote[], controls: readonly ControlPoint[], time: number, duration: number, unit?: "seconds" | "beats"): string {
+function fingerprint(
+  notes: readonly MidiNote[],
+  controls: readonly ControlPoint[],
+  time: number,
+  duration: number,
+  unit?: "seconds" | "beats",
+): string {
   const ordered = [...controls].sort((a, b) => a.time - b.time || a.channel - b.channel || a.controller - b.controller || a.value - b.value);
   const plain = JSON.stringify({
     time,
@@ -125,7 +131,12 @@ function controlsFromEvents(events: readonly ProjectMidiEvent[]): ControlPoint[]
   });
 }
 
-function writeAudioSource(path: string, source: AudioClipSource, entries: Record<string, Uint8Array>, mediaEntries: Map<string, AudioClipSource>): void {
+function writeAudioSource(
+  path: string,
+  source: AudioClipSource,
+  entries: Record<string, Uint8Array>,
+  mediaEntries: Map<string, AudioClipSource>,
+): void {
   if (source.media) mediaEntries.set(path, source);
   else entries[path] = encodeWav(source);
 }
@@ -289,7 +300,7 @@ function prepareDawProject(project: Project): { entries: Record<string, Uint8Arr
     const lane = append(lanes, "Lanes", { id: `${track.id}-lane`, track: track.id, timeUnit: "seconds" });
     let index = 0;
     for (const unit of ["seconds", "beats"] as const) {
-      const group = track.clips.filter((clip) => clip.kind === "audio" ? unit === "seconds" : clip.timeUnit === unit);
+      const group = track.clips.filter((clip) => (clip.kind === "audio" ? unit === "seconds" : clip.timeUnit === unit));
       if (!group.length && (unit === "beats" || track.clips.length)) continue;
       const clips = append(lane, "Clips", { id: `${track.id}-clips${unit === "beats" ? "-beats" : ""}`, timeUnit: unit });
       for (const clip of group) writeClip(clip, clips, entries, mediaEntries, state, track, index++);
@@ -435,7 +446,8 @@ function readMidi(clip: Element, trackId: string, index: number, unit: "seconds"
   const expected = fingerprint(notes, controls, time, duration, stored?.version === 2 ? unit : undefined);
   const usable =
     match &&
-    (stored?.version === 2 || unit === "seconds") && match.fingerprint === expected &&
+    (stored?.version === 2 || unit === "seconds") &&
+    match.fingerprint === expected &&
     Array.isArray(match.noteIds) &&
     match.noteIds.length === notes.length &&
     Array.isArray(match.events) &&
@@ -661,8 +673,7 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
             attributesOnly(plugin, ["id", "deviceID", "deviceName", "deviceVendor", "deviceRole", "loaded"]);
             childrenOnly(plugin, ["State"]);
             const deviceId = attr(plugin, "deviceID");
-            if (attr(plugin, "deviceRole") !== "audioFX" ||
-                !Object.keys(rackDeviceNames).some((type) => deviceId === rackDevicePrefix + type))
+            if (attr(plugin, "deviceRole") !== "audioFX" || !Object.keys(rackDeviceNames).some((type) => deviceId === rackDevicePrefix + type))
               throw new Error("Project has an unsupported built-in effect.");
             const stateRef = one(plugin, "State")!;
             attributesOnly(stateRef, ["path"]);
@@ -767,8 +778,7 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
             project.addMidiClip(trackId, midi, midi.time, { id: midi.id, timeUnit: midi.timeUnit });
           } else {
             attributesOnly(clip, ["time", "duration", "contentTimeUnit", "fadeTimeUnit", "fadeInTime", "fadeOutTime"]);
-            if (clip.hasAttribute("fadeTimeUnit") && attr(clip, "fadeTimeUnit") !== "seconds")
-              throw new Error("Project audio fades need seconds.");
+            if (clip.hasAttribute("fadeTimeUnit") && attr(clip, "fadeTimeUnit") !== "seconds") throw new Error("Project audio fades need seconds.");
             if (attr(clip, "contentTimeUnit") !== "seconds" || direct(clip, "Lanes").length)
               throw new Error("Project audio clip has unsupported content.");
             const audio = one(clip, "Audio")!;

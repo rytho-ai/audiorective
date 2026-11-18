@@ -55,8 +55,9 @@ try {
   await page.waitForFunction((id) => {
     const { project, workspace } = window.__daw;
     const synth = project.tracks[0]?.devices[0];
-    return project.tracks.find((track) => track.id === id).devices.length === 0 &&
-      synth && workspace.host(synth.id) && !workspace.cells.needsSync.value;
+    return (
+      project.tracks.find((track) => track.id === id).devices.length === 0 && synth && workspace.host(synth.id) && !workspace.cells.needsSync.value
+    );
   }, uiTrack);
   const report = await page.evaluate(async () => {
     const { workspace: studio } = window.__daw;

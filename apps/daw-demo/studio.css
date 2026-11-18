@@ -542,7 +542,9 @@ input[type="range"] {
 }
 .lane.grid,
 .ruler {
-  background-image: linear-gradient(to right, var(--bar-line, #405462) 1px, transparent 1px), linear-gradient(to right, var(--beat-line, #2b3c48) 1px, transparent 1px);
+  background-image:
+    linear-gradient(to right, var(--bar-line, #405462) 1px, transparent 1px),
+    linear-gradient(to right, var(--beat-line, #2b3c48) 1px, transparent 1px);
   background-repeat: repeat-x;
   background-size:
     var(--bar-width) 100%,
@@ -557,7 +559,9 @@ input[type="range"] {
   top: 0;
   bottom: 0;
   pointer-events: none;
-  background-image: linear-gradient(to right, var(--bar-line, #405462) 1px, transparent 1px), linear-gradient(to right, var(--beat-line, #2b3c48) 1px, transparent 1px);
+  background-image:
+    linear-gradient(to right, var(--bar-line, #405462) 1px, transparent 1px),
+    linear-gradient(to right, var(--beat-line, #2b3c48) 1px, transparent 1px);
   background-repeat: repeat-x;
   background-size:
     var(--bar-width) 100%,
@@ -860,7 +864,8 @@ input[type="range"] {
   gap: 7px;
   margin-bottom: 10px;
 }
-.webclap-picker, .webclap-parameters {
+.webclap-picker,
+.webclap-parameters {
   display: flex;
   align-items: end;
   flex-wrap: wrap;
@@ -942,18 +947,65 @@ input[type="range"] {
     width: 40px;
   }
 }
-.effect-rack{display:grid;gap:8px;margin-top:12px}
-.effect-rack-actions,.effect-slot-actions,.effect-slot-values{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.effect-rack-actions .ar-level-meter{display:flex;gap:8px;align-items:center;font-size:.8rem}
-.effect-rack-actions meter{width:90px}
-.rack-macro-controls:empty{display:none}
-.rack-macro-controls,.rack-macro{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
-.rack-macro{padding:4px 8px;border-inline-start:2px solid var(--line)}
-.effect-rack-slots{display:flex;gap:8px;overflow:auto;padding-bottom:4px}
-.effect-slot{display:grid;align-content:start;gap:8px;flex:0 0 auto;padding:8px;border:1px solid var(--line, #657078)}
-.effect-slot-values .ar-parameter{font-size:.8rem}
-.effect-slot-values input:not([aria-orientation="vertical"]){width:92px}
-.effect-slot-actions button[aria-pressed="true"]{outline:1px solid currentColor}
+.effect-rack {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+.effect-rack-actions,
+.effect-slot-actions,
+.effect-slot-values {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.effect-rack-actions .ar-level-meter {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 0.8rem;
+}
+.effect-rack-actions meter {
+  width: 90px;
+}
+.rack-macro-controls:empty {
+  display: none;
+}
+.rack-macro-controls,
+.rack-macro {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.rack-macro {
+  padding: 4px 8px;
+  border-inline-start: 2px solid var(--line);
+}
+.effect-rack-slots {
+  display: flex;
+  gap: 8px;
+  overflow: auto;
+  padding-bottom: 4px;
+}
+.effect-slot {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 8px;
+  border: 1px solid var(--line, #657078);
+}
+.effect-slot-values .ar-parameter {
+  font-size: 0.8rem;
+}
+.effect-slot-values input:not([aria-orientation="vertical"]) {
+  width: 92px;
+}
+.effect-slot-actions button[aria-pressed="true"] {
+  outline: 1px solid currentColor;
+}
 
 #automation-panel {
   padding: 8px 12px;

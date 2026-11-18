@@ -138,8 +138,8 @@ Each call owns a Worker, so concurrent calls remain independent. An already-abor
 | `TimeStretch needs finite equal-length PCM channels and an integer sampleRate from 8000 to 192000.` | Check channel type, lengths, samples and sample rate.                                                        |
 | `TimeStretch requires Web Workers.`                                                                 | Run processing in a browser environment with Worker support.                                                 |
 | `TimeStretch: unsupported Rubber Band WASM ABI.`                                                    | Supply the compatible C-ABI module, including memory, allocation and `rb_*` exports.                         |
-| `TimeStretch anchors need strictly increasing interior source and output frames.`                  | Supply integer interior frame pairs in increasing order on both axes. |
-| `TimeStretch: Rubber Band WASM does not support warp anchors.`                                     | Supply a compatible module that exports `rb_set_key_frame_map`. |
+| `TimeStretch anchors need strictly increasing interior source and output frames.`                   | Supply integer interior frame pairs in increasing order on both axes.                                        |
+| `TimeStretch: Rubber Band WASM does not support warp anchors.`                                      | Supply a compatible module that exports `rb_set_key_frame_map`.                                              |
 | `TimeStretch processing was aborted.` (`AbortError`)                                                | The caller cancelled the job; create a fresh signal to retry.                                                |
 | `TimeStretch is destroyed.`                                                                         | Construct another processor for further jobs.                                                                |
 | `TimeStretch produced an unexpected frame count.` / `TimeStretch produced nonfinite PCM.`           | The supplied module did not produce the required finite output; check module compatibility and input.        |

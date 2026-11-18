@@ -47,7 +47,8 @@ function mounted(timeUnit: "seconds" | "beats" = "seconds") {
 test("drag previews and commits one snapped cross-track move", async () => {
   const { clip, onMove, onOpen } = mounted();
   const rect = clip.getBoundingClientRect();
-  const x = rect.x + 20, y = rect.y + 20;
+  const x = rect.x + 20,
+    y = rect.y + 20;
   await pointer({ action: "down", x, y });
   await pointer({ action: "move", x: x + 110, y });
   expect(clip.classList.contains("dragging")).toBe(true);
@@ -61,7 +62,8 @@ test("drag previews and commits one snapped cross-track move", async () => {
 test("cancel leaves the project untouched; keyboard nudges one musical beat", async () => {
   const { clip, onMove, onOpen } = mounted();
   const rect = clip.getBoundingClientRect();
-  const x = rect.x + 20, y = rect.y + 20;
+  const x = rect.x + 20,
+    y = rect.y + 20;
   let pointerId = -1;
   clip.addEventListener("pointerdown", (event) => (pointerId = event.pointerId), { once: true });
   await pointer({ action: "down", x, y });
@@ -80,7 +82,8 @@ test("cancel leaves the project untouched; keyboard nudges one musical beat", as
 test("beat clip gestures convert pointer geometry but commit native beats", async () => {
   const { clip, onMove } = mounted("beats");
   const rect = clip.getBoundingClientRect();
-  const x = rect.x + 20, y = rect.y + 20;
+  const x = rect.x + 20,
+    y = rect.y + 20;
   await pointer({ action: "down", x, y });
   await pointer({ action: "move", x: x + 110, y });
   expect(clip.style.left).toBe("300px");

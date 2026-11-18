@@ -60,10 +60,11 @@ try {
   await waveform.dblclick({ position: { x: bounds.width / 3, y: bounds.height / 3 } });
   const gainPoint = page.getByRole("slider", { name: "片段增益點 2", exact: true });
   await gainPoint.waitFor();
-  const envelope = () => page.evaluate(() => {
-    const track = window.__daw.project.tracks.find(({ kind }) => kind === "audio");
-    return track.clips[0].gainAutomation?.points;
-  });
+  const envelope = () =>
+    page.evaluate(() => {
+      const track = window.__daw.project.tracks.find(({ kind }) => kind === "audio");
+      return track.clips[0].gainAutomation?.points;
+    });
   const beforeDrag = await envelope();
   const pointBox = await gainPoint.boundingBox();
   const pointX = pointBox.x + pointBox.width / 2;
@@ -104,7 +105,10 @@ try {
       const workspace = await Workspace.create(context, project, { destination: context.destination });
       const create = context.createBufferSource.bind(context);
       let starts = 0;
-      context.createBufferSource = () => { starts++; return create(); };
+      context.createBufferSource = () => {
+        starts++;
+        return create();
+      };
       await workspace.play();
       const change = context.suspend(0.2);
       const replace = context.suspend(0.66);
@@ -139,17 +143,21 @@ try {
       const source = new AudioMedia(new Blob([frames]), rate, 1, frames.length);
       const fade = { gain: 0.5, fadeIn: 0, fadeOut: 0 };
       const gainAutomation = { sourceStart: kind === "file" ? 0 : 0.5, points };
-      const clip = kind === "file"
-        ? project.addAudioMediaClip(track.id, source, 0, { envelope: fade, gainAutomation })
-        : project.addAudioClip(track.id, { sampleRate: rate, channels: [new Float32Array(rate).fill(1)] }, 2, {
-            stretch: { ratio: 2, source: { sampleRate: rate, channels: [new Float32Array(rate / 2).fill(1)] } },
-            envelope: fade,
-            gainAutomation,
-          });
+      const clip =
+        kind === "file"
+          ? project.addAudioMediaClip(track.id, source, 0, { envelope: fade, gainAutomation })
+          : project.addAudioClip(track.id, { sampleRate: rate, channels: [new Float32Array(rate).fill(1)] }, 2, {
+              stretch: { ratio: 2, source: { sampleRate: rate, channels: [new Float32Array(rate / 2).fill(1)] } },
+              envelope: fade,
+              gainAutomation,
+            });
       const workspace = await Workspace.create(context, project, { destination: context.destination });
       const create = context.createBufferSource.bind(context);
       let starts = 0;
-      context.createBufferSource = () => { starts++; return create(); };
+      context.createBufferSource = () => {
+        starts++;
+        return create();
+      };
       if (kind === "file") workspace.seek(1.75);
       await workspace.play();
       if (kind === "session") workspace.launchClips([{ trackId: track.id, clipId: clip.id }]);
@@ -175,7 +183,10 @@ try {
     ["live", automated.live.values, [1, 0.25, 0.725, 0.4, 0.6, 1]],
     ["file", automated.file, [0.25, 0.25]],
     ["session", automated.session, [0, 0.36875, 0.34375]],
-  ]) actual.forEach((sample, index) => assert.ok(Math.abs(sample - expected[index]) < 0.004, `clip automation ${mode} sample ${index}: ${sample} vs ${expected[index]}`));
+  ])
+    actual.forEach((sample, index) =>
+      assert.ok(Math.abs(sample - expected[index]) < 0.004, `clip automation ${mode} sample ${index}: ${sample} vs ${expected[index]}`),
+    );
 
   const audible = await page.evaluate(async () => {
     const { AudioMedia, Project, Workspace } = window.fadeFixture;
@@ -254,7 +265,10 @@ try {
     try {
       const realResume = context.resume.bind(context);
       let unblock;
-      context.resume = () => new Promise((resolve) => { unblock = resolve; });
+      context.resume = () =>
+        new Promise((resolve) => {
+          unblock = resolve;
+        });
       const cancelled = workspace.auditionAudioClip(memoryClip.id);
       workspace.stopClipAudition();
       unblock();
@@ -279,7 +293,7 @@ try {
       await workspace.auditionAudioClip(memoryClip.id);
       await waitFor(() => mean() > 0.49);
       project.removeTrack(track.id);
-      await workspace.commit();
+      await workspace.sync();
       await waitFor(() => Math.abs(mean()) < 0.001);
       if (workspace.auditioningClip.value !== null) throw new Error("Removing the audition track left it active.");
       const result = { cancelledState, pcmValue, first, second, reads, position: workspace.position, clock: workspace.clock.state.value };
@@ -295,7 +309,10 @@ try {
   assert.ok(Math.abs(auditioned.pcmValue - 0.5) < 0.002);
   assert.ok(Math.abs(auditioned.first - 0.15) < 0.01);
   assert.ok(Math.abs(auditioned.second - 0.3) < 0.01);
-  assert.deepEqual(auditioned.reads, [[12000, 96000], [108000, 24000]]);
+  assert.deepEqual(auditioned.reads, [
+    [12000, 96000],
+    [108000, 24000],
+  ]);
   assert.deepEqual([auditioned.position, auditioned.clock], [1.25, "stopped"]);
 
   const rangeMix = await page.evaluate(async () => {
@@ -343,10 +360,10 @@ try {
         else clock.refresh();
         await resume();
       };
-      const steps = [pump(.1), pump(.24), pump(.36), pump(.5), pump(.60), pump(.71), pump(.85, true)];
+      const steps = [pump(0.1), pump(0.24), pump(0.36), pump(0.5), pump(0.6), pump(0.71), pump(0.85, true)];
       const output = await context.startRendering();
       await Promise.all(steps);
-      const times = [.0249, .0251, .1749, .1751, .3749, .3751, .7249, .7251, .9];
+      const times = [0.0249, 0.0251, 0.1749, 0.1751, 0.3749, 0.3751, 0.7249, 0.7251, 0.9];
       const samples = times.map((time) => [0, 1].map((channel) => output.getChannelData(channel)[Math.round(time * rate)]));
       return { samples, allocatedBuffers: buffers.size, mediaReads, position: workspace.position, clock: workspace.clock.state.value };
     } finally {
@@ -358,10 +375,22 @@ try {
   assert.equal(rangeMix.allocatedBuffers, 2);
   assert.deepEqual(rangeMix.mediaReads, [[2400, 26400]]);
   assert.deepEqual([rangeMix.position, rangeMix.clock], [0.7, "stopped"]);
-  const rangeExpected = [[0, 0], [0.5, 0.25], [0.5, 0.25], [0, 0.25], [0, 0.25], [0.5, 0.25], [0, 0.25], [0.5, 0.25], [0, 0]];
-  rangeMix.samples.forEach((pair, index) => pair.forEach((value, channel) => {
-    assert.ok(Math.abs(value - rangeExpected[index][channel]) < 0.002, JSON.stringify(rangeMix));
-  }));
+  const rangeExpected = [
+    [0, 0],
+    [0.5, 0.25],
+    [0.5, 0.25],
+    [0, 0.25],
+    [0, 0.25],
+    [0.5, 0.25],
+    [0, 0.25],
+    [0.5, 0.25],
+    [0, 0],
+  ];
+  rangeMix.samples.forEach((pair, index) =>
+    pair.forEach((value, channel) => {
+      assert.ok(Math.abs(value - rangeExpected[index][channel]) < 0.002, JSON.stringify(rangeMix));
+    }),
+  );
   assert.deepEqual(errors, []);
   console.log("Clip gain automation passed waveform editing, live voice reuse, file chunks and stretched Session PCM", automated);
   console.log("Clip fades passed DAW edits and undo, PCM seek, file-backed chunk seek and Session launch", audible);

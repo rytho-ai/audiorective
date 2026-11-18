@@ -292,11 +292,11 @@ Two things to remember when writing assertions:
 
 ## Common errors
 
-| Message                                                        | Cause                                                                                                        | Fix                                                                     |
-| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
-| `Clock owned event time must be finite, non-negative seconds.` | `window.own(event, when)` received an invalid audio time; the event is cancelled before the error is thrown. | Pass the same absolute `AudioContext` time used to schedule that event. |
-| `RangeLoop needs increasing finite source seconds and a non-negative audio start.` / `RangeLoop window needs finite audio seconds.` | The time range or window contains an invalid bound. | Use finite seconds and place the source end after its start. |
-| `RangeLoop period is below audio time precision.` | Consecutive repeat boundaries collapse at the current audio time. | Use a longer source range. |
+| Message                                                                                                                             | Cause                                                                                                        | Fix                                                                     |
+| ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| `Clock owned event time must be finite, non-negative seconds.`                                                                      | `window.own(event, when)` received an invalid audio time; the event is cancelled before the error is thrown. | Pass the same absolute `AudioContext` time used to schedule that event. |
+| `RangeLoop needs increasing finite source seconds and a non-negative audio start.` / `RangeLoop window needs finite audio seconds.` | The time range or window contains an invalid bound.                                                          | Use finite seconds and place the source end after its start.            |
+| `RangeLoop period is below audio time precision.`                                                                                   | Consecutive repeat boundaries collapse at the current audio time.                                            | Use a longer source range.                                              |
 
 ## Non-goals
 

@@ -38,7 +38,9 @@ describe("project tempo map", () => {
     project.setTempoChanges([{ beat: 4, bpm: 60 }]);
     const track = project.addTrack("Keys", "midi");
     const take: RecordedMidi = {
-      startTime: 10, endTime: 12, duration: 2,
+      startTime: 10,
+      endTime: 12,
+      duration: 2,
       notes: [{ id: "held", start: 0, end: 1.5, pitch: 60, velocity: 90, channel: 0, track: 0 }],
       events: [
         { audioTime: 10, data: new Uint8Array([0x90, 60, 90]), noteId: "held" },
@@ -78,7 +80,12 @@ describe("project tempo map", () => {
     const files = unzipSync(saveDawProject(project));
     const privateState = JSON.parse(text.decode(files["audiorective/state.json"]));
     privateState.version = 1;
-    const plain = JSON.stringify({ time: 0, duration: 0.1, notes: [[0, 0.03, 60, 90, 0]], controls: [{ time: 10.03 - 10, channel: 0, controller: 64, value: 127 }] });
+    const plain = JSON.stringify({
+      time: 0,
+      duration: 0.1,
+      notes: [[0, 0.03, 60, 90, 0]],
+      controls: [{ time: 10.03 - 10, channel: 0, controller: 64, value: 127 }],
+    });
     let hash = 2166136261;
     for (const char of plain) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
     privateState.clips[0].fingerprint = (hash >>> 0).toString(16).padStart(8, "0");
@@ -86,7 +93,9 @@ describe("project tempo map", () => {
     const legacy = openDawProject(zipSync(files));
     expect(legacy.warnings).toEqual([]);
     legacy.project.destroy();
-    const xml = text.decode(files["project.xml"]).replaceAll('contentTimeUnit="seconds"', 'contentTimeUnit="beats"')
+    const xml = text
+      .decode(files["project.xml"])
+      .replaceAll('contentTimeUnit="seconds"', 'contentTimeUnit="beats"')
       .replace(/(<Clips[^>]*?)timeUnit="seconds"/, '$1timeUnit="beats"')
       .replace(/(<(?:Lanes|Notes|Points) id="clip[^"]+" )timeUnit="seconds"/g, '$1timeUnit="beats"');
     files["project.xml"] = bytes.encode(xml);
@@ -100,7 +109,13 @@ describe("project tempo map", () => {
     expect(map.snapSeconds(4.4)).toBe(4);
     expect(map.snapSeconds(4.6)).toBe(5);
     expect(map.bpmAtBeat(4)).toBe(60);
-    expect(() => new TempoMap(120, [{ beat: 4, bpm: 60 }, { beat: 4, bpm: 90 }])).toThrow("unique positive beats");
+    expect(
+      () =>
+        new TempoMap(120, [
+          { beat: 4, bpm: 60 },
+          { beat: 4, bpm: 90 },
+        ]),
+    ).toThrow("unique positive beats");
     expect(() => new TempoMap(120, [{ beat: -1, bpm: 60 }])).toThrow("unique positive beats");
     expect(() => new TempoMap(Number.MIN_VALUE, [{ beat: 1, bpm: 60 }])).toThrow("unique positive beats");
   });
@@ -132,14 +147,19 @@ describe("DAWproject native slice", () => {
   test("round trips an Equalizer as one ordered slot and preserves all bands", () => {
     const project = new Project();
     const track = project.addTrack("EQ track", "audio");
-    project.setTrackEffects(track.id, [{
-      id: "three", type: "eq", wet: 0.6, enabled: false,
-      bands: [
-        { frequency: 250, gain: -3, q: 0.7 },
-        { frequency: 1000, gain: 6, q: 1 },
-        { frequency: 4000, gain: 0, q: 0.8 },
-      ],
-    }]);
+    project.setTrackEffects(track.id, [
+      {
+        id: "three",
+        type: "eq",
+        wet: 0.6,
+        enabled: false,
+        bands: [
+          { frequency: 250, gain: -3, q: 0.7 },
+          { frequency: 1000, gain: 6, q: 1 },
+          { frequency: 4000, gain: 0, q: 0.8 },
+        ],
+      },
+    ]);
     const reopened = openDawProject(saveDawProject(project)).project;
     expect(reopened.tracks[0].effects).toEqual(project.tracks[0].effects);
   });
@@ -171,11 +191,15 @@ describe("DAWproject native slice", () => {
     const project = new Project();
     const track = project.addTrack("Bus", "bus");
     const filter = { id: "filter", type: "filter", enabled: true, wet: 0.8, frequency: 480, mode: "highpass", q: 0.8 } as const;
-    const macros = [{ id: "tone", value: 0.4, targets: [{ slotId: filter.id, parameter: "frequency", min: 200, max: 8000, scale: "exponential" }] }] as const;
+    const macros = [
+      { id: "tone", value: 0.4, targets: [{ slotId: filter.id, parameter: "frequency", min: 200, max: 8000, scale: "exponential" }] },
+    ] as const;
     project.setTrackRackPreset(track.id, { effects: [filter], macros });
     project.setTrackMacroValue(track.id, "tone", 0.65);
     const changed = project.tracks[0];
-    expect(() => project.setTrackRackPreset(track.id, { effects: [filter], macros: [...macros, { ...macros[0], id: "copy" }] })).toThrow(/distinct valid targets/);
+    expect(() => project.setTrackRackPreset(track.id, { effects: [filter], macros: [...macros, { ...macros[0], id: "copy" }] })).toThrow(
+      /distinct valid targets/,
+    );
     expect(project.tracks[0]).toBe(changed);
     const archive = saveDawProject(project);
     const reopened = openDawProject(archive);

@@ -15,7 +15,14 @@ export { createWarpMarkers } from "./warp-markers";
 export type { WarpMarkerOptions } from "./warp-markers";
 export { attachClipGesture, attachTimeRangeGesture, attachTimelineZoom } from "./arrangement";
 export type {
-  ArrangementTimeMap, ClipGestureHandle, ClipGestureOptions, ClipMove, TimeRangeGestureOptions, TimelineRange, TimelineZoomHandle, TimelineZoomOptions,
+  ArrangementTimeMap,
+  ClipGestureHandle,
+  ClipGestureOptions,
+  ClipMove,
+  TimeRangeGestureOptions,
+  TimelineRange,
+  TimelineZoomHandle,
+  TimelineZoomOptions,
 } from "./arrangement";
 export { mountClipGrid } from "./clip-grid";
 export type { ClipGridLayout, ClipGridOptions } from "./clip-grid";

@@ -191,7 +191,7 @@ try {
       const prepared = await workspace.prepareAudioClipStretch(clip.id, 2, stretch);
       if (project.tracks[0].clips[0] !== clip) throw new Error("Preparation modified project.");
       const first = prepared.apply();
-      await workspace.commit();
+      await workspace.flush();
       const slice = first.channels[0].subarray(Math.round(rate * 0.2), Math.round(rate * 0.6));
       let crossings = 0;
       for (let index = 1; index < slice.length; index++) {

@@ -3,11 +3,15 @@ import type { ClipLaunch } from "@audiorective/blocks";
 import { mountClipGrid, type ClipGridLayout } from "@audiorective/widgets";
 import type { Workspace } from "@audiorective/workspace";
 
-export function mountStudioSession(root: HTMLElement, workspace: Workspace, options: {
-  quantum(): number;
-  mode(): NonNullable<ClipLaunch["mode"]>;
-  report(error: unknown): void;
-}) {
+export function mountStudioSession(
+  root: HTMLElement,
+  workspace: Workspace,
+  options: {
+    quantum(): number;
+    mode(): NonNullable<ClipLaunch["mode"]>;
+    report(error: unknown): void;
+  },
+) {
   let request = 0;
   const grid = mountClipGrid(root, {
     state: workspace.session,
@@ -20,7 +24,10 @@ export function mountStudioSession(root: HTMLElement, workspace: Workspace, opti
         if (generation !== request) return;
         if (workspace.clock.state.value !== "playing") await workspace.play();
         if (generation === request && workspace.clock.state.value === "playing")
-          workspace.launchClips(changes.map((change) => change.clipId === null ? change : { ...change, mode }), beats);
+          workspace.launchClips(
+            changes.map((change) => (change.clipId === null ? change : { ...change, mode })),
+            beats,
+          );
       };
       void launch().catch(options.report);
     },

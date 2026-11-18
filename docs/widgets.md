@@ -6,7 +6,7 @@ Try the [waveform showroom](/showroom/waveform) for a working selector, or the [
 
 `@audiorective/widgets` provides browser DOM widgets that mount into an element and return an imperative handle. Use `mountPlayer` for ordinary playback controls without a waveform, `mountWaveformSelector` for loading audio, selecting a range, and auditioning it, or the audio-independent `@audiorective/widgets/waveform` entry for a waveform driven by your own data and playback position.
 
-For a DAW arrangement with caller-rendered clips, `@audiorective/widgets/arrangement` exports `attachClipGesture(element, options)`. It borrows a clip element and owns pointer capture, click versus drag, snapped preview, cancellation, and one move commit on release. Arrow Left/Right moves one musical beat; Shift moves four. Pass a structural time map such as `project.tempoMap`; Alt bypasses pointer snapping. `onMove` receives a move intent, so the caller applies its own Project edit, history and `Workspace.commit()`.
+For a DAW arrangement with caller-rendered clips, `@audiorective/widgets/arrangement` exports `attachClipGesture(element, options)`. It borrows a clip element and owns pointer capture, click versus drag, snapped preview, cancellation, and one move commit on release. Arrow Left/Right moves one musical beat; Shift moves four. Pass a structural time map such as `project.tempoMap`; Alt bypasses pointer snapping. `onMove` receives a move intent, so the caller applies its own Project edit, and history; a running `Workspace` applies the Project edit by itself.
 
 ```typescript
 import { attachClipGesture } from "@audiorective/widgets/arrangement";
@@ -23,7 +23,6 @@ const gesture = attachClipGesture(clipElement, {
   onOpen: () => openClipEditor(clip.id),
   onMove: ({ clipId, trackId, time }) => {
     history.record("Move clip", () => project.moveClip(clipId, trackId, time));
-    void workspace.commit();
   },
 });
 
@@ -46,12 +45,17 @@ import { mountParameter, mountLevelMeter } from "@audiorective/widgets";
 
 const cutoff = mountParameter(controls, {
   param: filter.params.frequency,
-  orientation: "rotary", scale: "log", min: 20, max: 20_000, step: 1,
-  label: "Cutoff", format: value => `${Math.round(value)} Hz`,
+  orientation: "rotary",
+  scale: "log",
+  min: 20,
+  max: 20_000,
+  step: 1,
+  label: "Cutoff",
+  format: (value) => `${Math.round(value)} Hz`,
 });
 const level = mountLevelMeter(meters, {
   sampleCount: analyser.fftSize,
-  read: samples => analyser.getFloatTimeDomainData(samples),
+  read: (samples) => analyser.getFloatTimeDomainData(samples),
 });
 // cutoff.destroy() and level.destroy() release just the views.
 ```
@@ -130,7 +134,6 @@ The caller owns the envelope, applies undo and redo, and calls `setPoints()` wit
 
 The return buttons request `clipId: null` for the affected tracks. The widget's `destroy()` removes its own DOM and subscription. See the [Workspace example](./workspace.md#clip-launcher) for wiring and launch timing.
 
-
 ## Plain player controls
 
 `@audiorective/widgets/player` mounts Play/Pause, position, duration and volume controls on a caller-owned player. It works without waveform decoding, so use `FilePlayer` for long tracks, podcasts and streams. The widget borrows the player: removing the controls leaves playback and the audio graph running.
@@ -163,7 +166,7 @@ Call `mountPlayer` in a browser, behind a client-only boundary when the app also
 | `fromFilePlayer(player)`   | Play/Pause, seek, volume | Reactive `currentTime` and `duration`; unknown length is supported                              | A blocked or rejected `audio.play()` and a missing track |
 | `fromWavePlayer(player)`   | Play/Pause, seek, volume | Audio clock while playing; paused seeks and committed versions update the view                  | Missing/loading audio and a rejected play request        |
 | `fromBufferPlayer(player)` | Play/Stop, volume        | No seek bar or time readout: `BufferPlayer` exposes no persistent playhead or reactive duration | Missing audio or a closed context                        |
-| `workspace.player`        | Play/Pause, seek         | Project seconds, reactive duration and position changes from transport actions                | A rejected `Workspace.play()` request                    |
+| `workspace.player`         | Play/Pause, seek         | Project seconds, reactive duration and position changes from transport actions                  | A rejected `Workspace.play()` request                    |
 
 When opening or creating a Workspace for speaker playback, pass `{ destination: context.destination }`. For an existing graph, route `workspace.output` from the app. See [Workspace playback controls](./workspace.md#mount-playback-controls).
 
@@ -268,7 +271,7 @@ type WaveformSelectorOptions = {
 | `cancelLoad(): void`                               | Cancels the player's active load. On a shared player this affects all observing selectors; destroying a borrowed view still leaves the caller's load running.                                                |
 | `setSelection(selection: Selection \| null): void` | Sets metadata and updates the player's range without initiating playback. Endpoints must be finite and satisfy `0 <= start < end <= duration`.                                                               |
 | `getState(): WaveformSelectorState`                | Returns a snapshot; selection boundaries and position use committed output seconds.                                                                                                                          |
-| `attach(plugin: TimeViewPlugin)`                   | Adds an overlay or interaction to the selector's waveform in committed output seconds. Returns a `PluginAttachment`. |
+| `attach(plugin: TimeViewPlugin)`                   | Adds an overlay or interaction to the selector's waveform in committed output seconds. Returns a `PluginAttachment`.                                                                                         |
 | `destroy(): void`                                  | Idempotently removes mounted DOM, listeners, observers, animation frames, pending load ownership, plugins, and owned audio nodes. Leaves the caller's context open.                                          |
 
 `WaveformSelectorState` contains `duration`, `selection`, `position`, `isPlaying`, `isLooping`, `loading`, `loadProgress`, `error: string | null`, `pixelsPerSecond`, `processing`, `stretchRatio`, `revision`, and `sourceDuration`. `duration` is the current output duration; `sourceDuration` belongs to the original source. Loading errors appear in the widget as well as in state. Catch `ready` and `load()` rejections when calling them directly. URL fetches follow the browser's CORS rules; decoding errors keep the browser's message.
@@ -467,38 +470,38 @@ DOM classes use the `ar-` prefix to scope widget presentation. Internal class na
 
 ## Common errors
 
-| Frequency widget message | Fix |
-| --- | --- |
-| `Frequency plot needs increasing frequency and decibel ranges.` | Supply positive ordered frequencies and increasing dB limits. |
-| `Spectrum needs a valid FFT size and a range within Nyquist.` | Pass a power-of-two FFT size from 32 through 32768 and limit the upper frequency to half the sample rate. |
-| `EQ editor needs unique band IDs and increasing positive Q limits.` | Supply unique IDs and finite positive Q bounds in increasing order. |
+| Frequency widget message                                            | Fix                                                                                                       |
+| ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `Frequency plot needs increasing frequency and decibel ranges.`     | Supply positive ordered frequencies and increasing dB limits.                                             |
+| `Spectrum needs a valid FFT size and a range within Nyquist.`       | Pass a power-of-two FFT size from 32 through 32768 and limit the upper frequency to half the sample rate. |
+| `EQ editor needs unique band IDs and increasing positive Q limits.` | Supply unique IDs and finite positive Q bounds in increasing order.                                       |
 
-| Control message | Fix |
-| --- | --- |
-| `Parameter control needs a finite increasing range and a positive minimum for log scale.` | Provide a finite increasing range, above zero for log scale. |
-| `Parameter control step must be positive.` | Supply a finite positive step, or omit it. |
-| `Automation overlay needs a positive maximum and an in-range default.` | Provide a positive finite maximum and a default between zero and that maximum. |
-| `Warp markers need a positive sample rate and source frame count.` | Supply both from the clip's source. |
-| `Warp markers need a seconds time view.` | Mount on a seconds-based waveform. |
-| `Level meter sample count must be a positive integer.` | Supply the length of the float buffer your reader needs. |
+| Control message                                                                           | Fix                                                                            |
+| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `Parameter control needs a finite increasing range and a positive minimum for log scale.` | Provide a finite increasing range, above zero for log scale.                   |
+| `Parameter control step must be positive.`                                                | Supply a finite positive step, or omit it.                                     |
+| `Automation overlay needs a positive maximum and an in-range default.`                    | Provide a positive finite maximum and a default between zero and that maximum. |
+| `Warp markers need a positive sample rate and source frame count.`                        | Supply both from the clip's source.                                            |
+| `Warp markers need a seconds time view.`                                                  | Mount on a seconds-based waveform.                                             |
+| `Level meter sample count must be a positive integer.`                                    | Supply the length of the float buffer your reader needs.                       |
 
 Messages thrown by the plain player adapters, waveform view, its plugins and the complete selector. Waveform loading and playback messages come from the borrowed player: see [Blocks](./blocks.md#common-errors).
 
-| Message                                                     | Cause                                                             | Fix                                                                                 |
-| ----------------------------------------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `No track is loaded.`                                       | The plain player view requested FilePlayer playback with no `src` | Set `player.src` before pressing Play.                                              |
-| `Timeline zoom needs a positive increasing scale range.` | Invalid arrangement zoom limits | Use finite positive `minScale` and a larger `maxScale`. |
-| `No audio is loaded.`                                       | A WavePlayer or BufferPlayer adapter has no buffer                | Load audio before pressing Play.                                                    |
-| `Audio is still loading.`                                   | The WavePlayer adapter was asked to play before loading finished  | Await `player.load(...)`.                                                           |
-| `The audio context is closed.`                              | The BufferPlayer adapter cannot start a closed context            | Create a new context and player.                                                    |
-| `Waveform selector is destroyed.`                           | Calling `load` or `setSelection` after cleanup                    | Mount a new selector.                                                               |
-| `Waveform is destroyed.`                                    | Mutating a destroyed waveform or attaching after waveform or selector cleanup | Mount a new view or selector. |
-| `Waveform data needs finite peaks and a positive duration.` | Invalid peaks or duration                                         | Supply nonempty finite peaks, matching extrema arrays, and finite positive seconds. |
-| `Zoom must be finite and at least 1.`                       | Invalid zoom factor                                               | Use `1` to fit, or a larger finite factor.                                          |
-| `Amplitude zoom must be finite and from 1 to 32.`           | Invalid display-only amplitude factor                             | Pass a finite factor from `1` through `32`.                                         |
-| `Playhead must be finite or null.`                          | Invalid playhead                                                  | Supply finite source seconds or `null` to hide it.                                  |
-| `Plugin is already attached to this waveform.`              | Duplicate attachment of one instance                              | Reuse its attachment or detach it before attaching again.                           |
-| `Plugin attachment is destroyed.`                           | Mounting an overlay from a disposed attachment                    | Stop asynchronous work during cleanup; use a live attachment context.               |
-| `Selection plugin is not attached.`                         | Setting metadata before attachment or after detach                | Call `view.attach(selection)` before `selection.setSelection`.                      |
-| `Selection plugin is already attached.`                     | Reusing a selection plugin across live views                      | Detach first, or create one plugin per view.                                        |
-| `Waveform already has a Selection owner.`                   | Multiple selection plugins on one view                            | Keep one selection plugin per view.                                                 |
+| Message                                                     | Cause                                                                         | Fix                                                                                 |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `No track is loaded.`                                       | The plain player view requested FilePlayer playback with no `src`             | Set `player.src` before pressing Play.                                              |
+| `Timeline zoom needs a positive increasing scale range.`    | Invalid arrangement zoom limits                                               | Use finite positive `minScale` and a larger `maxScale`.                             |
+| `No audio is loaded.`                                       | A WavePlayer or BufferPlayer adapter has no buffer                            | Load audio before pressing Play.                                                    |
+| `Audio is still loading.`                                   | The WavePlayer adapter was asked to play before loading finished              | Await `player.load(...)`.                                                           |
+| `The audio context is closed.`                              | The BufferPlayer adapter cannot start a closed context                        | Create a new context and player.                                                    |
+| `Waveform selector is destroyed.`                           | Calling `load` or `setSelection` after cleanup                                | Mount a new selector.                                                               |
+| `Waveform is destroyed.`                                    | Mutating a destroyed waveform or attaching after waveform or selector cleanup | Mount a new view or selector.                                                       |
+| `Waveform data needs finite peaks and a positive duration.` | Invalid peaks or duration                                                     | Supply nonempty finite peaks, matching extrema arrays, and finite positive seconds. |
+| `Zoom must be finite and at least 1.`                       | Invalid zoom factor                                                           | Use `1` to fit, or a larger finite factor.                                          |
+| `Amplitude zoom must be finite and from 1 to 32.`           | Invalid display-only amplitude factor                                         | Pass a finite factor from `1` through `32`.                                         |
+| `Playhead must be finite or null.`                          | Invalid playhead                                                              | Supply finite source seconds or `null` to hide it.                                  |
+| `Plugin is already attached to this waveform.`              | Duplicate attachment of one instance                                          | Reuse its attachment or detach it before attaching again.                           |
+| `Plugin attachment is destroyed.`                           | Mounting an overlay from a disposed attachment                                | Stop asynchronous work during cleanup; use a live attachment context.               |
+| `Selection plugin is not attached.`                         | Setting metadata before attachment or after detach                            | Call `view.attach(selection)` before `selection.setSelection`.                      |
+| `Selection plugin is already attached.`                     | Reusing a selection plugin across live views                                  | Detach first, or create one plugin per view.                                        |
+| `Waveform already has a Selection owner.`                   | Multiple selection plugins on one view                                        | Keep one selection plugin per view.                                                 |

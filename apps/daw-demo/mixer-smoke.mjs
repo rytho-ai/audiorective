@@ -57,14 +57,15 @@ try {
   const macroControl = page.getByRole("slider", { name: "巨集 1", exact: true });
   await macroControl.press("Home");
   await page.getByRole("button", { name: "Filter 往後", exact: true }).click();
-  const measure = () => page.evaluate((id) => {
-    const { workspace, project } = window.__daw;
-    const track = project.tracks.find((item) => item.id === id);
-    const magnitudes = new Float32Array(1);
-    const filter = track.effects.find((effect) => effect.type === "filter");
-    workspace.trackFilterResponse(id, filter.id, new Float32Array([1500]), magnitudes, new Float32Array(1));
-    return magnitudes[0];
-  }, busId);
+  const measure = () =>
+    page.evaluate((id) => {
+      const { workspace, project } = window.__daw;
+      const track = project.tracks.find((item) => item.id === id);
+      const magnitudes = new Float32Array(1);
+      const filter = track.effects.find((effect) => effect.type === "filter");
+      workspace.trackFilterResponse(id, filter.id, new Float32Array([1500]), magnitudes, new Float32Array(1));
+      return magnitudes[0];
+    }, busId);
   const closed = await measure();
   await macroControl.press("End");
   const opened = await measure();
@@ -78,10 +79,19 @@ try {
     try {
       const restored = reopened.project.tracks.find((item) => item.id === id);
       const magnitudes = new Float32Array(1);
-      reopened.trackFilterResponse(id, track.effects.find((effect) => effect.type === "filter").id,
-        new Float32Array([1500]), magnitudes, new Float32Array(1));
-      return { same: JSON.stringify(restored.effectMacros) === JSON.stringify(track.effectMacros),
-        value: reopened.trackMacroValue(id, restored.effectMacros[0].id).value, magnitude: magnitudes[0], ...snapshot };
+      reopened.trackFilterResponse(
+        id,
+        track.effects.find((effect) => effect.type === "filter").id,
+        new Float32Array([1500]),
+        magnitudes,
+        new Float32Array(1),
+      );
+      return {
+        same: JSON.stringify(restored.effectMacros) === JSON.stringify(track.effectMacros),
+        value: reopened.trackMacroValue(id, restored.effectMacros[0].id).value,
+        magnitude: magnitudes[0],
+        ...snapshot,
+      };
     } finally {
       reopened.destroy();
       reopened.project.destroy();
@@ -134,7 +144,7 @@ try {
       step(0.8, () => render.setTrackRouting(drums.id, { outputBusId: null, sends: [{ busId: wet.id, gain: 0.25 }] })),
       step(1.2, () => {
         active.removeTrack(wet.id);
-        return render.commit();
+        return render.flush();
       }),
     ];
     const output = await context.startRendering();

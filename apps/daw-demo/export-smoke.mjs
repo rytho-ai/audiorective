@@ -112,10 +112,16 @@ try {
   assert.equal(result.cancellation, "AbortError");
   assert.equal(result.report.pluginDependencies.length, 0);
   assert.ok(result.report.limitations.some((line) => line.startsWith("Audio clip gain automation")));
-  assert.deepEqual(result.effectOutput.effects.map(({ type }) => type), ["filter", "delay"]);
+  assert.deepEqual(
+    result.effectOutput.effects.map(({ type }) => type),
+    ["filter", "delay"],
+  );
   assert.equal(result.effectOutput.effects[0].frequency, 100);
   assert.equal(result.effectOutput.effects[1].delayTime, 0.25);
-  assert.ok(result.effectOutput.early < 0.001 && result.effectOutput.echo > 0.002 && result.effectOutput.echo < 0.025, JSON.stringify(result.effectOutput));
+  assert.ok(
+    result.effectOutput.early < 0.001 && result.effectOutput.echo > 0.002 && result.effectOutput.echo < 0.025,
+    JSON.stringify(result.effectOutput),
+  );
   const pluginResult = await page.evaluate(async () => {
     const original = window.__daw.workspace;
     const project = new original.project.constructor({ title: "Plugin export probe" });

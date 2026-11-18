@@ -24,8 +24,8 @@
               <option value="canvas">畫布</option>
               <option value="orchid">蘭紫</option>
             </select></label
-          ><button id="portability">分享說明</button><button id="export-audio">匯出音訊</button><button id="new">新建</button><button id="open">開啟</button
-          ><button id="save" class="primary">儲存工程</button><button id="recover-take" hidden>復原錄音</button
+          ><button id="portability">分享說明</button><button id="export-audio">匯出音訊</button><button id="new">新建</button
+          ><button id="open">開啟</button><button id="save" class="primary">儲存工程</button><button id="recover-take" hidden>復原錄音</button
           ><input id="open-file" type="file" accept=".dawproject" />
         </div>
       </header>
@@ -46,7 +46,15 @@
         </div>
         <div class="zoom-controls">
           <button id="zoom-out" aria-label="縮小時間軸">−</button><button id="zoom-fit" title="顯示整首工程">全部</button
-          ><input id="timeline-zoom" type="range" min="0" max="1000" step="1" aria-label="時間軸縮放" title="拖動連續縮放；在編曲區按 Ctrl／⌘ 並滾輪也可縮放" /><button id="zoom-in" aria-label="放大">＋</button>
+          ><input
+            id="timeline-zoom"
+            type="range"
+            min="0"
+            max="1000"
+            step="1"
+            aria-label="時間軸縮放"
+            title="拖動連續縮放；在編曲區按 Ctrl／⌘ 並滾輪也可縮放"
+          /><button id="zoom-in" aria-label="放大">＋</button>
         </div>
       </div>
       <div class="work-area">
@@ -74,7 +82,8 @@
             ><button id="browser-import" class="browser-item">
               <span class="item-icon audio-icon">↑</span><span><strong>匯入素材</strong><small>試聽後放入音訊軌</small></span
               ><b>＋</b></button
-            ><input id="audio-file" type="file" accept="audio/*" multiple /><div id="sample-browser"></div>
+            ><input id="audio-file" type="file" accept="audio/*" multiple />
+            <div id="sample-browser"></div>
           </div>
           <div class="browser-note">
             <label class="record-latency" for="record-latency"
@@ -96,7 +105,14 @@
           </div>
           <div class="arrange-overview">
             <span>全曲總覽</span>
-            <div id="arrangement-overview" role="slider" tabindex="0" aria-label="編曲視窗" aria-controls="tracks" title="拖曳或點擊以移動編曲視窗"></div>
+            <div
+              id="arrangement-overview"
+              role="slider"
+              tabindex="0"
+              aria-label="編曲視窗"
+              aria-controls="tracks"
+              title="拖曳或點擊以移動編曲視窗"
+            ></div>
           </div>
           <details id="session-panel" class="session-panel">
             <summary>片段觸發</summary>
@@ -133,8 +149,8 @@
               tabindex="0"
             ></div>
             <div class="lower-tabs">
-              <button id="tab-editor" class="active">編輯</button><button id="tab-mixer">混音</button><button id="tab-device">裝置</button><button id="tab-automation">自動化</button
-              ><span id="selection-caption">選取片段開始編輯</span>
+              <button id="tab-editor" class="active">編輯</button><button id="tab-mixer">混音</button><button id="tab-device">裝置</button
+              ><button id="tab-automation">自動化</button><span id="selection-caption">選取片段開始編輯</span>
             </div>
             <div id="editor-panel" class="panel-body"></div>
             <div id="mixer-panel" class="panel-body hidden"></div>
@@ -153,7 +169,10 @@
       </dialog>
       <dialog id="recovery-dialog" aria-labelledby="recovery-title">
         <h2 id="recovery-title">復原錄音</h2>
-        <label>復原時間 <select id="recovery-files"></select></label>
+        <label
+          >復原時間
+          <select id="recovery-files"></select
+        ></label>
         <button id="restore-take" type="button">開啟復原點</button>
         <button id="remove-checkpoint" type="button">刪除復原點</button>
         <form method="dialog"><button>關閉</button></form>

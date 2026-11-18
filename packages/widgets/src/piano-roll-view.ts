@@ -73,7 +73,10 @@ export const defaultPianoRollRenderer: PianoRollRenderer = (root) => ({
           opacity: String(0.3 + (0.7 * note.velocity) / 127),
         });
         el.textContent = name(note.pitch);
-        el.setAttribute("aria-label", `${name(note.pitch)}, ${note.start.toFixed(3)} to ${note.end.toFixed(3)} ${frame.timeUnit}, velocity ${note.velocity}`);
+        el.setAttribute(
+          "aria-label",
+          `${name(note.pitch)}, ${note.start.toFixed(3)} to ${note.end.toFixed(3)} ${frame.timeUnit}, velocity ${note.velocity}`,
+        );
         if (frame.editable) {
           el.title = "Drag to move; drag either edge to resize. Hold Alt to bypass snap.";
           el.style.cursor = "grab";

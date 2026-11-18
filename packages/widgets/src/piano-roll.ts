@@ -88,7 +88,15 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
   };
   const timeToX = (time: number) => clamp(time, 0, state.duration) * scale;
   const snapshot = () =>
-    Object.freeze({ duration: state.duration, timeUnit, pixelsPerUnit: scale, pixelsPerSecond: scale, scrollLeft: viewport.scrollLeft, width: viewport.clientWidth, height });
+    Object.freeze({
+      duration: state.duration,
+      timeUnit,
+      pixelsPerUnit: scale,
+      pixelsPerSecond: scale,
+      scrollLeft: viewport.scrollLeft,
+      width: viewport.clientWidth,
+      height,
+    });
   let renderer: ReturnType<PianoRollRenderer> | undefined;
   let presentation: ReturnType<PianoRollLayout> | undefined;
   const pitchToY = (pitch: number) => ((pitches.high - pitch) * height) / (pitches.high - pitches.low + 1);

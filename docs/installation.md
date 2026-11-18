@@ -14,8 +14,8 @@ Which `@audiorective/*` packages to install, what they pull in, and how to keep 
 | `@audiorective/widgets`    | Waveform/MIDI piano-roll display, range selection and audio audition without a UI framework          | —                       |
 | `@audiorective/blocks`     | Headless audio capture, WavePlayer and cancellable grouped sample hits                               | —                       |
 | `@audiorective/midi`       | MIDI file parsing, shared note data, playback event projection and browser MIDI take recording       | —                       |
-| `@audiorective/workspace`  | Audio/MIDI project ownership, browser playback and DAWproject save/open                             | —                       |
-| `@audiorective/host`       | WebCLAP plug-in hosting through the `./webclap` entry                                               | —                       |
+| `@audiorective/workspace`  | Audio/MIDI project ownership, browser playback and DAWproject save/open                              | —                       |
+| `@audiorective/host`       | WebCLAP plug-in hosting through the `./webclap` entry                                                | —                       |
 | `@audiorective/react`      | React hooks and an engine context                                                                    | `react` `^18 \|\| ^19`  |
 | `@audiorective/threejs`    | Spatial audio that follows three.js objects                                                          | `three` `>=0.150.0`     |
 | `@audiorective/playcanvas` | A shared `AudioContext` and spatial sound bound to PlayCanvas entity transforms                      | `playcanvas` `>=2.18.1` |

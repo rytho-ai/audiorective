@@ -4,7 +4,10 @@
   "description": "Browser WebCLAP plug-in host",
   "type": "module",
   "license": "MIT",
-  "files": ["dist", "LICENSES"],
+  "files": [
+    "dist",
+    "LICENSES"
+  ],
   "exports": {
     "./webclap": {
       "types": "./dist/webclap.d.ts",
@@ -17,7 +20,9 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": { "@audiorective/core": "workspace:^" },
+  "dependencies": {
+    "@audiorective/core": "workspace:^"
+  },
   "devDependencies": {
     "@types/node": "^24.9.1",
     "tsdown": "^0.15.9",

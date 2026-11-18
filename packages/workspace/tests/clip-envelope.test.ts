@@ -43,7 +43,10 @@ test("clip gain automation retains source coordinates across stretch, trim, move
   const track = project.addTrack("Vocal", "audio");
   const audio = { sampleRate: 100, channels: [new Float32Array(200).fill(0.5)] };
   const original = project.addAudioClip(track.id, audio, 0);
-  const points = [{ time: 0, value: 0.25, shape: "linear" }, { time: 1.5, value: 0.75, shape: "hold" }] as const;
+  const points = [
+    { time: 0, value: 0.25, shape: "linear" },
+    { time: 1.5, value: 0.75, shape: "hold" },
+  ] as const;
   const edited = project.setAudioClipGainAutomation(original.id, points);
   expect(edited.channels).toBe(original.channels);
   expect(project.setAudioClipGainAutomation(original.id, points)).toBe(edited);
