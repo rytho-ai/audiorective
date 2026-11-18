@@ -33,3 +33,6 @@ coverage/
 
 # Brainstorming companion mockups
 .superpowers/
+
+# Local project blueprints
+/blueprints/
