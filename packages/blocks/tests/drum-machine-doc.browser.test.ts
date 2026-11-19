@@ -71,7 +71,11 @@ test("hits fire at step times with pattern velocities", async () => {
   clock.stop();
 });
 
-/** Plays open hat (step 2) then closed hat (step 4); optionally deletes the scheduled closed hat first. */
+/**
+ * Plays open hat (step 2) then closed hat (step 4); optionally deletes the scheduled closed hat first.
+ * Everything waits on the audio clock. The deletion only counts when it happens while the audio clock is
+ * still safely before the step's time; if load made the test arrive too late, returns `null` (retry).
+ */
 async function openHatEndedAfterStep4(deleteClosed: boolean) {
   const { bank, sequencer, clock, context } = await drumMachine();
   const spy = vi.spyOn(bank, "trigger");
@@ -80,27 +84,43 @@ async function openHatEndedAfterStep4(deleteClosed: boolean) {
   // closed #0 is step 0, closed #1 is step 4; open #0 is step 2
   await until(() => call("closed", 1) !== undefined);
   const when = call("closed", 1)![2]!;
-  expect(when).toBeGreaterThan(context.currentTime);
   const open = spy.mock.results[spy.mock.calls.findIndex(([id]) => id === "open")].value as { onEnded(l: () => void): void };
   let ended = false;
   open.onEnded(() => (ended = true));
 
   if (deleteClosed) {
+    // The edit is synchronous, so checking the audio clock right before it is race-free.
+    if (context.currentTime > when - SAFE_MARGIN) return null;
     // ---- begin: same code as docs/blocks.md ----
     sequencer.setVelocity("closed", 4, 0);
     clock.refresh();
     // ---- end: same code as docs/blocks.md ----
+  } else {
+    expect(when).toBeGreaterThan(context.currentTime);
   }
 
   await until(() => context.currentTime > when + 0.5);
+  if (!deleteClosed) await until(() => ended);
   return { ended, closedAfter: spy.mock.calls.filter(([id, , w]) => id === "closed" && Math.abs(w! - when) < 1e-6).length };
 }
 
+/** Margin (s) the audio clock must leave before the step so the edit cannot lose the race. */
+const SAFE_MARGIN = 0.03;
+
+async function settled(deleteClosed: boolean) {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const result = await openHatEndedAfterStep4(deleteClosed);
+    if (result) return result;
+    for (const dispose of disposers.splice(0).reverse()) await dispose();
+  }
+  throw new Error("audio clock was never early enough to edit before the step");
+}
+
 test("control: the closed hat at step 4 chokes the open hat", async () => {
-  expect(await openHatEndedAfterStep4(false)).toEqual({ ended: true, closedAfter: 1 });
+  expect(await settled(false)).toEqual({ ended: true, closedAfter: 1 });
 });
 
 test("deleting a scheduled closed-hat step before it plays leaves the open hat sounding", async () => {
-  const result = await openHatEndedAfterStep4(true);
+  const result = await settled(true);
   expect(result.ended).toBe(false);
 });
