@@ -70,22 +70,40 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
   }
 
   /**
-   * Begins playback. Always a position jump (bumps `generation`): the
-   * V1 tempo-automation caveat applies when `atBeat` lands on/after a
-   * scheduled tempo event — see the clock design spec's ST-6.
+   * Begins playback with the Web Audio shape: beat `offsetBeats` sounds at audio-context time `when`, exactly,
+   * following the tempo curve from there. Always a position jump (bumps `generation`).
+   *
+   * - `when` defaults to now. A `when` in the past is clamped to now (like `AudioScheduledSourceNode.start`).
+   * - A `when` in the future puts the transport in `"playing"` immediately; no window reaches past `offsetBeats`, so
+   *   nothing is scheduled to sound before `when`, and `position` stays at its start value until `when`.
+   * - `offsetBeats` defaults to 0 and may be negative (a count-in before beat 0).
+   *
+   * The older `start({ atBeat })` form is the same as `start(undefined, atBeat)`.
+   * The V1 tempo-automation caveat applies when the start lands on/after a scheduled tempo event; see the clock design spec's ST-6.
    */
-  start(options?: { atBeat?: number }): void {
+  start(when?: number, offsetBeats?: number): void;
+  start(options?: { atBeat?: number }): void;
+  start(whenOrOptions?: number | { atBeat?: number }, offsetBeats?: number): void {
+    let when: number | undefined;
+    let atBeat: number;
+    if (typeof whenOrOptions === "object" && whenOrOptions !== null) {
+      atBeat = whenOrOptions.atBeat ?? 0;
+    } else {
+      when = whenOrOptions;
+      atBeat = offsetBeats ?? 0;
+    }
+    if (when !== undefined && !Number.isFinite(when)) throw new RangeError(`Clock start time must be finite seconds, got ${when}`);
+    if (!Number.isFinite(atBeat)) throw new RangeError(`Clock start offset must be finite beats, got ${atBeat}`);
     this._refillPending = false;
     this._cancelOwned();
-    const atBeat = options?.atBeat ?? 0;
     // one change: effects watching `state` never see the new state with stale bookkeeping
-    batch(() => this._timeline._start(atBeat));
+    batch(() => this._timeline._start(atBeat, when));
     this._previousWindowEndBeat = atBeat;
     // deliberately NOT updating _previousWindowEndGeneration here: it must
     // stay stale (mismatching the just-bumped generation) so the first tick
     // recognizes this as a fresh segment and skips the miss check; _tick()
     // catches it up to the current generation once that tick has run.
-    this._startedAt = this._timeline.now;
+    this._startedAt = Math.max(this._timeline.now, when ?? 0);
   }
 
   /**

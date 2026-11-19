@@ -63,9 +63,9 @@ export class Timeline<TRulers extends Record<string, Ruler<unknown, unknown>> = 
     return this._generation;
   }
 
-  /** Pause-aware played seconds — a stopwatch, not tempo-scaled. */
+  /** Pause-aware played seconds — a stopwatch, not tempo-scaled. Stays at the start position until a future `start(when)` is reached. */
   get position(): number {
-    return this._transport === "playing" ? this._positionAtAnchor + (this._now() - this._timeAtAnchor) : this._positionAtAnchor;
+    return this._transport === "playing" ? this._positionAtAnchor + Math.max(0, this._now() - this._timeAtAnchor) : this._positionAtAnchor;
   }
 
   /**
@@ -122,12 +122,16 @@ export class Timeline<TRulers extends Record<string, Ruler<unknown, unknown>> = 
     return out as never;
   }
 
-  /** @internal Anchor write for Clock.start()/start({ atBeat }). Always a jump. */
-  _start(atBeat = 0): void {
+  /**
+   * @internal Anchor write for Clock.start(). Always a jump. Beat `atBeat` sounds at `when` (default and floor: now).
+   * A `when` in the future leaves the transport "playing" at once with the beat frozen at `atBeat` until `when`.
+   */
+  _start(atBeat = 0, when?: number): void {
     const now = this._now();
+    const at = when === undefined || !(when > now) ? now : when;
     this._beatAtAnchor = atBeat;
-    this._timeAtAnchor = now;
-    this._positionAtAnchor = (atBeat * 60) / this.bpm.valueAtTime(now);
+    this._timeAtAnchor = at;
+    this._positionAtAnchor = (atBeat * 60) / this.bpm.valueAtTime(at);
     this._stateCell.value = "playing";
     this._generation++;
   }
@@ -144,7 +148,7 @@ export class Timeline<TRulers extends Record<string, Ruler<unknown, unknown>> = 
     if (this._transport !== "playing") return;
     const now = this._now();
     this._beatAtAnchor = this.timeToBeat(now);
-    this._positionAtAnchor += now - this._timeAtAnchor;
+    this._positionAtAnchor += Math.max(0, now - this._timeAtAnchor);
     this._timeAtAnchor = now;
     this._stateCell.value = "paused";
   }
@@ -185,8 +189,13 @@ export class Timeline<TRulers extends Record<string, Ruler<unknown, unknown>> = 
 
   /** @internal Reissue from Clock's captured audio boundary without moving the heard position. */
   _invalidate(now: number): number {
+    // a start still in the future keeps its anchor: nothing has sounded yet, so only the generation moves
+    if (this._transport === "playing" && now < this._timeAtAnchor) {
+      this._generation++;
+      return this._beatAtAnchor;
+    }
     const beat = this.timeToBeat(now);
-    const position = this._transport === "playing" ? this._positionAtAnchor + (now - this._timeAtAnchor) : this._positionAtAnchor;
+    const position = this._transport === "playing" ? this._positionAtAnchor + Math.max(0, now - this._timeAtAnchor) : this._positionAtAnchor;
     this._beatAtAnchor = beat;
     this._timeAtAnchor = now;
     this._positionAtAnchor = position;
