@@ -359,7 +359,72 @@ Choke is carried by a per-event gain gate, so cancelling an unstarted hit retrac
 
 ## Step Sequencer
 
-`StepSequencer` owns an editable looping pattern: per-lane length, rate, direction and swing, per-step velocity, offset, length, repeat, pitch and chance, and any numbers you declare per step. It borrows a beat transport and an instrument trigger and imports only `@audiorective/core`.
+`StepSequencer` owns an editable looping pattern: per-lane length, rate, direction and swing, per-step velocity, offset, length, repeat, pitch and chance, and any numbers you declare per step. It borrows its time from a clock or transport (`clock.attach(sequencer)`) and imports only `@audiorective/core`. It has two constructor forms: the **lane-record form** below (name lanes, get hits), and the [explicit form](#explicit-form) (shared loop, your own trigger).
+
+### Lane-record form
+
+```ts
+import { StepSequencer } from "@audiorective/blocks/sequencer";
+
+const seq = new StepSequencer(
+  {
+    kick: "X...X...X...X...",
+    snare: { pattern: "....X.......X...", swing: "30%", rate: "16n", sound: snareBuffer },
+    hat: { pattern: "x.x.x.x.x.x.x.x.", sound: "C6", params: { cutoff: { min: 200, max: 8000, default: 1200 } } },
+  },
+  {
+    context: ctx,
+    seed: 1,
+    onHit: (hit) => {
+      /* hit.lane, index, when, duration, velocity, values, loop */
+    },
+  },
+);
+const detach = clock.attach(seq); // or workspace.transport.attach(seq)
+clock.start(ctx.currentTime + 0.5);
+```
+
+Patterns are `X` (velocity 1), `x` (0.8), `1`..`9` (tenths), `.` (rest), spaces ignored; or an array of velocities. Each lane loops forever on its own length at its own rate (true polymeter: lanes of 5, 16 and 8 steps drift apart and realign), starting at beat 0. `rate` is a `Time`: `"16n"` (a quarter of a beat), `"16n."` dotted, `"8t"` triplet, `"1m"` four beats; `"250ms"`, `"2s"` or a number are seconds, converted to beats at the tempo at beat 0. The `StepRate` names (`"1/16"`) also work. `swing` is 0..1 or `"30%"` and delays every second step by that fraction of half a step. Index counts from 0: `hit.index` and `steps[i]` are zero-based.
+
+- **Hear each hit.** `onHit(hit)` runs ahead of time for every hit that will sound; `seq.addEventListener("hit", (e) => e.hit)` and `seq.onhit = fn` receive the same `HitEvent`. A lane can also carry its own `onHit`.
+- **Automate on a hit, and undo it.** `onHit` may return a cleanup. When a pending hit is retracted (an edit re-queues it, the transport stops, pauses or seeks, or `dispose()` runs) the cleanup runs, like a React effect cleanup, so `filter.frequency.setValueAtTime(hit.values.cutoff, hit.when)` with cleanup `filter.frequency.cancelScheduledValues(hit.when)` never lingers or doubles. `onHit` can run again for the same hit after a re-queue, after its cleanup ran.
+- **Edit live.** `seq.lanes.snare.steps[6].velocity = 0.8` and `seq.lanes.hat.steps[0].values.cutoff = 400` write through the sequencer's cells; on an attached transport the pending hits are retracted and queued again (several edits in one task re-queue once), so the next pass plays them. `lane.pattern`, `rate`, `swing`, `mute` and `sound` are live setters; assigning `pattern` also sets the lane's length. Lane `params` declare per-step numbers (`{ min, max, step?, default }`); each step holds one per name and `hit.values` carries them.
+- **Humanize.** `transform(hit, random)` runs in seconds after `transforms` (swing): return the hit moved (`{ ...hit, when: hit.when + (random("t") - 0.5) * 0.016 }`), or `null` to drop it. `random(key?)` is a number in [0, 1) fixed by `seed`, lane, loop, index and `key`, so a re-queued hit gets the same number.
+- **Give a lane a sound.** `sound` is a note name (`"C6"`, a built-in tone), an `AudioBuffer` or a function returning an `AudioScheduledSourceNode`, and needs `options.context`. The lane owns one voice per hit (velocity scales its gain; a retracted hit never sounds) and exposes `lane.output: GainNode`, joined to `context.destination` until `lane.connect(node)` reroutes it (returns `node`) or `lane.disconnect()`. Without a sound the sequencer only reports hits.
+- **Tear down.** `seq.dispose()` (also `using seq = ...` or the `signal` option) detaches from every transport (the transport keeps running), retracts pending hits and runs their cleanups, disconnects lane outputs and removes listeners.
+
+```ts
+class StepSequencer extends EventTarget {
+  constructor(lanes: Record<string, Pattern | LaneOptions>, options?: { context?; seed?; onHit?; transform?; transforms?; signal?; random? });
+  readonly lanes: Readonly<Record<string, Lane>>;
+  lane(name: string): Lane;
+  onhit: ((this: StepSequencer, e: HitEvent) => unknown) | null;
+  attached(handle: { refresh(): void; detach(): void }): () => void; // called by clock.attach
+  dispose(): void;
+}
+class Lane {
+  name;
+  length;
+  pattern;
+  rate;
+  swing;
+  mute;
+  sound;
+  params;
+  output: GainNode;
+  connect(node): AudioNode;
+  disconnect();
+  readonly steps: readonly Step[];
+} // steps: 0-based
+type Step = { velocity: number; readonly values: Record<string, number> };
+type Hit = { lane: string; index: number; when: number; duration: number; velocity: number; values: Readonly<Record<string, number>>; loop: number };
+```
+
+`attach` tells the sequencer which transport it follows (`Scheduler.attached(handle)`, see [Clock](./clock.md#attach-several-schedulers)); that is how edits re-queue without `refreshOnEdit`. A sequencer attached to two clocks queues on both.
+
+### Explicit form
+
+`new StepSequencer({ size, lanes }, trigger, options)` keeps the lanes in one shared loop of `size` 1/16 steps, calls your `trigger` for each hit and leaves routing and re-queuing to you (`refreshOnEdit`, `Workspace.attachStepSequencer`). Everything below documents it. `onHit`, `context` and `sound` belong to the lane-record form; `transform` and `signal` work in both.
 
 `StepSequencer` is the wrong tool when the pattern is not a lane-and-step grid with these per-cell fields, for example per-lane state machines, polyrhythm rules of your own, or note logic that is not a cell edit. Schedule directly instead: iterate `window.rulers.<name>.grid(division)` from a `Clock` `onTick`, trigger the sound at each point's `time`, and register the returned handle with `window.own(hit, time)` so transport edits cut it. See [Clock](./clock.md#own-cancellable-events-when-transport-edits-must-cut-queued-sound) and [Typing the window](./clock.md#typing-the-window).
 
@@ -756,6 +821,20 @@ For engine playback with a Project, and for mounting a view over `state`, see [t
 | `Step Sequencer custom values need declared param ids and finite numbers from each param's min to max.`                                                                             | Declare the id in `params` at construction, and keep each `custom` value within that param's range.                                                                                                                                                      |
 | `Step Sequencer transforms need an array of objects that each have a nonempty string id and an apply function.`                                                                     | Pass `transforms` / `setTransforms` a list of `{ id, apply }` objects.                                                                                                                                                                                   |
 | `Event transform "<id>" returned an event without a finite "beat".` (also `"when"`, `"durationBeats"`, `"duration"`, `"velocity"`, `must return an array`, `has a unit other than`) | The named transform returned a hit with a non-finite `beat` (`when` if it sets `unit: "second"`), a `durationBeats` (`duration`) not above 0, a `velocity` outside 0..1, a non-array, or a `unit` other than `"beat"` or `"second"`. Fix that transform. |
+| `Step Sequencer pattern has an invalid character "…" at position …: use X, x, 1-9 or . (spaces are ignored).`                                                                       | Write patterns with `X`, `x`, `1`..`9` and `.` only.                                                                                                                                                                                                     |
+| `Step Sequencer pattern velocities need numbers from 0 to 1.` / `Step Sequencer pattern needs a string like "X...x..." or an array of velocities from 0 to 1.`                      | Pass a string or an array of numbers from 0 to 1.                                                                                                                                                                                                        |
+| `Step Sequencer pattern needs from 1 to 128 steps.`                                                                                                                                 | Give each lane 1..128 steps.                                                                                                                                                                                                                             |
+| `Step Sequencer needs a Time such as "16n", "16n.", "8t", "1m", "250ms", "2s" or a number of seconds.`                                                                              | Use a note value (`n`, `n.`, `t`, `m` suffix), `ms`/`s` or a number for `rate`.                                                                                                                                                                          |
+| `Step Sequencer needs a rate that is a StepRate or a Time, at least 1/128 of a beat long.`                                                                                          | Use a longer step length such as `"64n"`.                                                                                                                                                                                                                |
+| `Step Sequencer swing needs a number from 0 to 1 or a percentage like "30%".`                                                                                                       | Pass `0.3` or `"30%"`.                                                                                                                                                                                                                                   |
+| `Step Sequencer sound needs a note name like "C4", an AudioBuffer or a function returning an audio source node.`                                                                    | Give `sound` a note name, an `AudioBuffer` or a factory.                                                                                                                                                                                                 |
+| `Step Sequencer sound factory needs to return an AudioScheduledSourceNode (…).`                                                                                                     | Return an oscillator, buffer source or constant source from the factory.                                                                                                                                                                                 |
+| `Step Sequencer needs options.context for a lane with a sound.`                                                                                                                     | Pass `{ context }` in the options when a lane has a `sound`, or read `lane.output`.                                                                                                                                                                      |
+| `Step Sequencer lane params need nonempty names that differ from the built-in cell keys, …`                                                                                         | Name lane `params` something other than `velocity`, `offset`, `length`, `repeat`, `pitch`, `chance`, `custom`; keep `min < max`, `step > 0` and `default` in range.                                                                                      |
+| `Step Sequencer lanes need nonempty names mapped to a pattern or to lane options with a pattern.`                                                                                   | Pass `{ kick: "X..." }` or `{ kick: { pattern: "X..." } }`.                                                                                                                                                                                              |
+| `Step Sequencer onHit and transform need functions.`                                                                                                                                | Pass functions for `onHit` and `transform`.                                                                                                                                                                                                              |
+| `Step Sequencer onHit and context belong to the lane-record form: …`                                                                                                                | Pass lanes as a record of names to patterns to use `onHit`/`context`; the explicit form has `trigger`.                                                                                                                                                   |
+| `Step Sequencer is disposed.`                                                                                                                                                       | Create a new sequencer; a disposed one cannot be attached again.                                                                                                                                                                                         |
 | `Step Sequencer needs an existing lane and step.`                                                                                                                                   | `setCell`/`toggle` need a current lane ID and a zero-based step below `size`.                                                                                                                                                                            |
 | `Step Sequencer needs an existing lane.`                                                                                                                                            | `setLane` needs a current lane ID.                                                                                                                                                                                                                       |
 

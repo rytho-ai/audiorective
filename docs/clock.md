@@ -194,7 +194,7 @@ const detach = clock.attach({
 });
 ```
 
-`onTick` runs first, then each attached scheduler in attach order. Owned events registered by any scheduler are cancelled by `start`, `pause`, `stop`, `seek` and `destroy`, and `refresh()` re-queues every scheduler's pending events. Attaching while playing refreshes the look-ahead; `detach()` calls `reset()` once. An error thrown by one scheduler is logged and the others still run. `Scheduler` and `SchedulerWindow` are exported types; `Workspace.clock` (also `workspace.transport`) is a Clock, so the same `attach` serves a Workspace.
+`onTick` runs first, then each attached scheduler in attach order. Owned events registered by any scheduler are cancelled by `start`, `pause`, `stop`, `seek` and `destroy`, and `refresh()` re-queues every scheduler's pending events. Attaching while playing refreshes the look-ahead; `detach()` calls `reset()` once. An error thrown by one scheduler is logged and the others still run. A scheduler may also define `attached(handle)`: `attach` calls it once with `{ refresh(), detach() }` for that transport and runs the cleanup it returns on detach or `destroy`. `StepSequencer` (lane-record form, see [Step Sequencer](./blocks.md#step-sequencer)) uses it to re-queue after its own edits and to detach on `dispose()`. `Scheduler`, `SchedulerHandle` and `SchedulerWindow` are exported types; `Workspace.clock` (also `workspace.transport`) is a Clock, so the same `attach` serves a Workspace.
 
 ### Start at an audio time
 
