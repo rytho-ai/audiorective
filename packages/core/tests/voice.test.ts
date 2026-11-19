@@ -30,20 +30,43 @@ describe("Voice — playback", () => {
     v.stop();
   });
 
-  test("currentTime advances roughly with wall-clock", async () => {
+  // Voice.currentTime follows the audio clock, not wall time, and the audio
+  // clock can stall under load. Wait on the audio clock itself instead.
+  async function waitForAudioClock(from: number, seconds: number): Promise<void> {
+    const deadline = Date.now() + 5000;
+    while (ctx.currentTime - from < seconds) {
+      if (Date.now() > deadline) {
+        throw new Error(`audio clock advanced only ${ctx.currentTime - from}s of ${seconds}s in 5s`);
+      }
+      await delay(5);
+    }
+  }
+  // The clock ticks in render quanta (128 frames, ~3 ms at 44.1 kHz) and the
+  // voice's start time and our reads can land in adjacent quanta, so allow a
+  // few quanta of slack (x rate, since Voice scales elapsed time by rate).
+  const QUANTA_SLACK = 0.015;
+
+  test("currentTime tracks the audio clock", async () => {
     const dest = ctx.createGain();
+    const t0 = ctx.currentTime;
     const v = new Voice(ctx, makeBuffer(ctx, 2), dest, {}, () => {});
-    await delay(150);
-    expect(v.currentTime).toBeGreaterThan(0.08);
-    expect(v.currentTime).toBeLessThan(0.5);
+    await waitForAudioClock(t0, 0.12);
+    const reported = v.currentTime;
+    const elapsed = ctx.currentTime - t0;
+    expect(reported).toBeGreaterThanOrEqual(0.12 - QUANTA_SLACK);
+    expect(Math.abs(reported - elapsed)).toBeLessThan(QUANTA_SLACK);
     v.stop();
   });
 
-  test("currentTime advances ~2x at rate 2", async () => {
+  test("currentTime advances ~2x the audio clock at rate 2", async () => {
     const dest = ctx.createGain();
+    const t0 = ctx.currentTime;
     const v = new Voice(ctx, makeBuffer(ctx, 2), dest, { rate: 2 }, () => {});
-    await delay(150);
-    expect(v.currentTime).toBeGreaterThan(0.18);
+    await waitForAudioClock(t0, 0.12);
+    const reported = v.currentTime;
+    const elapsed = ctx.currentTime - t0;
+    expect(reported).toBeGreaterThanOrEqual(2 * 0.12 - 2 * QUANTA_SLACK);
+    expect(Math.abs(reported - 2 * elapsed)).toBeLessThan(2 * QUANTA_SLACK);
     v.stop();
   });
 
