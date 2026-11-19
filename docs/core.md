@@ -527,7 +527,7 @@ class Analyser extends AudioProcessor {
   readFrequencies(out: Uint8Array): void; // 0–255 per bin (getByteFrequencyData)
   readWaveform(out: Uint8Array): void; // 0–255, 128 = silence (getByteTimeDomainData)
 
-  constructor(context: AudioContext, options?: AnalyserOptions);
+  constructor(context: BaseAudioContext, options?: AnalyserOptions);
 }
 
 interface AnalyserOptions {
@@ -1261,16 +1261,20 @@ signals/src/
 
 ## Exports
 
+Every name below is exported from the `@audiorective/core` root. `scripts/check-core-exports.test.mjs` fails when this list and `packages/core/src/index.ts` differ.
+
 ```typescript
 // Classes
-export { Param, SchedulableParam, ParamSync, AudioProcessor, AudioEngine, Cell, Spatial, Analyser };
+export { Param, SchedulableParam, ParamSync, AudioProcessor, AudioEngine, Cell, ReadonlyCell, Spatial, Analyser };
 export { Sampler, BufferPlayer, FilePlayer, Voice };
 export { AudioBufferCache };
 export { EngineEnvironmentError, LatencyUnknownError, WorkletUnavailableError };
 
-// Factories
-export { createEngine, cell, defineGraph };
-export { loadAudioBuffer, registerWorklet };
+// Factories and functions
+export { createEngine, cell, readonlyCell, defineGraph };
+export { batch, untracked, effect, computed };
+export { loadAudioBuffer, registerWorklet, reverseBuffer, renderOffline };
+export { applyEventTransforms, withCancel };
 export { summarizePeaks, peakFrameRange };
 
 // Constants
@@ -1278,6 +1282,10 @@ export { DEFAULT_SYNC_INTERVAL_MS };
 
 // Types
 export type {
+  EngineStateView,
+  ValueRange,
+  ParamRange,
+  ParamSpec,
   ParamBind,
   ParamOptions,
   EngineState,
@@ -1293,6 +1301,17 @@ export type {
   BufferPlayerOptions,
   VoiceOptions,
   FilePlayerOptions,
+  CancellableEvent,
+  BeatTiming,
+  ScheduledEvent,
+  TimedEvent,
+  BeatEvent,
+  TimedBeatEvent,
+  SecondsOf,
+  EventTransformUnit,
+  EventTransformContext,
+  EventTransform,
+  RenderOfflineOptions,
   GraphEdge,
   EdgeList,
   EdgeOptions,
@@ -1300,10 +1319,9 @@ export type {
   GraphOptions,
   GraphSource,
   GraphSink,
+  GraphSnapshot,
   PCMData,
   PeakSummary,
-  CancellableEvent,
-  BeatTiming,
 };
 ```
 

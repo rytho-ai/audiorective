@@ -25,6 +25,13 @@ describe("Analyser", () => {
     a.destroy();
   });
 
+  test("constructs on an OfflineAudioContext", async () => {
+    const offline = new OfflineAudioContext(1, 128, 44100);
+    const a = new Analyser(offline, { fftSize: 256 });
+    expect(a.binCount).toBe(128);
+    a.destroy();
+  });
+
   test("binCount is fftSize / 2; buffers are sized to match", () => {
     const a = new Analyser(ctx, { fftSize: 512 });
     expect(a.fftSize).toBe(512);

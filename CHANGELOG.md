@@ -30,6 +30,7 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Changed
 
+- **core:** `Analyser` takes a `BaseAudioContext` (it was typed `AudioContext`), so it can be built on an `OfflineAudioContext` like every other processor.
 - **blocks:** `StepHit` extends `TimedEvent` and gains `count`, `beat`, `rateBeats`, `swing`, `custom` and `loop`; `StepCell` gains `custom` (`{}` without `params`). Lane `swing` is applied by the `stepSwing` transform, so a custom `transforms` list without it makes `swing` inert; compose `[...defaultStepTransforms, mine]` to keep it.
 
 ### Changed (breaking)

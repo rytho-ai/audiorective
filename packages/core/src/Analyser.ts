@@ -33,7 +33,7 @@ export interface AnalyserOptions {
 export class Analyser extends AudioProcessor {
   readonly node: AnalyserNode;
 
-  constructor(context: AudioContext, options: AnalyserOptions = {}) {
+  constructor(context: BaseAudioContext, options: AnalyserOptions = {}) {
     const node = new AnalyserNode(context, {
       fftSize: options.fftSize ?? 2048,
       smoothingTimeConstant: options.smoothingTimeConstant ?? 0.8,
