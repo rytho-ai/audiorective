@@ -4,6 +4,14 @@ import { BufferPlayer, cell, effect } from "../src";
 function makeBuffer(ctx: AudioContext, seconds = 0.5): AudioBuffer {
   return ctx.createBuffer(1, Math.max(1, Math.ceil(ctx.sampleRate * seconds)), ctx.sampleRate);
 }
+// Ramps run on the audio clock, which can stall under load; wait on it, not wall time.
+async function waitForAudioClock(ctx: AudioContext, from: number, seconds: number): Promise<void> {
+  const deadline = Date.now() + 5000;
+  while (ctx.currentTime - from < seconds) {
+    if (Date.now() > deadline) throw new Error(`audio clock advanced only ${ctx.currentTime - from}s of ${seconds}s in 5s`);
+    await delay(5);
+  }
+}
 function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -63,7 +71,7 @@ describe("BufferPlayer", () => {
       .cancelScheduledValues(t)
       .setValueAtTime(p.params.rate.read(), t)
       .exponentialRampToValueAtTime(0.1, t + 0.05);
-    await delay(150);
+    await waitForAudioClock(ctx, t, 0.15);
     expect(p.params.rate.read()).toBeLessThan(0.5); // spun down on the real source
     p.stop();
     p.destroy();
@@ -75,7 +83,7 @@ describe("BufferPlayer", () => {
     p.start();
     const t = ctx.currentTime;
     p.params.rate.setValueAtTime(1, t).exponentialRampToValueAtTime(0.1, t + 0.05);
-    await delay(120);
+    await waitForAudioClock(ctx, t, 0.12);
     expect(p.params.rate.read()).toBeLessThan(0.5);
     p.stop();
 
@@ -83,7 +91,7 @@ describe("BufferPlayer", () => {
     expect(p.params.rate.read()).toBeCloseTo(1); // re-anchored to base, not the spun-down 0.1
     const t2 = ctx.currentTime;
     p.params.rate.setValueAtTime(1, t2).exponentialRampToValueAtTime(0.1, t2 + 0.05);
-    await delay(120);
+    await waitForAudioClock(ctx, t2, 0.12);
     expect(p.params.rate.read()).toBeLessThan(0.5); // new source automates too
     p.stop();
     p.destroy();
