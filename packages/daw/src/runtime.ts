@@ -6,7 +6,7 @@ import { WebClapHost } from "@audiorective/host/webclap";
 import { ClipLauncher, type ClipLaunch, type ClipLauncherState, type QueuedClipLaunch } from "@audiorective/blocks/launcher";
 import type { StepSequencer } from "@audiorective/blocks/sequencer";
 import type { WaveStretchAnchor, WaveStretchProcessor } from "@audiorective/blocks/player";
-import { EffectRack, retainRackMacroTargets, type RackEffect } from "@audiorective/effects/rack";
+import { EffectRack, type RackEffect } from "@audiorective/effects/rack";
 import { AudioTrackSession } from "./audio-track-session";
 import { Audition, type RangeAuditionState } from "./audition";
 import { ClipStretch, type PreparedClipStretch } from "./clip-stretch";
@@ -20,38 +20,10 @@ export { scheduleClipEnvelope } from "./schedule-clip-envelope";
 export type { PreparedClipStretch } from "./clip-stretch";
 
 export type { RangeAuditionState } from "./audition";
+import { collectGainAutomationEdits, deviceKeys, updateRack } from "./track-reconcile";
+import { assertTakeAudioTime, placeTake, type TakeAnchor } from "./take-placement";
 import type { TrackRuntime } from "./track-runtime";
 
-function collectGainAutomationEdits(
-  before: ProjectTrack["clips"],
-  after: ProjectTrack["clips"],
-  edits: Map<string, AudioClipGainAutomation | undefined>,
-): boolean {
-  if (before.length !== after.length) return false;
-  for (let index = 0; index < before.length; index++) {
-    const old = before[index];
-    const clip = after[index];
-    if (old === clip) continue;
-    if (
-      old.kind !== "audio" ||
-      clip.kind !== "audio" ||
-      old.id !== clip.id ||
-      old.time !== clip.time ||
-      old.duration !== clip.duration ||
-      old.sampleRate !== clip.sampleRate ||
-      old.envelope !== clip.envelope ||
-      old.stretch !== clip.stretch ||
-      old.channels !== clip.channels ||
-      old.media !== clip.media ||
-      (old.media && clip.media && old.startFrame !== clip.startFrame)
-    )
-      return false;
-    edits.set(clip.id, clip.gainAutomation);
-  }
-  return true;
-}
-const deviceKeys = (track: ProjectTrack): readonly string[] =>
-  track.devices.map((device) => `${device.id}\u0000${device.pluginId}\u0000${device.bundleUrl}`);
 export type WorkspaceOptions = {
   destination?: AudioNode;
   workletUrl?: string;
@@ -71,7 +43,7 @@ export type WorkspacePlayer = Readonly<{
     seek(seconds: number): void;
   }>;
 }>;
-export type TakeAnchor = Readonly<{ audioTime: number; projectTime: number; advancing: boolean }>;
+export type { TakeAnchor } from "./take-placement";
 /** One live DAW workspace over one Project. Project remains the sole persistent-data owner. */
 export class Workspace {
   readonly context: AudioContext;
@@ -258,24 +230,14 @@ export class Workspace {
   /** Capture the relationship between the audio clock and the project before arming a recorder. */
   takeAnchor(audioTime = this.context.currentTime): TakeAnchor {
     if (this.destroyed) throw new Error("Workspace is destroyed.");
-    if (!Number.isFinite(audioTime) || audioTime < 0) throw new RangeError("Workspace take anchor needs a finite non-negative audio time.");
+    assertTakeAudioTime(audioTime);
     return untracked(() => ({ audioTime, projectTime: this.position, advancing: this.clock.state.value === "playing" }));
   }
 
   /** Positive input latency moves a take earlier. Use preroll when this would cross project zero. */
   takePosition(anchor: TakeAnchor, take: Readonly<{ startTime: number }>, inputLatencySeconds = 0): number {
     if (this.destroyed) throw new Error("Workspace is destroyed.");
-    if (
-      ![anchor.audioTime, anchor.projectTime, take.startTime, inputLatencySeconds].every(Number.isFinite) ||
-      anchor.audioTime < 0 ||
-      anchor.projectTime < 0 ||
-      take.startTime < 0 ||
-      inputLatencySeconds < 0
-    )
-      throw new RangeError("Workspace take placement needs a valid anchor, take start and non-negative input latency.");
-    const time = anchor.projectTime + (anchor.advancing ? take.startTime - anchor.audioTime : 0) - inputLatencySeconds;
-    if (time < 0) throw new RangeError("Workspace take placement crosses project zero; use preroll or a smaller latency correction.");
-    return time;
+    return placeTake(anchor, take, inputLatencySeconds);
   }
 
   private serialize<T>(task: () => Promise<T>): Promise<T> {
@@ -531,7 +493,7 @@ export class Workspace {
         if (!refreshClips) refreshClips = !collectGainAutomationEdits(runtime.clips, track.clips, gainEdits);
       }
       runtime.clips = track.clips;
-      this.updateRack(runtime, track);
+      updateRack(runtime, track);
       this.updateAutomation(runtime, track);
     }
     this.mixer.applyRouting(tracks);
@@ -565,34 +527,6 @@ export class Workspace {
     }
     if (this.clock.state.value !== "playing")
       runtime.automationGain.gain.setValueAtTime(runtime.automationCurve.valueAt(this.position), this.context.currentTime);
-  }
-
-  private updateRack(runtime: TrackRuntime, track: ProjectTrack): void {
-    const effectsChanged = runtime.effectSettings !== track.effects;
-    if (runtime.macroSettings !== track.effectMacros) {
-      const retained = effectsChanged ? retainRackMacroTargets(track.effects, runtime.macroSettings) : runtime.macroSettings;
-      const valuesOnly =
-        retained.length === track.effectMacros.length &&
-        retained.every((old, i) => {
-          const macro = track.effectMacros[i];
-          return (
-            old.id === macro.id &&
-            old.label === macro.label &&
-            old.targets.length === macro.targets.length &&
-            old.targets.every((target, j) => target === macro.targets[j])
-          );
-        });
-      if (!valuesOnly) {
-        runtime.rack.setPreset({ effects: track.effects, macros: track.effectMacros });
-      } else {
-        if (effectsChanged) runtime.rack.setEffects(track.effects);
-        for (const [i, macro] of track.effectMacros.entries()) {
-          if (macro.value !== retained[i].value) runtime.rack.macro(macro.id)!.param.value = macro.value;
-        }
-      }
-    } else if (effectsChanged) runtime.rack.setEffects(track.effects);
-    runtime.effectSettings = track.effects;
-    runtime.macroSettings = track.effectMacros;
   }
 
   private positionAutomation(seconds: number, playing: boolean): void {

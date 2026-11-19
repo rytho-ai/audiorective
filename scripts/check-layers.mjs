@@ -37,6 +37,8 @@ const DAW_RUNTIME = [
   "mixer.ts",
   "audition.ts",
   "clip-stretch.ts",
+  "take-placement.ts",
+  "track-reconcile.ts",
   "project-lookup.ts",
 ];
 const DAW_ROOT = ["index.ts", "compose.ts"];
