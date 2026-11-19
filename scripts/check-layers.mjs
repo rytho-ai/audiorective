@@ -34,6 +34,7 @@ const DAW_RUNTIME = [
   "schedule-clip-envelope.ts",
   "track-runtime.ts",
   "clip-scheduler.ts",
+  "mixer.ts",
 ];
 const DAW_ROOT = ["index.ts", "compose.ts"];
 

@@ -6,11 +6,10 @@ import { WebClapHost } from "@audiorective/host/webclap";
 import { ClipLauncher, type ClipLaunch, type ClipLauncherState, type QueuedClipLaunch } from "@audiorective/blocks/launcher";
 import type { StepSequencer } from "@audiorective/blocks/sequencer";
 import type { WaveStretchAnchor, WaveStretchProcessor } from "@audiorective/blocks/player";
-import { Channel, SendBus } from "@audiorective/effects";
 import { EffectRack, retainRackMacroTargets, type RackEffect } from "@audiorective/effects/rack";
 import { AudioTrackSession } from "./audio-track-session";
 import { ClipScheduler } from "./clip-scheduler";
-import { soloRouting } from "./mixer-routing";
+import { Mixer, type MixerStrip } from "./mixer";
 import { MidiClip, Project, audioFrameCount } from "./model";
 import { normalizeClipAnchors } from "./clip-time-map";
 import type { TempoMap } from "./tempo-map";
@@ -123,8 +122,7 @@ export class Workspace {
   private failedApplication?: { cause: unknown };
   private playRequest = 0;
   private destroyed = false;
-  private readonly sendBus: SendBus;
-  private sendSerial = 0;
+  private readonly mixer: Mixer;
 
   private constructor(context: AudioContext, project: Project, options: WorkspaceOptions) {
     this.context = context;
@@ -133,7 +131,7 @@ export class Workspace {
     this.options = options;
     this.scheduler = new ClipScheduler(context, (message) => this.warn(message));
     this.output = context.createGain();
-    this.sendBus = new SendBus(context);
+    this.mixer = new Mixer(context, this.output, this.tracks, () => this.project);
     if (options.destination) this.output.connect(options.destination);
     this.timeline = new Timeline({ audioContext: context, bpm: project.bpm });
     this.clock = new Clock({ timeline: this.timeline, lookAhead: 0.15, tickInterval: 0.025, onTick: (window) => this.schedule(window) });
@@ -375,8 +373,8 @@ export class Workspace {
         this.tracks.set(track.id, runtime);
       }
       if (this.project.tracks !== tracks) return await this.rebuildTracks(position);
-      this.applyRouting(tracks);
-      this.applyMixer();
+      this.mixer.applyRouting(tracks);
+      this.mixer.applyMixer();
       this.bindSequences();
       this.seek(position);
       this.topologyPending.value = false;
@@ -389,22 +387,15 @@ export class Workspace {
 
   private async createTrack(track: ProjectTrack): Promise<TrackRuntime> {
     const automationGain = this.context.createGain();
-    let channel: Channel | undefined;
-    let sendName: string | undefined;
+    let strip: MixerStrip | undefined;
     let rack: EffectRack;
     try {
-      // "max" keeps a mono source mono into the panner, so it gets the mono equal-power law.
-      // Project owns gain, pan, mute and solo; applyMixer writes them into the Channel params and nothing reads them back.
-      channel = new Channel(this.context, { channelCountMode: "max" });
-      automationGain.connect(channel.input);
-      sendName = `${track.id}#${this.sendSerial++}`;
-      this.sendBus.define(sendName);
+      strip = this.mixer.createStrip(track.id, automationGain);
       rack = new EffectRack(this.context, track.effects, track.effectMacros);
     } catch (error) {
       // Nothing is registered yet, so release whatever was built before the failure.
       automationGain.disconnect();
-      channel?.destroy();
-      if (sendName !== undefined) this.sendBus.undefine(sendName);
+      if (strip) this.mixer.releaseStrip(strip);
       throw error;
     }
     const runtime: TrackRuntime = {
@@ -412,12 +403,12 @@ export class Workspace {
       clips: track.clips,
       deviceKeys: deviceKeys(track),
       deviceStates: new Map(track.devices.map((device) => [device.id, device.state])),
-      channel,
+      channel: strip.channel,
       automationGain,
       rack,
       effectSettings: track.effects,
       macroSettings: track.effectMacros,
-      sendName,
+      sendName: strip.sendName,
       sends: new Map(),
       input: automationGain,
       hosts: new Map(),
@@ -454,7 +445,7 @@ export class Workspace {
         previous.output.connect(runtime.rack.input);
         runtime.input = [...runtime.hosts.values()][0].input;
       }
-      this.sendBus.receive(sendName).connect(runtime.input);
+      this.mixer.connectReceive(strip, runtime.input);
       if (track.kind === "audio") runtime.session = new AudioTrackSession(this.context, runtime.input);
       this.updateAutomation(runtime, track);
       return runtime;
@@ -540,8 +531,8 @@ export class Workspace {
       this.updateRack(runtime, track);
       this.updateAutomation(runtime, track);
     }
-    this.applyRouting(tracks);
-    this.applyMixer();
+    this.mixer.applyRouting(tracks);
+    this.mixer.applyMixer();
     if (clipsChanged) this.stopStaleAudition();
     if (tempoChanged) this.seek(position);
     else if (refreshClips) this.refreshArrangement();
@@ -756,33 +747,33 @@ export class Workspace {
   setTrackVolume(trackId: string, value: number): void {
     this.reflectProjectEdit(() => {
       this.project.setTrackVolume(trackId, value);
-      this.applyMixer();
+      this.mixer.applyMixer();
     });
   }
 
   setMasterVolume(value: number): void {
     this.reflectProjectEdit(() => {
       this.project.setMasterVolume(value);
-      this.output.gain.setValueAtTime(this.project.masterVolume, this.context.currentTime);
+      this.mixer.applyMaster();
     });
   }
 
   setTrackMuted(trackId: string, muted: boolean): void {
     this.reflectProjectEdit(() => {
       this.project.setTrackMuted(trackId, muted);
-      this.applyMixer();
+      this.mixer.applyMixer();
     });
   }
   setTrackSolo(trackId: string, solo: boolean): void {
     this.reflectProjectEdit(() => {
       this.project.setTrackSolo(trackId, solo);
-      this.applyMixer();
+      this.mixer.applyMixer();
     });
   }
   setTrackPan(trackId: string, pan: number): void {
     this.reflectProjectEdit(() => {
       this.project.setTrackPan(trackId, pan);
-      this.applyMixer();
+      this.mixer.applyMixer();
     });
   }
 
@@ -842,75 +833,14 @@ export class Workspace {
       throw new Error("Sync new or removed tracks before changing live routing.");
     this.reflectProjectEdit(() => {
       this.project.setTrackRouting(trackId, routing);
-      this.applyRouting(this.project.tracks);
-      this.applyMixer();
+      this.mixer.applyRouting(this.project.tracks);
+      this.mixer.applyMixer();
     });
   }
 
   /** Borrow a post-fader track output for the mixer's meter, or use output for the master meter. */
   trackMixerOutput(trackId: string): AudioNode | undefined {
-    return this.tracks.get(trackId)?.channel.tap;
-  }
-
-  private applyRouting(tracks: readonly ProjectTrack[]): void {
-    const inputFor = (id: string | null) => (id === null ? this.output : this.tracks.get(id)!.input);
-    // Remove obsolete edges first so reversing a bus chain never introduces a temporary cycle.
-    for (const track of tracks) {
-      const runtime = this.tracks.get(track.id)!;
-      if (runtime.outputDestination !== inputFor(track.routing.outputBusId)) {
-        runtime.channel.output.disconnect();
-        runtime.outputDestination = undefined;
-      }
-      for (const [id, entry] of runtime.sends) {
-        if (track.routing.sends.some(({ busId }) => busId === id) && entry.target === this.tracks.get(id)) continue;
-        entry.send.dispose();
-        runtime.sends.delete(id);
-      }
-    }
-    for (const track of tracks) {
-      const runtime = this.tracks.get(track.id)!;
-      if (!runtime.outputDestination) {
-        runtime.outputDestination = inputFor(track.routing.outputBusId);
-        runtime.channel.output.connect(runtime.outputDestination);
-      }
-      for (const { busId } of track.routing.sends) {
-        if (runtime.sends.has(busId)) continue;
-        const target = this.tracks.get(busId)!;
-        runtime.sends.set(busId, { target, send: runtime.channel.send(this.sendBus, target.sendName) });
-      }
-    }
-  }
-
-  private disposeRouting(runtime: TrackRuntime): void {
-    runtime.channel.output.disconnect();
-    runtime.outputDestination = undefined;
-    for (const { send } of runtime.sends.values()) send.dispose();
-    runtime.sends.clear();
-  }
-
-  /** Project is the only owner of mixer state: write it into each Channel's params. */
-  private applyMixer(): void {
-    const now = this.context.currentTime;
-    this.output.gain.setValueAtTime(this.project.masterVolume, now);
-    const tracks = this.project.tracks;
-    const solo = soloRouting(tracks);
-    for (const track of tracks) {
-      const runtime = this.tracks.get(track.id);
-      if (!runtime) continue;
-      const { params } = runtime.channel;
-      batch(() => {
-        params.gain.value = track.volume;
-        params.pan.value = track.pan;
-        params.mute.value = track.muted || !solo.strip(track);
-        params.outputEnabled.value = solo.edge(track, track.routing.outputBusId);
-        for (const { busId, gain } of track.routing.sends) {
-          const send = runtime.sends.get(busId)?.send;
-          if (!send) continue;
-          send.gain.value = gain;
-          send.enabled.value = solo.edge(track, busId);
-        }
-      });
-    }
+    return this.mixer.tap(trackId);
   }
 
   host(deviceId: string): WebClapHost | undefined {
@@ -1200,9 +1130,7 @@ export class Workspace {
     for (const host of runtime.hosts.values()) host.destroy();
     runtime.automationBinding?.destroy();
     runtime.automationGain.disconnect();
-    this.disposeRouting(runtime);
-    runtime.channel.destroy();
-    this.sendBus.undefine(runtime.sendName);
+    this.mixer.disposeStrip(runtime);
   }
 
   private disposeTracks(): void {
