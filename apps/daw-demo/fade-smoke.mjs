@@ -352,7 +352,7 @@ try {
       workspace.seek(0.7);
       await workspace.auditionRange({ start: 0.1, end: 0.45 }, { trackIds: [short.id, long.id] });
       // Offline rendering advances faster than a wall-clock worker. Drive the preview's real tick path.
-      const clock = workspace.audition.clock;
+      const clock = workspace.audition.current.clock;
       const pump = async (at, stop = false) => {
         await context.suspend(at);
         if (stop) workspace.stopRangeAudition();

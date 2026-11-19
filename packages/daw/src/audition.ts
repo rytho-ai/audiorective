@@ -39,7 +39,8 @@ export class Audition {
     });
   }
 
-  private get audition(): ClipAudition | RangeAudition | null {
+  /** The running audition, read without subscribing the caller. */
+  get current(): ClipAudition | RangeAudition | null {
     return untracked(() => this.source.value);
   }
 
@@ -55,13 +56,13 @@ export class Audition {
       this.source.value = audition;
     });
     const finish = () => {
-      if (this.audition === audition) this.stopClip();
+      if (this.current === audition) this.stopClip();
     };
     try {
       await this.context.resume();
-      if (this.audition !== audition) return;
+      if (this.current !== audition) return;
       if (clip.media) await this.scheduler.loadMediaBuffer(clip, 0);
-      if (this.audition !== audition) return;
+      if (this.current !== audition) return;
       if (findAudioClip(this.project(), clipId) !== clip) return finish();
 
       if (clip.media) {
@@ -93,18 +94,18 @@ export class Audition {
         handle.onEnded(finish);
       }
     } catch (error) {
-      if (this.audition !== audition) return;
+      if (this.current !== audition) return;
       finish();
       throw error;
     }
   }
 
   stopClip(): void {
-    if (this.audition && "clip" in this.audition) this.stop();
+    if (this.current && "clip" in this.current) this.stop();
   }
 
   stopStale(): void {
-    const audition = this.audition;
+    const audition = this.current;
     if (!audition) return;
     const stale =
       "clip" in audition
@@ -114,7 +115,7 @@ export class Audition {
   }
 
   stop(): void {
-    const audition = this.audition;
+    const audition = this.current;
     if (!audition) return;
     batch(() => {
       this.source.value = null;
@@ -146,7 +147,7 @@ export class Audition {
     });
     try {
       await this.context.resume();
-      if (this.audition !== audition) return;
+      if (this.current !== audition) return;
       await Promise.all(
         clips.map((clip) => {
           if (!clip.media || clip.time >= start + 0.15) return undefined;
@@ -154,9 +155,9 @@ export class Audition {
           return this.scheduler.loadMediaBuffer(clip, index);
         }),
       );
-      if (this.audition !== audition) return;
+      if (this.current !== audition) return;
       this.stopStale();
-      if (this.audition !== audition) return;
+      if (this.current !== audition) return;
 
       const loop = new RangeLoop(state, this.context.currentTime + 0.025);
       const timeline = new Timeline({ audioContext: this.context });
@@ -183,13 +184,13 @@ export class Audition {
       clock.start();
       clock.refresh();
     } catch (error) {
-      if (this.audition !== audition) return;
+      if (this.current !== audition) return;
       this.stop();
       throw error;
     }
   }
 
   stopRange(): void {
-    if (this.audition && "range" in this.audition) this.stop();
+    if (this.current && "range" in this.current) this.stop();
   }
 }
