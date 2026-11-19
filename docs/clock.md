@@ -37,6 +37,26 @@ const clock = new Clock({
 clock.start();
 ```
 
+### `ClockOptions`
+
+```typescript
+interface ClockOptions<TRulers> {
+  timeline: Timeline<TRulers>;
+  onTick: (window: TickWindow<TRulers>) => void; // called once per tick while playing
+  lookAhead?: number; // seconds scheduled ahead of now. Default 0.1
+  tickInterval?: number; // seconds between ticks for the default source. Default 0.025
+  onMiss?: (gap: MissedGap) => void; // a tick landed past the previous window's end
+  tickSource?: TickSource; // replaces the default WorkerTickSource
+}
+
+interface TickSource {
+  start(onTick: () => void): void;
+  stop(): void;
+}
+```
+
+Keep `tickInterval` below `lookAhead`. `tickInterval` has no effect when you pass `tickSource`.
+
 ### Handing a grid point to a core player
 
 The names differ across the package boundary, and that is the single easiest thing to get wrong here: the clock gives you **`time`**, core's players take **`when`**. Both are absolute `AudioContext` seconds, so the value passes straight through — only the key changes.
@@ -85,6 +105,19 @@ timeline.timeToBeat(ctx.currentTime); // current beat position
 
 `timeline.bpm` is a standalone, event-list-backed tempo curve (`TempoParam`) — not an `AudioParam`. It mirrors the Web Audio scheduling method names (`setValueAtTime`, `cancelScheduledValues`, `cancelAndHoldAtTime`) plus a `valueAtTime(t)` query the AudioParam-backed `SchedulableParam` in `@audiorective/core` can never support (Web Audio gives no way to ask an `AudioParam` "what will your value be at time T?"). Tempo changes are steps only: `linearRampToValueAtTime` and `exponentialRampToValueAtTime` throw, because the beat integral is defined over a stepwise curve. A direct write — `bpm.value = x` or `bpm.$(x)` — is a step at the current audio time that leaves later scheduled events intact, and the Clock refreshes the displayed value from the curve every tick.
 
+```typescript
+class TempoParam extends Param<number> {
+  setValueAtTime(value: number, time: number): this; // step at an absolute audio time
+  cancelScheduledValues(time: number): this; // drop every event at or after `time`
+  cancelAndHoldAtTime(time: number): this; // drop later events and hold the value in force at `time`
+  valueAtTime(time: number): number; // the curve's value at any audio time
+  linearRampToValueAtTime(value: number, endTime: number): this; // throws, steps only
+  exponentialRampToValueAtTime(value: number, endTime: number): this; // throws, steps only
+}
+```
+
+Scheduled steps are visible to `beatToTime` immediately, so scheduling a staircase one step at a time and converting beats in between is valid. A user edit while future steps are queued needs `cancelAndHoldAtTime(now)` first, or the next queued step overwrites it.
+
 **What "beat" means:** the axis unit is defined by the tempo curve and nothing else — `bpm` is axis-units per minute, so the unit is literally the B in BPM. It carries no time signature, no bars, no downbeat; it's musically meaningless on its own (like MIDI's quarter-note-normalized ppq ticks) until a ruler interprets it. This is Ableton Link's convention: a float beat plus a bpm, "beat = quarter note" by shared convention.
 
 ## Transport
@@ -95,6 +128,14 @@ clock.pause(); // freezes position; unowned look-ahead audio keeps sounding (an 
 clock.resume(); // continues from the frozen position, no re-scheduling
 clock.stop(); // resets to beat 0
 clock.seek(64); // jumps to beat 64
+```
+
+### Start with a count-in
+
+`start({ atBeat })` accepts a negative beat. The first window begins at that beat, so beat 0 arrives `-atBeat` beats after the call. A launcher or sequencer whose first boundary is beat 0 then waits that long instead of a full bar:
+
+```typescript
+clock.start({ atBeat: -0.5 }); // beat 0, the first launch boundary, is half a beat away
 ```
 
 ### Own cancellable events when transport edits must cut queued sound
@@ -238,6 +279,29 @@ const wav = await renderTimeline({ seconds: 8, channels: 2, sampleRate: 44100 },
 ```
 
 Two rules carry over from live playback. Keep `tickInterval` below the clock's `lookAhead`, or the clock reports misses offline exactly as it would live. And one tick source drives one clock — the one-clock rule below. One rule is offline-only: a render can pause only on a 128-frame render-quantum boundary, so ticks are never closer than one quantum (about 2.9 ms at 44.1 kHz), and a smaller `tickInterval` ticks once per quantum.
+
+### Scripted user actions during an offline render
+
+To launch a clip, edit a pattern or change tempo at a named audio time, wrap the injected tick source and run the actions from inside the tick, on the clock's own schedule:
+
+```typescript
+const actions = [{ at: 2, run: () => launcher.queue([{ trackId: "drums", clipId: "b" }], 4) }];
+
+const wav = await renderTimeline({ seconds: 8, channels: 2, sampleRate: 44100 }, (ctx, source) => {
+  const tickSource: TickSource = {
+    start: (onTick) =>
+      source.start(() => {
+        while (actions.length && actions[0].at <= ctx.currentTime) actions.shift()!.run();
+        onTick();
+      }),
+    stop: () => source.stop(),
+  };
+  const clock = new Clock({ timeline, tickSource, onTick });
+  clock.start();
+});
+```
+
+An action lands on the first tick at or after its time, and ticks are one render quantum apart at best, so record `ctx.currentTime` when it runs and use that, not the requested time, in expectations.
 
 A type that owns its `Clock` needs to accept `tickSource` to be renderable this way — `apps/web/src/demos/sequencer`'s `DrumMachine` does, and its tests render the whole machine through its limiter graph with `renderTimeline`. Unlike a fake `currentTime`, that is a real seam and not a test-only option: it is how the same class runs live and exports offline.
 
