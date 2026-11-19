@@ -52,6 +52,14 @@ export class Workspace {
   readonly output: GainNode;
   readonly timeline: Timeline;
   readonly clock: Clock;
+  /**
+   * The Workspace's beat transport (its `clock`): `transport.timeline` maps beats and time, `transport.attach(scheduler)` follows its windows
+   * and `transport.refresh()` re-queues the look-ahead. Pass it wherever a structural transport is accepted, for example the `transport`
+   * option of `@audiorective/sequencer`. Play, pause, seek and tempo stay with the Workspace.
+   */
+  get transport(): Clock {
+    return this.clock;
+  }
   readonly player: WorkspacePlayer;
   /** Mirrors `cells.session`. */
   readonly session: ReadonlyCell<ClipLauncherState>;

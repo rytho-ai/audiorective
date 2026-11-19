@@ -180,6 +180,22 @@ clock.stop(); // resets to beat 0
 clock.seek(64); // jumps to beat 64
 ```
 
+### Attach several schedulers
+
+`onTick` is optional. `clock.attach(scheduler)` follows the clock with any `{ schedule(window, timing), reset?() }` and returns a detach function; several schedulers share one transport and stay beat-aligned because they all read the same windows and the clock's `timeline` (`clock.timeline`).
+
+```typescript
+const clock = new Clock({ timeline, lookAhead: 0.1 }); // no onTick
+const detach = clock.attach({
+  schedule(window, timing) {
+    // window.beat, window.time.current, window.own(event, when); timing.beatToTime(beat)
+  },
+  reset() {}, // after start, pause, stop, seek or destroy have cancelled the owned events
+});
+```
+
+`onTick` runs first, then each attached scheduler in attach order. Owned events registered by any scheduler are cancelled by `start`, `pause`, `stop`, `seek` and `destroy`, and `refresh()` re-queues every scheduler's pending events. Attaching while playing refreshes the look-ahead; `detach()` calls `reset()` once. An error thrown by one scheduler is logged and the others still run. `Scheduler` and `SchedulerWindow` are exported types; `Workspace.clock` (also `workspace.transport`) is a Clock, so the same `attach` serves a Workspace.
+
 ### Start at an audio time
 
 `start(when = now, offsetBeats = 0)` has the shape of `AudioScheduledSourceNode.start`: beat `offsetBeats` sounds at audio-context time `when`, exactly, and later beats follow the tempo curve from there (the tempo in force at `when` sets the pace of the first beats).
@@ -429,6 +445,7 @@ Two things to remember when writing assertions:
 | `Clock owned event time must be finite, non-negative seconds.`                                                                      | `window.own(event, when)` received an invalid audio time; the event is cancelled before the error is thrown.       | Pass the same absolute `AudioContext` time used to schedule that event.                                                      |
 | `RangeLoop needs increasing finite source seconds and a non-negative audio start.` / `RangeLoop window needs finite audio seconds.` | The time range or window contains an invalid bound.                                                                | Use finite seconds and place the source end after its start.                                                                 |
 | `TempoParam ramp end time must be finite, got …`                                                                                    | `linearRampToValueAtTime` or `exponentialRampToValueAtTime` received NaN or an infinite end time.                  | Pass the absolute `AudioContext` time at which the ramp reaches its value.                                                   |
+| `Clock is destroyed.` / `Clock already has this scheduler attached.`                                                                | `attach` was called on a destroyed clock, or with a scheduler that is already attached.                            | Create a new Clock, or detach the scheduler first.                                                                           |
 | `Clock start time must be finite seconds, got …` / `Clock start offset must be finite beats, got …`                                 | `start(when, offsetBeats)` or `start({ atBeat })` received NaN or an infinite number.                              | Pass a finite audio time and a finite beat.                                                                                  |
 | `TempoParam start time must be finite, got …` / `TempoParam time constant must be finite and >= 0, got …`                           | `setTargetAtTime` or `setValueCurveAtTime` received a non-finite start, or a negative or non-finite time constant. | Pass an absolute `AudioContext` time and a time constant of 0 or more.                                                       |
 | `TempoParam value curve needs at least 2 values.` / `TempoParam value curve duration must be finite and > 0, got …`                 | `setValueCurveAtTime` got fewer than two values, or a zero, negative or non-finite duration.                       | Pass two or more bpm values and a duration above 0 seconds.                                                                  |

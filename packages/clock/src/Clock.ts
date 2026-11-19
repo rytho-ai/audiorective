@@ -1,4 +1,4 @@
-import { batch, type CancellableEvent, type ReadonlyCell } from "@audiorective/core";
+import { batch, type BeatTiming, type CancellableEvent, type ReadonlyCell } from "@audiorective/core";
 import type { Timeline } from "./Timeline";
 import type { Ruler } from "./rulers/Ruler";
 import { WorkerTickSource } from "./TickSource";
@@ -19,11 +19,28 @@ export type TickWindow<TRulers extends Record<string, Ruler<unknown, unknown>>> 
   own(event: CancellableEvent, when: number): void;
 };
 
+/** The part of a tick window an attached scheduler reads: the beat span to fill, the audio time now, and `own` for cancellable events. */
+export interface SchedulerWindow {
+  beat: { start: number; end: number };
+  time: { current: number };
+  own(event: CancellableEvent, when: number): void;
+}
+
+/**
+ * A pattern, sequencer or generator that follows a clock's windows. `schedule` runs once per look-ahead window and registers its events
+ * with `window.own`; `reset` runs when the transport jumps (`start`, `pause`, `stop`, `seek`, `destroy`) after owned events are cancelled.
+ */
+export interface Scheduler {
+  schedule(window: SchedulerWindow, timing: BeatTiming): void;
+  reset?(): void;
+}
+
 export interface ClockOptions<TRulers extends Record<string, Ruler<unknown, unknown>>> {
   timeline: Timeline<TRulers>;
   lookAhead?: number;
   tickInterval?: number;
-  onTick: (window: TickWindow<TRulers>) => void;
+  /** Called with every window. Optional: schedulers can instead follow the clock with `attach`. */
+  onTick?: (window: TickWindow<TRulers>) => void;
   onMiss?: (gap: MissedGap) => void;
   tickSource?: TickSource;
 }
@@ -40,7 +57,8 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
 
   private readonly _timeline: Timeline<TRulers>;
   private readonly _lookAhead: number;
-  private readonly _onTick: (window: TickWindow<TRulers>) => void;
+  private readonly _onTick: ((window: TickWindow<TRulers>) => void) | undefined;
+  private readonly _schedulers = new Set<Scheduler>();
   private readonly _onMiss?: (gap: MissedGap) => void;
   private readonly _tickSource: TickSource;
 
@@ -67,6 +85,40 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     this._tickSource = options.tickSource ?? new WorkerTickSource((options.tickInterval ?? 0.025) * 1000);
     this.state = options.timeline.state;
     this._tickSource.start(() => this._tick());
+  }
+
+  /** The beat/time mapping this clock plays. */
+  get timeline(): Timeline<TRulers> {
+    return this._timeline;
+  }
+
+  /**
+   * Follow this clock with a scheduler: it receives every window after `onTick`, with this clock's timeline as its timing. Several schedulers
+   * share one transport and stay beat-aligned. Returns a detach function (idempotent) that calls `scheduler.reset()` and stops the windows.
+   * Attaching while playing refreshes the look-ahead so the scheduler's first hits are not missed. An error thrown by a scheduler is logged
+   * and does not stop the others.
+   */
+  attach(scheduler: Scheduler): () => void {
+    if (this._destroyed) throw new Error("Clock is destroyed.");
+    if (this._schedulers.has(scheduler)) throw new Error("Clock already has this scheduler attached.");
+    this._schedulers.add(scheduler);
+    this.refresh();
+    return () => {
+      if (!this._schedulers.delete(scheduler)) return;
+      this._resetScheduler(scheduler);
+    };
+  }
+
+  private _resetSchedulers(): void {
+    for (const scheduler of [...this._schedulers]) this._resetScheduler(scheduler);
+  }
+
+  private _resetScheduler(scheduler: Scheduler): void {
+    try {
+      scheduler.reset?.();
+    } catch (error) {
+      console.error("Clock scheduler reset failed:", error);
+    }
   }
 
   /**
@@ -96,6 +148,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     if (!Number.isFinite(atBeat)) throw new RangeError(`Clock start offset must be finite beats, got ${atBeat}`);
     this._refillPending = false;
     this._cancelOwned();
+    this._resetSchedulers();
     // one change: effects watching `state` never see the new state with stale bookkeeping
     batch(() => this._timeline._start(atBeat, when));
     this._previousWindowEndBeat = atBeat;
@@ -121,6 +174,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     if (this._timeline._transportState !== "playing") return;
     this._refillPending = false;
     this._cancelOwned();
+    this._resetSchedulers();
     this._timeline._pause();
   }
 
@@ -138,6 +192,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
   stop(): void {
     this._refillPending = false;
     this._cancelOwned();
+    this._resetSchedulers();
     this._timeline._stop();
     this._previousWindowEndBeat = 0;
   }
@@ -146,6 +201,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
   seek(beat: number): void {
     this._refillPending = false;
     this._cancelOwned();
+    this._resetSchedulers();
     this._timeline._seek(beat);
     this._previousWindowEndBeat = beat;
     // see start(): _previousWindowEndGeneration deliberately stays stale here too
@@ -179,6 +235,8 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     this._refillPending = false;
     this._tickSource.stop();
     this._cancelOwned();
+    this._resetSchedulers();
+    this._schedulers.clear();
   }
 
   private _cancelOwned(fromNow = false, now = this._timeline.now): void {
@@ -257,11 +315,20 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
           generation,
           transport: { state: this._timeline._transportState, position: this._timeline.position },
         };
-        this._onTick({
+        const window = {
           ...coreWindow,
           rulers: this._timeline._readWindowRulers(coreWindow),
           own: (event: CancellableEvent, when: number) => this._own(event, when, generation),
-        } as TickWindow<TRulers>);
+        } as TickWindow<TRulers>;
+        this._onTick?.(window);
+        for (const scheduler of [...this._schedulers]) {
+          if (this._timeline.generation !== generation) break; // a callback moved the transport: this window is stale
+          try {
+            scheduler.schedule(window, this._timeline);
+          } catch (error) {
+            console.error("Clock scheduler failed:", error);
+          }
+        }
       }
 
       if (this._timeline.generation === generation) {
