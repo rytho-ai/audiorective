@@ -3,7 +3,21 @@ export type TempoChange = Readonly<{ beat: number; bpm: number }>;
 
 type Step = TempoChange & Readonly<{ seconds: number }>;
 
-/** Immutable conversion between musical beats and project seconds. */
+/**
+ * Immutable conversion between musical beats and project seconds.
+ *
+ * This is deliberately not `@audiorective/clock`'s `TempoCurve`. They share only the
+ * piecewise-constant integration:
+ * - Domain: `TempoMap` is keyed by project beats (the Project model, the DAWproject codec and
+ *   clip placement). `TempoCurve` is keyed by AudioContext seconds, for live transport playback.
+ * - Mutability: `TempoMap` is immutable, so a Project snapshot or a file can hold one safely.
+ *   `TempoCurve` is a mutable event list that is edited while playing.
+ * - Layering: `daw/project` must not import `clock`, so the Node project-file tool does not
+ *   load the scheduler.
+ *
+ * Numerical agreement with clock's tempo maths is guarded by
+ * `tests/tempo-agreement.test.ts`, which feeds the same schedule to a clock `Timeline`.
+ */
 export class TempoMap {
   readonly initialBpm: number;
   readonly changes: readonly TempoChange[];
