@@ -37,7 +37,7 @@ try {
   await page.locator("#launch-quantum").selectOption("bar");
   const intro = page.getByRole("button", { name: "場景 Intro" });
   await intro.click();
-  await page.waitForFunction(() => window.__daw.workspace.session.value.queued?.beat === 4);
+  await page.waitForFunction(() => window.__daw.workspace.session.value.queued[0]?.beat === 4);
   assert.equal(await intro.getAttribute("data-clip-state"), "queued");
   await page.getByRole("button", { name: "取消排隊" }).click();
   assert.equal(await intro.getAttribute("data-clip-state"), "idle");
@@ -48,13 +48,13 @@ try {
   if (process.env.DAW_SESSION_SCREENSHOT) await page.screenshot({ path: process.env.DAW_SESSION_SCREENSHOT });
   const returns = page.getByRole("button", { name: "回到編曲", exact: true });
   await returns.click();
-  await page.waitForFunction(() => !window.__daw.workspace.session.value.active.length && !window.__daw.workspace.session.value.queued);
+  await page.waitForFunction(() => !window.__daw.workspace.session.value.active.length && !window.__daw.workspace.session.value.queued.length);
   assert.equal(await intro.getAttribute("aria-pressed"), "false");
   await page.locator("#launch-mode").selectOption("one-shot");
   await intro.click();
   await page.waitForFunction(() => {
     const state = window.__daw.workspace.session.value;
-    const changes = state.queued?.changes ?? state.active;
+    const changes = state.queued.length ? state.queued : state.active;
     return changes.length > 1 && changes.every(({ mode }) => mode === "one-shot");
   });
 
@@ -84,7 +84,7 @@ try {
     let cancelled;
     let queuedAfterSeek;
     await workspace.play();
-    deadlines.push(workspace.launchClips([launch(drums, drumsLoop), launch(bass, bassA)]).when);
+    deadlines.push(workspace.launchClips([launch(drums, drumsLoop), launch(bass, bassA)])[0].when);
     async function step(time, act) {
       await context.suspend(time);
       // Explicitly pump the existing Workspace clock during accelerated offline rendering.
@@ -95,20 +95,20 @@ try {
     const steps = [
       step(0.72, () => {
         becameActive.push(workspace.session.value.active.map((item) => item.clipId));
-        deadlines.push(workspace.launchClips([launch(bass, bassB)]).when);
+        deadlines.push(workspace.launchClips([launch(bass, bassB)])[0].when);
       }),
       step(0.82, () => {
         cancelled = workspace.cancelClipLaunch();
       }),
       step(1.13, () => {
-        deadlines.push(workspace.launchClips([launch(bass, bassB)]).when);
+        deadlines.push(workspace.launchClips([launch(bass, bassB)])[0].when);
       }),
       step(1.62, () => {
         becameActive.push(workspace.session.value.active.map((item) => item.clipId));
-        deadlines.push(workspace.launchClips([launch(bass, null)]).when);
+        deadlines.push(workspace.launchClips([launch(bass, null)])[0].when);
       }),
       step(2.16, () => {
-        deadlines.push(workspace.launchClips([launch(bass, bassB)], 6).when);
+        deadlines.push(workspace.launchClips([launch(bass, bassB)], 6)[0].when);
         workspace.seek(0);
         queuedAfterSeek = workspace.session.value;
       }),
@@ -137,7 +137,7 @@ try {
     [drums, bassB],
   ]);
   assert.equal(cancelled, true);
-  assert.deepEqual(queuedAfterSeek, { active: [], queued: null });
+  assert.deepEqual(queuedAfterSeek, { active: [], queued: [] });
   const expected = [
     [0.18, 0.2],
     [0.35, 0.3],
@@ -184,7 +184,7 @@ try {
       await resume();
       return value;
     };
-    const overlap = step(0.61, () => workspace.launchClips([{ trackId: left.id, clipId: finite.id }]).when);
+    const overlap = step(0.61, () => workspace.launchClips([{ trackId: left.id, clipId: finite.id }])[0].when);
     const cancel = step(0.81, () => workspace.cancelClipLaunch());
     const ended = step(1.3, () => workspace.session.value.active.map(({ trackId }) => trackId));
     const output = await context.startRendering();
@@ -216,6 +216,58 @@ try {
     pair.forEach((sample, ch) => {
       assert.ok(Math.abs(sample - expectedOneShot[index][ch]) < 0.002, JSON.stringify(oneShot));
     }),
+  );
+  const perTrack = await page.evaluate(async () => {
+    const { Workspace, Project } = window.sessionFixture;
+    const rate = 48000;
+    const context = new OfflineAudioContext(2, rate * 2, rate);
+    const resume = context.resume.bind(context);
+    context.resume = async () => {};
+    const project = new Project({ bpm: 120 });
+    const left = project.addTrack("Left", "audio", { pan: -1 });
+    const right = project.addTrack("Right", "audio", { pan: 1 });
+    const clip = (track, value) => project.addAudioClip(track.id, { sampleRate: rate, channels: [new Float32Array(rate * 3).fill(value)] }, 10);
+    const a = clip(left, 0.4);
+    const b = clip(right, 0.3);
+    const workspace = await Workspace.create(context, project, { destination: context.destination });
+    await workspace.play();
+    const step = async (time, fn) => {
+      await context.suspend(time);
+      workspace.refresh();
+      const value = fn();
+      await resume();
+      return value;
+    };
+    // Two independent queues coexist; withdrawing one leaves the other.
+    workspace.launchClips([{ trackId: left.id, clipId: a.id }], 4);
+    workspace.launchClips([{ trackId: right.id, clipId: b.id }], 1);
+    const both = workspace.session.value.queued.map(({ trackId }) => trackId);
+    const withdrew = workspace.cancelClipLaunch(left.id);
+    const remaining = workspace.session.value.queued.map(({ trackId }) => trackId);
+    const immediate = step(0.7, () => workspace.launchClips([{ trackId: left.id, clipId: a.id }], 0)[0]);
+    const output = await context.startRendering();
+    const at = (time, ch) => output.getChannelData(ch)[Math.round(time * rate)];
+    const launched = await immediate;
+    workspace.destroy();
+    project.destroy();
+    return {
+      both,
+      withdrew,
+      remaining,
+      launched,
+      right: [at(0.45, 1), at(0.6, 1)],
+      left: [at(0.45, 0), at(0.69, 0), at(0.8, 0)],
+      ids: [left.id, right.id],
+    };
+  });
+  assert.deepEqual(perTrack.both, perTrack.ids);
+  assert.ok(perTrack.withdrew);
+  assert.deepEqual(perTrack.remaining, [perTrack.ids[1]]);
+  assert.ok(Math.abs(perTrack.launched.when - 0.7) < 0.01, JSON.stringify(perTrack));
+  assert.ok(Math.abs(perTrack.right[0]) < 0.002 && Math.abs(perTrack.right[1] - 0.3) < 0.002, JSON.stringify(perTrack));
+  assert.ok(
+    perTrack.left.slice(0, 2).every((value) => Math.abs(value) < 0.002) && Math.abs(perTrack.left[2] - 0.4) < 0.002,
+    JSON.stringify(perTrack),
   );
   assert.deepEqual(errors, []);
   console.log("Session UI and PCM passed: quantized scenes, independent loops, cancellation, seek and sample-timed one-shot return.");

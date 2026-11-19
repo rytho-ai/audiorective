@@ -126,19 +126,10 @@ export class Workspace {
       now: () => this.context.currentTime,
       timeToBeat: (time) => this.timeline.timeToBeat(time),
       beatToTime: (beat) => this.timeline.beatToTime(beat),
-      schedule: (changes, when) => {
-        const endsAt = new Map<string, number>();
-        const transitions = changes.map(({ trackId, clipId, mode }) => {
-          const buffer = clipId === null ? null : this.scheduler.sessionBufferFor(this.launchableClip(trackId, clipId));
-          const transition = this.tracks.get(trackId)!.session!.schedule(buffer, when, mode !== "one-shot");
-          if (transition.end !== undefined) endsAt.set(trackId, transition.end);
-          return transition;
-        });
-        return {
-          commit: () => transitions.forEach((transition) => transition.commit()),
-          cancel: () => transitions.forEach((transition) => transition.cancel()),
-          endsAt,
-        };
+      schedule: ({ trackId, clipId, mode }, when) => {
+        const buffer = clipId === null ? null : this.scheduler.sessionBufferFor(this.launchableClip(trackId, clipId));
+        const { end, commit, cancel } = this.tracks.get(trackId)!.session!.schedule(buffer, when, mode !== "one-shot");
+        return { commit, cancel, endsAt: end };
       },
       reset: () => {
         for (const track of this.tracks.values()) track.session?.reset();
@@ -562,8 +553,11 @@ export class Workspace {
     return detach;
   }
 
-  /** Queue clips or return tracks to Arrangement at the next launch grid boundary. */
-  launchClips(changes: readonly ClipLaunch[], quantumBeats = 1): QueuedClipLaunch {
+  /**
+   * Queue clips or return tracks to Arrangement at the next launch grid boundary, or now when `quantumBeats` is 0.
+   * A track's launch replaces only that track's pending launch.
+   */
+  launchClips(changes: readonly ClipLaunch[], quantumBeats = 1): readonly QueuedClipLaunch[] {
     return untracked(() => {
       if (this.destroyed || this.clock.state.value !== "playing") throw new Error("Start Workspace playback before launching clips.");
       for (const { trackId, clipId } of changes) {
@@ -574,8 +568,9 @@ export class Workspace {
     });
   }
 
-  cancelClipLaunch(): boolean {
-    return this.launcher.cancel();
+  /** Withdraw one track's pending launch, or every pending launch without an argument. */
+  cancelClipLaunch(trackId?: string): boolean {
+    return this.launcher.cancel(trackId);
   }
 
   private launchableClip(trackId: string, clipId: string): PcmAudioClip {
@@ -661,7 +656,7 @@ export class Workspace {
     }
     const { active, queued } = this.session.value;
     if (
-      [...active, ...(queued?.changes ?? [])].some(
+      [...active, ...queued].some(
         ({ trackId, clipId }) =>
           clipId !== null && !this.project.tracks.find((track) => track.id === trackId)?.clips.some((clip) => clip.id === clipId),
       )

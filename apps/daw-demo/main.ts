@@ -329,7 +329,9 @@ function bindSession(): void {
   const current = workspace;
   detachRangeAuditionView = effect(() => renderRangeAuditionButton(current.auditioningRange.value !== null));
   const quantum = () => {
-    if ($<HTMLSelectElement>("launch-quantum").value === "bar") {
+    const choice = $<HTMLSelectElement>("launch-quantum").value;
+    if (choice === "now") return 0;
+    if (choice === "bar") {
       const [beats, unit] = workspace.project.signature;
       return (beats * 4) / unit;
     }
@@ -863,7 +865,7 @@ function animate(): void {
     $("time").textContent = `${Math.floor(position / 60)}:${(position % 60).toFixed(1).padStart(4, "0")}`;
     studio.setPlayhead(position);
     const { active, queued } = workspace.session.value;
-    if (workspace.clock.state.value === "playing" && !active.length && !queued) {
+    if (workspace.clock.state.value === "playing" && !active.length && !queued.length) {
       const range = looping ? loopRange() : undefined;
       if (looping && !range) {
         looping = false;

@@ -1,106 +1,135 @@
 import { batch, cell, readonlyCell, untracked, type BeatTiming } from "@audiorective/core";
 
 export type ClipLaunch = Readonly<{ trackId: string; clipId: string | null; mode?: "loop" | "one-shot" }>;
-export type QueuedClipLaunch = Readonly<{ beat: number; when: number; changes: readonly ClipLaunch[] }>;
-export type ClipLauncherState = Readonly<{ active: readonly ClipLaunch[]; queued: QueuedClipLaunch | null }>;
+/** A pending launch with the grid boundary it will switch on. `beat` and `when` are the same instant. */
+export type QueuedClipLaunch = Readonly<ClipLaunch & { beat: number; when: number }>;
+/** `active` and `queued` hold at most one entry per track. */
+export type ClipLauncherState = Readonly<{ active: readonly ClipLaunch[]; queued: readonly QueuedClipLaunch[] }>;
 export type ClipLaunchTransition = Readonly<{
+  /** Retract the incoming playback and leave the previous playback intact. */
   cancel(): void;
+  /** Release the outgoing playback; the switch time has arrived. */
   commit(): void;
-  /** Absolute audio time at which each finite override naturally ends. */
-  endsAt?: ReadonlyMap<string, number>;
+  /** Absolute audio time at which a finite (one-shot) override naturally ends. */
+  endsAt?: number;
 }>;
 export type ClipLaunchTransport = BeatTiming &
   Readonly<{
     now(): number;
-    schedule(changes: readonly ClipLaunch[], when: number): ClipLaunchTransition;
+    /** Prepare one track's change to take effect at `when`. Called once per track, with the same `when` for every track of a call. */
+    schedule(change: ClipLaunch, when: number): ClipLaunchTransition;
     reset(): void;
   }>;
 
-const empty: ClipLauncherState = Object.freeze({ active: Object.freeze([]), queued: null });
+const none: readonly never[] = Object.freeze([]);
+const empty: ClipLauncherState = Object.freeze({ active: none, queued: none });
 
-/** Quantized track overrides using a borrowed audio clock and reversible playback driver. */
+/** Quantized per-track overrides using a borrowed audio clock and reversible playback driver. */
 export class ClipLauncher {
   private readonly source = cell<ClipLauncherState>(empty);
-  private transition?: ClipLaunchTransition;
+  private readonly pending = new Map<string, { launch: QueuedClipLaunch; transition: ClipLaunchTransition }>();
   private readonly endsAt = new Map<string, number>();
   readonly state = readonlyCell(() => this.source.value);
 
   constructor(private readonly transport: ClipLaunchTransport) {}
 
-  /** Queue one group for the next grid boundary. A new group replaces the pending group. */
-  queue(changes: readonly ClipLaunch[], quantumBeats = 1): QueuedClipLaunch {
+  /**
+   * Queue one launch per listed track for the next boundary of `quantumBeats` (0 launches at the current audio time).
+   * Every track of one call lands on the same boundary. A track's new launch replaces only that track's pending launch.
+   */
+  queue(changes: readonly ClipLaunch[], quantumBeats = 1): readonly QueuedClipLaunch[] {
     return untracked(() => this.enqueue(changes, quantumBeats));
   }
 
-  private enqueue(changes: readonly ClipLaunch[], quantumBeats: number): QueuedClipLaunch {
-    if (!Number.isFinite(quantumBeats) || quantumBeats <= 0) throw new RangeError("Clip Launcher requires a positive launch quantum.");
+  private enqueue(changes: readonly ClipLaunch[], quantumBeats: number): readonly QueuedClipLaunch[] {
+    if (!Number.isFinite(quantumBeats) || quantumBeats < 0) throw new RangeError("Clip Launcher requires a non-negative launch quantum.");
     if (!changes.length || new Set(changes.map(({ trackId }) => trackId)).size !== changes.length) {
       throw new Error("Clip Launcher requires one launch per affected track.");
     }
     const now = this.transport.now();
     const position = this.transport.timeToBeat(now);
-    const beat = (Math.floor(position / quantumBeats + 1e-10) + 1) * quantumBeats;
-    const when = this.transport.beatToTime(beat);
-    if (!Number.isFinite(when) || when <= now) throw new RangeError("Clip Launcher requires a future audio time.");
-    const queued = Object.freeze({ beat, when, changes: Object.freeze(changes.map((change) => Object.freeze({ ...change }))) });
+    const beat = quantumBeats === 0 ? position : (Math.floor(position / quantumBeats + 1e-10) + 1) * quantumBeats;
+    const when = quantumBeats === 0 ? now : this.transport.beatToTime(beat);
+    if (!Number.isFinite(when) || (quantumBeats > 0 && when <= now)) throw new RangeError("Clip Launcher requires a future audio time.");
+    const launches = changes.map((change) => Object.freeze({ ...change, beat, when }));
 
     batch(() => {
-      this.dequeue();
-      this.transition = this.transport.schedule(queued.changes, when);
-      this.source.value = Object.freeze({ active: this.source.value.active, queued });
+      this.advance();
+      for (const { trackId } of launches) this.withdraw(trackId);
+      const created: ClipLaunchTransition[] = [];
+      try {
+        for (const launch of launches) {
+          const { beat: _beat, when: _when, ...change } = launch;
+          const transition = this.transport.schedule(change, when);
+          created.push(transition);
+          this.pending.set(launch.trackId, { launch, transition });
+        }
+      } catch (error) {
+        for (const { trackId } of launches) this.pending.delete(trackId);
+        for (const transition of created) transition.cancel();
+        this.publish();
+        throw error;
+      }
+      this.publish();
     });
-    return queued;
+    return Object.freeze(launches);
   }
 
-  /** Cancel the pending group if its audio deadline has not arrived. */
-  cancel(): boolean {
-    return untracked(() => this.dequeue());
+  /** Withdraw `trackId`'s pending launch, or every pending launch without an argument. Returns whether anything was withdrawn. */
+  cancel(trackId?: string): boolean {
+    return untracked(() => {
+      this.advance();
+      const ids = trackId === undefined ? [...this.pending.keys()] : [trackId];
+      const withdrawn = ids.map((id) => this.withdraw(id));
+      if (!withdrawn.includes(true)) return false;
+      this.publish();
+      return true;
+    });
   }
 
-  private dequeue(): boolean {
-    this.advance();
-    if (!this.transition) return false;
-    this.transition.cancel();
-    this.transition = undefined;
-    this.source.value = Object.freeze({ active: this.source.value.active, queued: null });
+  private withdraw(trackId: string): boolean {
+    const entry = this.pending.get(trackId);
+    if (!entry) return false;
+    this.pending.delete(trackId);
+    entry.transition.cancel();
     return true;
   }
 
-  /** Publish a switch after the audio clock reaches its already scheduled deadline. */
+  private publish(active: readonly ClipLaunch[] = this.source.value.active): void {
+    this.source.value = Object.freeze({ active, queued: Object.freeze([...this.pending.values()].map(({ launch }) => launch)) });
+  }
+
+  /** Publish every switch whose audio time has arrived. Call it from the borrowed transport's tick. */
   advance(): void {
     untracked(() => this.settle());
   }
 
   private settle(): void {
-    const { active, queued } = this.source.value;
     const now = this.transport.now();
-    const due = queued && queued.when <= now;
-    if (!due && ![...this.endsAt.values()].some((end) => end <= now)) return;
-    const tracks = new Map(active.map((change) => [change.trackId, change]));
-    if (due && queued) {
-      const transition = this.transition!;
+    const due = [...this.pending.values()].filter(({ launch }) => launch.when <= now);
+    if (!due.length && ![...this.endsAt.values()].some((end) => end <= now)) return;
+    const tracks = new Map(this.source.value.active.map((change) => [change.trackId, change]));
+    for (const { launch, transition } of due) {
+      const { beat: _beat, when: _when, ...change } = launch;
+      this.pending.delete(change.trackId);
       transition.commit();
-      this.transition = undefined;
-      for (const change of queued.changes) {
-        const end = transition.endsAt?.get(change.trackId);
-        if (end === undefined) this.endsAt.delete(change.trackId);
-        else this.endsAt.set(change.trackId, end);
-        if (change.clipId === null) tracks.delete(change.trackId);
-        else tracks.set(change.trackId, change);
-      }
+      if (transition.endsAt === undefined) this.endsAt.delete(change.trackId);
+      else this.endsAt.set(change.trackId, transition.endsAt);
+      if (change.clipId === null) tracks.delete(change.trackId);
+      else tracks.set(change.trackId, change);
     }
     for (const [id, end] of this.endsAt) {
       if (end > now) continue;
       this.endsAt.delete(id);
       tracks.delete(id);
     }
-    this.source.value = Object.freeze({ active: Object.freeze([...tracks.values()]), queued: due ? null : queued });
+    this.publish(Object.freeze([...tracks.values()]));
   }
 
   /** Clear pending and active overrides when the borrowed transport jumps or stops. */
   reset(): void {
-    this.transition?.cancel();
-    this.transition = undefined;
+    for (const { transition } of this.pending.values()) transition.cancel();
+    this.pending.clear();
     this.endsAt.clear();
     this.transport.reset();
     this.source.value = empty;

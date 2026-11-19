@@ -3,7 +3,7 @@ import { effect, type Readable } from "@audiorective/core";
 type ClipLaunch = Readonly<{ trackId: string; clipId: string | null; mode?: "loop" | "one-shot" }>;
 type ClipLauncherState = Readonly<{
   active: readonly ClipLaunch[];
-  queued: Readonly<{ beat: number; changes: readonly ClipLaunch[] }> | null;
+  queued: readonly (ClipLaunch & Readonly<{ beat: number }>)[];
 }>;
 
 export type ClipGridLayout = Readonly<{
@@ -66,7 +66,7 @@ export function mountClipGrid(root: HTMLElement, options: ClipGridOptions) {
   let returns: { button: HTMLButtonElement; trackId: string }[] = [];
   function renderState(state: ClipLauncherState): void {
     const active = new Map(state.active.map(({ trackId, clipId }) => [trackId, clipId]));
-    const queued = new Map(state.queued?.changes.map(({ trackId, clipId }) => [trackId, clipId]));
+    const queued = new Map(state.queued.map(({ trackId, clipId }) => [trackId, clipId]));
     function mark(item: HTMLButtonElement, playing: boolean, pending: boolean): void {
       item.dataset.clipState = pending ? "queued" : playing ? "active" : "idle";
       item.setAttribute("aria-pressed", String(playing));
@@ -83,9 +83,13 @@ export function mountClipGrid(root: HTMLElement, options: ClipGridOptions) {
       button.disabled = !active.has(trackId);
       button.dataset.clipState = queued.get(trackId) === null ? "queued" : "idle";
     }
-    cancel.disabled = !state.queued;
+    cancel.disabled = !state.queued.length;
     arrangement.disabled = !active.size;
-    status.textContent = state.queued ? labels.queued(state.queued.beat) : active.size ? labels.playing : labels.idle;
+    status.textContent = state.queued.length
+      ? labels.queued(Math.min(...state.queued.map(({ beat }) => beat)))
+      : active.size
+        ? labels.playing
+        : labels.idle;
   }
 
   function setLayout(layout: ClipGridLayout): void {
