@@ -1,7 +1,7 @@
 {
   "name": "@audiorective/blocks",
   "version": "2.3.2",
-  "description": "Headless audio capture, range playback and cancellable instrument events",
+  "description": "Headless audio capture, range playback and a choke-group pad bank",
   "type": "module",
   "license": "MIT",
   "homepage": "https://github.com/audiorective/audiorective/tree/main/packages/blocks#readme",
@@ -30,9 +30,9 @@
       "types": "./dist/samples.d.ts",
       "import": "./dist/samples.js"
     },
-    "./instrument-events": {
-      "types": "./dist/instrument-events.d.ts",
-      "import": "./dist/instrument-events.js"
+    "./pads": {
+      "types": "./dist/pads.d.ts",
+      "import": "./dist/pads.js"
     },
     "./sequencer": {
       "types": "./dist/sequencer.d.ts",

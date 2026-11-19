@@ -17,7 +17,7 @@ Modular toolkit for web audio development. Independent, composable packages that
 ├── clock        # Timing and scheduling: transport, tempo, look-ahead tick windows, rulers
 ├── effects      # DSP effects: filter, delay, dynamics, pitch shift, channel strip, send bus; effect rack (`/rack`, pure data `/rack-preset`)
 ├── devtools     # Dev-time validators, e.g. impulse-based latency measurement
-├── blocks       # Headless capabilities by subpath, no root entry: player, recorder, samples, instrument-events, sequencer, launcher
+├── blocks       # Headless capabilities by subpath, no root entry: player, recorder, samples, pads, sequencer, launcher
 ├── midi         # MIDI note data and event projection (root); browser take recording (`/web`)
 ├── host         # Browser WebCLAP plug-in host (`/webclap`)
 ├── widgets      # Browser waveform, player, piano-roll and arrangement views
@@ -36,7 +36,7 @@ Four layers; an import points down, never up, and never sideways inside layer 2 
 ```
 4  apps          apps/web, apps/daw-demo, a drum machine, a project-file tool
 3  widgets ∥ daw (daw/runtime, daw/dawproject, daw/project)
-2  capabilities  clock, midi, effects, host, blocks/{player,recorder,samples,instrument-events,sequencer,launcher}
+2  capabilities  clock, midi, effects, host, blocks/{player,recorder,samples,pads,sequencer,launcher}
 1  core
    side          react, threejs, playcanvas, devtools: import core only
 ```

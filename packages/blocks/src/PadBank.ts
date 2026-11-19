@@ -9,16 +9,16 @@ import {
   type SchedulableParam,
 } from "@audiorective/core";
 
-export type EventPad = Readonly<{ id: string; buffer: AudioBuffer; group?: string; gate?: boolean }>;
+export type PadSpec = Readonly<{ id: string; buffer: AudioBuffer; group?: string; gate?: boolean }>;
 
 /** One hit and all of its future policy effects. Clock can own this structural handle. */
-export interface InstrumentEvent extends CancellableEvent {
+export interface PadHit extends CancellableEvent {
   /** Same operation as cancel, for callers treating the event as a voice. */
   stop(): void;
 }
 
 type Hit = {
-  pad: EventPad;
+  pad: PadSpec;
   when: number;
   order: number;
   gate: GainNode;
@@ -32,19 +32,19 @@ type Hit = {
  * Sample hits with retractable same-group choke. The caller owns the AudioContext and routing.
  * A native gain gate carries future choke so cancelling the incoming hit can retract it.
  */
-export class InstrumentEvents extends AudioProcessor<{ volume: SchedulableParam }, { activeEvents: ReadonlyCell<number> }> {
+export class PadBank extends AudioProcessor<{ volume: SchedulableParam }, { activeEvents: ReadonlyCell<number> }> {
   private readonly outputNode: GainNode;
   private readonly activeStore: Cell<number>;
-  private readonly pads: Map<string, EventPad>;
+  private readonly pads: Map<string, PadSpec>;
   private readonly hits = new Set<Hit>();
   private nextOrder = 0;
   private cleanupTimer: ReturnType<typeof setTimeout> | undefined;
   private disposed = false;
 
-  constructor(context: BaseAudioContext, pads: readonly EventPad[]) {
+  constructor(context: BaseAudioContext, pads: readonly PadSpec[]) {
     const ids = new Set<string>();
     for (const pad of pads) {
-      if (!pad.id || ids.has(pad.id)) throw new Error("Instrument pad IDs must be nonempty and unique.");
+      if (!pad.id || ids.has(pad.id)) throw new Error("Pad Bank pad IDs must be nonempty and unique.");
       ids.add(pad.id);
     }
     const output = new GainNode(context);
@@ -63,7 +63,7 @@ export class InstrumentEvents extends AudioProcessor<{ volume: SchedulableParam 
   }
 
   private assertAlive(): void {
-    if (this.disposed) throw new Error("InstrumentEvents is destroyed.");
+    if (this.disposed) throw new Error("PadBank is destroyed.");
   }
 
   private publish(): void {
@@ -129,10 +129,10 @@ export class InstrumentEvents extends AudioProcessor<{ volume: SchedulableParam 
   }
 
   /** Schedule one hit. Past times play now; unknown pad IDs return null. */
-  trigger(id: string, velocity = 1, when = this.context.currentTime): InstrumentEvent | null {
+  trigger(id: string, velocity = 1, when = this.context.currentTime): PadHit | null {
     this.assertAlive();
-    if (!Number.isFinite(when) || when < 0) throw new RangeError("Instrument event time must be finite, non-negative seconds.");
-    if (!Number.isFinite(velocity)) throw new RangeError("Instrument velocity must be finite.");
+    if (!Number.isFinite(when) || when < 0) throw new RangeError("Pad hit time must be finite, non-negative seconds.");
+    if (!Number.isFinite(velocity)) throw new RangeError("Pad hit velocity must be finite.");
     const pad = this.pads.get(id);
     if (!pad) return null;
     this.settle();
@@ -177,7 +177,7 @@ export class InstrumentEvents extends AudioProcessor<{ volume: SchedulableParam 
   assign(id: string, buffer: AudioBuffer): void {
     this.assertAlive();
     const pad = this.pads.get(id);
-    if (!pad) throw new Error("Unknown instrument pad.");
+    if (!pad) throw new Error("Unknown pad.");
     this.settle();
     for (const hit of [...this.hits]) if (hit.pad.id === id) this.finish(hit);
     this.pads.set(id, Object.freeze({ ...pad, buffer }));

@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "vitest";
-import { InstrumentEvents } from "../src/InstrumentEvents";
+import { PadBank } from "../src/PadBank";
 
 const disposers: Array<() => void | Promise<unknown>> = [];
 afterEach(async () => {
@@ -15,7 +15,7 @@ async function fixture() {
     result.getChannelData(0).fill(level);
     return result;
   };
-  const bank = new InstrumentEvents(context, [
+  const bank = new PadBank(context, [
     { id: "open", buffer: buffer(1, 0.3), group: "hat", gate: true },
     { id: "closed", buffer: buffer(0.1, 0.1), group: "hat" },
   ]);
@@ -90,21 +90,21 @@ test("invalid inputs preserve state and destroy ends future events", async () =>
   const { context, bank } = await fixture();
   expect(
     () =>
-      new InstrumentEvents(context, [
+      new PadBank(context, [
         { id: "same", buffer: context.createBuffer(1, 10, context.sampleRate) },
         { id: "same", buffer: context.createBuffer(1, 10, context.sampleRate) },
       ]),
-  ).toThrow("Instrument pad IDs must be nonempty and unique.");
-  expect(() => bank.trigger("open", 1, NaN)).toThrow("Instrument event time must be finite, non-negative seconds.");
-  expect(() => bank.trigger("open", Infinity)).toThrow("Instrument velocity must be finite.");
-  expect(() => bank.assign("missing", context.createBuffer(1, 10, context.sampleRate))).toThrow("Unknown instrument pad.");
+  ).toThrow("Pad Bank pad IDs must be nonempty and unique.");
+  expect(() => bank.trigger("open", 1, NaN)).toThrow("Pad hit time must be finite, non-negative seconds.");
+  expect(() => bank.trigger("open", Infinity)).toThrow("Pad hit velocity must be finite.");
+  expect(() => bank.assign("missing", context.createBuffer(1, 10, context.sampleRate))).toThrow("Unknown pad.");
   const future = bank.trigger("closed", 1, context.currentTime + 1)!;
   let ended = 0;
   future.onEnded(() => ended++);
   bank.destroy();
   expect(ended).toBe(1);
   expect(bank.cells.activeEvents.value).toBe(0);
-  expect(() => bank.trigger("open")).toThrow("InstrumentEvents is destroyed.");
+  expect(() => bank.trigger("open")).toThrow("PadBank is destroyed.");
 });
 
 test("offline output follows native choke timing even without cleanup timer ticks", async () => {
@@ -116,7 +116,7 @@ test("offline output follows native choke timing even without cleanup timer tick
       value.getChannelData(0).fill(level);
       return value;
     };
-    const bank = new InstrumentEvents(context, [
+    const bank = new PadBank(context, [
       { id: "open", buffer: sample(0.1, 0.3), group: "hat", gate: true },
       { id: "closed", buffer: sample(0.05, 0.1), group: "hat" },
     ]);

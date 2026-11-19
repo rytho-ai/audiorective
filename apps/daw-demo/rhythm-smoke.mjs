@@ -18,7 +18,7 @@ const server = await createServer({
             tag: "script",
             attrs: { type: "module" },
             children:
-              'import { InstrumentEvents } from "@audiorective/blocks/instrument-events"; import { StepSequencer } from "@audiorective/blocks/sequencer"; window.rhythmFixture = { InstrumentEvents, StepSequencer };',
+              'import { PadBank } from "@audiorective/blocks/pads"; import { StepSequencer } from "@audiorective/blocks/sequencer"; window.rhythmFixture = { PadBank, StepSequencer };',
           },
         ],
       },
@@ -49,7 +49,7 @@ try {
   assert.equal(await page.locator(".ar-step-grid [data-current=true]").count(), 0);
 
   const levels = await page.evaluate(async () => {
-    const { InstrumentEvents, StepSequencer } = window.rhythmFixture;
+    const { PadBank, StepSequencer } = window.rhythmFixture;
     const Workspace = window.__daw.workspace.constructor;
     const Project = window.__daw.project.constructor;
     async function run(cancelled) {
@@ -64,7 +64,7 @@ try {
         buffer.getChannelData(0).fill(amplitude);
         return buffer;
       }
-      const kit = new InstrumentEvents(context, [
+      const kit = new PadBank(context, [
         { id: "open", buffer: sample(0.3, 0.1), gate: true, group: "hat" },
         { id: "closed", buffer: sample(0.1, 0.05), group: "hat" },
         { id: "manual", buffer: sample(0.05, 0.1), gate: true },

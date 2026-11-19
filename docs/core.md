@@ -1150,7 +1150,7 @@ interface CancellableEvent {
 type BeatTiming = Readonly<{ beatToTime(beat: number): number; timeToBeat(time: number): number }>;
 ```
 
-- `CancellableEvent` is a consumer-owned audio event that a scheduler may revoke after a transport or edit change. `Clock`'s `window.own(event, when)` accepts one (`@audiorective/clock` re-exports the type), and `InstrumentEvent` extends it.
+- `CancellableEvent` is a consumer-owned audio event that a scheduler may revoke after a transport or edit change. `Clock`'s `window.own(event, when)` accepts one (`@audiorective/clock` re-exports the type), and `PadHit` extends it.
 - `BeatTiming` converts between beats and absolute audio-context time. `Timeline` satisfies it, and `StepSequencer.schedule(window, timing)` and `ClipLauncher`'s transport take it.
 
 ## Package Structure

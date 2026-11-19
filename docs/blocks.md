@@ -6,16 +6,16 @@ title: Blocks
 
 The package has no root entry. Each capability is a subpath that imports only `@audiorective/core`, so importing one never loads another:
 
-| Subpath                                  | Exports            | Kind                                                                                                                |
-| ---------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------- |
-| `@audiorective/blocks/player`            | `WavePlayer`       | Standalone: give it an `AudioContext`                                                                               |
-| `@audiorective/blocks/recorder`          | `AudioRecorder`    | Standalone                                                                                                          |
-| `@audiorective/blocks/samples`           | `SampleLibrary`    | Standalone; previews through core `BufferPlayer`                                                                    |
-| `@audiorective/blocks/instrument-events` | `InstrumentEvents` | Standalone: bring your own `AudioBuffer`s                                                                           |
-| `@audiorective/blocks/sequencer`         | `StepSequencer`    | Borrowing: needs a `BeatTiming` (`beatToTime`, `timeToBeat`) and a `trigger(hit)` that returns a `CancellableEvent` |
-| `@audiorective/blocks/launcher`          | `ClipLauncher`     | Borrowing: needs a transport (`BeatTiming` plus `now`, `schedule`, `reset`)                                         |
+| Subpath                          | Exports         | Kind                                                                                                                |
+| -------------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `@audiorective/blocks/player`    | `WavePlayer`    | Standalone: give it an `AudioContext`                                                                               |
+| `@audiorective/blocks/recorder`  | `AudioRecorder` | Standalone                                                                                                          |
+| `@audiorective/blocks/samples`   | `SampleLibrary` | Standalone; previews through core `BufferPlayer`                                                                    |
+| `@audiorective/blocks/pads`      | `PadBank`       | Standalone: bring your own `AudioBuffer`s                                                                           |
+| `@audiorective/blocks/sequencer` | `StepSequencer` | Borrowing: needs a `BeatTiming` (`beatToTime`, `timeToBeat`) and a `trigger(hit)` that returns a `CancellableEvent` |
+| `@audiorective/blocks/launcher`  | `ClipLauncher`  | Borrowing: needs a transport (`BeatTiming` plus `now`, `schedule`, `reset`)                                         |
 
-`BeatTiming` and `CancellableEvent` are core contracts ([Core](./core.md#shared-contracts)); `Timeline`, `Clock` and `InstrumentEvents` satisfy them structurally, so a drum machine needs only `clock`, `blocks/sequencer`, `blocks/instrument-events` and `core`. See [Architecture](./architecture.md).
+`BeatTiming` and `CancellableEvent` are core contracts ([Core](./core.md#shared-contracts)); `Timeline`, `Clock` and `PadBank` satisfy them structurally, so a drum machine needs only `clock`, `blocks/sequencer`, `blocks/pads` and `core`. See [Architecture](./architecture.md).
 
 ## WavePlayer
 
@@ -319,14 +319,14 @@ await context.close();
 
 The result preserves the audio clock's raw sample positions. A Track/Clip owner places takes against transport time and applies any measured input/monitor latency adjustment; the recorder does not guess a round-trip offset. Normal `start()`/`stop()` accumulates PCM in memory and suits short takes. For long captures, call `startStream(writeChunk, { when? })` and `stopStream({ when? })` instead. The callback receives ordered `{ startFrame, channels }` chunks, each with up to 4096 frames, and writes them to caller-owned storage. `stopStream()` waits for accepted writes and returns `{ channelCount, sampleRate, startFrame, endFrame, startTime, endTime }` without returning the full PCM. When the browser skips a short render interval, the result includes `dropouts` with absolute frame ranges and the skipped samples become silence; a gap longer than two seconds rejects. Check `dropouts` before treating a take as lossless. At most 64 pending writes are allowed; a slower writer fails the take instead of growing the recorder's queue without bound. The callback owns any external file or database and must preserve chunk order when writes complete asynchronously. `@audiorective/daw/project` provides `AudioMediaWriter` and `Project.addAudioMediaClip` to turn these chunks into file-backed, editable project clips; see [DAW project and runtime](./daw.md#long-audio-takes-and-media-ownership). AudioWorklet registration uses a Blob URL and needs compatible Content Security Policy settings. `MediaRecorder` can still be suitable for a simple voice memo, but its chunk intervals are not the alignment contract used here.
 
-## Cancellable instrument events
+## Pad Bank
 
-`InstrumentEvents` plays sample hits and owns reversible same-group choke policy. Use it when a sequencer can edit or cancel a hit after the Clock has scheduled it, or when a future closed-hat hit must choke an open-hat hit only if that closed hit still exists. Ordinary one-shot pads without choke can keep using core `Sampler` and `Voice`.
+`PadBank` plays sample hits and owns reversible same-group choke policy. Use it when a sequencer can edit or cancel a hit after the Clock has scheduled it, or when a future closed-hat hit must choke an open-hat hit only if that closed hit still exists. Ordinary one-shot pads without choke can keep using core `Sampler` and `Voice`.
 
 ```typescript
-import { InstrumentEvents } from "@audiorective/blocks/instrument-events";
+import { PadBank } from "@audiorective/blocks/pads";
 
-const instruments = new InstrumentEvents(context, [
+const instruments = new PadBank(context, [
   { id: "open-hat", buffer: openHat, group: "hat", gate: true },
   { id: "closed-hat", buffer: closedHat, group: "hat" },
 ]);
@@ -337,13 +337,13 @@ queued?.cancel(); // removes both the hit and its future choke; manual keeps sou
 // Later: manual?.cancel(); instruments.destroy(); context.close();
 ```
 
-`trigger(id, velocity = 1, when = context.currentTime)` returns an `InstrumentEvent` with idempotent `cancel()` / `stop()` and `onEnded(listener)`, or `null` for an unknown pad ID. Velocity clamps to 0..1; a past `when` plays now. `gate: true` loops a sample until its event is cancelled or choked; otherwise it plays once. Later hits with a **different ID** in the same `group` choke earlier hits at their native audio start time, even if the later hit was scheduled first. Hits of the same ID may overlap. Choke is carried by a per-event gain gate, so cancelling an unstarted hit retracts its future choke. A choke that already reached its deadline stays committed and cannot resurrect an earlier sound. The cleanup timer retires silent nodes; it does not time the audible cutoff.
+`trigger(id, velocity = 1, when = context.currentTime)` returns an `PadHit` with idempotent `cancel()` / `stop()` and `onEnded(listener)`, or `null` for an unknown pad ID. Velocity clamps to 0..1; a past `when` plays now. `gate: true` loops a sample until its event is cancelled or choked; otherwise it plays once. Later hits with a **different ID** in the same `group` choke earlier hits at their native audio start time, even if the later hit was scheduled first. Hits of the same ID may overlap. Choke is carried by a per-event gain gate, so cancelling an unstarted hit retracts its future choke. A choke that already reached its deadline stays committed and cannot resurrect an earlier sound. The cleanup timer retires silent nodes; it does not time the audible cutoff.
 
 `assign(id, buffer)` replaces that pad's buffer, cancels its current and future hits, and retracts their future choke. `stopAll()` cancels every hit. `cells.activeEvents` is a read-only reactive count; `params.volume` follows the normal schedulable `.value` / `$` contract. The block owns its nodes and event handles, while the caller owns output routing and the `AudioContext`. It has no polyphony cap or voice-stealing policy. For Clock-owned sequenced hits, pass the handle to `window.own(hit, when)` and call `clock.refresh()` after pattern edits; manual hits remain unregistered. See [Clock](./clock.md#own-cancellable-events-when-transport-edits-must-cut-queued-sound).
 
 ## Step Sequencer
 
-`StepSequencer` owns a repeating beat grid and per-step velocities. Give it a fixed `StepPattern` with a step count, beats per step and unique lane IDs. Zero velocity skips a hit. The supplied trigger receives `{ laneId, step, velocity, when }` and returns a `CancellableEvent` (`cancel()` and `onEnded()`) or `null`. An `InstrumentEvent` is one. The trigger can delegate to `InstrumentEvents.trigger()`. The sequencer tracks and cancels only events returned by that callback. Use a separate call to the instrument for manual hits.
+`StepSequencer` owns a repeating beat grid and per-step velocities. Give it a fixed `StepPattern` with a step count, beats per step and unique lane IDs. Zero velocity skips a hit. The supplied trigger receives `{ laneId, step, velocity, when }` and returns a `CancellableEvent` (`cancel()` and `onEnded()`) or `null`. An `PadHit` is one. The trigger can delegate to `PadBank.trigger()`. The sequencer tracks and cancels only events returned by that callback. Use a separate call to the instrument for manual hits.
 
 `schedule(window, timing)` reads the caller's transport window and registers its hits via `window.own(event, when)`. `timing` is any `BeatTiming`; pass the same `Timeline` the window came from. On edits, call the clock's `refresh()` to rebuild the unplayed look-ahead horizon. `setVelocity(laneId, step, velocity)` edits one step and `currentStep` exposes the current index. `reset()` clears its playhead and scheduled hits. [the DAW runtime](./daw.md#step-sequencer) wires the scheduling and refresh for an attached pattern.
 
@@ -353,13 +353,13 @@ A vanilla drum machine with no DAW: your decoded buffers, a `Clock` driving the 
 
 ```ts
 import { Clock, Timeline } from "@audiorective/clock";
-import { InstrumentEvents } from "@audiorective/blocks/instrument-events";
+import { PadBank } from "@audiorective/blocks/pads";
 import { StepSequencer, type StepPattern } from "@audiorective/blocks/sequencer";
 import { mountStepGrid } from "@audiorective/widgets";
 
 const context = new AudioContext(); // you own it; resume() it from a user gesture
 // kick, snare, closedHat, openHat: AudioBuffers you decoded yourself
-const bank = new InstrumentEvents(context, [
+const bank = new PadBank(context, [
   { id: "kick", buffer: kick },
   { id: "snare", buffer: snare },
   { id: "closed", buffer: closedHat, group: "hat" },
@@ -452,10 +452,10 @@ Loading, selection and playback messages from `WavePlayer`. Stretch and time-map
 | `Selection must satisfy 0 <= start < end <= duration (finite seconds).`                                                                            | Invalid programmatic range                       | Await loading, then pass ordered finite endpoints within duration, or `null`.   |
 | `Source automation must use the player's AudioContext.`                                                                                            | Binding uses another audio clock                 | Construct it with the same `AudioContext` as the player.                        |
 | `Source automation requires non-looping playback.`                                                                                                 | Loop requested with finite source automation     | Detach the binding before looping, or play the selection once.                  |
-| `Instrument pad IDs must be nonempty and unique.`                                                                                                  | Empty or repeated pad ID                         | Give each pad a stable unique ID.                                               |
-| `Instrument event time must be finite, non-negative seconds.` / `Instrument velocity must be finite.`                                              | Invalid hit time or velocity                     | Use absolute audio seconds and a finite velocity.                               |
-| `Unknown instrument pad.`                                                                                                                          | `assign()` received an ID not in the bank        | Assign to a declared pad ID.                                                    |
-| `InstrumentEvents is destroyed.`                                                                                                                   | Trigger or assign after cleanup                  | Create a new block; `destroy()` is final.                                       |
+| `Pad Bank pad IDs must be nonempty and unique.`                                                                                                    | Empty or repeated pad ID                         | Give each pad a stable unique ID.                                               |
+| `Pad hit time must be finite, non-negative seconds.` / `Pad hit velocity must be finite.`                                                          | Invalid hit time or velocity                     | Use absolute audio seconds and a finite velocity.                               |
+| `Unknown pad.`                                                                                                                                     | `assign()` received an ID not in the bank        | Assign to a declared pad ID.                                                    |
+| `PadBank is destroyed.`                                                                                                                            | Trigger or assign after cleanup                  | Create a new block; `destroy()` is final.                                       |
 | `AudioRecorder channels must be an integer from 1 to 32.`                                                                                          | Invalid channel option                           | Choose an integer channel count from 1 to 32.                                   |
 | `AudioRecorder requires AudioWorklet support.` / `AudioRecorder worklet failed.`                                                                   | Missing worklet support or processor failure     | Use a browser with AudioWorklet and inspect its audio processor error.          |
 | `AudioRecorder AudioContext closed during recording.`                                                                                              | Caller closed the borrowed context mid-take      | Await `stop` or cancel the take before closing the context.                     |

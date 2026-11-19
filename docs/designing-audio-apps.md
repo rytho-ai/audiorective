@@ -69,7 +69,7 @@ A reverb fed _post-panner_ tracks the dry and never opens up as you move — a s
 
 ### 6. Compose by layer, import by subpath
 
-Take only the capability modules the app needs. A drum machine with its own buffers uses `clock`, `blocks/sequencer` and `blocks/instrument-events` and never loads `daw`; a project-file tool in Node uses `daw/project` and `daw/dawproject` and never loads the runtime. Wire widgets to the module that owns the value, and keep the wiring between `widgets` and `daw` in the app. See [Architecture](./architecture.md#layers-and-dependency-direction).
+Take only the capability modules the app needs. A drum machine with its own buffers uses `clock`, `blocks/sequencer` and `blocks/pads` and never loads `daw`; a project-file tool in Node uses `daw/project` and `daw/dawproject` and never loads the runtime. Wire widgets to the module that owns the value, and keep the wiring between `widgets` and `daw` in the app. See [Architecture](./architecture.md#layers-and-dependency-direction).
 
 ## Common pitfalls
 

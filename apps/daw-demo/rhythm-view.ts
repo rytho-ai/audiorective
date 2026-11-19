@@ -1,5 +1,5 @@
 import { effect } from "@audiorective/core";
-import { InstrumentEvents } from "@audiorective/blocks/instrument-events";
+import { PadBank } from "@audiorective/blocks/pads";
 import type { SampleLease, SampleLibrary } from "@audiorective/blocks/samples";
 import { StepSequencer } from "@audiorective/blocks/sequencer";
 import { mountPadGrid, mountStepGrid } from "@audiorective/widgets";
@@ -19,7 +19,7 @@ export function mountRhythmView(
   onError: (error: unknown) => void,
 ) {
   const context = workspace.context;
-  const bank = new InstrumentEvents(
+  const bank = new PadBank(
     context,
     lanes.map((lane, index) => ({
       id: lane.id,

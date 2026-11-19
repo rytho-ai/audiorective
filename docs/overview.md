@@ -8,20 +8,20 @@ The audio engine owns its state. Your interfaces observe parameters, change valu
 
 ## Choose your packages
 
-| Package                        | What it provides                                                                                                         |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| [Core](/docs/core)             | Reactive parameters and cells, processors, playback, analysis, spatial audio, and graph routing                          |
-| [Clock](/docs/clock)           | Transport, tempo automation, scheduling windows, and beat/bar/time rulers                                                |
-| [Effects](/docs/effects)       | Filters, delay, reverb, distortion, modulation, pitch shifting, dynamics, channel strips, and send buses                 |
-| [Widgets](/docs/widgets)       | Browser waveform/piano-roll display, shared selection, audition and custom drawing                                       |
-| [Blocks](/docs/blocks)         | Headless capabilities by subpath: WavePlayer, recorder, sample library, instrument events, step sequencer, clip launcher |
-| [MIDI](/docs/midi)             | MIDI file parsing, note editing, take recording and ordered playback events                                              |
-| [DAW](/docs/daw)               | Audio/MIDI project model, DAWproject codec and browser playback runtime, as separate entries                             |
-| [Host](/docs/host)             | WebCLAP instrument/effect host, MIDI scheduling, state and editor bridge                                                 |
-| [React](/docs/react)           | Hooks and an engine context for reactive interfaces                                                                      |
-| [Three.js](/docs/threejs)      | A shared audio context and spatial sound that follows scene objects                                                      |
-| [PlayCanvas](/docs/playcanvas) | Engine integration and entity-to-panner bindings                                                                         |
-| [Devtools](/docs/devtools)     | Processor latency measurement and assertions                                                                             |
+| Package                        | What it provides                                                                                                |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| [Core](/docs/core)             | Reactive parameters and cells, processors, playback, analysis, spatial audio, and graph routing                 |
+| [Clock](/docs/clock)           | Transport, tempo automation, scheduling windows, and beat/bar/time rulers                                       |
+| [Effects](/docs/effects)       | Filters, delay, reverb, distortion, modulation, pitch shifting, dynamics, channel strips, and send buses        |
+| [Widgets](/docs/widgets)       | Browser waveform/piano-roll display, shared selection, audition and custom drawing                              |
+| [Blocks](/docs/blocks)         | Headless capabilities by subpath: WavePlayer, recorder, sample library, pad bank, step sequencer, clip launcher |
+| [MIDI](/docs/midi)             | MIDI file parsing, note editing, take recording and ordered playback events                                     |
+| [DAW](/docs/daw)               | Audio/MIDI project model, DAWproject codec and browser playback runtime, as separate entries                    |
+| [Host](/docs/host)             | WebCLAP instrument/effect host, MIDI scheduling, state and editor bridge                                        |
+| [React](/docs/react)           | Hooks and an engine context for reactive interfaces                                                             |
+| [Three.js](/docs/threejs)      | A shared audio context and spatial sound that follows scene objects                                             |
+| [PlayCanvas](/docs/playcanvas) | Engine integration and entity-to-panner bindings                                                                |
+| [Devtools](/docs/devtools)     | Processor latency measurement and assertions                                                                    |
 
 [PixiJS](/docs/pixijs) uses core directly; it does not need a dedicated binding package. Other imperative interfaces can also observe and change the engine's state.
 

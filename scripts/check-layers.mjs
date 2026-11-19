@@ -12,7 +12,7 @@ const SCOPE = "@audiorective/";
 /** Packages that may import `@audiorective/core*` and nothing else of ours. */
 const CORE_ONLY = ["clock", "midi", "host", "effects", "devtools", "react", "threejs", "playcanvas"];
 
-const BLOCKS_CAPABILITIES = ["WavePlayer", "AudioRecorder", "SampleLibrary", "InstrumentEvents", "StepSequencer", "ClipLauncher"];
+const BLOCKS_CAPABILITIES = ["WavePlayer", "AudioRecorder", "SampleLibrary", "PadBank", "StepSequencer", "ClipLauncher"];
 /** Private helpers of a blocks capability: module -> relative targets it may import (`dir/*` = whole dir). */
 const BLOCKS_HELPER_ALLOWLIST = {
   "WavePlayer.ts": ["source.ts"],

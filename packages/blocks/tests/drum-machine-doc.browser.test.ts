@@ -3,7 +3,7 @@
 // in place of decoded files, and the test's own assertions.
 import { afterEach, expect, test, vi } from "vitest";
 import { Clock, Timeline } from "@audiorective/clock";
-import { InstrumentEvents } from "../src/InstrumentEvents";
+import { PadBank } from "../src/PadBank";
 import { StepSequencer, type StepPattern } from "../src/StepSequencer";
 
 const disposers: Array<() => void | Promise<unknown>> = [];
@@ -21,7 +21,7 @@ async function drumMachine() {
   const [kick, snare, closedHat, openHat] = [silent(0.1), silent(0.1), silent(0.05), silent(3)];
 
   // ---- begin: same code as docs/blocks.md ----
-  const bank = new InstrumentEvents(context, [
+  const bank = new PadBank(context, [
     { id: "kick", buffer: kick },
     { id: "snare", buffer: snare },
     { id: "closed", buffer: closedHat, group: "hat" },

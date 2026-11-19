@@ -65,7 +65,7 @@ Layer 4  Apps          apps/daw-demo, a drum machine, a project-file tool, your 
 Layer 3  Project and   widgets  ∥  daw (daw/runtime, daw/dawproject, daw/project)
          interaction
 Layer 2  Capabilities  clock, midi, effects, host, blocks/player, blocks/recorder,
-                       blocks/samples, blocks/instrument-events,
+                       blocks/samples, blocks/pads,
                        blocks/sequencer, blocks/launcher
 Layer 1  Foundation    core
 Side     (core only)   react, threejs, playcanvas, devtools
@@ -89,13 +89,13 @@ Side     (core only)   react, threejs, playcanvas, devtools
 
 "Independent" means two things: the module imports no sibling, and it works when taken out alone. They are separate questions.
 
-| Kind           | Test                                                                     | Modules                                                                                                              |
-| -------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
-| **Standalone** | Imports only core; give it an `AudioContext` and it works                | `clock`, `midi`, `effects`, `host`, `blocks/player`, `blocks/recorder`, `blocks/samples`, `blocks/instrument-events` |
-| **Borrowing**  | Imports only core, but cannot run until the caller supplies an interface | `blocks/sequencer` (a `BeatTiming` and a trigger returning a `CancellableEvent`), `blocks/launcher` (a transport)    |
-| **Composed**   | Imports a sibling capability module                                      | none; an exception needs a written reason and an edge that disappears when the feature is unused                     |
+| Kind           | Test                                                                     | Modules                                                                                                           |
+| -------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| **Standalone** | Imports only core; give it an `AudioContext` and it works                | `clock`, `midi`, `effects`, `host`, `blocks/player`, `blocks/recorder`, `blocks/samples`, `blocks/pads`           |
+| **Borrowing**  | Imports only core, but cannot run until the caller supplies an interface | `blocks/sequencer` (a `BeatTiming` and a trigger returning a `CancellableEvent`), `blocks/launcher` (a transport) |
+| **Composed**   | Imports a sibling capability module                                      | none; an exception needs a written reason and an edge that disappears when the feature is unused                  |
 
-A borrowing module names what it needs as a structural type in [core](./core.md#shared-contracts), so `Timeline`, `Clock`, `InstrumentEvents` or the DAW runtime can each satisfy it without the module importing any of them. `SampleLibrary` previews through core `BufferPlayer` for the same reason: it stays standalone.
+A borrowing module names what it needs as a structural type in [core](./core.md#shared-contracts), so `Timeline`, `Clock`, `PadBank` or the DAW runtime can each satisfy it without the module importing any of them. `SampleLibrary` previews through core `BufferPlayer` for the same reason: it stays standalone.
 
 ### Features are not modules: the Mixer
 
@@ -112,10 +112,10 @@ The piano roll, arrangement, automation lanes, clip grid and step grid split the
 
 ### Two reference compositions
 
-| Application                         | Needs                                                           | Optional                                                       | Never loaded                                                                            |
-| ----------------------------------- | --------------------------------------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| A drum machine with its own buffers | `core`, `clock`, `blocks/sequencer`, `blocks/instrument-events` | `widgets` (step grid), `blocks/samples` (load or browse sound) | `daw`, `blocks/player`, `host`, `effects`, `midi`, `blocks/recorder`, `blocks/launcher` |
-| A `.dawproject` tool in Node        | `core`, `daw/project`, `daw/dawproject`                         | `effects/rack-preset`, `midi`                                  | `daw/runtime`, `clock`, `host`, `widgets`, the other blocks                             |
+| Application                         | Needs                                              | Optional                                                       | Never loaded                                                                            |
+| ----------------------------------- | -------------------------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| A drum machine with its own buffers | `core`, `clock`, `blocks/sequencer`, `blocks/pads` | `widgets` (step grid), `blocks/samples` (load or browse sound) | `daw`, `blocks/player`, `host`, `effects`, `midi`, `blocks/recorder`, `blocks/launcher` |
+| A `.dawproject` tool in Node        | `core`, `daw/project`, `daw/dawproject`            | `effects/rack-preset`, `midi`                                  | `daw/runtime`, `clock`, `host`, `widgets`, the other blocks                             |
 
 Keep the dependency direction downward. Bind widgets to the module that already owns the value. Store project data once, and keep temporary runtime state where it is used.
 

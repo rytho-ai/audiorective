@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { InstrumentEvents } from "@audiorective/blocks/instrument-events";
+import { PadBank } from "@audiorective/blocks/pads";
 import { Clock, LinearBarRuler, ManualTickSource, Timeline } from "@audiorective/clock";
 
 test("a Clock-owned future choke is cancellable while a manual pad hit keeps sounding", async () => {
@@ -10,7 +10,7 @@ test("a Clock-owned future choke is cancellable while a manual pad hit keeps sou
     value.getChannelData(0).fill(level);
     return value;
   };
-  const bank = new InstrumentEvents(context, [
+  const bank = new PadBank(context, [
     { id: "open", buffer: buffer(0.1, 0.3), group: "hat", gate: true },
     { id: "closed", buffer: buffer(0.06, 0.1), group: "hat" },
   ]);
@@ -70,7 +70,7 @@ test("refresh at a hit's exact audio time renders one hit, not two", async () =>
     const context = new OfflineAudioContext(1, rate / 10, rate);
     const buffer = context.createBuffer(1, rate / 10, rate);
     buffer.getChannelData(0).fill(0.3);
-    const bank = new InstrumentEvents(context, [{ id: "hit", buffer }]);
+    const bank = new PadBank(context, [{ id: "hit", buffer }]);
     bank.output.connect(context.destination);
     const ticks = new ManualTickSource();
     const timeline = new Timeline({ audioContext: context, bpm: 120 }).addRuler("bar", new LinearBarRuler({ numerator: 4, denominator: 4 }));

@@ -245,7 +245,7 @@
       "expectations": [
         "Chooses the timing primitive from @audiorective/clock (Clock/Timeline tick windows or rulers) for transport, tempo and swing, rather than setInterval, setTimeout or requestAnimationFrame scheduling",
         "Chooses a one-shot playback primitive from @audiorective/core (Sampler/Voice, or an equivalent buffer source scheduled with audio-clock times) for the hits, with per-step velocity applied as gain at trigger time",
-        "Does not import the @audiorective/blocks root (it has none) or a daw package; either builds on @audiorective/blocks/sequencer StepSequencer with @audiorective/blocks/instrument-events, or writes its own scheduling in the app's audio layer from clock windows",
+        "Does not import the @audiorective/blocks root (it has none) or a daw package; either builds on @audiorective/blocks/sequencer StepSequencer with @audiorective/blocks/pads, or writes its own scheduling in the app's audio layer from clock windows",
         "Keeps pattern and velocity in reactive state owned by the audio layer (a Cell, or a plain class holding Cells) and reads it in React with useValue; no second copy of the pattern in useState, a context or an external store",
         "Scheduling lives in an audio-layer class or method; React handlers only write params/cells or call methods",
         "Adds no wrapper layer around the library's primitives that only forwards calls (no re-implemented transport, event bus or subscription system)"
@@ -260,7 +260,7 @@
         "Chooses core's Sampler/Voice (or an equivalent polyphonic one-shot primitive from @audiorective/core) for playback, one voice per press",
         "Does not use WavePlayer, mountWaveformSelector or BufferPlayer as the pad voice: they are single-playhead players and cannot overlap hits of the same pad",
         "Release fades the voice that this press started, using the voice's own fade/stop with a release time (or an equivalent scheduled gain ramp), so overlapping presses release independently",
-        "Keeps independent one-shot pads on core Sampler/Voice; InstrumentEvents is for cancellable grouped choke, which this request does not need",
+        "Keeps independent one-shot pads on core Sampler/Voice; PadBank is for cancellable grouped choke, which this request does not need",
         "Triggering goes through a method on the audio-layer object; pointer and keyboard handlers do not create audio nodes themselves",
         "Starts or resumes the AudioContext from a user gesture"
       ]
@@ -338,26 +338,26 @@
     {
       "id": 23,
       "prompt": "Our audiorective step sequencer schedules open and closed hi-hats ahead through Clock. If I delete a future closed-hat step, its voice stops but the previously scheduled choke still mutes the open hat. An edit may also land exactly at a hit's AudioContext start time. A manually pressed open hat must survive sequencer pause and edits. Show the audio owner and Clock callback, plus what happens on edit, stop and cleanup. Don't run anything.",
-      "expected_output": "InstrumentEvents owns reversible grouped choke; Clock owns only sequenced event handles registered with window.own(hit, when), and refreshes owned hits at or after the captured audio time while manual hits stay unregistered.",
+      "expected_output": "PadBank owns reversible grouped choke; Clock owns only sequenced event handles registered with window.own(hit, when), and refreshes owned hits at or after the captured audio time while manual hits stay unregistered.",
       "files": [],
       "expectations": [
-        "Chooses InstrumentEvents from @audiorective/blocks/instrument-events for grouped sample hits instead of scheduling an irreversible Voice.stop(when) on the open hat",
+        "Chooses PadBank from @audiorective/blocks/pads for grouped sample hits instead of scheduling an irreversible Voice.stop(when) on the open hat",
         "Creates open and closed pads with different IDs in one group; routes the block output once and keeps context ownership with the caller",
         "Schedules a hit in a Clock tick window using absolute point.time and registers its returned handle with window.own(hit, point.time)",
         "Leaves a manually triggered pad event unregistered with Clock so sequencer transport changes do not cancel it",
         "After a pattern edit, calls clock.refresh() to retract owned hits at or after the captured audio time and refill the horizon; explains that a hit exactly at now is reissued once while earlier hits remain active",
         "Explains that pause, stop, seek, start and destroy cancel owned events, while unowned events retain Clock's prior tail behavior",
-        "Destroys Clock and InstrumentEvents separately; the caller closes its AudioContext"
+        "Destroys Clock and PadBank separately; the caller closes its AudioContext"
       ]
     },
     {
       "id": 24,
       "prompt": "Make a vanilla TypeScript game soundboard: each button plays a short independent one-shot sound, and rapid clicks may overlap. There are no choke groups, step edits or transport. Use our audiorective packages; don't run anything.",
-      "expected_output": "Core Sampler/Voice handles independent overlapping one-shots; no Clock or InstrumentEvents block is needed.",
+      "expected_output": "Core Sampler/Voice handles independent overlapping one-shots; no Clock or PadBank block is needed.",
       "files": [],
       "expectations": [
         "Chooses core Sampler or Voice for overlapping one-shot playback",
-        "Does not add Clock, an event-ownership registry or InstrumentEvents because there is no future choke or editable sequencer",
+        "Does not add Clock, an event-ownership registry or PadBank because there is no future choke or editable sequencer",
         "Routes the sampler output once and starts the AudioContext from a user gesture",
         "Keeps soundboard button callbacks thin; audio scheduling and voice lifetime stay with the audio owner"
       ]
@@ -643,10 +643,10 @@
     {
       "id": 46,
       "prompt": "Make a 16-step drum grid tied to my Audiorective Workspace, then add manual pads that keep sounding when I remove a queued step. The closed hat should still choke the open hat when it actually plays. Use current APIs.",
-      "expected_output": "Uses StepSequencer and InstrumentEvents under the Workspace Clock, with separate manual pad triggers and borrowed widgets.",
+      "expected_output": "Uses StepSequencer and PadBank under the Workspace Clock, with separate manual pad triggers and borrowed widgets.",
       "files": [],
       "expectations": [
-        "Constructs a velocity pattern and passes each returned InstrumentEvents handle from the step trigger",
+        "Constructs a velocity pattern and passes each returned PadBank handle from the step trigger",
         "Uses Workspace.attachStepSequencer with cleanup and keeps manual hits outside the scheduled ownership",
         "Assigns both hats the same choke group and calls mountStepGrid and mountPadGrid over the borrowed model/actions",
         "Explains that pending hits and their chokes are revoked together and live patterns are session state"
@@ -869,15 +869,15 @@
     {
       "id": 65,
       "prompt": "build me a 16-step drum machine in vanilla typescript with audiorective. I already decode my own 4 AudioBuffers (kick, snare, closed hat, open hat). a closed hat has to cut off a ringing open hat, but if I delete a closed-hat step that is already scheduled, the open hat must keep ringing. there is no project file or DAW here, just a grid, a bpm field and play/stop. Keep the dependencies as small as you can. don't run anything.",
-      "expected_output": "A small drum machine over clock, the blocks sequencer and instrument-events subpaths and an optional step-grid widget, with no daw package and no sample library.",
+      "expected_output": "A small drum machine over clock, the blocks sequencer and pads subpaths and an optional step-grid widget, with no daw package and no sample library.",
       "files": [],
       "expectations": [
-        "Imports StepSequencer from @audiorective/blocks/sequencer and InstrumentEvents from @audiorective/blocks/instrument-events (or an equivalent that schedules retractable grouped hits through Clock) with Clock and Timeline from @audiorective/clock; there is no @audiorective/blocks root import",
+        "Imports StepSequencer from @audiorective/blocks/sequencer and PadBank from @audiorective/blocks/pads (or an equivalent that schedules retractable grouped hits through Clock) with Clock and Timeline from @audiorective/clock; there is no @audiorective/blocks root import",
         "Puts closed and open hat in one choke group so cancelling a scheduled closed-hat hit also retracts its future choke, instead of scheduling an irreversible stop on the open hat",
         "Does not import @audiorective/daw, @audiorective/host, @audiorective/effects, @audiorective/midi, @audiorective/blocks/samples or @audiorective/blocks/player, and creates no Project or Workspace",
         "Calls sequencer.schedule(window, timeline) from the Clock tick, passing the same Timeline as the BeatTiming (the sequencer registers its hits with window.own itself), and calls clock.refresh() after pattern edits",
         "Uses @audiorective/widgets mountStepGrid for the grid or names it as an option; a hand-written grid is acceptable when it calls the sequencer's setVelocity",
-        "Cleans up by destroying the clock and InstrumentEvents and leaving the caller's AudioContext open"
+        "Cleans up by destroying the clock and PadBank and leaving the caller's AudioContext open"
       ]
     }
   ]

@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from "vitest";
 import type { BeatTiming, CancellableEvent } from "@audiorective/core";
-import { InstrumentEvents } from "../src/InstrumentEvents";
+import { PadBank } from "../src/PadBank";
 import { StepSequencer, type StepHit, type StepPattern, type StepWindow } from "../src/StepSequencer";
 
 const disposers: Array<() => void | Promise<unknown>> = [];
@@ -39,7 +39,7 @@ const sortHits = (hits: Played[]) => [...hits].sort((a, b) => a.when - b.when ||
 
 function instrumentSource(context: AudioContext) {
   const buffer = context.createBuffer(1, context.sampleRate, context.sampleRate);
-  const bank = new InstrumentEvents(context, [
+  const bank = new PadBank(context, [
     { id: "kick", buffer },
     { id: "snare", buffer },
   ]);

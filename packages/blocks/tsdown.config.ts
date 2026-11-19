@@ -4,7 +4,7 @@ export default defineConfig({
     player: "src/WavePlayer.ts",
     recorder: "src/AudioRecorder.ts",
     samples: "src/SampleLibrary.ts",
-    "instrument-events": "src/InstrumentEvents.ts",
+    pads: "src/PadBank.ts",
     sequencer: "src/StepSequencer.ts",
     launcher: "src/ClipLauncher.ts",
   },

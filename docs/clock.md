@@ -99,7 +99,7 @@ clock.seek(64); // jumps to beat 64
 
 ### Own cancellable events when transport edits must cut queued sound
 
-The default remains unchanged: `Clock` does not cancel sound scheduled by `onTick`, so an unowned event may keep playing for up to the look-ahead interval after `pause()`. For a hard stop or an editable pattern, register a returned event handle with `window.own(event, when)`. `when` is its finite, nonnegative absolute `AudioContext` start time. The handle is a core `CancellableEvent` (`cancel()` and `onEnded(listener)`, re-exported by this package); Clock drops naturally ended events from its registry. `InstrumentEvents.trigger()` in [Blocks](./blocks.md#cancellable-instrument-events) returns a compatible handle. `Timeline` satisfies core's `BeatTiming`, so it can be passed to `StepSequencer.schedule(window, timing)` without any other package in between.
+The default remains unchanged: `Clock` does not cancel sound scheduled by `onTick`, so an unowned event may keep playing for up to the look-ahead interval after `pause()`. For a hard stop or an editable pattern, register a returned event handle with `window.own(event, when)`. `when` is its finite, nonnegative absolute `AudioContext` start time. The handle is a core `CancellableEvent` (`cancel()` and `onEnded(listener)`, re-exported by this package); Clock drops naturally ended events from its registry. `PadBank.trigger()` in [Blocks](./blocks.md#pad-bank) returns a compatible handle. `Timeline` satisfies core's `BeatTiming`, so it can be passed to `StepSequencer.schedule(window, timing)` without any other package in between.
 
 ```typescript
 const clock = new Clock({

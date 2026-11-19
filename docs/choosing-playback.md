@@ -69,6 +69,8 @@ In words:
 | `load(url)` / `loaded`          | `AudioBufferCache.load(url)` then `sampler.buffer = …`                |
 | `new Tone.Player({ context })`  | `new Sampler(ctx)` — live or `OfflineAudioContext`                    |
 
+For several pads that cut each other off (closed hat chokes open hat) and hits that a sequencer may still cancel, use `PadBank` from [`@audiorective/blocks/pads`](./blocks.md#pad-bank): one `Sampler` plays one buffer polyphonically; one `PadBank` plays many pads with choke groups and returns a cancellable `PadHit` per trigger.
+
 ### `BufferPlayer` — the deck
 
 **Use when** you have one in-memory source on a single playhead and you need **sample-accurate `start(t0)`** and/or a **schedulable `rate`**: beat-locked loops and stems, vinyl spin-down, tempo-matched transitions, anything that must stay phase-locked to other ctx-clocked sources.
@@ -101,7 +103,7 @@ For a plain playback bar, mount [`@audiorective/widgets/player`](./widgets.md#pl
 
 ## Capability modules built on these
 
-Higher-level modules reuse these primitives and import only core, so they stay standalone. `@audiorective/blocks/player`'s `WavePlayer` wraps `BufferPlayer` with a selection and offline stretch; `@audiorective/blocks/samples`'s `SampleLibrary` auditions through a `BufferPlayer` voice; `@audiorective/blocks/instrument-events` plays cancellable pad hits for sequencers. See [Blocks](./blocks.md).
+Higher-level modules reuse these primitives and import only core, so they stay standalone. `@audiorective/blocks/player`'s `WavePlayer` wraps `BufferPlayer` with a selection and offline stretch; `@audiorective/blocks/samples`'s `SampleLibrary` auditions through a `BufferPlayer` voice; `@audiorective/blocks/pads` plays cancellable pad hits for sequencers. See [Blocks](./blocks.md).
 
 ## Common mistakes
 

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { effect } from "@audiorective/core";
 import { AudioRecorder } from "../src/AudioRecorder";
-import { InstrumentEvents } from "../src/InstrumentEvents";
+import { PadBank } from "../src/PadBank";
 import { WavePlayer } from "../src/WavePlayer";
 
 const disposers: Array<() => void | Promise<unknown>> = [];
@@ -108,10 +108,10 @@ describe("AudioRecorder readers are tracked", () => {
   });
 });
 
-describe("InstrumentEvents readers are tracked", () => {
+describe("PadBank readers are tracked", () => {
   test("cells.activeEvents follows trigger and stopAll", async () => {
     const context = new AudioContext();
-    const bank = new InstrumentEvents(context, [{ id: "kick", buffer: tone(context) }]);
+    const bank = new PadBank(context, [{ id: "kick", buffer: tone(context) }]);
     disposers.push(
       () => context.close(),
       () => bank.destroy(),
