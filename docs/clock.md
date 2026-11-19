@@ -209,6 +209,8 @@ For unowned events, toggling a step whose window has already been committed take
 
 `Clock` defaults to `WorkerTickSource` (a Web-Worker timer, so ticks continue in background tabs). `IntervalTickSource` (setInterval fallback) and `ManualTickSource` (deterministic, hand-driven ticks — how this package's own tests work without a real `AudioContext`) are also exported.
 
+A `TickSource` serves one `Clock`: the Clock calls `start(onTick)` on construction and `stop()` on `destroy()`, whether it created the source or you passed it as `tickSource`. Do not share a source between clocks, and create a fresh one per Clock.
+
 ## Rendering offline — `renderTimeline`
 
 `renderOffline` (from `@audiorective/core`) builds an `OfflineAudioContext`, runs your setup, and renders. That is enough when everything is scheduled up front at absolute times, but not for a `Clock`: an offline context's `currentTime` never moves before rendering starts and then races through the whole render in milliseconds, so a timer-driven tick source emits one `lookAhead` window and starves.

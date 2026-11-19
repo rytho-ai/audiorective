@@ -284,7 +284,7 @@ const preset = rack.capturePreset();
 rack.setPreset(preset);
 ```
 
-`rack.cells.macros.value` lists the live controls. Bind an ordinary knob to a macro's `param`. For audio-clock automation, pass `macro.automation` to [AutomationBinding](./automation.md). Linear or hold segments in the normalized curve produce native ramps or steps on the mapped parameters. Exponential targets require positive endpoints. Stop a running binding before taking manual control so subsequent curve edits do not reprogram the target.
+`rack.cells.macros.value` lists the live controls. Bind an ordinary knob to a macro's `param`; writing it moves the native macro timeline and every mapped target together, and its value is what `capturePreset()` reports. It stays valid across `setEffects`, so only `automation` schedules ramps. For audio-clock automation, pass `macro.automation` to [AutomationBinding](./automation.md). Linear or hold segments in the normalized curve produce native ramps or steps on the mapped parameters. Exponential targets require positive endpoints. Stop a running binding before taking manual control so subsequent curve edits do not reprogram the target.
 
 Only one macro can own a given slot parameter. Use `rackMacroRange(slot, parameter)` for ranges. Supported targets are mix (`wet`) on every insert, Filter `frequency` and `q`, and Delay `delayTime` and `feedback`. Removing a slot drops its mappings. Bypassing a slot keeps its macro phase and makes that insert dry.
 

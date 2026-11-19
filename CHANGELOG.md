@@ -43,6 +43,9 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Fixed
 
+- **daw:** `openWorkspace` and `openWorkspaceBlob` return a Workspace that owns its opened `Project`: `workspace.destroy()` destroys it. `WorkspaceOptions.ownsProject` hands a project to `Workspace.create` the same way; without it the caller still owns the project.
+- **daw:** `Project.cells.content` re-runs for note and duration edits made through `MidiClip.sequence` as well as structural commits; `Project.cells.revision` still counts structural commits only.
+- **widgets:** `mountStepGrid` rebuilds when the borrowed pattern's step count or lane list changes instead of throwing.
 - **blocks:** `WavePlayer.buffer`, `.duration` and `.sourceBuffer` track the committed playback version. `EffectRack.effects` and its read-only `cells.effects` update alongside the live chain. A destroyed WavePlayer now reports `WavePlayer is destroyed.`.
 - **clock:** `timeline.bpm.$(x)` writes a tempo-curve step like `bpm.value = x`; before, it changed only the displayed value.
 - **effects:** `Convolver.buffer` is a tracked read. `Compressor` and `Limiter` without AudioWorklet no longer cause an unhandled rejection; `ready` still rejects.
