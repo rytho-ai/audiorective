@@ -729,7 +729,7 @@ export class Workspace {
       for (const sequence of this.stepSequencers.keys()) sequence.reset();
       this.seekPoint.value = { seconds: 0 };
     });
-    this.positionAutomation(0, false);
+    untracked(() => this.positionAutomation(0, false));
     this.cancelAudio();
     this.panic();
   }
@@ -963,10 +963,13 @@ export class Workspace {
   }
 
   private findAudioClip(clipId: string): AudioClip | undefined {
-    for (const track of this.project.tracks) {
-      const clip = track.clips.find((candidate) => candidate.id === clipId);
-      if (clip?.kind === "audio") return clip;
-    }
+    return untracked(() => {
+      for (const track of this.project.tracks) {
+        const clip = track.clips.find((candidate) => candidate.id === clipId);
+        if (clip?.kind === "audio") return clip;
+      }
+      return undefined;
+    });
   }
 
   private get audition(): ClipAudition | RangeAudition | null {
@@ -1060,10 +1063,12 @@ export class Workspace {
     if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end - start < 1 / this.context.sampleRate)
       throw new RangeError("Workspace range audition needs a non-negative range at least one audio frame long.");
     const ids = options.trackIds ? new Set(options.trackIds) : undefined;
-    const tracks = this.project.tracks.filter((track) => track.kind === "audio" && (!ids || ids.has(track.id)));
+    const tracks = untracked(() => this.project.tracks.filter((track) => track.kind === "audio" && (!ids || ids.has(track.id))));
     if (!tracks.length || (ids && tracks.length !== ids.size)) throw new Error("Workspace range audition needs existing audio tracks.");
-    const clips = tracks.flatMap((track) =>
-      track.clips.filter((clip): clip is AudioClip => clip.kind === "audio" && clip.time < end && clip.time + clip.duration > start),
+    const clips = untracked(() =>
+      tracks.flatMap((track) =>
+        track.clips.filter((clip): clip is AudioClip => clip.kind === "audio" && clip.time < end && clip.time + clip.duration > start),
+      ),
     );
     if (!clips.length) throw new Error("Workspace range audition needs audio in the selected range.");
     const state = Object.freeze({ start, end, trackIds: Object.freeze(tracks.map(({ id }) => id)) });

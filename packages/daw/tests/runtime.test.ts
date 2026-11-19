@@ -465,7 +465,13 @@ describe("workspace readers are tracked", () => {
 });
 
 describe("workspace commands do not subscribe a calling effect", () => {
-  const commands: Array<{ name: string; run: (ctx: Awaited<ReturnType<typeof setup>>) => unknown }> = [
+  type Ctx = Awaited<ReturnType<typeof setup>> & { clipId: string };
+  const settle = (promise: Promise<unknown>) => void promise.catch(() => undefined);
+  const commands: Array<{ name: string; run: (ctx: Ctx) => unknown }> = [
+    { name: "stop", run: (c) => c.workspace.stop() },
+    { name: "auditionAudioClip", run: (c) => settle(c.workspace.auditionAudioClip(c.clipId)) },
+    { name: "auditionRange", run: (c) => settle(c.workspace.auditionRange({ start: 0, end: 0.5 })) },
+    { name: "prepareAudioClipStretch", run: (c) => settle(c.workspace.prepareAudioClipStretch(c.clipId, 1)) },
     { name: "setTrackVolume", run: (c) => c.workspace.setTrackVolume(c.track.id, 0.4) },
     { name: "setMasterVolume", run: (c) => c.workspace.setMasterVolume(0.4) },
     { name: "setTrackMuted", run: (c) => c.workspace.setTrackMuted(c.track.id, true) },
@@ -487,7 +493,11 @@ describe("workspace commands do not subscribe a calling effect", () => {
     { name: "refreshArrangement", run: (c) => c.workspace.refreshArrangement() },
   ];
   test.each(commands)("$name", async ({ run }) => {
-    const ctx = await setup();
+    const base = await setup();
+    const audioTrack = base.project.addTrack("Audio", "audio");
+    const clip = base.project.addAudioClip(audioTrack.id, { sampleRate: 100, channels: [new Float32Array(100)] }, 0);
+    const ctx: Ctx = { ...base, clipId: clip.id };
+    await ctx.workspace.flush();
     let runs = 0;
     const stop = effect(() => {
       runs++;
