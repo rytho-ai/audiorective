@@ -8,6 +8,7 @@ import {
   type BeatTiming,
   type CancellableEvent,
   type EventTransform,
+  type ParamSpec,
   type ReadonlyCell,
   type TimedEvent,
 } from "@audiorective/core";
@@ -34,15 +35,7 @@ export type StepCell = Readonly<{
 }>;
 
 /** A caller-defined per-step number. The sequencer stores and validates it and passes it to the trigger; it never interprets it. */
-export type StepParamSpec = Readonly<{
-  id: string;
-  label?: string;
-  min: number;
-  max: number;
-  default: number;
-  /** Editing granularity hint for views; not enforced. */
-  step?: number;
-}>;
+export type StepParamSpec = ParamSpec;
 
 export type StepLane = Readonly<{
   id: string;

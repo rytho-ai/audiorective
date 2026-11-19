@@ -91,8 +91,8 @@ interface StepGridSequencer {
   pattern: Readable<{ size: number; lanes: readonly Lane[] }>; // Lane: id, label, steps, rate, direction, swing, mute, solo, cells[]
   playheads: Readable<Readonly<Record<string, number | null>>>;
   loopProgress: Readable<number | null>;
-  params?: readonly { id: string; label?: string; min: number; max: number; default: number; step?: number }[];
-  cellParams?: readonly { id: string; label?: string; min: number; max: number; default: number; step?: number }[]; // ranges for the built-in values, by id
+  params?: readonly ParamSpec[]; // from @audiorective/core: { id, label?, min, max, default, step? }
+  cellParams?: readonly ParamSpec[]; // ranges for the built-in values, by id
   rates?: readonly Rate[]; // the Rate picker's options
   setCell(laneId: string, step: number, patch: Partial<Cell>): void;
   toggle(laneId: string, step: number): void;

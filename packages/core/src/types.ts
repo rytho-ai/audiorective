@@ -1,15 +1,13 @@
+import type { ParamSpec } from "./range";
+
 export interface ParamBind<T> {
   get?: () => T;
   set?: (value: T) => void;
 }
 
-export interface ParamOptions<T> {
+export interface ParamOptions<T> extends Partial<Pick<ParamSpec, "label" | "min" | "max" | "step">> {
   default: T;
   bind?: ParamBind<T>;
-  label?: string;
-  min?: number;
-  max?: number;
-  step?: number;
   display?: (value: T) => string;
 }
 

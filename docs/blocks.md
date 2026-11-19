@@ -372,7 +372,7 @@ new StepSequencer(pattern: StepPatternInput, trigger: (hit: StepHit) => Cancella
 | `pitch`    | integer -24..24 | semitones, passed to the trigger                   |
 | `chance`   | 0..1            | probability that the step plays                    |
 
-The ranges are data, in one place. `sequencer.cellParams` (also exported as `stepCellParams`) lists these six fields as `readonly StepParamSpec[]` in the order above, in the same `{ id, label, min, max, default, step }` shape as a custom param (`step` is the editing hint; `repeat` and `pitch` are enforced as integers). `sequencer.rates` (also `stepRates`) lists the twelve `StepRate`s in display order, straight 1/2 to 1/64 then the triplets. Validation and views read the same constants, so a view needs no copy of them.
+The ranges are data, in one place. `sequencer.cellParams` (also exported as `stepCellParams`) lists these six fields as `readonly StepParamSpec[]` in the order above, as core `ParamSpec`s, the same `{ id, label, min, max, default, step }` shape as a custom param (`step` is the editing hint; `repeat` and `pitch` are enforced as integers). `sequencer.rates` (also `stepRates`) lists the twelve `StepRate`s in display order, straight 1/2 to 1/64 then the triplets. Validation and views read the same constants, so a view needs no copy of them.
 
 Lane fields: `steps` (integer 1..`size`, the lane's own length, so lanes of different lengths drift against each other), `rate` (a `StepRate`; straight 1/2 = 2 beats down to 1/64 = 1/16 beat, and a `T` rate is two thirds of the straight one), `direction`, `swing` (0..1; the `stepSwing` transform delays every odd lane step by `swing * 0.5` lane steps), `mute` and `solo`.
 
@@ -448,7 +448,7 @@ The six built-in cell values affect timing, so the sequencer understands them. A
 
 ```ts
 const sequencer = new StepSequencer(pattern, ({ custom, when, laneId }) => /* set a filter from custom.cutoff at `when` */ null, {
-  params: [{ id: "cutoff", label: "Cutoff", min: 0, max: 1, default: 0.5, step: 0.01 }], // StepParamSpec
+  params: [{ id: "cutoff", label: "Cutoff", min: 0, max: 1, default: 0.5, step: 0.01 }], // StepParamSpec, an alias of core ParamSpec
 });
 sequencer.params; // the declared specs, read-only and fixed at construction
 sequencer.setCell("kick", 0, { custom: { cutoff: 0.4 } }); // partial merge; other custom ids keep their values

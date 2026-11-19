@@ -901,6 +901,16 @@
         "Writes the euclidean button as a plugin object with attach(context) passed to grid.attach, using context.addToolbarItem and context.sequencer.setCell (or toggle), not by querying the widget's internal markup",
         "Registers listeners through context.listen or context.onCleanup so attachment.destroy() or grid.destroy() releases them, and does not import @audiorective/daw"
       ]
+    },
+    {
+      "id": 68,
+      "prompt": "In my vanilla audiorective project I'm writing a small helper that takes a list of numeric parameter definitions (id, label, min, max, default, step) for a custom per-step control and validates them before handing them to a StepSequencer. What type should the definitions use? don't run anything.",
+      "expected_output": "Uses the shared ParamSpec type from @audiorective/core rather than a local copy of the shape.",
+      "files": [],
+      "expectations": [
+        "Types the definitions as ParamSpec imported from @audiorective/core (or StepParamSpec from @audiorective/blocks/sequencer, its alias), not a hand-written { id, min, max, default } interface",
+        "Passes the list to the StepSequencer params option and checks min < max and default within min..max, keeping step as an editing hint rather than enforcing it"
+      ]
     }
   ]
 }

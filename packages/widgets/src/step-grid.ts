@@ -1,4 +1,4 @@
-import { cell, effect, readonlyCell, untracked } from "@audiorective/core";
+import { cell, effect, readonlyCell, untracked, type ValueRange } from "@audiorective/core";
 import { createPluginHost } from "./plugin-host";
 import { stepGridStyles } from "./step-grid-style";
 import type {
@@ -44,11 +44,9 @@ const DEFAULT_LABELS: StepGridLabels = {
 };
 
 type Kind = "fill" | "centre" | "segments";
-type ParamDef = {
+type ParamDef = ValueRange & {
   id: string;
   label: string;
-  min: number;
-  max: number;
   kind: Kind;
   integer: boolean;
   quantum: number;

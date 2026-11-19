@@ -15,6 +15,7 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Added
 
+- **core:** `ValueRange` (`{ min, max }`), `ParamRange` (adds `default` and an optional `step`) and `ParamSpec` (adds `id` and an optional `label`) describe a numeric parameter's range once. `StepParamSpec` and `StepGridParamSpec` are aliases of `ParamSpec`; `ParamOptions`, `LfoOptions`, `RackMacroMapping` and `WebClapParameter` reuse the same fields. No behaviour change.
 - **blocks:** `refreshOnEdit(sequencer, transport)` in `@audiorective/blocks/sequencer` calls `transport.refresh()` once per committed change of a `StepSequencer`'s `pattern` or `transforms` (not on attach) and returns a disposer. `transport` is any `{ refresh(): void }`. `Workspace.attachStepSequencer` in `@audiorective/daw` uses it.
 - **core:** `withCancel(event, undo)` returns a `CancellableEvent` whose `cancel()` also runs `undo` once, so a trigger's extra scheduling (such as a filter cutoff) is retracted when a scheduler cancels and re-queues the hit.
 - **blocks:** `PadBank.routePad(id, destination | null)` sends one pad to a caller-owned node (or back to the bank `output` with `null`). Each pad owns a gain node feeding `output`, so pads in one choke group can feed different effects and still choke each other. An unknown pad ID throws `Unknown pad.`

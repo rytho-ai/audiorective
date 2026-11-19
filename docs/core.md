@@ -112,8 +112,25 @@ interface ParamBind<T> {
 interface ParamOptions<T> {
   default: T;
   bind?: ParamBind<T>;
+  label?: string; // same fields as ParamSpec
+  min?: number;
+  max?: number;
+  step?: number;
+  display?: (value: T) => string;
 }
 ```
+
+### ValueRange, ParamRange and ParamSpec
+
+One set of types describes a numeric parameter's range, so every package that declares one uses the same shape. They are pure data and load without the DOM or an `AudioContext`.
+
+```typescript
+type ValueRange = Readonly<{ min: number; max: number }>; // inclusive interval
+type ParamRange = ValueRange & Readonly<{ default: number; step?: number }>; // step is an editing hint, not enforced
+type ParamSpec = ParamRange & Readonly<{ id: string; label?: string }>; // a named numeric parameter
+```
+
+`StepSequencer` takes `params: ParamSpec[]` and lists its built-in cell ranges as `cellParams: ParamSpec[]`; the step grid's `params` and `cellParams` use the same type. `ValueRange` alone types ranges with no default or id: the `EffectRack` macro mappings, and the CLAP parameter info in `host.parameterInfo`. To declare your own numeric parameter, write a `ParamSpec` (`{ id: "cutoff", label: "Cutoff", min: 0, max: 1, default: 0.5, step: 0.01 }`) and import the type from `@audiorective/core`.
 
 ### Param\<T\>
 

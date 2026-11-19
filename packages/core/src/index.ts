@@ -11,6 +11,7 @@ export { Spatial } from "./Spatial";
 export type { SpatialOptions } from "./Spatial";
 export { Analyser } from "./Analyser";
 export type { AnalyserOptions } from "./Analyser";
+export type { ValueRange, ParamRange, ParamSpec } from "./range";
 export type { ParamBind, ParamOptions, EngineState, SignalAccessor, ComputedAccessor, Readable } from "./types";
 export type { BuildHelpers, BuildResult } from "./AudioProcessor";
 export { loadAudioBuffer, AudioBufferCache } from "./loadAudioBuffer";

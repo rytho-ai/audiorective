@@ -1,16 +1,26 @@
-import { AudioProcessor, batch, cell, readonlyCell, type CancellableEvent, type Cell, type Param, type ReadonlyCell } from "@audiorective/core";
+import {
+  AudioProcessor,
+  batch,
+  cell,
+  readonlyCell,
+  type CancellableEvent,
+  type Cell,
+  type Param,
+  type ReadonlyCell,
+  type ValueRange,
+} from "@audiorective/core";
 
 export type WebClapDescriptor = Readonly<{ id: string; name: string; vendor: string; version: string; features: readonly string[] }>;
-export type WebClapParameter = Readonly<{
-  id: number;
-  name: string;
-  min: number;
-  max: number;
-  defaultValue: number;
-  value: number;
-  text: string;
-  flags?: number;
-}>;
+/** The CLAP wire shape: numeric `id`, `name` and `defaultValue` differ from `ParamSpec`, so only the range is shared. */
+export type WebClapParameter = ValueRange &
+  Readonly<{
+    id: number;
+    name: string;
+    defaultValue: number;
+    value: number;
+    text: string;
+    flags?: number;
+  }>;
 export type WebClapBundle = Readonly<{ url: string; pluginId?: string; pluginIndex?: number; workletUrl?: string }>;
 export type WebClapEvent = CancellableEvent;
 

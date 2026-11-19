@@ -1,4 +1,4 @@
-import type { Readable } from "@audiorective/core";
+import type { ParamSpec, Readable } from "@audiorective/core";
 import type { PluginTarget, Unsubscribe, WidgetPlugin, WidgetPluginContext } from "./types";
 
 export type StepGridRate = "1/2" | "1/4" | "1/8" | "1/16" | "1/32" | "1/64" | "1/2T" | "1/4T" | "1/8T" | "1/16T" | "1/32T" | "1/64T";
@@ -32,7 +32,7 @@ export type StepGridLane = Readonly<{
 export type StepGridPattern = Readonly<{ size: number; lanes: readonly StepGridLane[] }>;
 
 /** A caller-defined per-step number; the grid shows it as an extra tab. */
-export type StepGridParamSpec = Readonly<{ id: string; label?: string; min: number; max: number; default: number; step?: number }>;
+export type StepGridParamSpec = ParamSpec;
 
 export type StepGridCellPatch = Partial<Omit<StepGridCell, "custom">> & { custom?: Readonly<Record<string, number>> };
 export type StepGridLanePatch = Partial<Omit<StepGridLane, "id" | "cells">>;

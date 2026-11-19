@@ -1,14 +1,14 @@
 /** Pure rack settings and validation; loads in Node without Web Audio or any effect runtime. */
+import type { ValueRange } from "@audiorective/core";
 import { normalizeEqualizerBands, type EqualizerBand } from "./equalizer-bands";
 
 export type RackMacroParameter = "wet" | "frequency" | "q" | "delayTime" | "feedback";
-export type RackMacroMapping = Readonly<{
-  slotId: string;
-  parameter: RackMacroParameter;
-  min: number;
-  max: number;
-  scale?: "linear" | "exponential";
-}>;
+export type RackMacroMapping = ValueRange &
+  Readonly<{
+    slotId: string;
+    parameter: RackMacroParameter;
+    scale?: "linear" | "exponential";
+  }>;
 export type RackMacroSettings = Readonly<{
   id: string;
   label?: string;
