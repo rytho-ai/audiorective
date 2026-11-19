@@ -15,6 +15,10 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Added
 
+- **blocks:** `refreshOnEdit(sequencer, transport)` in `@audiorective/blocks/sequencer` calls `transport.refresh()` once per committed change of a `StepSequencer`'s `pattern` or `transforms` (not on attach) and returns a disposer. `transport` is any `{ refresh(): void }`. `Workspace.attachStepSequencer` in `@audiorective/daw` uses it.
+- **core:** `withCancel(event, undo)` returns a `CancellableEvent` whose `cancel()` also runs `undo` once, so a trigger's extra scheduling (such as a filter cutoff) is retracted when a scheduler cancels and re-queues the hit.
+- **blocks:** `PadBank.routePad(id, destination | null)` sends one pad to a caller-owned node (or back to the bank `output` with `null`). Each pad owns a gain node feeding `output`, so pads in one choke group can feed different effects and still choke each other. An unknown pad ID throws `Unknown pad.`
+- **blocks:** `StepSequencer.cellParams` (`stepCellParams`) lists the six built-in cell ranges as `StepParamSpec[]`, and `StepSequencer.rates` (`stepRates`) lists the twelve `StepRate`s in display order. Cell validation reads the same constants.
 - **core:** `ScheduledEvent` (`{ when }`), `TimedEvent` (adds `duration`, `velocity`), `EventTransform<E>`, `EventTransformContext` and `applyEventTransforms`, the shared contract and enforcement for scheduler transform sockets. See Core "Shared contracts".
 - **blocks:** `StepSequencer` option `transforms` (default `defaultStepTransforms`), the read-only `transforms` cell and `setTransforms(list)`; exported `stepSwing()` and `defaultStepTransforms` from `@audiorective/blocks/sequencer`. Violations throw `Event transform "<id>" …`.
 - **blocks:** `StepSequencer` option `params` (`StepParamSpec[]`) declares custom per-step numbers, exposed as `sequencer.params`; cells carry `custom`, and `setCell(lane, step, { custom })` merges partially and validates. New errors start `Step Sequencer params need`, `Step Sequencer custom values need` and `Step Sequencer transforms need`.

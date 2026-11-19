@@ -331,15 +331,22 @@ const instruments = new PadBank(context, [
   { id: "closed-hat", buffer: closedHat, group: "hat" },
 ]);
 instruments.output.connect(context.destination);
+instruments.routePad("open-hat", hatFilter); // optional: this pad feeds `hatFilter` instead of the bank output; hatFilter is a node you own
 const manual = instruments.trigger("open-hat"); // caller owns this event
 const queued = instruments.trigger("closed-hat", 1, context.currentTime + 0.2);
 queued?.cancel(); // removes both the hit and its future choke; manual keeps sounding
 // Later: manual?.cancel(); instruments.destroy(); context.close();
 ```
 
-`trigger(id, velocity = 1, when = context.currentTime, options?: { pitch?: number; duration?: number })` returns an `PadHit` with idempotent `cancel()` / `stop()` and `onEnded(listener)`, or `null` for an unknown pad ID. Velocity clamps to 0..1; a past `when` plays now. `options.pitch` is in semitones and sets the playback rate to `2 ** (pitch / 12)`. `options.duration` (seconds) applies only to `gate: true` pads: the gate closes at `when + duration`, retractably like choke, so cancelling the hit before then keeps the earlier close from applying; one-shot pads ignore it and play to the end of their buffer. `gate: true` loops a sample until its event is cancelled or choked; otherwise it plays once. Later hits with a **different ID** in the same `group` choke earlier hits at their native audio start time, even if the later hit was scheduled first. Hits of the same ID may overlap. Choke is carried by a per-event gain gate, so cancelling an unstarted hit retracts its future choke. A choke that already reached its deadline stays committed and cannot resurrect an earlier sound. The cleanup timer retires silent nodes; it does not time the audible cutoff.
+`trigger(id, velocity = 1, when = context.currentTime, options?: { pitch?: number; duration?: number })` returns an `PadHit` with idempotent `cancel()` / `stop()` and `onEnded(listener)`, or `null` for an unknown pad ID. Velocity clamps to 0..1; a past `when` plays now. `options.pitch` is in semitones and sets the playback rate to `2 ** (pitch / 12)`. `options.duration` (seconds) applies only to `gate: true` pads: the gate closes at `when + duration`, retractably like choke, so cancelling the hit before then keeps the earlier close from applying; one-shot pads ignore it and play to the end of their buffer. Later hits with a **different ID** in the same `group` choke earlier hits at their native audio start time, even if the later hit was scheduled first. Hits of the same ID may overlap.
 
-`assign(id, buffer)` replaces that pad's buffer, cancels its current and future hits, and retracts their future choke. `stopAll()` cancels every hit. `cells.activeEvents` is a read-only reactive count and `cells.pads` is the read-only list of current pad specs, which changes on `assign`; `params.volume` follows the normal schedulable `.value` / `$` contract. The block owns its nodes and event handles, while the caller owns output routing and the `AudioContext`. It has no polyphony cap or voice-stealing policy. For Clock-owned sequenced hits, pass the handle to `window.own(hit, when)` and call `clock.refresh()` after pattern edits; manual hits remain unregistered. See [Clock](./clock.md#own-cancellable-events-when-transport-edits-must-cut-queued-sound).
+**`gate` and choke.** Choke does not need `gate`: a later hit of another pad in the same `group` cuts an earlier hit whether the earlier pad is a one-shot (`gate` omitted or `false`) or a gate pad, so a one-shot open hat is choked by a later closed hat. `gate` changes what the hit does when nothing chokes it. A one-shot plays its buffer once and ends at the buffer's end; `options.duration` is ignored. A `gate: true` pad loops its buffer for as long as the gate stays open, until the hit is cancelled, choked, or closed by `options.duration`; pass a `duration` from the sequencer, or the hit never ends by itself. Use `gate: true` for sustained sounds (an open hat held until the next hit, a pad that must stop at the step length) and leave it off for drum one-shots.
+
+Choke is carried by a per-event gain gate, so cancelling an unstarted hit retracts its future choke. A choke that already reached its deadline stays committed and cannot resurrect an earlier sound. The cleanup timer retires silent nodes; it does not time the audible cutoff.
+
+**Per-pad routing.** Each pad owns a gain node that feeds the bank `output`. `routePad(id, destination: AudioNode | null)` sends that pad to a node you own instead (a filter, a send), and `routePad(id, null)` sends it back to `output`. Choke acts before the routing, so two pads in one `group` can feed different effects and still cut each other. A routed pad bypasses `params.volume`, which scales only the bank `output`. The bank owns its pad nodes and edges; you own every destination. `destroy()` disconnects only the bank's own nodes and leaves a destination connected to the rest of your graph. An unknown pad ID throws `Unknown pad.`
+
+`assign(id, buffer)` replaces that pad's buffer, cancels its current and future hits, and retracts their future choke. `stopAll()` cancels every hit. `cells.activeEvents` is a read-only reactive count and `cells.pads` is the read-only list of current pad specs, which changes on `assign`; `params.volume` follows the normal schedulable `.value` / `$` contract. The block owns its nodes and event handles, while the caller owns output routing and the `AudioContext`. It has no polyphony cap or voice-stealing policy. For Clock-owned sequenced hits, pass the handle to `window.own(hit, when)` and call `clock.refresh()` after pattern edits (or let `refreshOnEdit` do it, see [Step Sequencer](#step-sequencer)); manual hits remain unregistered. See [Clock](./clock.md#own-cancellable-events-when-transport-edits-must-cut-queued-sound).
 
 ## Step Sequencer
 
@@ -364,6 +371,8 @@ new StepSequencer(pattern: StepPatternInput, trigger: (hit: StepHit) => Cancella
 | `repeat`   | integer 1..8    | hits evenly spaced inside the step                 |
 | `pitch`    | integer -24..24 | semitones, passed to the trigger                   |
 | `chance`   | 0..1            | probability that the step plays                    |
+
+The ranges are data, in one place. `sequencer.cellParams` (also exported as `stepCellParams`) lists these six fields as `readonly StepParamSpec[]` in the order above, in the same `{ id, label, min, max, default, step }` shape as a custom param (`step` is the editing hint; `repeat` and `pitch` are enforced as integers). `sequencer.rates` (also `stepRates`) lists the twelve `StepRate`s in display order, straight 1/2 to 1/64 then the triplets. Validation and views read the same constants, so a view needs no copy of them.
 
 Lane fields: `steps` (integer 1..`size`, the lane's own length, so lanes of different lengths drift against each other), `rate` (a `StepRate`; straight 1/2 = 2 beats down to 1/64 = 1/16 beat, and a `T` rate is two thirds of the straight one), `direction`, `swing` (0..1; the `stepSwing` transform delays every odd lane step by `swing * 0.5` lane steps), `mute` and `solo`.
 
@@ -392,7 +401,37 @@ type StepHit = TimedEvent & {
 
 The trigger can delegate to `PadBank.trigger(id, velocity, when, { pitch, duration })`. The sequencer tracks and cancels only events returned by that callback. Use a separate call to the instrument for manual hits.
 
-`schedule(window, timing)` reads the caller's transport window and registers its hits via `window.own(event, when)`. `timing` is any `BeatTiming`; pass the same `Timeline` the window came from. On edits, call the clock's `refresh()` to rebuild the unplayed look-ahead horizon.
+`schedule(window, timing)` reads the caller's transport window and registers its hits via `window.own(event, when)`. `timing` is any `BeatTiming`; pass the same `Timeline` the window came from.
+
+**Edits and the look-ahead.** The clock has already scheduled the next window when you edit, so an edit applies to later windows unless the look-ahead is rebuilt. `refreshOnEdit(sequencer, transport)` does that: it calls `transport.refresh()` once per committed change of `pattern` or `transforms` (a `batch` counts once) and returns a disposer.
+
+```ts
+import { refreshOnEdit } from "@audiorective/blocks/sequencer";
+
+const stopRefresh = refreshOnEdit(sequencer, clock); // `transport` is anything with refresh(), such as a Clock
+sequencer.setCell("closed", 4, { velocity: 0 }); // the queued look-ahead is rebuilt without a manual refresh()
+stopRefresh(); // before the clock is destroyed
+```
+
+It does not refresh on attach, and calling it inside an effect does not subscribe that effect. [The DAW runtime](./daw.md#step-sequencer) already uses it for an attached pattern.
+
+**A re-queue calls the trigger again.** `refresh()`, `reset()`, stop and seek cancel every owned hit that has not ended and the next window builds the hits again, so the trigger runs again for every still-pending hit, not only the edited one. Keep the trigger free of state that a cancel cannot undo: do not count hits in it, and do not leave behind scheduling on a node you own (a filter cutoff, a send level). Derive counts from the pattern, not from trigger calls. To retract extra scheduling, wrap the event with core's `withCancel(event, undo)`: its `cancel()` cancels the event and runs `undo` once.
+
+```ts
+import { withCancel } from "@audiorective/core";
+
+const sequencer = new StepSequencer(
+  pattern,
+  ({ laneId, velocity, when, duration, custom }) => {
+    const hit = bank.trigger(laneId, velocity, when, { duration });
+    filter.frequency.setValueAtTime(200 * 2 ** (custom.cutoff * 6), when); // extra scheduling, so retractable
+    return withCancel(hit, () => filter.frequency.cancelScheduledValues(when));
+  },
+  { params: [{ id: "cutoff", min: 0, max: 1, default: 0.5 }] },
+);
+```
+
+`cancelScheduledValues(when)` drops that value and every later one on the param, which is right because the look-ahead is rebuilt together. `undo` runs once, and not for an event that already ended on its own. When the trigger returns `null` for an unknown pad, `withCancel(null, undo)` still gives the sequencer a handle to cancel.
 
 **State and commands.** `pattern` is a read-only reactive cell of the `StepPattern`; `transforms` is a read-only cell of the transform list; `playheads` is a read-only cell of `Record<laneId, cellIndex | null>` (the cell each lane is on at the window's current time) and `loopProgress` is a read-only cell of the 0..1 loop position or `null`. Only the sequencer writes them. Commands:
 
@@ -447,12 +486,12 @@ A `StepSequencer` holds no nodes, timers or effects, so `reset()` releases every
 
 ### Standalone drum machine
 
-A vanilla drum machine with no DAW: your decoded buffers, a `Clock` driving the sequencer, and the step grid for editing. Closed and open hat share a choke `group`, so each pad ID doubles as its lane ID.
+A vanilla drum machine with no DAW: your decoded buffers, a `Clock` driving the sequencer, and the step grid for editing. Closed and open hat share a choke `group`, so each pad ID doubles as its lane ID. To give the two hat lanes separate effects, call `bank.routePad("open", openFilter)` and `bank.routePad("closed", closedFilter)`: choke still crosses them.
 
 ```ts
 import { Clock, Timeline } from "@audiorective/clock";
 import { PadBank } from "@audiorective/blocks/pads";
-import { StepSequencer, type StepPatternInput } from "@audiorective/blocks/sequencer";
+import { refreshOnEdit, StepSequencer, type StepPatternInput } from "@audiorective/blocks/sequencer";
 import { mountStepGrid } from "@audiorective/widgets";
 
 const context = new AudioContext(); // you own it; resume() it from a user gesture
@@ -461,7 +500,7 @@ const bank = new PadBank(context, [
   { id: "kick", buffer: kick },
   { id: "snare", buffer: snare },
   { id: "closed", buffer: closedHat, group: "hat" },
-  { id: "open", buffer: openHat, group: "hat" },
+  { id: "open", buffer: openHat, group: "hat" }, // a one-shot (no gate) is still choked by a later closed hit
 ]);
 bank.output.connect(context.destination);
 
@@ -480,19 +519,20 @@ const sequencer = new StepSequencer(pattern, ({ laneId, velocity, when, pitch, d
 );
 const timeline = new Timeline({ audioContext: context, bpm: 120 });
 const clock = new Clock({ timeline, onTick: (window) => sequencer.schedule(window, timeline) });
+const stopRefresh = refreshOnEdit(sequencer, clock); // every edit re-queues the look-ahead
 const grid = mountStepGrid(document.querySelector("#grid")!, { sequencer }); // click toggles; drag a cell or use the arrow keys to edit the active parameter
 
 await context.resume();
 clock.start(); // clock.stop() ends playback and cancels queued hits
 timeline.bpm.value = 140; // takes effect on the next look-ahead window
 
-// Edits in the grid or code apply on the next tick; refresh() re-queues the look-ahead now.
+// Edits in the grid or code re-queue the look-ahead at once.
 // A deleted closed-hat step that has not played yet no longer chokes the open hat.
 sequencer.setCell("closed", 4, { velocity: 0 });
-clock.refresh();
 
 // Teardown: the caller keeps the AudioContext.
 grid.destroy();
+stopRefresh();
 clock.destroy();
 bank.destroy();
 ```
@@ -546,31 +586,31 @@ Pass `mode: "one-shot"` on a change to request finite playback. The playback dri
 
 Loading, selection and playback messages from `WavePlayer`. Stretch and time-mapping messages are listed with [stretch](#committed-versions-and-offline-stretch); waveform view and plugin messages are in [Widgets](./widgets.md#common-errors).
 
-| Message                                                                                                                                            | Cause                                            | Fix                                                                             |
-| -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------- |
-| `WavePlayer is destroyed.`                                                                                                                         | Mutating or subscribing after block cleanup      | Create a new WavePlayer; shared views must not destroy their caller's player.   |
-| `Position must be finite seconds.` / `Start time must be finite, non-negative seconds.`                                                            | Invalid `seek` position or `play({ when })` time | Pass finite seconds; `when` is an absolute `AudioContext` time, clamped to now. |
-| `Enter an audio URL.`                                                                                                                              | Empty URL passed to `load`                       | Supply a URL or File.                                                           |
-| `Audio request failed: HTTP 404.` (status varies)                                                                                                  | URL response is unsuccessful                     | Check the URL, access, and server response; call `load` again to recover.       |
-| `Audio request returned text instead of audio.`                                                                                                    | URL served HTML/text                             | Fix routing/proxy to return audio, then retry load.                             |
-| `Audio download size does not match Content-Length.`                                                                                               | Truncated or incorrect byte length               | Fix the transfer/length, then retry load.                                       |
-| `Load progress needs non-negative byte counts and a null or matching total.` / `Unknown audio loading phase.`                                      | Invalid cache adapter reports                    | Use download/read with safe byte counts or decode; total may be null.           |
-| `Audio file has no playable duration.`                                                                                                             | Decoded audio has zero duration                  | Supply audio with a positive duration.                                          |
-| `Selection must satisfy 0 <= start < end <= duration (finite seconds).`                                                                            | Invalid programmatic range                       | Await loading, then pass ordered finite endpoints within duration, or `null`.   |
-| `Source automation must use the player's AudioContext.`                                                                                            | Binding uses another audio clock                 | Construct it with the same `AudioContext` as the player.                        |
-| `Source automation requires non-looping playback.`                                                                                                 | Loop requested with finite source automation     | Detach the binding before looping, or play the selection once.                  |
-| `Pad Bank pad IDs must be nonempty and unique.`                                                                                                    | Empty or repeated pad ID                         | Give each pad a stable unique ID.                                               |
-| `Pad hit time must be finite, non-negative seconds.` / `Pad hit velocity must be finite.`                                                          | Invalid hit time or velocity                     | Use absolute audio seconds and a finite velocity.                               |
-| `Pad hit pitch must be finite semitones.` / `Pad hit duration must be finite, positive seconds.`                                                   | Invalid `options.pitch` or `options.duration`    | Pass finite semitones and a duration above zero.                                |
-| `Unknown pad.`                                                                                                                                     | `assign()` received an ID not in the bank        | Assign to a declared pad ID.                                                    |
-| `PadBank is destroyed.`                                                                                                                            | Trigger or assign after cleanup                  | Create a new block; `destroy()` is final.                                       |
-| `AudioRecorder channels must be an integer from 1 to 32.`                                                                                          | Invalid channel option                           | Choose an integer channel count from 1 to 32.                                   |
-| `AudioRecorder requires AudioWorklet support.` / `AudioRecorder worklet failed.`                                                                   | Missing worklet support or processor failure     | Use a browser with AudioWorklet and inspect its audio processor error.          |
-| `AudioRecorder AudioContext closed during recording.`                                                                                              | Caller closed the borrowed context mid-take      | Await `stop` or cancel the take before closing the context.                     |
-| `AudioRecorder time must be finite, non-negative seconds.` / `AudioRecorder stop must follow its start time.`                                      | Invalid scheduled capture interval               | Pass ordered absolute AudioContext seconds.                                     |
-| `AudioRecorder already has an active take.` / `AudioRecorder has no started take to stop.`                                                         | Start/stop lifecycle mismatch                    | Await `start`, then `stop` or `cancel` before starting another take.            |
-| `AudioRecorder stream needs a chunk writer.` / `AudioRecorder streaming take needs stopStream().` / `AudioRecorder has no started stream to stop.` | Streaming call mismatch                          | Pass a writer to `startStream`, then finish that take with `stopStream`.        |
-| `AudioRecorder stream writer fell behind.`                                                                                                         | More than 64 chunk writes remain pending         | Use a faster external writer or stop and retry with shorter takes.              |
-| `AudioRecorder captured no frames.` / `AudioRecorder lost captured frames: expected …`                                                             | Missed interval or incomplete worklet transfer   | Preload `ready`, use future times, then retry the take.                         |
-| `AudioRecorder render clock skipped more than two seconds.`                                                                                        | Browser audio graph stopped running mid-take     | Retry while the AudioContext remains active; check device and browser load.     |
-| `AudioRecorder recording was cancelled.` (`AbortError`) / `AudioRecorder is destroyed.`                                                            | Take cancelled or owner destroyed                | Start a fresh take on a live recorder, or construct another owner.              |
+| Message                                                                                                                                            | Cause                                                     | Fix                                                                             |
+| -------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `WavePlayer is destroyed.`                                                                                                                         | Mutating or subscribing after block cleanup               | Create a new WavePlayer; shared views must not destroy their caller's player.   |
+| `Position must be finite seconds.` / `Start time must be finite, non-negative seconds.`                                                            | Invalid `seek` position or `play({ when })` time          | Pass finite seconds; `when` is an absolute `AudioContext` time, clamped to now. |
+| `Enter an audio URL.`                                                                                                                              | Empty URL passed to `load`                                | Supply a URL or File.                                                           |
+| `Audio request failed: HTTP 404.` (status varies)                                                                                                  | URL response is unsuccessful                              | Check the URL, access, and server response; call `load` again to recover.       |
+| `Audio request returned text instead of audio.`                                                                                                    | URL served HTML/text                                      | Fix routing/proxy to return audio, then retry load.                             |
+| `Audio download size does not match Content-Length.`                                                                                               | Truncated or incorrect byte length                        | Fix the transfer/length, then retry load.                                       |
+| `Load progress needs non-negative byte counts and a null or matching total.` / `Unknown audio loading phase.`                                      | Invalid cache adapter reports                             | Use download/read with safe byte counts or decode; total may be null.           |
+| `Audio file has no playable duration.`                                                                                                             | Decoded audio has zero duration                           | Supply audio with a positive duration.                                          |
+| `Selection must satisfy 0 <= start < end <= duration (finite seconds).`                                                                            | Invalid programmatic range                                | Await loading, then pass ordered finite endpoints within duration, or `null`.   |
+| `Source automation must use the player's AudioContext.`                                                                                            | Binding uses another audio clock                          | Construct it with the same `AudioContext` as the player.                        |
+| `Source automation requires non-looping playback.`                                                                                                 | Loop requested with finite source automation              | Detach the binding before looping, or play the selection once.                  |
+| `Pad Bank pad IDs must be nonempty and unique.`                                                                                                    | Empty or repeated pad ID                                  | Give each pad a stable unique ID.                                               |
+| `Pad hit time must be finite, non-negative seconds.` / `Pad hit velocity must be finite.`                                                          | Invalid hit time or velocity                              | Use absolute audio seconds and a finite velocity.                               |
+| `Pad hit pitch must be finite semitones.` / `Pad hit duration must be finite, positive seconds.`                                                   | Invalid `options.pitch` or `options.duration`             | Pass finite semitones and a duration above zero.                                |
+| `Unknown pad.`                                                                                                                                     | `assign()` or `routePad()` received an ID not in the bank | Use a declared pad ID.                                                          |
+| `PadBank is destroyed.`                                                                                                                            | Trigger, assign or routePad after cleanup                 | Create a new block; `destroy()` is final.                                       |
+| `AudioRecorder channels must be an integer from 1 to 32.`                                                                                          | Invalid channel option                                    | Choose an integer channel count from 1 to 32.                                   |
+| `AudioRecorder requires AudioWorklet support.` / `AudioRecorder worklet failed.`                                                                   | Missing worklet support or processor failure              | Use a browser with AudioWorklet and inspect its audio processor error.          |
+| `AudioRecorder AudioContext closed during recording.`                                                                                              | Caller closed the borrowed context mid-take               | Await `stop` or cancel the take before closing the context.                     |
+| `AudioRecorder time must be finite, non-negative seconds.` / `AudioRecorder stop must follow its start time.`                                      | Invalid scheduled capture interval                        | Pass ordered absolute AudioContext seconds.                                     |
+| `AudioRecorder already has an active take.` / `AudioRecorder has no started take to stop.`                                                         | Start/stop lifecycle mismatch                             | Await `start`, then `stop` or `cancel` before starting another take.            |
+| `AudioRecorder stream needs a chunk writer.` / `AudioRecorder streaming take needs stopStream().` / `AudioRecorder has no started stream to stop.` | Streaming call mismatch                                   | Pass a writer to `startStream`, then finish that take with `stopStream`.        |
+| `AudioRecorder stream writer fell behind.`                                                                                                         | More than 64 chunk writes remain pending                  | Use a faster external writer or stop and retry with shorter takes.              |
+| `AudioRecorder captured no frames.` / `AudioRecorder lost captured frames: expected …`                                                             | Missed interval or incomplete worklet transfer            | Preload `ready`, use future times, then retry the take.                         |
+| `AudioRecorder render clock skipped more than two seconds.`                                                                                        | Browser audio graph stopped running mid-take              | Retry while the AudioContext remains active; check device and browser load.     |
+| `AudioRecorder recording was cancelled.` (`AbortError`) / `AudioRecorder is destroyed.`                                                            | Take cancelled or owner destroyed                         | Start a fresh take on a live recorder, or construct another owner.              |

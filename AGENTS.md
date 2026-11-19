@@ -135,7 +135,7 @@ The `schedulableParam` helper (without `bind`) creates a `SchedulableParam` back
 8. **No state duplication** — AudioProcessor owns all state. UI frameworks observe/mutate directly. No separate store.
 9. **Unified SchedulableParam** — one type regardless of backing. `bind` with AudioParam is an internal optimization, not a type distinction.
 10. **Observable state lives in `cells` or `params`** — for blocks as for core processors. A cell is the only store: no private field mirrored by `subscribe`. State whose change involves validation, playback or cancellation is registered as `readonlyCell(...)` over a private `Cell` and written only through the owner's methods; multi-field operations commit in one `batch`. Public readers are tracked, the owner's internal reads are `untracked`. Clock-derived values such as `position` stay plain getters. `getState()`/`subscribe()`, where a block has them, are thin wrappers over the cells.
-11. **Light edits propagate; interrupting rebuilds are explicit** — a running `Workspace` (`daw/runtime`) applies light `Project` edits automatically (coalesced, serialized, errors in `cells.error`). A structural rebuild that stops audio and reloads hosts never runs by itself: topology changes set `cells.needsSync` and the caller runs `sync()`. See [Project edits](docs/workspace.md#apply-project-edits-to-the-live-graph) for the waiting and error contract.
+11. **Light edits propagate; interrupting rebuilds are explicit** — a running `Workspace` (`daw/runtime`) applies light `Project` edits automatically (coalesced, serialized, errors in `cells.error`). A structural rebuild that stops audio and reloads hosts never runs by itself: topology changes set `cells.needsSync` and the caller runs `sync()`. See [Project edits](docs/daw.md#apply-project-edits-to-the-live-graph) for the waiting and error contract.
 
 ## AudioProcessor Base Class
 
@@ -177,6 +177,10 @@ The skills are the product's front door for agents, so they're maintained like p
 **Errors are documentation, in two tiers.** Every thrown error has a row (message text an agent will actually see → cause → fix) in the "Common errors" table of the reference doc for its area (`docs/blocks.md`, `docs/widgets.md`, `docs/midi.md`, `docs/automation.md`, the TimeStretch and PCM sections). `SKILL.md` holds only the errors that cut across areas or block getting started (engine, client boundary, autoplay, version drift, graph wiring), plus an "Errors by area" table that routes a message prefix to its reference. A new error therefore needs its row in the reference, and a routing entry in `SKILL.md` only if its message prefix is not already routed.
 
 **Evals.** `evals/<skill>/trigger_eval.json` checks the description fires for the right requests and stays quiet for near-misses; `evals/<skill>/evals.json` checks output quality with verifiable expectations. Run them after editing a description or a rule (`evals/README.md`).
+
+## Showroom demos
+
+A demo is an Astro page in `apps/web/src/pages/showroom/<slug>.astro` plus one entry in the `demos` array of `apps/web/src/data/demos.ts` (`slug`, `title`, `blurb`, `thumb`, `route`, `source`, `packages`). `DemoCard.astro` renders each entry on the showroom index, so a page without an entry is unreachable from it. Put the card thumbnail in `apps/web/public/showroom/` (an `.svg` or `.jpg`; `thumb` is its path under `public`). Demo-only code imports packages by their public entries, and a doc example that a demo exercises is mirrored by a test next to its block.
 
 ## Releasing
 

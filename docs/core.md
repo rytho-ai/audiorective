@@ -851,13 +851,16 @@ Renders a graph to an `AudioBuffer` through an `OfflineAudioContext`. `setup` ma
 ```typescript
 import { renderOffline, Sampler, loadAudioBuffer } from "@audiorective/core";
 
-const wav = await renderOffline({ seconds: 8, channels: 2, sampleRate: 44100 }, async (ctx) => {
+const rendered: AudioBuffer = await renderOffline({ seconds: 8, channels: 2, sampleRate: 44100 }, async (ctx) => {
   const kick = new Sampler(ctx);
   kick.buffer = await loadAudioBuffer(ctx, "/kick.wav");
   kick.output.connect(ctx.destination);
   for (let beat = 0; beat < 16; beat++) kick.trigger({ when: beat * 0.5 });
 });
+// `rendered` is an AudioBuffer (decoded PCM), not file bytes. Play it, pass it to a PadBank pad, or encode it yourself.
 ```
+
+The same call synthesizes a sample: build an oscillator or noise burst with a gain envelope in `setup`, render a fraction of a second, and use the returned `AudioBuffer` as a `PadBank` or `Sampler` buffer, with no file to decode.
 
 `Sampler`, `BufferPlayer`, and every `@audiorective/effects` processor accept a `BaseAudioContext`, so the same classes run live and offline.
 
@@ -1155,7 +1158,7 @@ Structural types let capability modules cooperate without importing each other. 
 
 ```typescript
 import type { BeatTiming, CancellableEvent, ScheduledEvent, TimedEvent, EventTransform, EventTransformContext } from "@audiorective/core";
-import { applyEventTransforms } from "@audiorective/core";
+import { applyEventTransforms, withCancel } from "@audiorective/core";
 
 interface CancellableEvent {
   cancel(): void;
@@ -1172,12 +1175,16 @@ type EventTransform<E extends ScheduledEvent = ScheduledEvent> = Readonly<{
   apply(events: readonly E[], context: EventTransformContext): readonly E[];
 }>;
 applyEventTransforms<E extends ScheduledEvent>(events: readonly E[], transforms: readonly EventTransform<E>[], context: EventTransformContext): E[];
+withCancel(event: CancellableEvent | null, undo: () => void): CancellableEvent;
 ```
+
+A structural contract that exposes reactive state, such as a sequencer's `pattern` or a plugin context's cells, types it as `Readable<T>` (see [Readable](#readablet)). Read it with `.value` or with the raw accessor `$()`; both are tracked inside an effect and give the same value.
 
 - `CancellableEvent` is a consumer-owned audio event that a scheduler may revoke after a transport or edit change. `Clock`'s `window.own(event, when)` accepts one (`@audiorective/clock` re-exports the type), and `PadHit` extends it.
 - `BeatTiming` converts between beats and absolute audio-context time. `Timeline` satisfies it, and `StepSequencer.schedule(window, timing)` and `ClipLauncher`'s transport take it.
 - `ScheduledEvent` is the minimum a scheduler's event needs: `when`, absolute audio-context seconds. `TimedEvent` adds `duration` (seconds) and `velocity` (0..1) for note-like events such as `StepHit`. A scheduler whose events have no duration or velocity (a clip launch) uses `ScheduledEvent` and the same transform contract.
 - `EventTransform<E>` is a pluggable step a scheduler runs between computing its events and triggering them. It is data-shaped (`id`, serialisable `params`, a pure `apply`) so it can be saved later. `context.now` is the earliest time an event may sound, `context.timing` maps beats to seconds, and `context.random` is the scheduler's injectable random source and the only randomness a transform may use. A transform keeps no state across windows and never triggers or cancels audio.
+- `withCancel(event, undo)` returns a `CancellableEvent` whose `cancel()` cancels `event`, then runs `undo` once (later calls do nothing); `onEnded` passes through to `event`. Use it when a trigger does more than start a sound, such as scheduling a filter change: a scheduler that cancels and re-triggers pending events (a Clock `refresh()`, a stop, a `StepSequencer.reset()`) then retracts the extra scheduling too. `undo` does not run for an event that already ended. With a `null` event it still runs on cancel, and the returned event ends at that cancel.
 - `applyEventTransforms` is the enforcement every scheduler shares: it runs the transforms in array order, throws `Event transform "<id>" ...` naming the transform for an output with a non-finite `when`, a `duration` that is not a finite number above 0, or a `velocity` outside 0..1 (`duration` and `velocity` are checked only on events that have them), drops events with `velocity` 0, and moves events earlier than `context.now` to `now`. The scheduler then triggers and owns every returned event. `StepSequencer` uses it ([Blocks](./blocks.md#transform-sockets)).
 
 ## registerWorklet
@@ -1201,7 +1208,7 @@ signals/src/
 ├── Spatial.ts           # AudioProcessor wrapping a PannerNode
 ├── Analyser.ts          # AudioProcessor wrapping an AnalyserNode (spectrum/waveform tap)
 ├── peaks.ts             # pure PCM summaries and frame/time bin ranges
-├── contracts.ts         # CancellableEvent, BeatTiming and EventTransform contracts + applyEventTransforms
+├── contracts.ts         # CancellableEvent, BeatTiming and EventTransform contracts + applyEventTransforms, withCancel
 ├── types.ts             # SignalAccessor, ComputedAccessor, Readable, ParamBind, etc.
 └── index.ts             # public exports
 ```
