@@ -70,16 +70,32 @@ describe("rendering", () => {
     const { root } = mount();
     const snare = laneAt(root, "snare");
     expect(snare.querySelector(".ar-sg-name")!.textContent).toBe("Snare");
-    expect(snare.querySelector<HTMLInputElement>("input[type=number]")!.value).toBe("8");
+    const [steps, swing] = snare.querySelectorAll<HTMLElement>("[role=spinbutton]");
+    expect(steps.textContent).toBe("8");
+    expect(steps.getAttribute("aria-valuenow")).toBe("8");
+    expect(steps.getAttribute("aria-valuemax")).toBe("16");
+    expect(steps.getAttribute("aria-label")).toBe("Snare Steps");
+    expect(swing.textContent).toBe("0%");
+    expect(swing.getAttribute("aria-valuemax")).toBe("100");
     expect(snare.querySelector<HTMLSelectElement>("select")!.value).toBe("1/8");
     expect(snare.querySelectorAll("select option")).toHaveLength(12);
     expect(snare.querySelector(".ar-sg-dir")!.textContent).toBe("→");
-    expect(snare.querySelector<HTMLInputElement>("input[max='100']")!.value).toBe("0");
     expect(root.querySelectorAll(".ar-sg-lane")).toHaveLength(3);
     expect(root.querySelectorAll(".ar-sg-cell")).toHaveLength(48);
   });
 
-  test("header controls call setLane", () => {
+  test("a column header row labels the controls and each lane row matches its cell height", () => {
+    const { root } = mount();
+    expect([...root.querySelectorAll(".ar-sg-colname")].map((item) => item.textContent)).toEqual(["Steps", "Rate", "Dir", "Swing"]);
+    const lane = laneAt(root, "kick");
+    const height = cellAt(root, "kick", 0).getBoundingClientRect().height;
+    expect(lane.getBoundingClientRect().height).toBe(height);
+    expect(lane.querySelector(".ar-sg-name")!.getBoundingClientRect().height).toBe(height);
+    const heads = [...root.querySelectorAll(".ar-sg-head")].map((item) => item.getBoundingClientRect().width);
+    expect(new Set(heads).size).toBe(1);
+  });
+
+  test("header controls call setLane", async () => {
     const { root, sequencer } = mount();
     const head = laneAt(root, "snare");
     head.querySelector<HTMLButtonElement>(".ar-sg-mute")!.click();
@@ -98,17 +114,49 @@ describe("rendering", () => {
     rate.value = "1/16T";
     rate.dispatchEvent(new Event("change", { bubbles: true }));
     expect(lane(sequencer, "snare").rate).toBe("1/16T");
-    const [steps, swing] = head.querySelectorAll<HTMLInputElement>("input[type=number]");
-    steps.value = "5";
-    steps.dispatchEvent(new Event("change", { bubbles: true }));
-    expect(lane(sequencer, "snare").steps).toBe(5);
-    swing.value = "25";
-    swing.dispatchEvent(new Event("change", { bubbles: true }));
-    expect(lane(sequencer, "snare").swing).toBeCloseTo(0.25);
-    steps.value = "999";
-    steps.dispatchEvent(new Event("change", { bubbles: true }));
+    const [steps, swing] = head.querySelectorAll<HTMLElement>("[role=spinbutton]");
+    key(steps, "ArrowDown");
+    expect(lane(sequencer, "snare").steps).toBe(7);
+    key(steps, "PageUp");
     expect(lane(sequencer, "snare").steps).toBe(16);
-    expect(steps.value).toBe("16");
+    expect(steps.textContent).toBe("16");
+    key(steps, "End");
+    key(steps, "Home");
+    expect(lane(sequencer, "snare").steps).toBe(1);
+    key(swing, "ArrowUp", { shiftKey: true });
+    expect(lane(sequencer, "snare").swing).toBeCloseTo(0.1);
+    expect(swing.textContent).toBe("10%");
+    steps.focus();
+    steps.dispatchEvent(new WheelEvent("wheel", { deltaY: -1, bubbles: true, cancelable: true }));
+    expect(lane(sequencer, "snare").steps).toBe(2);
+  });
+
+  test("a number box is dragged vertically and typed into on double-click", async () => {
+    const { root, sequencer } = mount();
+    const [steps, swing] = laneAt(root, "snare").querySelectorAll<HTMLElement>("[role=spinbutton]");
+    await drag(swing, 30);
+    expect(lane(sequencer, "snare").swing).toBeCloseTo(0.1);
+    await drag(steps, -16);
+    expect(lane(sequencer, "snare").steps).toBe(6);
+    steps.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    const input = steps.querySelector("input")!;
+    expect(steps.dataset.editing).toBe("true");
+    input.value = "12";
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(lane(sequencer, "snare").steps).toBe(12);
+    expect(steps.querySelector("input")).toBeNull();
+    expect(steps.textContent).toBe("12");
+    steps.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    const again = steps.querySelector("input")!;
+    again.value = "999";
+    again.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(lane(sequencer, "snare").steps).toBe(16);
+    steps.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    const cancelled = steps.querySelector("input")!;
+    cancelled.value = "3";
+    cancelled.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(lane(sequencer, "snare").steps).toBe(16);
+    expect(steps.textContent).toBe("16");
   });
 
   test("cells beyond a lane's steps are dimmed and inert", () => {
@@ -674,5 +722,70 @@ describe("lifecycle and contract", () => {
     expect(tab(root, "velocity").textContent).toBe("力度");
     expect(root.querySelector(".ar-sg-fold")!.textContent).toBe("收合");
     expect(cellAt(root, "a", 0).getAttribute("aria-label")).toBe("A 第 1 格, 力度 80%");
+  });
+});
+
+describe("sequencer-declared ranges", () => {
+  function fake(extra: Partial<StepGridSequencer>, velocity = 1) {
+    const lanes: StepGridLane[] = [
+      {
+        id: "a",
+        label: "A",
+        steps: 4,
+        rate: "1/16",
+        direction: "forward",
+        swing: 0,
+        mute: false,
+        solo: false,
+        cells: Array.from({ length: 4 }, () => ({ velocity, offset: 0, length: 1, repeat: 1, pitch: 0, chance: 1 })),
+      },
+    ];
+    const pattern = cell<StepGridPattern>({ size: 4, lanes });
+    const setCell = vi.fn((laneId: string, step: number, patch: StepGridCellPatch) => {
+      const next = pattern.value.lanes.map((item) =>
+        item.id === laneId ? { ...item, cells: item.cells.map((value, index) => (index === step ? { ...value, ...patch } : value)) } : item,
+      );
+      pattern.value = { size: 4, lanes: next };
+    });
+    const sequencer: StepGridSequencer = {
+      pattern: readonlyCell(pattern),
+      playheads: readonlyCell(cell<Record<string, number | null>>({})),
+      loopProgress: readonlyCell(cell<number | null>(null)),
+      setCell,
+      toggle: vi.fn(),
+      setLane: vi.fn(),
+      ...extra,
+    };
+    return { sequencer, setCell };
+  }
+
+  test("falls back to the built-in ranges and rates", () => {
+    const { root } = mount(fake({}).sequencer);
+    expect(laneAt(root, "a").querySelectorAll("select option")).toHaveLength(12);
+    const element = cellAt(root, "a", 0);
+    key(element, "ArrowDown");
+    expect(element.getAttribute("aria-label")).toContain("95%");
+  });
+
+  test("uses cellParams for ranges and rates for the picker", () => {
+    const { sequencer, setCell } = fake(
+      {
+        cellParams: [
+          { id: "velocity", min: 0, max: 127, default: 0, step: 1 },
+          { id: "pitch", min: -12, max: 12, default: 0, step: 1 },
+        ],
+        rates: ["1/4", "1/8"],
+      },
+      100,
+    );
+    const { root } = mount(sequencer);
+    expect([...laneAt(root, "a").querySelectorAll("select option")].map((item) => (item as HTMLOptionElement).value)).toEqual(["1/4", "1/8"]);
+    const element = cellAt(root, "a", 0);
+    key(element, "PageDown");
+    const sent = setCell.mock.calls.at(-1)![2] as { velocity: number };
+    expect(sent.velocity).toBe(68);
+    tab(root, "pitch").click();
+    for (let i = 0; i < 20; i++) key(cellAt(root, "a", 1), "ArrowUp");
+    expect((setCell.mock.calls.at(-1)![2] as { pitch: number }).pitch).toBe(12);
   });
 });

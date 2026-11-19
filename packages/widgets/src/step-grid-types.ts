@@ -44,6 +44,10 @@ export interface StepGridSequencer {
   readonly loopProgress: Readable<number | null>;
   /** Custom per-step parameters, shown as tabs after the built-in ones. */
   readonly params?: readonly StepGridParamSpec[];
+  /** Ranges for the built-in cell values, matched by id (`velocity`, `offset`, `length`, `repeat`, `pitch`, `chance`). Absent ids keep the built-in range. */
+  readonly cellParams?: readonly StepGridParamSpec[];
+  /** The rates offered in each lane's Rate picker. Defaults to the twelve straight and triplet rates. */
+  readonly rates?: readonly StepGridRate[];
   setCell(laneId: string, step: number, patch: StepGridCellPatch): void;
   toggle(laneId: string, step: number): void;
   setLane(laneId: string, patch: StepGridLanePatch): void;
@@ -65,6 +69,8 @@ export type StepGridLabels = {
   rate: string;
   direction: string;
   swing: string;
+  /** Short caption of the direction column. */
+  dir: string;
 };
 
 export type StepGridOptions = {

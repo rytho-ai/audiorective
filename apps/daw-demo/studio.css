@@ -1348,7 +1348,7 @@ input[type="range"] {
   --ar-step-background: transparent;
   --ar-step-border: transparent;
   --ar-step-padding: 0;
-  --ar-step-header-width: 250px;
+  --ar-step-header-width: 300px;
   --ar-step-cell-on-background: var(--accent-wash);
   --ar-step-cell-on-border: var(--accent);
   --ar-step-value-color: var(--accent);

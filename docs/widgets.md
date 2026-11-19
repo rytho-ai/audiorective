@@ -92,6 +92,8 @@ interface StepGridSequencer {
   playheads: Readable<Readonly<Record<string, number | null>>>;
   loopProgress: Readable<number | null>;
   params?: readonly { id: string; label?: string; min: number; max: number; default: number; step?: number }[];
+  cellParams?: readonly { id: string; label?: string; min: number; max: number; default: number; step?: number }[]; // ranges for the built-in values, by id
+  rates?: readonly Rate[]; // the Rate picker's options
   setCell(laneId: string, step: number, patch: Partial<Cell>): void;
   toggle(laneId: string, step: number): void;
   setLane(laneId: string, patch: Partial<Omit<Lane, "id" | "cells">>): void;
@@ -100,34 +102,42 @@ interface StepGridSequencer {
 
 Each lane row has a header and a row of cells.
 
-- **Header:** the label, Mute and Solo toggles, `Steps` (number, committed on change), `Rate` (select over the 12 rates), `Dir` (click cycles `→`, `←`, `↔`) and `Swing` (percent). Every control calls `setLane`.
-- **Parameter tabs:** a strip under the grid selects which cell value the grid shows and edits: Velocity, Offset, Length, Repeat, Pitch and Chance, then one tab for each entry of `sequencer.params`. Velocity, chance, length and custom values draw as a fill height, offset and pitch as a bar from the centre line, repeat as segment marks.
+- **Header:** a column header row (`Steps`, `Rate`, `Dir`, `Swing`) sits above the lanes, aligned with fixed-width header columns. Each lane row is as tall as its cells: a filled name block, Mute and Solo square toggles, then the four columns. Every control calls `setLane`.
+  - `Steps` and `Swing` are number boxes (`role="spinbutton"` with `aria-valuemin`, `aria-valuemax`, `aria-valuenow` and `aria-valuetext`). Drag vertically (8 px per step, 3 px per percent), press Up/Right or Down/Left (Shift moves by 10), PageUp and PageDown (10), Home and End, scroll the wheel while the box is focused, or double-click (or press Enter) to type a value; Enter commits, Escape cancels, and the value is clamped. `Steps` is limited to the pattern `size`; swing is 0 to 100 percent.
+  - `Rate` is a styled `select` over `sequencer.rates`, or the twelve built-in rates when absent. `Dir` is a button that cycles `→`, `←`, `↔`.
+- **Parameter tabs:** a strip under the grid selects which cell value the grid shows and edits: Velocity, Offset, Length, Repeat, Pitch and Chance, then one tab for each entry of `sequencer.params`. When `sequencer.cellParams` declares a built-in id, its `min`, `max`, `default` and `step` replace the built-in range, snapping and fine/coarse key steps (integer values such as repeat and pitch always snap to whole numbers; the value labels keep their built-in units). Velocity, chance, length and custom values draw as a fill height, offset and pitch as a bar from the centre line, repeat as segment marks.
 - **Cells:** click toggles. A vertical drag edits the active parameter. A fill-height value covers its range over one cell height, repeat takes 12 px per hit and pitch 3 px per semitone; repeat and pitch snap to integers and every value stays inside its range. A value label (`65%`, `+3 st`, `x4`) shows while editing, on hover and on focus. A drag does not also toggle.
 - **Polymeter:** cells beyond a lane's `steps` are dimmed and inert. Each lane's playhead cell is highlighted, a bar across the top shows `loopProgress`, and the ruler marks every 4th step (1, 5, 9, 13 …).
 - **Fold:** the Fold toggle hides lanes with no active step.
 - **Keyboard:** the grid is one tab stop (roving `tabindex`). Left and Right (or Home and End) move along a lane, Alt+Up and Alt+Down move between lanes, Enter and Space toggle, Up and Down adjust the active parameter by a fine step, PageUp and PageDown by a coarse one (velocity 5% and 25%; pitch 1 and 12 semitones).
 - **Updates:** the widget keeps every element across pattern changes and repaints only the cells, headers and playheads whose values changed. It rebuilds cells only when `size` or the lane list changes.
 
-`formatStep(label, step)` names each cell for assistive technology (default `Kick step 3`). `labels` overrides the built-in strings (`grid`, `velocity`, `offset`, `length`, `repeat`, `pitch`, `chance`, `fold`, `mute`, `solo`, `steps`, `rate`, `direction`, `swing`); custom tabs use the param's `label`.
+`formatStep(label, step)` names each cell for assistive technology (default `Kick step 3`). `labels` overrides the built-in strings (`grid`, `velocity`, `offset`, `length`, `repeat`, `pitch`, `chance`, `fold`, `mute`, `solo`, `steps`, `rate`, `direction`, `swing`, `dir`); custom tabs use the param's `label`.
 
 **Styling.** Every colour and size is a CSS custom property with a neutral default, so a page themes the grid by setting properties on the root or an ancestor, without overriding selectors:
 
-| Property                                                                                                             | Controls                                                       |
-| -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| `--ar-step-font`, `--ar-step-color`, `--ar-step-muted`                                                               | Text font, colour and secondary text                           |
-| `--ar-step-background`, `--ar-step-border`, `--ar-step-radius`, `--ar-step-padding`                                  | The grid frame                                                 |
-| `--ar-step-header-width`, `--ar-step-header-color`                                                                   | Lane header column width and lane label colour                 |
-| `--ar-step-cell-height`, `--ar-step-cell-min-width`, `--ar-step-cell-gap`, `--ar-step-lane-gap`, `--ar-step-bar-gap` | Cell and lane sizes, and the extra gap before every 4th step   |
-| `--ar-step-cell-background`, `--ar-step-cell-border`, `--ar-step-cell-radius`                                        | Off cells                                                      |
-| `--ar-step-cell-on-background`, `--ar-step-cell-on-border`                                                           | Active cells                                                   |
-| `--ar-step-value-color`, `--ar-step-centre-line`                                                                     | The value bar (fill, centre bar, segments) and the centre line |
-| `--ar-step-playhead`, `--ar-step-playhead-value-color`                                                               | The playhead cell and its value bar                            |
-| `--ar-step-inert-opacity`                                                                                            | Cells beyond a lane's `steps`                                  |
-| `--ar-step-focus`                                                                                                    | Keyboard focus outline                                         |
-| `--ar-step-progress`, `--ar-step-progress-track`, `--ar-step-progress-height`                                        | The loop progress bar                                          |
-| `--ar-step-label-color`, `--ar-step-label-background`                                                                | The value label                                                |
-| `--ar-step-control-background`, `--ar-step-control-color`, `--ar-step-control-border`, `--ar-step-control-radius`    | Header and tab controls                                        |
-| `--ar-step-control-active-background`, `--ar-step-control-active-color`, `--ar-step-tab-radius`                      | Pressed Mute/Solo/Fold and the selected tab                    |
+| Property                                                                                                                    | Controls                                                           |
+| --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `--ar-step-font`, `--ar-step-color`, `--ar-step-muted`                                                                      | Text font, colour and secondary text                               |
+| `--ar-step-background`, `--ar-step-border`, `--ar-step-radius`, `--ar-step-padding`                                         | The grid frame                                                     |
+| `--ar-step-header-width` (default 320px)                                                                                    | Width of the lane header column                                    |
+| `--ar-step-header-background`, `--ar-step-name-color` (falls back to `--ar-step-header-color`)                              | The lane name block fill and its text                              |
+| `--ar-step-column-color`                                                                                                    | Column header labels and the ruler (falls back to muted)           |
+| `--ar-step-cell-height` (40px), `--ar-step-cell-min-width`, `--ar-step-cell-gap`, `--ar-step-lane-gap`, `--ar-step-bar-gap` | Cell and lane sizes, and the extra gap before every 4th step       |
+| `--ar-step-cell-background`, `--ar-step-cell-border`, `--ar-step-cell-radius`                                               | Off cells                                                          |
+| `--ar-step-cell-on-background`, `--ar-step-cell-on-border`                                                                  | Active cells                                                       |
+| `--ar-step-value-color`, `--ar-step-centre-line`                                                                            | The value bar (fill, centre bar, segments) and the centre line     |
+| `--ar-step-playhead`, `--ar-step-playhead-value-color`                                                                      | The playhead cell and its value bar                                |
+| `--ar-step-inert-opacity`                                                                                                   | Cells beyond a lane's `steps`                                      |
+| `--ar-step-focus`                                                                                                           | Keyboard focus outline                                             |
+| `--ar-step-progress`, `--ar-step-progress-track`, `--ar-step-progress-height`                                               | The loop progress bar                                              |
+| `--ar-step-label-color`, `--ar-step-label-background`                                                                       | The value label                                                    |
+| `--ar-step-control-background`, `--ar-step-control-color`, `--ar-step-control-border`, `--ar-step-control-radius`           | Header and toolbar controls                                        |
+| `--ar-step-box-background`, `--ar-step-box-color`, `--ar-step-box-border`                                                   | Number boxes, the rate picker and direction (fall back to control) |
+| `--ar-step-mute-active-background`, `--ar-step-mute-active-color`                                                           | Pressed Mute (fall back to control active)                         |
+| `--ar-step-solo-active-background`, `--ar-step-solo-active-color`                                                           | Pressed Solo (fall back to control active)                         |
+| `--ar-step-tabs-background`                                                                                                 | The segmented track behind the tabs and Fold                       |
+| `--ar-step-control-active-background`, `--ar-step-control-active-color`, `--ar-step-tab-radius`                             | Selected tab and pressed Fold; the default for Mute/Solo           |
 
 ### Step grid plugins
 

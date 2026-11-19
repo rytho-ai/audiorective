@@ -22,6 +22,7 @@ const RATES: readonly StepGridRate[] = ["1/2", "1/4", "1/8", "1/16", "1/32", "1/
 const DIRECTIONS: readonly StepGridDirection[] = ["forward", "backward", "bounce"];
 const ARROWS: Record<StepGridDirection, string> = { forward: "→", backward: "←", bounce: "↔" };
 const DRAG_THRESHOLD = 3;
+const BOX_DRAG = 3;
 const HEADER_FIELDS = ["label", "steps", "rate", "direction", "swing", "mute", "solo"] as const;
 
 const DEFAULT_LABELS: StepGridLabels = {
@@ -39,6 +40,7 @@ const DEFAULT_LABELS: StepGridLabels = {
   rate: "Rate",
   direction: "Direction",
   swing: "Swing",
+  dir: "Dir",
 };
 
 type Kind = "fill" | "centre" | "segments";
@@ -54,6 +56,8 @@ type ParamDef = {
   coarse: number;
   /** Pixels of vertical drag that cover the whole range, given the cell height. */
   span(height: number): number;
+  /** Pixels of drag per unit for integer values; their span follows the range. */
+  unitPx?: number;
   fallback: number;
   custom: boolean;
   text(value: number): string;
@@ -121,6 +125,7 @@ function builtIns(labels: StepGridLabels): ParamDef[] {
       fine: 1,
       coarse: 2,
       span: () => 84,
+      unitPx: 12,
       fallback: 1,
       custom: false,
       text: (value) => `x${value}`,
@@ -136,6 +141,7 @@ function builtIns(labels: StepGridLabels): ParamDef[] {
       fine: 1,
       coarse: 12,
       span: () => 144,
+      unitPx: 3,
       fallback: 0,
       custom: false,
       text: (value) => `${value > 0 ? "+" : ""}${value} st`,
@@ -156,6 +162,24 @@ function builtIns(labels: StepGridLabels): ParamDef[] {
       text: percent,
     },
   ];
+}
+
+/** Narrow a built-in definition to the range a sequencer declares for the same id. */
+function withSpec(def: ParamDef, spec: StepGridParamSpec): ParamDef {
+  const range = spec.max - spec.min;
+  if (!(range > 0) || !Number.isFinite(range)) return def;
+  const ratio = range / (def.max - def.min);
+  const quantum = def.integer ? 1 : spec.step !== undefined && spec.step > 0 ? spec.step : def.quantum * ratio;
+  return {
+    ...def,
+    min: spec.min,
+    max: spec.max,
+    fallback: spec.default,
+    quantum,
+    fine: def.integer ? def.fine : Math.max(quantum, def.fine * ratio),
+    coarse: def.integer ? def.coarse : Math.max(quantum, def.coarse * ratio),
+    span: def.unitPx ? () => def.unitPx! * range : def.span,
+  };
 }
 
 function customDef(spec: StepGridParamSpec): ParamDef {
@@ -196,16 +220,148 @@ function patchFor(def: ParamDef, value: number): StepGridCellPatch {
   return def.custom ? { custom: { [def.id]: value } } : ({ [def.id]: value } as StepGridCellPatch);
 }
 
+type NumberBox = {
+  el: HTMLElement;
+  update(state: { value: number; min: number; max: number; text: string; label: string }): void;
+};
+
+/** A compact spinbutton: drag vertically, arrow keys or wheel (when focused) adjust it, double-click or Enter types a value. */
+function createNumberBox(doc: Document, pxPerUnit: number, onChange: (value: number) => void): NumberBox {
+  const el = doc.createElement("div");
+  el.className = "ar-sg-box";
+  el.tabIndex = 0;
+  el.setAttribute("role", "spinbutton");
+  let value = 0;
+  let min = 0;
+  let max = 0;
+  let text = "";
+  let editing = false;
+  let press: { y: number; start: number; id: number; moved: boolean } | undefined;
+  const attr = (name: string, next: string) => {
+    if (el.getAttribute(name) !== next) el.setAttribute(name, next);
+  };
+  const commit = (next: number) => {
+    const clamped = clamp(Math.round(next), min, max);
+    if (clamped !== value) onChange(clamped);
+  };
+  function edit(): void {
+    if (editing) return;
+    editing = true;
+    el.dataset.editing = "true";
+    const input = doc.createElement("input");
+    input.type = "text";
+    input.inputMode = "numeric";
+    input.value = String(value);
+    input.setAttribute("aria-label", el.getAttribute("aria-label") ?? "");
+    el.replaceChildren(input);
+    input.focus();
+    input.select();
+    let done = false;
+    const finish = (apply: boolean) => {
+      if (done) return;
+      done = true;
+      editing = false;
+      delete el.dataset.editing;
+      if (apply) {
+        const typed = parseFloat(input.value);
+        if (Number.isFinite(typed)) commit(typed);
+      }
+      el.textContent = text;
+      if (doc.activeElement === input || doc.activeElement === doc.body) el.focus();
+    };
+    input.addEventListener("keydown", (event) => {
+      event.stopPropagation();
+      if (event.key === "Enter") finish(true);
+      else if (event.key === "Escape") finish(false);
+    });
+    input.addEventListener("blur", () => finish(true));
+  }
+  el.addEventListener("pointerdown", (event) => {
+    if (editing || event.button !== 0) return;
+    press = { y: event.clientY, start: value, id: event.pointerId, moved: false };
+    try {
+      el.setPointerCapture(event.pointerId);
+    } catch {
+      // A synthetic pointer cannot be captured.
+    }
+  });
+  el.addEventListener("pointermove", (event) => {
+    if (!press || event.pointerId !== press.id) return;
+    const delta = press.y - event.clientY;
+    if (!press.moved && Math.abs(delta) < BOX_DRAG) return;
+    press.moved = true;
+    commit(press.start + Math.round(delta / pxPerUnit));
+  });
+  const release = (event: PointerEvent) => {
+    if (press && event.pointerId === press.id) press = undefined;
+  };
+  el.addEventListener("pointerup", release);
+  el.addEventListener("pointercancel", release);
+  el.addEventListener("dblclick", edit);
+  el.addEventListener("wheel", (event) => {
+    if (editing || doc.activeElement !== el || event.deltaY === 0) return;
+    event.preventDefault();
+    commit(value + (event.deltaY < 0 ? 1 : -1));
+  });
+  el.addEventListener("keydown", (event) => {
+    if (editing || event.target !== el || event.ctrlKey || event.metaKey || event.altKey) return;
+    const unit = event.shiftKey ? 10 : 1;
+    switch (event.key) {
+      case "ArrowUp":
+      case "ArrowRight":
+        commit(value + unit);
+        break;
+      case "ArrowDown":
+      case "ArrowLeft":
+        commit(value - unit);
+        break;
+      case "PageUp":
+        commit(value + 10);
+        break;
+      case "PageDown":
+        commit(value - 10);
+        break;
+      case "Home":
+        commit(min);
+        break;
+      case "End":
+        commit(max);
+        break;
+      case "Enter":
+        edit();
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
+  });
+  return {
+    el,
+    update(state) {
+      value = state.value;
+      min = state.min;
+      max = state.max;
+      text = state.text;
+      attr("aria-valuemin", String(min));
+      attr("aria-valuemax", String(max));
+      attr("aria-valuenow", String(value));
+      attr("aria-valuetext", text);
+      attr("aria-label", state.label);
+      if (!editing && el.textContent !== text) el.textContent = text;
+    },
+  };
+}
+
 type LaneView = {
   id: string;
   el: HTMLElement;
   name: HTMLElement;
   mute: HTMLButtonElement;
   solo: HTMLButtonElement;
-  steps: HTMLInputElement;
+  steps: NumberBox;
   rate: HTMLSelectElement;
   dir: HTMLButtonElement;
-  swing: HTMLInputElement;
+  swing: NumberBox;
   cellsEl: HTMLElement;
   cells: HTMLElement[];
   /** The key last painted into each cell, so unchanged cells are skipped. */
@@ -226,7 +382,12 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
   const labels = { ...DEFAULT_LABELS, ...options.labels };
   const formatStep = options.formatStep ?? ((label: string, step: number) => `${label} step ${step + 1}`);
   const doc = root.ownerDocument;
-  const defs = [...builtIns(labels), ...(sequencer.params ?? []).map(customDef)];
+  const specs = new Map((sequencer.cellParams ?? []).map((spec) => [spec.id, spec]));
+  const rates = sequencer.rates?.length ? sequencer.rates : RATES;
+  const defs = [
+    ...builtIns(labels).map((def) => (specs.has(def.id) ? withSpec(def, specs.get(def.id)!) : def)),
+    ...(sequencer.params ?? []).map(customDef),
+  ];
   const defById = new Map(defs.map((def) => [def.id, def]));
   const make = <K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, parent?: HTMLElement): HTMLElementTagNameMap[K] => {
     const element = doc.createElement(tag);
@@ -242,11 +403,17 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
   style.textContent = stepGridStyles;
   const scroll = make("div", "ar-sg-scroll", view);
   const surface = make("div", "ar-sg-surface", scroll);
-  const progressTrack = make("div", "ar-sg-progress", surface);
-  progressTrack.setAttribute("aria-hidden", "true");
+  const top = make("div", "ar-sg-top", surface);
+  top.setAttribute("aria-hidden", "true");
+  const colHead = make("div", "ar-sg-colhead", top);
+  [labels.steps, labels.rate, labels.dir, labels.swing].forEach((caption, index) => {
+    make("span", "ar-sg-colname", colHead).style.gridColumn = String(index + 4);
+    colHead.lastElementChild!.textContent = caption;
+  });
+  const timeline = make("div", "ar-sg-timeline", top);
+  const ruler = make("div", "ar-sg-ruler", timeline);
+  const progressTrack = make("div", "ar-sg-progress", timeline);
   const progressFill = make("div", "ar-sg-progress-fill", progressTrack);
-  const ruler = make("div", "ar-sg-ruler", surface);
-  ruler.setAttribute("aria-hidden", "true");
   const lanesEl = make("div", "ar-sg-lanes", surface);
   const footer = make("div", "ar-sg-footer", view);
   const tabs = make("div", "ar-sg-tabs", footer);
@@ -354,31 +521,25 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
     const solo = make("button", "ar-sg-solo", head);
     solo.type = "button";
     solo.textContent = "S";
-    const field = (caption: string) => {
-      const wrap = make("label", "ar-sg-field", head);
-      wrap.append(caption);
-      return wrap;
-    };
-    const stepsField = field("n");
-    const steps = make("input", undefined, stepsField);
-    steps.type = "number";
-    steps.min = "1";
-    steps.step = "1";
-    const rateField = field("");
-    const rate = make("select", undefined, rateField);
-    for (const value of RATES) {
+    const steps = createNumberBox(doc, 8, (value) => {
+      const current = laneOf(lane.id);
+      if (current) sequencer.setLane(lane.id, { steps: clamp(value, 1, pattern?.size ?? current.cells.length) });
+    });
+    steps.el.classList.add("ar-sg-steps");
+    head.append(steps.el);
+    const rateWrap = make("span", "ar-sg-select", head);
+    const rate = make("select", undefined, rateWrap);
+    for (const value of rates) {
       const option = make("option", undefined, rate);
       option.value = option.textContent = value;
     }
     const dir = make("button", "ar-sg-dir", head);
     dir.type = "button";
-    const swingField = field("");
-    const swing = make("input", undefined, swingField);
-    swing.type = "number";
-    swing.min = "0";
-    swing.max = "100";
-    swing.step = "1";
-    swingField.append("%");
+    const swing = createNumberBox(doc, 3, (value) => {
+      if (laneOf(lane.id)) sequencer.setLane(lane.id, { swing: clamp(value, 0, 100) / 100 });
+    });
+    swing.el.classList.add("ar-sg-swing");
+    head.append(swing.el);
     const cellsEl = make("div", "ar-sg-cells", el);
     const laneView: LaneView = {
       id: lane.id,
@@ -409,18 +570,6 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
       if (current) sequencer.setLane(lane.id, { direction: DIRECTIONS[(DIRECTIONS.indexOf(current.direction) + 1) % DIRECTIONS.length] });
     });
     rate.addEventListener("change", () => sequencer.setLane(lane.id, { rate: rate.value as StepGridRate }));
-    steps.addEventListener("change", () => {
-      const current = laneOf(lane.id);
-      const next = Math.round(steps.valueAsNumber);
-      if (current && Number.isFinite(next)) sequencer.setLane(lane.id, { steps: clamp(next, 1, pattern?.size ?? current.cells.length) });
-      refreshHeader(laneView, laneOf(lane.id)!);
-    });
-    swing.addEventListener("change", () => {
-      const current = laneOf(lane.id);
-      const next = swing.valueAsNumber;
-      if (current && Number.isFinite(next)) sequencer.setLane(lane.id, { swing: clamp(next, 0, 100) / 100 });
-      refreshHeader(laneView, laneOf(lane.id)!);
-    });
     // Stored for destroy(): the lane's own control listeners die with its elements.
     return laneView;
   }
@@ -439,21 +588,15 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
     laneView.solo.setAttribute("aria-pressed", String(lane.solo));
     laneView.solo.setAttribute("aria-label", `${lane.label} ${labels.solo}`);
     laneView.solo.title = labels.solo;
-    const stepsText = String(lane.steps);
-    if (laneView.steps.value !== stepsText) laneView.steps.value = stepsText;
-    laneView.steps.max = String(size);
-    laneView.steps.setAttribute("aria-label", `${lane.label} ${labels.steps}`);
-    laneView.steps.title = labels.steps;
+    laneView.steps.update({ value: lane.steps, min: 1, max: size, text: String(lane.steps), label: `${lane.label} ${labels.steps}` });
     if (laneView.rate.value !== lane.rate) laneView.rate.value = lane.rate;
     laneView.rate.setAttribute("aria-label", `${lane.label} ${labels.rate}`);
     laneView.rate.title = labels.rate;
     setText(laneView.dir, ARROWS[lane.direction]);
     laneView.dir.setAttribute("aria-label", `${lane.label} ${labels.direction}: ${lane.direction}`);
     laneView.dir.title = `${labels.direction}: ${lane.direction}`;
-    const swingText = String(Math.round(lane.swing * 100));
-    if (laneView.swing.value !== swingText) laneView.swing.value = swingText;
-    laneView.swing.setAttribute("aria-label", `${lane.label} ${labels.swing} %`);
-    laneView.swing.title = labels.swing;
+    const swing = Math.round(lane.swing * 100);
+    laneView.swing.update({ value: swing, min: 0, max: 100, text: `${swing}%`, label: `${lane.label} ${labels.swing} %` });
   }
 
   function syncRuler(size: number): void {
