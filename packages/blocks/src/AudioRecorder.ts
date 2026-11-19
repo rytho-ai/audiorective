@@ -1,4 +1,4 @@
-import { AudioProcessor, cell, readonlyCell, untracked, type Cell, type ReadonlyCell } from "@audiorective/core";
+import { AudioProcessor, cell, readonlyCell, registerWorklet, untracked, type Cell, type ReadonlyCell } from "@audiorective/core";
 import type { PCMData } from "@audiorective/core/peaks";
 import { AUDIO_RECORDER_WORKLET, AUDIO_RECORDER_WORKLET_NAME } from "./recording/audio-recorder.worklet";
 
@@ -51,21 +51,9 @@ type Session = {
   reject?: (error: unknown) => void;
 };
 
-const modules = new WeakMap<BaseAudioContext, Promise<void>>();
 function registerRecorder(context: BaseAudioContext): Promise<void> {
   if (!context.audioWorklet) return Promise.reject(new Error("AudioRecorder requires AudioWorklet support."));
-  const existing = modules.get(context);
-  if (existing) return existing;
-  const url = URL.createObjectURL(new Blob([AUDIO_RECORDER_WORKLET], { type: "application/javascript" }));
-  const pending = context.audioWorklet
-    .addModule(url)
-    .finally(() => URL.revokeObjectURL(url))
-    .catch((error: unknown) => {
-      modules.delete(context);
-      throw error;
-    });
-  modules.set(context, pending);
-  return pending;
+  return registerWorklet(context, AUDIO_RECORDER_WORKLET_NAME, AUDIO_RECORDER_WORKLET);
 }
 
 function abortError(): DOMException {

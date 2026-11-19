@@ -11,7 +11,9 @@ export class Param<T> {
   private _stopEffect?: () => void;
 
   constructor(options: ParamOptions<T>) {
-    this.$ = signal(options.default);
+    // `bind.get` seeds the value from the external state; `default` covers a getter that yields undefined.
+    const initial = options.bind?.get?.();
+    this.$ = signal(initial === undefined ? options.default : initial);
     this.label = options.label;
     this.min = options.min;
     this.max = options.max;

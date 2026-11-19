@@ -1,6 +1,7 @@
 import { AudioProcessor } from "./AudioProcessor";
 import type { SchedulableParam } from "./SchedulableParam";
-import type { Cell } from "./Cell";
+import { cell, readonlyCell, type Cell, type ReadonlyCell } from "./Cell";
+import type { Param } from "./Param";
 
 export interface FilePlayerOptions {
   /** Stream URL. Settable later via `.src`. */
@@ -25,8 +26,8 @@ export interface FilePlayerOptions {
  * externally via `player.output -> ...`.
  */
 export class FilePlayer extends AudioProcessor<
-  { volume: SchedulableParam },
-  { isPlaying: Cell<boolean>; currentTime: Cell<number>; duration: Cell<number> }
+  { volume: SchedulableParam; loop: Param<boolean>; playbackRate: Param<number> },
+  { isPlaying: ReadonlyCell<boolean>; currentTime: ReadonlyCell<number>; duration: ReadonlyCell<number> }
 > {
   /**
    * The underlying media element — a deliberate escape hatch for advanced needs
@@ -40,6 +41,9 @@ export class FilePlayer extends AudioProcessor<
   private readonly _output: GainNode;
   private readonly _disposers: Array<() => void> = [];
   private readonly _endedCbs: Array<() => void> = [];
+  private readonly _playing: Cell<boolean>;
+  private readonly _time: Cell<number>;
+  private readonly _duration: Cell<number>;
   private _src: string | null = null;
 
   constructor(ctx: AudioContext, opts: FilePlayerOptions = {}) {
@@ -53,10 +57,35 @@ export class FilePlayer extends AudioProcessor<
     const outputGain = new GainNode(ctx, { gain: opts.volume ?? 1 });
     source.connect(outputGain);
 
-    super(ctx, ({ param, cell }) => ({
-      params: { volume: param({ default: opts.volume ?? 1, bind: outputGain.gain, min: 0, max: 1 }) },
-      cells: { isPlaying: cell(false), currentTime: cell(0), duration: cell(NaN) },
+    const playing = cell(false);
+    const time = cell(0);
+    const duration = cell(NaN);
+
+    super(ctx, ({ param }) => ({
+      params: {
+        volume: param({ default: opts.volume ?? 1, bind: outputGain.gain, min: 0, max: 1 }),
+        loop: param<boolean>({
+          default: opts.loop ?? false,
+          bind: {
+            set: (v) => {
+              audio.loop = v;
+            },
+          },
+        }),
+        playbackRate: param<number>({
+          default: opts.playbackRate ?? 1,
+          bind: {
+            set: (v) => {
+              audio.playbackRate = v;
+            },
+          },
+        }),
+      },
+      cells: { isPlaying: readonlyCell(playing), currentTime: readonlyCell(time), duration: readonlyCell(duration) },
     }));
+    this._playing = playing;
+    this._time = time;
+    this._duration = duration;
 
     this.audio = audio;
     this._source = source;
@@ -67,25 +96,25 @@ export class FilePlayer extends AudioProcessor<
       this._disposers.push(() => audio.removeEventListener(type, fn));
     };
     on("play", () => {
-      this.cells.isPlaying.value = true;
+      this._playing.value = true;
     });
     on("playing", () => {
-      this.cells.isPlaying.value = true;
+      this._playing.value = true;
     });
     on("pause", () => {
-      this.cells.isPlaying.value = false;
+      this._playing.value = false;
     });
     on("timeupdate", () => {
-      this.cells.currentTime.value = audio.currentTime;
+      this._time.value = audio.currentTime;
     });
     on("seeking", () => {
-      this.cells.currentTime.value = audio.currentTime;
+      this._time.value = audio.currentTime;
     });
     on("loadedmetadata", () => {
-      this.cells.duration.value = audio.duration;
+      this._duration.value = audio.duration;
     });
     on("ended", () => {
-      this.cells.isPlaying.value = false;
+      this._playing.value = false;
       for (const cb of [...this._endedCbs]) cb();
     });
 
@@ -106,17 +135,27 @@ export class FilePlayer extends AudioProcessor<
     if (url == null) this.audio.removeAttribute("src");
     else this.audio.src = url;
     this.audio.load();
-    this.cells.isPlaying.value = false;
-    this.cells.currentTime.value = 0;
-    this.cells.duration.value = NaN;
+    this._playing.value = false;
+    this._time.value = 0;
+    this._duration.value = NaN;
+  }
+
+  /** Loop the stream. Reads and writes `params.loop`. */
+  get loop(): boolean {
+    return this.params.loop.value;
   }
 
   set loop(v: boolean) {
-    this.audio.loop = v;
+    this.params.loop.value = v;
+  }
+
+  /** Playback rate. Reads and writes `params.playbackRate`. */
+  get playbackRate(): number {
+    return this.params.playbackRate.value;
   }
 
   set playbackRate(v: number) {
-    this.audio.playbackRate = v;
+    this.params.playbackRate.value = v;
   }
 
   async play(): Promise<void> {
@@ -140,18 +179,23 @@ export class FilePlayer extends AudioProcessor<
     const d = this.audio.duration;
     const clamped = Math.max(0, Number.isFinite(d) ? Math.min(d, t) : t);
     this.audio.currentTime = clamped;
-    this.cells.currentTime.value = this.audio.currentTime;
+    this._time.value = this.audio.currentTime;
   }
 
   stop(): void {
     this.audio.pause();
     this.audio.currentTime = 0;
-    this.cells.isPlaying.value = false;
-    this.cells.currentTime.value = 0;
+    this._playing.value = false;
+    this._time.value = 0;
   }
 
-  onEnded(cb: () => void): void {
+  /** Run `cb` each time playback reaches the end. Returns a function that removes it. */
+  onEnded(cb: () => void): () => void {
     this._endedCbs.push(cb);
+    return () => {
+      const i = this._endedCbs.indexOf(cb);
+      if (i !== -1) this._endedCbs.splice(i, 1);
+    };
   }
 
   override destroy(): void {

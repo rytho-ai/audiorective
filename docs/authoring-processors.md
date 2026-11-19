@@ -287,7 +287,7 @@ class Drone extends AudioProcessor<{ freq: SchedulableParam }> {
 ## 6. Worklet-backed processors
 
 A worklet-backed processor loads its module through `registerWorklet(ctx, name, source)` from
-`@audiorective/effects` — it turns `source` into a Blob URL and calls `ctx.audioWorklet.addModule`,
+`@audiorective/core` (also re-exported by `@audiorective/effects`) — it turns `source` into a Blob URL and calls `ctx.audioWorklet.addModule`,
 deduped per context so a second call for the same name and context is a no-op, and it works offline
 against an `OfflineAudioContext`. The processor itself constructs synchronously and exposes a `ready`
 promise that resolves once the module has loaded and the `AudioWorkletNode` is built and wired in; a

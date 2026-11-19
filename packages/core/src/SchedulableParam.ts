@@ -1,4 +1,4 @@
-import type { ParamOptions } from "./types";
+import type { ParamOptions, SignalAccessor } from "./types";
 import { Param } from "./Param";
 import { ParamSync } from "./ParamSync";
 
@@ -17,23 +17,25 @@ export class SchedulableParam extends Param<number> {
   // (an AudioBufferSourceNode is one-shot, so each start() makes a fresh playbackRate).
   private _audioParam: AudioParam;
   private readonly _audioContext: BaseAudioContext;
-
-  override get value(): number {
-    return super.value;
-  }
+  // The plain signal, for ParamSync read-back: it must update the value without writing the AudioParam.
+  private readonly _signal: SignalAccessor<number>;
 
   /** Backing AudioParam, for graph param sinks. */
   get audioParam(): AudioParam {
     return this._audioParam;
   }
 
-  override set value(newValue: number) {
-    super.value = newValue;
-    this._audioParam.value = newValue;
-  }
-
   constructor(options: SchedulableParamOptions) {
     super(options);
+    // Every write path (`.value` and raw `$(x)`) pushes to the AudioParam, so the two cannot diverge.
+    const raw = this.$;
+    this._signal = raw;
+    const accessor = ((...args: [] | [number]) => {
+      if (args.length === 0) return raw();
+      raw(args[0]);
+      this._audioParam.value = args[0];
+    }) as SignalAccessor<number>;
+    (this as { $: SignalAccessor<number> }).$ = accessor;
     this._audioContext = options.audioContext;
     this._audioParam = options.audioParam;
 
@@ -72,7 +74,7 @@ export class SchedulableParam extends Param<number> {
    * sync current value to the audioParam value underhood
    */
   syncFromAudio(): void {
-    super.value = this._audioParam.value;
+    this._signal(this._audioParam.value);
   }
 
   setValueAtTime(value: number, time: number): this {

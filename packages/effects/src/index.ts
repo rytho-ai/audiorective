@@ -1,5 +1,5 @@
 export { dbToGain, gainToDb } from "./db";
-export { registerWorklet, WorkletUnavailableError } from "./registerWorklet";
+export { registerWorklet, WorkletUnavailableError } from "@audiorective/core";
 export { Effect } from "./Effect";
 export { TimeStretch } from "./TimeStretch";
 export type { TimeStretchAnchor, TimeStretchOptions, TimeStretchResult } from "./TimeStretch";

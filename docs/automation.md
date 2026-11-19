@@ -65,10 +65,9 @@ snapshot. Use a new array to edit:
 processor.curve.value = processor.curve.value.map((p, i) => (i === 1 ? { ...p, value: 0.5 } : p));
 ```
 
-`$` is the raw alien-signals accessor, matching core Param/Cell. Direct raw writes
-bypass copying and validation: advanced callers must supply a valid sorted,
-immutable snapshot (for example another curve’s `.value`). Use `.value` for editor
-writes so validation runs before the snapshot is published.
+`$` is the signal accessor, matching core Param/Cell. Reads through `$()` are tracked
+like `.value`. Writes through `$(points)` go through the same copy, sort, freeze and
+validation as `.value =`, so an invalid raw write throws and keeps the old snapshot.
 
 Each `AutomationPoint` contains `{ time, value, shape }`:
 

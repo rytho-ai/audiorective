@@ -161,6 +161,7 @@ describe("AudioEngine", () => {
     const p1 = engine.untilReady();
     const p2 = engine.untilReady();
     expect(p1).toBe(p2);
+    p1.catch(() => {}); // destroy() rejects a pending wait
     engine.destroy();
   });
 
@@ -172,7 +173,7 @@ describe("AudioEngine", () => {
     // Simulate browser externally suspending the context by calling onstatechange directly
     // In production, the browser fires this when tab goes to background on mobile
     Object.defineProperty(engine.context, "state", { value: "suspended", writable: true });
-    engine.context.onstatechange?.call(engine.context, new Event("statechange"));
+    engine.context.dispatchEvent(new Event("statechange"));
     expect(engine.state()).toBe("suspended");
     engine.destroy();
   });
@@ -192,7 +193,7 @@ describe("AudioEngine", () => {
     const engine = new TestEngine();
     await engine.start();
     Object.defineProperty(engine.context, "state", { value: "interrupted", configurable: true });
-    engine.context.onstatechange?.call(engine.context, new Event("statechange"));
+    engine.context.dispatchEvent(new Event("statechange"));
     expect(engine.state()).toBe("suspended");
     engine.destroy();
   });
@@ -201,7 +202,7 @@ describe("AudioEngine", () => {
     const engine = new TestEngine();
     await engine.start();
     Object.defineProperty(engine.context, "state", { value: "interrupted", configurable: true });
-    engine.context.onstatechange?.call(engine.context, new Event("statechange"));
+    engine.context.dispatchEvent(new Event("statechange"));
     expect(engine.state()).toBe("suspended");
 
     const spy = vi.spyOn(engine.context, "resume");
@@ -216,7 +217,7 @@ describe("AudioEngine", () => {
     const engine = new TestEngine();
     await engine.start();
     Object.defineProperty(engine.context, "state", { value: "interrupted", configurable: true });
-    engine.context.onstatechange?.call(engine.context, new Event("statechange"));
+    engine.context.dispatchEvent(new Event("statechange"));
     expect(engine.state()).toBe("suspended");
 
     const spy = vi.spyOn(engine.context, "resume");
@@ -260,7 +261,7 @@ describe("AudioEngine", () => {
     const engine = new TestEngine();
     await engine.start();
     Object.defineProperty(engine.context, "state", { value: "closed", configurable: true });
-    engine.context.onstatechange?.call(engine.context, new Event("statechange"));
+    engine.context.dispatchEvent(new Event("statechange"));
     expect(engine.state()).toBe("destroyed");
   });
 
@@ -282,7 +283,7 @@ describe("AudioEngine", () => {
     const engine = new TestEngine();
     expect(engine.state()).toBe("idle");
     Object.defineProperty(engine.context, "state", { value: "suspended", configurable: true });
-    engine.context.onstatechange?.call(engine.context, new Event("statechange"));
+    engine.context.dispatchEvent(new Event("statechange"));
     expect(engine.state()).toBe("idle");
     engine.destroy();
   });

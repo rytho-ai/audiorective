@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { effect, isSignal } from "alien-signals";
+import { effect } from "alien-signals";
 import { AutomationBinding, AutomationCurve, audioParamTarget } from "../src/automation";
 import type { AutomationPoint, AutomationTarget } from "../src/automation";
 import { Param } from "../src/Param";
@@ -36,8 +36,7 @@ describe("AutomationCurve", () => {
     curve.value = [point(0, 1), point(1, 2)];
     const replacement = new AutomationCurve([point(0, 2), point(1, 3)]).value;
     curve.$(replacement);
-    expect(isSignal(curve.$)).toBe(true);
-    expect(curve.value).toBe(replacement);
+    expect(curve.value).toEqual(replacement);
     expect(curve.value).toBe(curve.$());
     expect(seen).toEqual([1, 2, 3]);
     dispose();

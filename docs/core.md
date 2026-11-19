@@ -101,7 +101,7 @@ Both scheduling paths (`bind: AudioParam` and unbound `schedulableParam`) use th
 
 ```typescript
 interface ParamBind<T> {
-  get?: () => T; // read from external state
+  get?: () => T; // read from external state: seeds the initial value (`default` is the fallback when it returns undefined)
   set?: (value: T) => void; // push to external state (via effect)
 }
 ```
@@ -128,7 +128,7 @@ class Param<T> implements Readable<T> {
 }
 ```
 
-When `bind.set` is provided, an internal effect pushes value changes to the target. Call `destroy()` to stop it.
+When `bind.set` is provided, an internal effect pushes value changes to the target. Call `destroy()` to stop it. When `bind.get` is provided, the param starts from `bind.get()` rather than `default` (`default` still applies if the getter returns `undefined`); it is read once at construction, and later changes to the external state are not polled.
 
 ### SchedulableParamOptions
 
@@ -160,6 +160,8 @@ class SchedulableParam extends Param<number> {
   destroy(): void; // unregisters from ParamSync
 }
 ```
+
+**Raw writes.** `$(x)` and `.value = x` are the same write: both update the signal and the backing `AudioParam`. `$()` reads are unchanged. Only `syncFromAudio()` updates the signal without writing back, so a ParamSync read-back never overwrites a value you set through `$`.
 
 **`read()` vs `.value`:** `.value` returns the signal's last-synced value (updated by `ParamSync` at ~10Hz). `read()` returns the live `AudioParam.value` directly — more accurate during active automations, but doesn't trigger reactive updates.
 
@@ -331,7 +333,7 @@ interface BuildHelpers {
 }
 ```
 
-**`destroy()`** stops all effects, calls `destroy()` on every param in the registry (cleaning up bind effects and `ParamSync` registrations), and disconnects any internally-created `ConstantSourceNode`s. Cells are not destroyed automatically — they're plain reactive containers with no audio-graph resources.
+**`destroy()`** stops all effects, calls `destroy()` on every param in the registry (cleaning up bind effects and `ParamSync` registrations), and stops and disconnects any internally-created `ConstantSourceNode`s and the internal silencer gain that keeps them alive. Cells are not destroyed automatically — they're plain reactive containers with no audio-graph resources.
 
 **Effects vs instruments — the `.input` convention.** A processor that **transforms** incoming audio (EQ, compressor, reverb, distortion) declares both `input` and `output`. A processor that **produces** audio from scratch (synth, sampler, oscillator) declares only `output`; `input` returns `undefined` from the base class. There are no `EffectProcessor`/`InstrumentProcessor` subclasses — the convention is purely about which getters a processor exposes. Downstream code that needs to insert a processor as an effect (e.g. `bindEffect` in `@audiorective/playcanvas`) checks `processor.input !== undefined`. Spatial's `input` getter is the prototype: it returns the entry `GainNode` that connects into the underlying `PannerNode`.
 
@@ -422,7 +424,7 @@ Compensation runs on every re-solve of a `defineGraph`: at any join with two or 
 **Engine queries** (on `AudioEngine`, so `engine.core.latency` for a `createEngine` consumer):
 
 ```typescript
-engine.latency: Param<number>;              // samples — longest path into ctx.destination across every engine-owned graph
+engine.latency: ReadonlyCell<number>;       // samples — longest path into ctx.destination across every engine-owned graph
 engine.perceivedTime: number;                // ctx.currentTime - latency/sampleRate - ctx.outputLatency (0 where unsupported)
 engine.getPathLatency(proc: AudioProcessor): number; // samples from proc's output to ctx.destination
 ```
@@ -658,8 +660,9 @@ player.buffer: AudioBuffer | null      // hot-swap at any time
 player.output: AudioNode               // summing gain; connect → Spatial / destination
 player.params.volume: SchedulableParam // output gain 0..1
 player.params.mute: Param<boolean>     // separate gain stage; leaves volume automation intact
-player.reverse: boolean                // applies to future triggers
-player.cells.activeVoices: Cell<number>// reactive voice count
+player.params.buffer: Param<AudioBuffer | null> // `player.buffer` reads and writes it
+player.params.reverse: Param<boolean>  // `player.reverse` reads and writes it; applies to future triggers
+player.cells.activeVoices: ReadonlyCell<number> // reactive voice count, written only by the sampler
 
 player.trigger(opts?: TriggerOptions): Voice | null
 // Returns null when no buffer is set, or steal:"none" drops the voice.
@@ -754,11 +757,14 @@ player.buffer: AudioBuffer | null      // hot-swap; takes effect on next start()
 player.output: AudioNode               // output gain; connect → Spatial / EQ / destination
 player.params.volume: SchedulableParam // output gain 0..1
 player.params.rate: SchedulableParam   // playback rate — schedulable (the point of this primitive)
-player.cells.isPlaying: Cell<boolean>
+player.params.loop: Param<boolean>      // `player.loop` reads and writes it; applies to a playing source immediately
+player.params.loopStart: Param<number> // `player.loopStart`
+player.params.loopEnd: Param<number>   // `player.loopEnd`
+player.cells.isPlaying: ReadonlyCell<boolean> // written only by the player
 
 player.start(when?: number, offset?: number): void  // sample-accurate; no-op while playing or with no buffer
 player.stop(when?: number): void                     // immediate, or future-dated (plays until `when`)
-player.loop = true; player.loopStart = 0; player.loopEnd = 3.69;  // setters write through to the live source
+player.loop = true; player.loopStart = 0; player.loopEnd = 3.69;  // same as writing params.loop / loopStart / loopEnd; write through to the live source
 player.destroy(): void
 ```
 
@@ -810,11 +816,13 @@ player.audio: HTMLAudioElement         // escape hatch for direct DOM access
 player.output: AudioNode               // MediaElementSource → connect here
 player.src: string | null              // getter/setter; setter loads + resets state
 player.params.volume: SchedulableParam
-player.cells.isPlaying: Cell<boolean>
-player.cells.currentTime: Cell<number>
-player.cells.duration: Cell<number>    // NaN until loadedmetadata fires
+player.params.loop: Param<boolean>
+player.params.playbackRate: Param<number>
+player.cells.isPlaying: ReadonlyCell<boolean>    // cells are written only by the player,
+player.cells.currentTime: ReadonlyCell<number>   // from the element's events and its own methods
+player.cells.duration: ReadonlyCell<number>      // NaN until loadedmetadata fires
 
-// setters
+// property forms of the params
 player.loop = true;
 player.playbackRate = 1.5;
 
@@ -822,7 +830,7 @@ player.play(): Promise<void>   // swallows autoplay-gesture + AbortError
 player.pause(): void
 player.seek(t: number): void
 player.stop(): void            // pause + seek(0)
-player.onEnded(cb: () => void): void
+player.onEnded(cb: () => void): () => void   // returns an unsubscribe
 player.destroy(): void
 ```
 
@@ -1021,8 +1029,12 @@ createEngine() / new Engine()  →  context created (suspended)               �
 .core.start()                  →  context.resume() (needs user gesture)      →  'running'
 .core.suspend()                →  context.suspend()                          →  'suspended'
 .core.resume()                 →  context.resume()                           →  'running'
-.core.destroy()                →  processors destroyed, context closed       →  'destroyed' (terminal)
+.core.destroy()                →  processors destroyed, context closed*      →  'destroyed' (terminal)
 ```
+
+\* **Context ownership.** An engine that creates its own `AudioContext` closes it on `destroy()`. A context passed in (`new AudioEngine(ctx)`, `createEngine(setup, { context })`) is borrowed and is never closed by the engine; the caller closes it. The engine listens with `addEventListener("statechange")` rather than assigning `onstatechange`, so a borrowed context keeps its own handler, and `destroy()` removes the engine's listener.
+
+`engine.state` and `engine.latency` are read-only: `state` is a callable view (`engine.state()`, `.value`, `$()`) and `latency` is a `ReadonlyCell<number>`. Only the engine writes them. `start()`, `suspend()`, `resume()` and `untilReady()` read the state untracked, so calling them inside an effect does not subscribe it. `destroy()` rejects any pending `untilReady()` with an error, and a call made after `destroy()` rejects at once.
 
 Calling `.core.start()` on a destroyed engine throws. Calling `.core.suspend()`/`.core.resume()` on a destroyed engine warns and no-ops.
 
@@ -1041,10 +1053,10 @@ class AudioEngine {
   constructor(existingContext?: AudioContext);
 
   get context(): AudioContext;
-  get state(): SignalAccessor<EngineState>;
-  readonly latency: Param<number>; // samples — see Latency (PDC)
+  get state(): EngineStateView; // read-only: state(), state.value, state.$()
+  readonly latency: ReadonlyCell<number>; // samples — see Latency (PDC)
   get perceivedTime(): number;
-  untilReady(): Promise<void>; // resolves when state becomes 'running'
+  untilReady(): Promise<void>; // resolves when state becomes 'running'; rejects if the engine is destroyed first
 
   start(): Promise<void>; // context.resume(), requires user gesture
   suspend(): Promise<void>;
@@ -1153,6 +1165,14 @@ type BeatTiming = Readonly<{ beatToTime(beat: number): number; timeToBeat(time: 
 - `CancellableEvent` is a consumer-owned audio event that a scheduler may revoke after a transport or edit change. `Clock`'s `window.own(event, when)` accepts one (`@audiorective/clock` re-exports the type), and `PadHit` extends it.
 - `BeatTiming` converts between beats and absolute audio-context time. `Timeline` satisfies it, and `StepSequencer.schedule(window, timing)` and `ClipLauncher`'s transport take it.
 
+## registerWorklet
+
+```typescript
+registerWorklet(ctx: BaseAudioContext, name: string, source: string): Promise<void>
+```
+
+Loads a worklet module into `ctx` once per `(context, name)`: concurrent and repeated calls share the first load, and a failed load can be retried. The source is served from a Blob URL, so no bundler setup is needed. It rejects with `WorkletUnavailableError` when the context has no `audioWorklet`. Both are exported from `@audiorective/core`; `@audiorective/effects` re-exports them. Blocks and apps that ship their own worklet use this instead of calling `addModule` themselves.
+
 ## Package Structure
 
 ```
@@ -1178,11 +1198,11 @@ signals/src/
 export { Param, SchedulableParam, ParamSync, AudioProcessor, AudioEngine, Cell, Spatial, Analyser };
 export { Sampler, BufferPlayer, FilePlayer, Voice };
 export { AudioBufferCache };
-export { EngineEnvironmentError, LatencyUnknownError };
+export { EngineEnvironmentError, LatencyUnknownError, WorkletUnavailableError };
 
 // Factories
 export { createEngine, cell, defineGraph };
-export { loadAudioBuffer };
+export { loadAudioBuffer, registerWorklet };
 export { summarizePeaks, peakFrameRange };
 
 // Constants

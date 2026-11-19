@@ -148,8 +148,14 @@ export abstract class AudioProcessor<P extends ParamRegistry = ParamRegistry, C 
     }
 
     for (const source of this._constantSources) {
+      try {
+        source.stop();
+      } catch {
+        /* already stopped */
+      }
       source.disconnect();
     }
     this._constantSources = new Set();
+    this._silencer.disconnect();
   }
 }

@@ -50,7 +50,12 @@ export class AutomationCurve {
   readonly $: SignalAccessor<readonly AutomationPoint[]>;
 
   constructor(points: readonly AutomationPoint[]) {
-    this.$ = signal(pointsCopy(points));
+    const raw = signal(pointsCopy(points));
+    // Raw `$(points)` writes get the same validation, sorting and freezing as `.value =`.
+    this.$ = ((...args: [] | [readonly AutomationPoint[]]) => {
+      if (args.length === 0) return raw();
+      raw(pointsCopy(args[0]));
+    }) as SignalAccessor<readonly AutomationPoint[]>;
   }
 
   get value(): readonly AutomationPoint[] {
@@ -58,7 +63,7 @@ export class AutomationCurve {
   }
 
   set value(points: readonly AutomationPoint[]) {
-    this.$(pointsCopy(points));
+    this.$(points);
   }
 
   /** Constant before the first point and after the last; finite negative queries are allowed. */
@@ -152,7 +157,12 @@ export class AutomationBinding {
     if (this._destroyed) throw new Error("AutomationBinding is destroyed.");
     const now = this.context.currentTime;
     const from = options.from ?? 0;
-    const to = options.to ?? Math.max(from, this.curve.value.at(-1)!.time);
+    const to =
+      options.to ??
+      Math.max(
+        from,
+        withoutTracking(() => this.curve.value.at(-1)!.time),
+      );
     const when = options.when ?? now;
     const secondsPerUnit = options.secondsPerUnit ?? 1;
     if (

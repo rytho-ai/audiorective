@@ -1,5 +1,4 @@
-import { AudioProcessor, cell, readonlyCell, type Cell, type ReadonlyCell, type SchedulableParam } from "@audiorective/core";
-import { registerWorklet } from "../registerWorklet";
+import { AudioProcessor, cell, readonlyCell, registerWorklet, type Cell, type ReadonlyCell, type SchedulableParam } from "@audiorective/core";
 import { DYNAMICS_WORKLET, DYNAMICS_WORKLET_NAME } from "../worklets/dynamics.worklet";
 
 export interface DynamicsCoreOptions {

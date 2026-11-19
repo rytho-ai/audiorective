@@ -1,10 +1,13 @@
-import { signal, effect } from "alien-signals";
+import { effect } from "alien-signals";
 import { AudioProcessor } from "./AudioProcessor";
 import { assertAudioContextAvailable, LatencyUnknownError } from "./errors";
 import { defineGraph as defineGraphFn, _graphRegistry, NodeNotInSolveError } from "./graph";
 import type { EdgeList, GraphHandle, GraphOptions } from "./graph";
-import { Param } from "./Param";
-import type { EngineState, SignalAccessor } from "./types";
+import { cell, readonlyCell, untracked, type ReadonlyCell } from "./Cell";
+import type { ComputedAccessor, EngineState, Readable } from "./types";
+
+/** Read-only engine state: call it (`engine.state()`) or read `.value` / `.$()`. It has no setter. */
+export type EngineStateView = ComputedAccessor<EngineState> & Readable<EngineState>;
 
 const DEFAULT_AUTO_START_EVENTS = ["click", "keydown", "touchstart"] as const;
 
@@ -75,7 +78,13 @@ function resolvePathLatency(proc: AudioProcessor): number {
 export class AudioEngine {
   private readonly _context: AudioContext;
   private _processors: AudioProcessor[] = [];
-  private _state: SignalAccessor<EngineState> = signal<EngineState>("idle");
+  private readonly _stateCell = cell<EngineState>("idle");
+  private readonly _stateView: EngineStateView;
+  // Pending untilReady() callers; settled when the state reaches "running" or the engine is destroyed.
+  private _waiters: Array<{ resolve: () => void; reject: (error: unknown) => void }> = [];
+  // A borrowed context is the caller's to close; only a context this engine created is closed on destroy.
+  private readonly _ownsContext: boolean;
+  private readonly _onStateChange: () => void;
   private _cachedPromise: Promise<void> | null = null;
   // Set only by destroy() — separate from the "destroyed" state, which an external
   // context closure can also reach, so cleanup still runs if destroy() is called
@@ -87,32 +96,56 @@ export class AudioEngine {
   // solve didn't touch the destination just keeps its prior entry (or none) instead
   // of clobbering it with `undefined`. `latency` is always the max across this map.
   private _graphLatency = new Map<object, number>();
-  readonly latency: Param<number> = new Param({ default: 0 });
+  private readonly _latencyCell = cell(0);
+  /** Longest path into the destination across engine-owned graphs, in samples. Written only by the engine. */
+  readonly latency: ReadonlyCell<number> = readonlyCell(this._latencyCell);
 
   constructor(existingContext?: AudioContext) {
     if (existingContext === undefined) assertAudioContextAvailable();
+    this._ownsContext = existingContext === undefined;
     this._context = existingContext ?? new AudioContext();
-    this._context.onstatechange = () => {
+    const view = (() => this._stateCell.$()) as EngineStateView;
+    Object.defineProperties(view, {
+      $: { value: () => this._stateCell.$() },
+      value: { get: () => this._stateCell.$() },
+    });
+    this._stateView = view;
+    // A listener, not `onstatechange`: a borrowed context keeps whatever handler its owner installed.
+    this._onStateChange = () => {
       if (this._destroyed) return;
       // Safari reports "interrupted" (phone call, Siri); it is not in lib.dom's union.
       const s = this._context.state as string;
       if (s === "closed") {
-        this._state("destroyed");
+        this._setState("destroyed");
       } else if (s === "running") {
-        this._state("running");
-        this._cachedPromise = null;
-      } else if (this._state() !== "idle") {
-        this._state("suspended");
+        this._setState("running");
+      } else if (this._peek() !== "idle") {
+        this._setState("suspended");
       }
     };
+    this._context.addEventListener("statechange", this._onStateChange);
+  }
+
+  private _peek(): EngineState {
+    return untracked(() => this._stateCell.value);
+  }
+
+  private _setState(next: EngineState): void {
+    this._stateCell.value = next;
+    if (next === "running") {
+      this._cachedPromise = null;
+      const waiters = this._waiters;
+      this._waiters = [];
+      for (const w of waiters) w.resolve();
+    }
   }
 
   get context(): AudioContext {
     return this._context;
   }
 
-  get state(): SignalAccessor<EngineState> {
-    return this._state;
+  get state(): EngineStateView {
+    return this._stateView;
   }
 
   /**
@@ -170,7 +203,7 @@ export class AudioEngine {
   private _recomputeLatency(): void {
     let max = 0;
     for (const v of this._graphLatency.values()) if (v > max) max = v;
-    this.latency.value = max;
+    this._latencyCell.value = max;
   }
 
   /** Samples from `proc`'s output to `ctx.destination`, following its graph ownership chain. */
@@ -179,44 +212,38 @@ export class AudioEngine {
   }
 
   untilReady(): Promise<void> {
-    if (this._state() === "running") return Promise.resolve();
-    if (this._cachedPromise) return this._cachedPromise;
-    this._cachedPromise = new Promise<void>((resolve) => {
-      const stop = effect(() => {
-        if (this._state() === "running") {
-          resolve();
-          stop();
-        }
-      });
+    const state = this._peek();
+    if (state === "running") return Promise.resolve();
+    if (state === "destroyed") return Promise.reject(new Error("AudioEngine destroyed before it became ready"));
+    this._cachedPromise ??= new Promise<void>((resolve, reject) => {
+      this._waiters.push({ resolve, reject });
     });
     return this._cachedPromise;
   }
 
   async start(): Promise<void> {
-    if (this._state() === "destroyed") throw new Error("Cannot start a destroyed engine");
+    if (this._peek() === "destroyed") throw new Error("Cannot start a destroyed engine");
     if (this._context.state !== "running") await this._context.resume();
-    this._state("running");
-    this._cachedPromise = null;
+    this._setState("running");
   }
 
   async suspend(): Promise<void> {
-    if (this._state() === "destroyed") {
+    if (this._peek() === "destroyed") {
       console.warn("AudioEngine: suspend() called on a destroyed engine");
       return;
     }
-    if (this._state() === "idle") return;
+    if (this._peek() === "idle") return;
     if (this._context.state === "running") await this._context.suspend();
-    this._state("suspended");
+    this._setState("suspended");
   }
 
   async resume(): Promise<void> {
-    if (this._state() === "destroyed") {
+    if (this._peek() === "destroyed") {
       console.warn("AudioEngine: resume() called on a destroyed engine");
       return;
     }
     if (this._context.state !== "running") await this._context.resume();
-    this._state("running");
-    this._cachedPromise = null;
+    this._setState("running");
   }
 
   register<T extends AudioProcessor>(processor: T): T {
@@ -246,7 +273,7 @@ export class AudioEngine {
     };
 
     const stop = effect(() => {
-      const s = this._state();
+      const s = this._stateCell.value;
       if (s === "destroyed") {
         disarm();
         return;
@@ -271,12 +298,16 @@ export class AudioEngine {
     this._graphLatency.clear();
     for (const p of this._processors) p.destroy();
     this._processors = [];
-    this.latency.destroy();
-    // The context may already be closed (an external close, or the browser tearing
-    // it down) — closing it again would reject with InvalidStateError.
-    if (this._context.state !== "closed") this._context.close();
-    this._state("destroyed");
+    this._context.removeEventListener("statechange", this._onStateChange);
+    // Only a context this engine created is closed. It may already be closed (an external
+    // close, or the browser tearing it down), and closing it again would reject.
+    if (this._ownsContext && this._context.state !== "closed") void this._context.close();
+    this._stateCell.value = "destroyed";
     this._cachedPromise = null;
+    const waiters = this._waiters;
+    this._waiters = [];
+    const error = new Error("AudioEngine destroyed before it became ready");
+    for (const w of waiters) w.reject(error);
   }
 }
 
