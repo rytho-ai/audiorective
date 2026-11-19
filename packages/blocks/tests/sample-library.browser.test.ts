@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { cell, effect } from "@audiorective/core";
+import { BufferPlayer, cell, effect } from "@audiorective/core";
 import { SampleLibrary } from "../src/SampleLibrary";
 
 const disposers: Array<() => void | Promise<unknown>> = [];
@@ -109,4 +109,41 @@ test("a failed preview releases its lease", async () => {
   connect.mockRestore();
   library.remove(id);
   expect(library.state.value.decodedBytes).toBe(0);
+});
+
+test("a BufferPlayer built inside an effect keeps its bound params after the effect re-runs", async () => {
+  const context = new AudioContext();
+  disposers.push(() => context.close());
+  const trigger = cell(0);
+  let player!: BufferPlayer;
+  disposers.push(
+    effect(() => {
+      void trigger.value;
+      player ??= new BufferPlayer(context, { buffer: context.createBuffer(1, 8000, 8000) });
+    }),
+  );
+  trigger.value = 1;
+  player.start();
+  player.params.loop.value = true;
+  expect((player as unknown as { _source: AudioBufferSourceNode })._source.loop).toBe(true);
+  player.destroy();
+});
+
+test("a library preview started inside an effect keeps loop binding on the preview player", async () => {
+  const { library, id } = await readyLibrary(2);
+  const trigger = cell(0);
+  let started = false;
+  disposers.push(
+    effect(() => {
+      void trigger.value;
+      if (started) return;
+      started = true;
+      void library.preview(id);
+    }),
+  );
+  await expect.poll(() => library.state.value.previewPlaying).toBe(true);
+  trigger.value = 1;
+  const player = (library as unknown as { previewVoice: { player: BufferPlayer } }).previewVoice.player;
+  player.params.loop.value = true;
+  expect((player as unknown as { _source: AudioBufferSourceNode })._source.loop).toBe(true);
 });

@@ -239,3 +239,13 @@ test("destroy silences owned audio but leaves caller context and peer running", 
   expect(peak(peerAnalyser)).toBeGreaterThan(0.1);
   expect(context.state).toBe("running");
 });
+
+test("destroy does not notify subscribers after the player is disposed", async () => {
+  const { context, player } = fixture();
+  await player.load(bands(context, 1));
+  await player.play();
+  const seen: unknown[] = [];
+  player.subscribe(() => seen.push(1));
+  player.destroy();
+  expect(seen).toEqual([]);
+});

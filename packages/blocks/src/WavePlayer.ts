@@ -636,6 +636,8 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
   }
   override destroy(): void {
     if (this.disposed) return;
+    // Stop subscribers first: resetting state inside the batch would otherwise notify them after `disposed`.
+    for (const unsubscribe of [...this.subscribers]) unsubscribe();
     this.change(() => {
       this.disposed = true;
       ++this.request;
@@ -656,6 +658,5 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
       super.destroy();
       this.gain.disconnect();
     });
-    for (const unsubscribe of [...this.subscribers]) unsubscribe();
   }
 }

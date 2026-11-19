@@ -188,7 +188,7 @@ export class SampleLibrary {
     this.stopPreview();
     let player: BufferPlayer | undefined;
     try {
-      player = new BufferPlayer(this.context, { buffer: lease.buffer });
+      player = untracked(() => new BufferPlayer(this.context, { buffer: lease.buffer }));
       player.output.connect(this.output);
     } catch (error) {
       player?.destroy();
