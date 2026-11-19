@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 import {
   applyEventTransforms,
+  hash01,
+  type EventTransformInput,
   type BeatEvent,
   type BeatTiming,
   type EventTransform,
@@ -11,7 +13,7 @@ import {
 
 /** 120 bpm from time 0: a beat is 0.5 s. */
 const timing: BeatTiming = { beatToTime: (b) => b * 0.5, timeToBeat: (t) => t * 2 };
-const context: EventTransformContext = { now: 2.5, timing, random: () => 0.5 };
+const context: EventTransformInput = { now: 2.5, timing, random: () => 0.5 };
 const hit = (beat: number, extra: Partial<TimedBeatEvent> = {}): TimedBeatEvent => ({ beat, durationBeats: 1, velocity: 1, ...extra });
 const make = (
   id: string,
@@ -88,5 +90,52 @@ describe("applyEventTransforms", () => {
     const plain = { id: "p", apply: (events: readonly BeatEvent[]) => events };
     expect(applyEventTransforms([{ beat: 1 }], [plain], context)).toEqual([{ when: 2.5 }]);
     expect(() => applyEventTransforms([{ beat: 1 }], [{ id: "q", apply: () => [{ beat: Infinity }] }], context)).toThrow(/"q"/);
+  });
+});
+
+describe("stable randomness", () => {
+  test("randomFor is pure in seed, event identity and key", () => {
+    const seen: number[] = [];
+    const t = make("r", (events, { randomFor }) => (seen.push(...events.map((e) => randomFor(e)), randomFor(events[0], "k")), events));
+    const events = [hit(1), hit(2)];
+    applyEventTransforms(events, [t], { ...context, seed: 5 });
+    applyEventTransforms([...events].reverse().reverse(), [t], { ...context, seed: 5 });
+    expect(seen.slice(0, 3)).toEqual(seen.slice(3));
+    expect(new Set(seen.slice(0, 3)).size).toBe(3);
+    applyEventTransforms(events, [t], { ...context, seed: 6 });
+    expect(seen.slice(6, 9)).not.toEqual(seen.slice(0, 3));
+  });
+
+  test("keyOf supplies identity and survives a copying transform", () => {
+    const keyOf = (e: TimedBeatEvent & { id?: string }) => e.id ?? "";
+    let draw = 0;
+    const read = make("read", (events, { randomFor }) => ((draw = randomFor(events[0])), events));
+    const move = make("move", (events) => events.map((e) => ({ ...e, beat: e.beat + 1 })));
+    applyEventTransforms([{ ...hit(1), id: "x" }], [read], { ...context, keyOf });
+    const first = draw;
+    applyEventTransforms([{ ...hit(9), id: "x" }], [move, read], { ...context, keyOf });
+    expect(draw).toBe(first);
+  });
+});
+
+describe("hash01", () => {
+  test("is deterministic, in [0, 1), order- and type-sensitive", () => {
+    expect(hash01(1, "a", 2.5)).toBe(hash01(1, "a", 2.5));
+    expect(hash01(1, 2)).not.toBe(hash01(2, 1));
+    expect(hash01(1)).not.toBe(hash01("1"));
+    for (let i = 0; i < 1000; i++) {
+      const v = hash01(i, "x");
+      expect(v).toBeGreaterThanOrEqual(0);
+      expect(v).toBeLessThan(1);
+    }
+  });
+
+  test("is roughly uniform over consecutive integers", () => {
+    const buckets = new Array(10).fill(0);
+    for (let i = 0; i < 10000; i++) buckets[Math.floor(hash01(0, i) * 10)]++;
+    for (const n of buckets) {
+      expect(n).toBeGreaterThan(850);
+      expect(n).toBeLessThan(1150);
+    }
   });
 });

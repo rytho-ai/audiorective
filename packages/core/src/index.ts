@@ -34,9 +34,11 @@ export type {
   SecondsOf,
   EventTransformUnit,
   EventTransformContext,
+  EventTransformInput,
   EventTransform,
 } from "./contracts";
 export { applyEventTransforms, withCancel } from "./contracts";
+export { hash01 } from "./hash";
 export { renderOffline } from "./renderOffline";
 export type { RenderOfflineOptions } from "./renderOffline";
 export { defineGraph } from "./graph";

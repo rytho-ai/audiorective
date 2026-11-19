@@ -888,7 +888,7 @@
       "expectations": [
         "Writes a StepTransform (EventTransform<StepEvent>) object with an id, `unit: \"second\"` and a pure apply that adjusts `when` on the hits, because the jitter is in milliseconds; types come from @audiorective/blocks/sequencer",
         "Plugs it in with sequencer.setTransforms([...defaultStepTransforms, humanize]) (or the transforms option) so stepSwing keeps lane swing working",
-        "Takes randomness from the transform context's random, and does not trigger or cancel audio or keep state across windows inside the transform"
+        "Takes randomness from the transform context's randomFor(hit) (stable per hit across re-queues), not from context.random or Math.random, and does not trigger or cancel audio or keep state across windows inside the transform"
       ]
     },
     {

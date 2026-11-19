@@ -581,6 +581,103 @@ describe("transform sockets", () => {
     expect(events.map((event) => event.cancelled)).toEqual([1, 1]);
   });
 
+  describe("stable randomness", () => {
+    const chancy = (n: number, chance = 0.5) =>
+      cellsAt(n, Object.fromEntries(Array.from({ length: n }, (_, i) => [i, { velocity: 1, chance, repeat: 2 }])));
+    const humanize: StepTransform = {
+      id: "humanize",
+      unit: "second",
+      apply: (hits, { randomFor }) => hits.map((hit) => ({ ...hit, when: hit.when + (randomFor(hit) - 0.5) * 0.01 })),
+    };
+    /** Identity-keyed, order-independent summary of what sounded. */
+    const summary = (hits: StepHit[]) => hits.map((h) => `${h.laneId}:${h.loop}:${h.count}:${h.repeatIndex}@${h.when.toFixed(9)}`).sort();
+
+    test("an unrelated edit and re-queue keeps the chance outcomes and humanize offsets", () => {
+      const lanes = [
+        { id: "a", cells: chancy(16) },
+        { id: "b", cells: chancy(16) },
+      ];
+      const { sequencer, hits, run } = rig(16, lanes, undefined, { transforms: [humanize] });
+      run(0, 8);
+      const before = summary(hits);
+      expect(before.length).toBeGreaterThan(0);
+      expect(before.length).toBeLessThan(2 * 16 * 2 * 2);
+      hits.length = 0;
+      sequencer.setCell("b", 0, { pitch: 3 });
+      sequencer.setLane("a", { swing: 0 });
+      run(0, 8);
+      // Lane b step 0 changed pitch only; every identity and every jittered time is the same.
+      expect(summary(hits)).toEqual(before);
+      hits.length = 0;
+      run(0, 8);
+      expect(summary(hits)).toEqual(before);
+    });
+
+    test("small and large look-ahead windows give the same result", () => {
+      const lanes = [
+        { id: "a", cells: chancy(16) },
+        { id: "b", rate: "1/8" as const, cells: chancy(16) },
+      ];
+      const big = rig(16, lanes, undefined, { transforms: [humanize] });
+      big.run(0, 8, 0);
+      const small = rig(16, lanes, undefined, { transforms: [humanize] });
+      for (let start = 0; start < 8; start += 0.3) small.run(start, Math.min(8, start + 0.3), 0); // current far in the past: no clamp to `now`
+      expect(summary(small.hits)).toEqual(summary(big.hits));
+    });
+
+    test("seeds: same seed reproduces, different seeds differ, all results are valid", () => {
+      const play = (seed: number) => {
+        const r = rig(16, [{ id: "a", cells: chancy(16) }], undefined, { seed, transforms: [humanize] });
+        r.run(0, 12);
+        return summary(r.hits);
+      };
+      expect(play(7)).toEqual(play(7));
+      expect(play(7)).not.toEqual(play(8));
+      const seeded = rig(16, [{ id: "a", cells: chancy(16) }], undefined, { seed: 7, transforms: [humanize] });
+      seeded.run(0, 12);
+      for (const hit of seeded.hits) expect(Number.isFinite(hit.when)).toBe(true);
+    });
+
+    test("repeats of one step share the chance outcome", () => {
+      const r = rig(16, [{ id: "a", cells: chancy(16) }], undefined, { seed: 3 });
+      r.run(0, 4);
+      const byStep = new Map<number, number>();
+      for (const hit of r.hits) byStep.set(hit.count, (byStep.get(hit.count) ?? 0) + 1);
+      expect(byStep.size).toBeGreaterThan(0);
+      for (const n of byStep.values()) expect(n).toBe(2);
+    });
+
+    test("randomFor gives independent numbers per key and a stable number per event", () => {
+      const seen: number[][] = [];
+      const probe: StepTransform = {
+        id: "probe",
+        apply: (hits, { randomFor }) => (
+          seen.push(
+            hits.map((hit) => randomFor(hit)),
+            hits.map((hit) => randomFor(hit, "other")),
+          ),
+          hits
+        ),
+      };
+      const r = rig(4, [{ id: "a", cells: cellsAt(4, { 0: 1, 1: 1 }) }], undefined, { transforms: [probe] });
+      r.run(0, 1);
+      r.run(0, 1);
+      expect(seen[0]).toEqual(seen[2]);
+      expect(seen[1]).toEqual(seen[3]);
+      expect(seen[0]).not.toEqual(seen[1]);
+      expect(seen[0][0]).not.toBe(seen[0][1]);
+    });
+
+    test("chance 0.5 plays about half the steps", () => {
+      const n = 64;
+      const r = rig(n, [{ id: "a", cells: cellsAt(n, Object.fromEntries(Array.from({ length: n }, (_, i) => [i, { velocity: 1, chance: 0.5 }]))) }]);
+      r.run(0, n * 0.25 * 16);
+      const total = n * 16;
+      expect(r.hits.length).toBeGreaterThan(total * 0.4);
+      expect(r.hits.length).toBeLessThan(total * 0.6);
+    });
+  });
+
   test("randomness comes from context.random, which is the injected source", () => {
     let seenRandom: (() => number) | undefined;
     const t: StepTransform = {
