@@ -1111,6 +1111,48 @@ detach();
 engine.core.autoStart(canvas, { events: ["pointerdown"] });
 ```
 
+### Build the engine after async assets
+
+`createEngine`'s `setup` is synchronous. When the engine needs decoded buffers or an offline render, load them first and create the engine afterwards, inside an effect that destroys it on cleanup. Module-scope `createEngine` and `createEngineContext(engine)` assume the engine already exists, so use plain state in this shape:
+
+```tsx
+function App() {
+  const [engine, setEngine] = useState<ReturnType<typeof build> | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let built: ReturnType<typeof build> | undefined;
+    let detach: (() => void) | undefined;
+    void renderLoops().then((buffers) => {
+      if (cancelled) return;
+      built = build(buffers); // createEngine((ctx) => ({ ... })) with the buffers in hand
+      detach = built.core.autoStart(document);
+      setEngine(built);
+    });
+    return () => {
+      cancelled = true;
+      detach?.();
+      built?.core.destroy();
+    };
+  }, []);
+
+  return engine ? <Session engine={engine} /> : <Loading />;
+}
+```
+
+### First gesture resumes, then schedule
+
+A suspended context's `currentTime` is frozen, so anything scheduled "now" before the context runs lands at a stale time. When the gesture that starts audio is also the one that issues a command (a launch, a play button), await `start()` first, then run the command:
+
+```typescript
+async function onPlay() {
+  await engine.core.start(); // resumes inside the click; a no-op when already running
+  clock.start(); // now context.currentTime is live
+}
+```
+
+`start()` is safe to call on every command; it resolves immediately while the context is running.
+
 ### `EngineEnvironmentError`
 
 ```typescript
