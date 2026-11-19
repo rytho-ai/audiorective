@@ -338,6 +338,15 @@ queued?.cancel(); // removes both the hit and its future choke; manual keeps sou
 // Later: manual?.cancel(); instruments.destroy(); context.close();
 ```
 
+```typescript
+type PadSpec = Readonly<{ id: string; buffer: AudioBuffer; group?: string; gate?: boolean }>;
+class PadBank {
+  constructor(context: BaseAudioContext, pads: readonly PadSpec[]); // an OfflineAudioContext works
+}
+```
+
+Pad IDs must be nonempty and unique. `group` names the choke group; `gate` is described below.
+
 `trigger(id, velocity = 1, when = context.currentTime, options?: { pitch?: number; duration?: number })` returns an `PadHit` with idempotent `cancel()` / `stop()` and `onEnded(listener)`, or `null` for an unknown pad ID. Velocity clamps to 0..1; a past `when` plays now. `options.pitch` is in semitones and sets the playback rate to `2 ** (pitch / 12)`. `options.duration` (seconds) applies only to `gate: true` pads: the gate closes at `when + duration`, retractably like choke, so cancelling the hit before then keeps the earlier close from applying; one-shot pads ignore it and play to the end of their buffer. Later hits with a **different ID** in the same `group` choke earlier hits at their native audio start time, even if the later hit was scheduled first. Hits of the same ID may overlap.
 
 **`gate` and choke.** Choke does not need `gate`: a later hit of another pad in the same `group` cuts an earlier hit whether the earlier pad is a one-shot (`gate` omitted or `false`) or a gate pad, so a one-shot open hat is choked by a later closed hat. `gate` changes what the hit does when nothing chokes it. A one-shot plays its buffer once and ends at the buffer's end; `options.duration` is ignored. A `gate: true` pad loops its buffer for as long as the gate stays open, until the hit is cancelled, choked, or closed by `options.duration`; pass a `duration` from the sequencer, or the hit never ends by itself. Use `gate: true` for sustained sounds (an open hat held until the next hit, a pad that must stop at the step length) and leave it off for drum one-shots.
@@ -405,6 +414,16 @@ The trigger can delegate to `PadBank.trigger(id, velocity, when, { pitch, durati
 
 `schedule(window, timing)` reads the caller's transport window and registers its hits via `window.own(event, when)`. `timing` is any `BeatTiming`; pass the same `Timeline` the window came from.
 
+`schedule` takes a `StepWindow`, a structural subset of the clock's tick window, so you can pass the real window or a hand-built one:
+
+```typescript
+type StepWindow = Readonly<{
+  beat: { start: number; end: number }; // beats this call may schedule
+  time: { current: number }; // audio time hits are clamped to
+  own(event: CancellableEvent, when: number): void; // registers each hit for cancel
+}>;
+```
+
 **Edits and the look-ahead.** The clock has already scheduled the next window when you edit, so an edit applies to later windows unless the look-ahead is rebuilt. `refreshOnEdit(sequencer, transport)` does that: it calls `transport.refresh()` once per committed change of `pattern` or `transforms` (a `batch` counts once) and returns a disposer.
 
 ```ts
@@ -415,7 +434,42 @@ sequencer.setCell("closed", 4, { velocity: 0 }); // the queued look-ahead is reb
 stopRefresh(); // before the clock is destroyed
 ```
 
+Each `setCell`, `toggle`, `setLane` or `setTransforms` call outside a `batch` is its own commit and re-queues once per call. To change many cells at once, such as filling a Euclidean pattern, wrap them in core's `batch` so the look-ahead is rebuilt once:
+
+```ts
+import { batch } from "@audiorective/core";
+
+batch(() => {
+  for (let step = 0; step < 16; step++) sequencer.setCell("kick", step, { velocity: hits[step] ? 1 : 0 });
+});
+```
+
 It does not refresh on attach, and calling it inside an effect does not subscribe that effect. [The DAW runtime](./daw.md#step-sequencer) already uses it for an attached pattern.
+
+### A pattern as a switchable clip
+
+To start and stop a pattern on a launch boundary, make one `StepSequencer` per launch and give it a window and timing shifted so its beat 0 is the launch beat. Clip the window to the clip's beat range so it never schedules outside it.
+
+```ts
+// In the Clock's onTick; startBeat is the launch boundary, endBeat the stop boundary (or Infinity).
+const start = Math.max(window.beat.start, startBeat);
+const end = Math.min(window.beat.end, endBeat);
+if (start < end) {
+  sequencer.schedule(
+    {
+      beat: { start: start - startBeat, end: end - startBeat }, // pattern-local beats
+      time: window.time,
+      own: (event, when) => window.own(event, when),
+    },
+    {
+      beatToTime: (local) => timeline.beatToTime(local + startBeat),
+      timeToBeat: (time) => timeline.timeToBeat(time) - startBeat,
+    },
+  );
+}
+```
+
+The pattern plays from step 0 at `startBeat` whatever the transport position was. To stop it, call `sequencer.reset()` to cancel its pending hits and stop calling `schedule`. Drive `startBeat` and `endBeat` from a [Clip Launcher](#clip-launcher) transition, or from your own state.
 
 **A re-queue calls the trigger again.** `refresh()`, `reset()`, stop and seek cancel every owned hit that has not ended and the next window builds the hits again, so the trigger runs again for every still-pending hit, not only the edited one. Keep the trigger free of state that a cancel cannot undo: do not count hits in it, and do not leave behind scheduling on a node you own (a filter cutoff, a send level). Derive counts from the pattern, not from trigger calls. To retract extra scheduling, wrap the event with core's `withCancel(event, undo)`: its `cancel()` cancels the event and runs `undo` once.
 
