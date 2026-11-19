@@ -612,7 +612,7 @@
       "expectations": [
         "Calls Workspace.play before launch and passes both clip changes in one Workspace.launchClips call with a four-beat quantum",
         "Specifies only the Bass track when switching or returning and passes clipId null for return to Arrangement",
-        "Uses workspace.session and cancelClipLaunch to drive mountClipGrid without creating another Clock or audio graph",
+        "Uses workspace.session and cancelClipLaunch to drive mountClipGrid without creating another Clock or audio graph, and cancels only Bass with cancelClipLaunch(trackId) when only that track should be withdrawn",
         "Describes PCM audio support and keeps live overrides and grid layout out of the DAWproject save"
       ]
     },
@@ -932,7 +932,10 @@
         "Chooses `@audiorective/blocks/launcher` `ClipLauncher` on a `clock` Clock as the launch state machine, and reads `references/blocks.md#clip-launcher`",
         "Does not build on `@audiorective/daw` `Workspace`/`workspace.launchClips`, or says its Session launches only in-memory PCM clips on Project tracks so step-pattern clips need the standalone route",
         "Runs each step-pattern clip as a StepSequencer scheduled on the launch beat (clipped window, shifted timing), cancelling its hits when the clip stops",
-        "Builds its own grid from `launcher.state` if it needs progress, colours or per-track stop, instead of relying on `mountClipGrid` for those"
+        "Builds its own grid from `launcher.state` if it needs progress, colours or per-track stop, instead of relying on `mountClipGrid` for those",
+        "Queues each independent click with its own `launcher.queue` call (pending launches are per track) and a scene as one call, without merging or re-queueing pending launches in app code",
+        "Writes the audio driver so the outgoing stop is reversible (a per-launch GainNode gate with `setValueAtTime(0, when)` and `cancelScheduledValues(when)` in `cancel`), not `AudioBufferSourceNode.stop(when)`",
+        "Uses `clipId: null` for a per-track stop and quantum `0` (not a tiny positive quantum) for an unquantized launch"
       ]
     }
   ]
