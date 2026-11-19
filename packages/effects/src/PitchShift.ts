@@ -62,6 +62,8 @@ export class PitchShift extends Effect<{ pitch: Param<number> }, { isReady: Read
             this._isReady.value = true;
           })
         : Promise.resolve();
+    // A failed engine load rejects `ready` for callers that await it; this keeps it from also surfacing as unhandled.
+    this.ready.catch(() => {});
     this.core = core;
   }
 

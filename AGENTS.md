@@ -153,7 +153,7 @@ Runtime `dependencies` from each `package.json`:
 
 - `core`: `alien-signals`, `immer`
 - `clock`: `core`, `alien-signals`
-- `effects`: `core`, `signalsmith-stretch` (dev: `devtools`)
+- `effects`: `core`; optional peer `signalsmith-stretch` (stretch pitch engine only; dev: `devtools`)
 - `devtools`: `core`
 - `blocks`: `core`
 - `midi`: `core`

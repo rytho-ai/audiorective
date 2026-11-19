@@ -4,4 +4,6 @@ export default defineConfig({
   entry: ["src/index.ts", "src/time-stretch.ts", "src/rack.ts", "src/rack-preset.ts"],
   format: "esm",
   dts: true,
+  // Optional peer, loaded lazily by the stretch pitch engine; never bundled.
+  external: ["signalsmith-stretch"],
 });
