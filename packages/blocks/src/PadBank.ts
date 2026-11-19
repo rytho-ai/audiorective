@@ -12,6 +12,13 @@ import {
 
 export type PadSpec = Readonly<{ id: string; buffer: AudioBuffer; group?: string; gate?: boolean }>;
 
+export type PadHitOptions = Readonly<{
+  /** Semitones; the voice plays at rate `2 ** (pitch / 12)`. Default 0. */
+  pitch?: number;
+  /** Seconds the gate stays open, honoured only for `gate: true` pads. Retractable like choke. */
+  duration?: number;
+}>;
+
 /** One hit and all of its future policy effects. Clock can own this structural handle. */
 export interface PadHit extends CancellableEvent {
   /** Same operation as cancel, for callers treating the event as a voice. */
@@ -24,7 +31,10 @@ type Hit = {
   order: number;
   gate: GainNode;
   voice: Voice;
+  /** Time the gate closes: the earliest of a same-group choke and the hit's own duration. */
   chokeAt: number;
+  /** Close time from `duration` on a gate pad; Infinity when the hit has none. */
+  closeAt: number;
   done: boolean;
   callbacks: Array<() => void>;
 };
@@ -107,7 +117,7 @@ export class PadBank extends AudioProcessor<
     const now = this.context.currentTime;
     let nextChoke = Infinity;
     for (const hit of this.hits) {
-      let chokeAt = Infinity;
+      let chokeAt = hit.closeAt;
       if (hit.pad.group !== undefined) {
         for (const incoming of this.hits) {
           if (incoming.pad.group !== hit.pad.group || incoming.pad.id === hit.pad.id) continue;
@@ -138,11 +148,18 @@ export class PadBank extends AudioProcessor<
     }
   }
 
-  /** Schedule one hit. Past times play now; unknown pad IDs return null. */
-  trigger(id: string, velocity = 1, when = this.context.currentTime): PadHit | null {
+  /**
+   * Schedule one hit. Past times play now; unknown pad IDs return null.
+   * `options.pitch` transposes by semitones; `options.duration` closes a gate pad's hit at `when + duration`.
+   */
+  trigger(id: string, velocity = 1, when = this.context.currentTime, options: PadHitOptions = {}): PadHit | null {
     this.assertAlive();
     if (!Number.isFinite(when) || when < 0) throw new RangeError("Pad hit time must be finite, non-negative seconds.");
     if (!Number.isFinite(velocity)) throw new RangeError("Pad hit velocity must be finite.");
+    const { pitch = 0, duration } = options;
+    if (!Number.isFinite(pitch)) throw new RangeError("Pad hit pitch must be finite semitones.");
+    if (duration !== undefined && (!Number.isFinite(duration) || duration <= 0))
+      throw new RangeError("Pad hit duration must be finite, positive seconds.");
     const pad = this.pad(id);
     if (!pad) return null;
     this.settle();
@@ -152,18 +169,34 @@ export class PadBank extends AudioProcessor<
     let hit: Hit | undefined;
     let voice: Voice;
     try {
-      voice = new Voice(this.context, pad.buffer, gate, { when: at, volume: Math.max(0, Math.min(1, velocity)), loop: pad.gate ?? false }, () => {
-        this.settle();
-        if (hit) {
-          this.finish(hit);
-          this.rebuild();
-        }
-      });
+      voice = new Voice(
+        this.context,
+        pad.buffer,
+        gate,
+        { when: at, volume: Math.max(0, Math.min(1, velocity)), rate: 2 ** (pitch / 12), loop: pad.gate ?? false },
+        () => {
+          this.settle();
+          if (hit) {
+            this.finish(hit);
+            this.rebuild();
+          }
+        },
+      );
     } catch (error) {
       gate.disconnect();
       throw error;
     }
-    hit = { pad, when: at, order: ++this.nextOrder, gate, voice, chokeAt: Infinity, done: false, callbacks: [] };
+    hit = {
+      pad,
+      when: at,
+      order: ++this.nextOrder,
+      gate,
+      voice,
+      chokeAt: Infinity,
+      closeAt: pad.gate && duration !== undefined ? at + duration : Infinity,
+      done: false,
+      callbacks: [],
+    };
     this.hits.add(hit);
     this.rebuild();
     this.publish();

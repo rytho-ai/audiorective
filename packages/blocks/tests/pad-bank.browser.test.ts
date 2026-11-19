@@ -134,3 +134,64 @@ test("offline output follows native choke timing even without cleanup timer tick
   expect(afterDeadline(cancelled)).toBeCloseTo(0.3, 5);
   expect(afterDeadline(committed)).toBeLessThan(0.001);
 });
+
+test("pitch sets the playback rate to 2^(pitch/12) and defaults to unchanged", async () => {
+  const { context, bank } = await fixture();
+  const rates: number[] = [];
+  const create = context.createBufferSource.bind(context);
+  context.createBufferSource = () => {
+    const source = create();
+    rates.push(0);
+    const index = rates.length - 1;
+    queueMicrotask(() => (rates[index] = source.playbackRate.value));
+    return source;
+  };
+  const at = context.currentTime + 0.5;
+  bank.trigger("closed", 1, at);
+  bank.trigger("closed", 1, at, { pitch: 12 });
+  bank.trigger("closed", 1, at, { pitch: -12 });
+  bank.trigger("closed", 1, at, { pitch: 7 });
+  await delay(5);
+  expect(rates[0]).toBeCloseTo(1, 6);
+  expect(rates[1]).toBeCloseTo(2, 6);
+  expect(rates[2]).toBeCloseTo(0.5, 6);
+  expect(rates[3]).toBeCloseTo(2 ** (7 / 12), 6);
+  expect(() => bank.trigger("closed", 1, at, { pitch: NaN })).toThrow("Pad hit pitch must be finite semitones.");
+  expect(() => bank.trigger("closed", 1, at, { duration: 0 })).toThrow("Pad hit duration must be finite, positive seconds.");
+});
+
+test("duration closes a gate pad at when + duration", async () => {
+  const { context, bank, level } = await fixture();
+  bank.trigger("open", 1, context.currentTime, { duration: 0.25 });
+  await delay(100);
+  expect(level()).toBeCloseTo(0.3, 2);
+  await expect.poll(level, { timeout: 1500 }).toBeLessThan(0.001);
+  await expect.poll(() => bank.cells.activeEvents.value).toBe(0);
+});
+
+test("cancelling a hit retracts its duration close, and one-shot pads ignore duration", async () => {
+  const { context, bank, level } = await fixture();
+  const first = bank.trigger("open", 1, context.currentTime, { duration: 0.2 })!;
+  const second = bank.trigger("open", 1, context.currentTime, { duration: 0.2 })!;
+  second.cancel();
+  await delay(400);
+  // The surviving hit's own close fired; the cancelled hit had no effect on it.
+  expect(level()).toBeLessThan(0.001);
+  expect(bank.cells.activeEvents.value).toBe(0);
+  let ended = 0;
+  first.onEnded(() => ended++);
+  expect(ended).toBe(1);
+
+  const long = bank.trigger("open", 1, context.currentTime + 0.05)!;
+  const doomed = bank.trigger("open", 1, context.currentTime + 0.05, { duration: 0.1 })!;
+  doomed.cancel();
+  await delay(300);
+  expect(level()).toBeCloseTo(0.3, 2);
+  expect(bank.cells.activeEvents.value).toBe(1);
+  long.cancel();
+
+  // A one-shot pad plays its whole 0.1 s buffer whatever the duration.
+  bank.trigger("closed", 1, context.currentTime, { duration: 0.02 });
+  await delay(60);
+  expect(level()).toBeCloseTo(0.1, 2);
+});
