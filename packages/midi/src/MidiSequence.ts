@@ -1,7 +1,7 @@
 /** Authoritative immutable MIDI note/selection snapshots, independent of DOM and audio.
  * Reads: ./midi-file for parsing and ./midi-data for note validation/query. Views borrow this owner.
  */
-import { batch, cell, readonlyCell, untracked, type ReadonlyCell } from "@audiorective/core";
+import { batch, cell, effect, readonlyCell, untracked, type ReadonlyCell } from "@audiorective/core";
 import { isValidMidiNote, visibleMidiNotes, type MidiData, type MidiNote, type MidiRange, type ParsedMidi } from "./midi-data";
 import { parseMidi } from "./midi-file";
 export type MidiSequenceState = MidiData & Readonly<{ selection: MidiRange | null; revision: number }>;
@@ -28,7 +28,7 @@ export class MidiSequence {
   private get state(): MidiSequenceState {
     return untracked(() => this.store.value);
   }
-  private listeners = new Set<() => void>();
+  private subscriptions = new Set<() => void>();
   private disposed = false;
   constructor(data?: MidiData) {
     if (data) this.setData(data);
@@ -41,18 +41,31 @@ export class MidiSequence {
   }
   subscribe(fn: () => void): () => void {
     this.alive();
-    this.listeners.add(fn);
-    return () => this.listeners.delete(fn);
+    let first = true;
+    // Detached from any effect that called `subscribe`, which would otherwise dispose this on its next run.
+    const stop = untracked(() =>
+      effect(() => {
+        void this.cells.state.value;
+        if (first) {
+          first = false;
+          return;
+        }
+        try {
+          untracked(fn);
+        } catch (error) {
+          console.error("MidiSequence listener failed.", error);
+        }
+      }),
+    );
+    const unsubscribe = () => {
+      stop();
+      this.subscriptions.delete(unsubscribe);
+    };
+    this.subscriptions.add(unsubscribe);
+    return unsubscribe;
   }
   private commit(next: Omit<MidiSequenceState, "revision">) {
     batch(() => (this.store.value = Object.freeze({ ...next, revision: this.state.revision + 1 })));
-    for (const fn of [...this.listeners]) {
-      try {
-        untracked(fn);
-      } catch (error) {
-        console.error("MidiSequence listener failed.", error);
-      }
-    }
   }
   load(bytes: ArrayBuffer | Uint8Array): ParsedMidi {
     this.alive();
@@ -108,6 +121,6 @@ export class MidiSequence {
   }
   destroy(): void {
     this.disposed = true;
-    this.listeners.clear();
+    for (const unsubscribe of [...this.subscriptions]) unsubscribe();
   }
 }

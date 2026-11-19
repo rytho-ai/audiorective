@@ -1,5 +1,5 @@
 import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
-import { effect, type Readable } from "@audiorective/core";
+import { cell, effect, type Readable } from "@audiorective/core";
 import { MidiSequence, type MidiSequenceState, type MidiNote } from "../src";
 
 const disposers: Array<() => void | Promise<unknown>> = [];
@@ -140,4 +140,40 @@ test("MidiSequence listener reading state is notified once per operation", () =>
   m.setSelection({ start: 0, end: 1 });
   m.updateNote("a", { end: 1.5 });
   expect(midiListener).toHaveBeenCalledTimes(2);
+});
+
+test("MidiSequence.subscribe is an effect over the state cell: one call per commit, released on destroy and unsubscribe", () => {
+  const m = midi();
+  const a = vi.fn();
+  const b = vi.fn();
+  const offA = m.subscribe(a);
+  m.subscribe(b);
+  expect(a).not.toHaveBeenCalled();
+  m.setData({ duration: 2, notes: [note("z", 0, 2)] });
+  expect(a).toHaveBeenCalledTimes(1);
+  offA();
+  m.setSelection({ start: 0, end: 1 });
+  expect(a).toHaveBeenCalledTimes(1);
+  expect(b).toHaveBeenCalledTimes(2);
+  m.destroy();
+  expect(b).toHaveBeenCalledTimes(2);
+  expect(() => m.subscribe(b)).toThrow(/destroyed/);
+});
+
+test("MidiSequence.subscribe survives the calling effect re-running", () => {
+  const m = midi();
+  const trigger = cell(0);
+  const listener = vi.fn();
+  let subscribed = false;
+  disposers.push(
+    effect(() => {
+      void trigger.value;
+      if (subscribed) return;
+      subscribed = true;
+      m.subscribe(listener);
+    }),
+  );
+  trigger.value = 1;
+  m.setData({ duration: 2, notes: [note("z", 0, 2)] });
+  expect(listener).toHaveBeenCalledTimes(1);
 });
