@@ -1260,3 +1260,18 @@ export type {
   BeatTiming,
 };
 ```
+
+## Common errors
+
+| Message                                                                                         | Cause                                                                                                   | Fix                                                                                         |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `AudioEngine destroyed before it became ready`                                                  | `untilReady()` was called on, or was pending when, a destroyed engine.                                  | Create a new engine; `destroy()` is final. Do not await readiness across a teardown.        |
+| `createEngine: setup returned reserved key "core"`                                              | The object returned by `setup` has a `core` property, which the engine reserves for itself.             | Rename that property; read the engine core as `engine.core`.                                |
+| `Event transform "<id>" returned an event whose "duration" is not a finite number above 0.`     | A transform returned a hit with a `duration` that is zero, negative or not finite.                      | Fix that transform; omit `duration` or return a finite number above 0.                      |
+| `Event transform "<id>" returned an event whose "velocity" is not a finite number from 0 to 1.` | A transform returned a hit with a `velocity` outside 0..1 or not finite.                                | Fix that transform; clamp velocity to 0..1.                                                 |
+| `Event transform "<id>" must return an array of events.`                                        | A transform returned something other than an array.                                                     | Return an array (possibly empty) from `apply`.                                              |
+| `<name>'s path latency is unknown: …`                                                           | A latency query on a processor that appears in no `defineGraph` (`LatencyUnknownError`).                | Wire it with `defineGraph`, its own or the engine's, instead of raw `.connect()`.           |
+| `defineGraph: <name> is a bare AudioWorkletNode …`                                              | A worklet node was used directly as an edge endpoint, so its latency is unknowable.                     | Wrap it in an `AudioProcessor` that declares `latency`.                                     |
+| `defineGraph: <name> used as source has no output` / `defineGraph: <name> has no output`        | A processor with no `output` (an input-only sink) was used as an edge source or endpoint.               | Check the edge direction; give the processor an `output` or route from a node that has one. |
+| `loadAudioBuffer: failed to fetch <url> (<status>)`                                             | The URL answered with a non-2xx HTTP status.                                                            | Check the URL and server response; decode errors surface from `decodeAudioData` instead.    |
+| `registerWorklet: this AudioContext has no audioWorklet, so "<name>" cannot be loaded. …`       | The context has no `audioWorklet` (old browser, some test contexts); this is `WorkletUnavailableError`. | Run in a browser with AudioWorklet support, or choose an engine that needs no worklet.      |

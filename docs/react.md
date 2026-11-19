@@ -211,3 +211,9 @@ function powerOn() {
 The early `return` means the pre-power-on render registers no cleanup at all, so the only teardown that ever runs is the real one. Keeping the context in state beside the thing that uses it — rather than in a ref the effect can reach across renders — is what makes that possible.
 
 There is no worked example of this in the repo, deliberately: `apps/web/src/demos/sequencer` was written this way first, hit exactly this bug, and was rewritten onto `createEngine`. Reach for the pattern above only when `createEngine`'s `context` option genuinely cannot express what you need.
+
+## Common errors
+
+| Message                                           | Cause                                                                            | Fix                                               |
+| ------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `useEngine must be used within an EngineProvider` | `useEngine()` was called outside the provider returned by `createEngineContext`. | Render the component under that `EngineProvider`. |

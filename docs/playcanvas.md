@@ -172,3 +172,10 @@ source → effects → spatial.panner → destination
 For HRTF panning plus nonlinear effects, pre- vs. post-panner placement is audibly different: HRTF convolution shapes the spectrum per-ear and per-azimuth, so EQ applied after it interacts with a moving target as the listener turns, and stereo-linked dynamics pump based on head position. Wiring effects before `spatial.input` avoids all of that.
 
 The `Spatial Music Room (PlayCanvas)` showroom demo uses pre-panner EQ to make this audible — try it with the EQ pushed and the camera moving.
+
+## Common errors
+
+| Message                                                                                        | Cause                                                        | Fix                                                                                                                                        |
+| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `attach: app.soundManager is unavailable. …`                                                   | The PlayCanvas app was constructed without a `SoundManager`. | Construct the app with a sound manager before calling `attach`.                                                                            |
+| `attach: AudioContext mismatch between PlayCanvas SoundManager and the audiorective engine. …` | The engine and PlayCanvas use different `AudioContext`s.     | Call `attach(engine, app)` before any sound plays, or create the engine with `createEngine(setup, { context: app.soundManager.context })`. |
