@@ -211,11 +211,12 @@ test("a drag commits within the latest duration when the track becomes shorter",
 });
 
 test("(b) unknown length: before metadata, live stream, track switch; never renders NaN", async () => {
-  const ctx = context();
-  const player = new FilePlayer(ctx);
-  disposers.push(() => player.destroy());
+  // FilePlayer's cells are read-only and its element cannot report NaN or Infinity on demand, so drive the
+  // same PlayerLike shape the adapter produces through writable cells.
+  const { player, position, duration } = fake();
+  duration.value = NaN;
   const root = host();
-  const view = mountPlayer(root, { player: fromFilePlayer(player) });
+  const view = mountPlayer(root, { player });
   disposers.push(() => view.destroy());
   const ui = parts(root);
   const clean = () => !/NaN|Infinity/.test(root.textContent ?? "") && !/NaN|Infinity/.test(ui.seek.max + ui.seek.value);
@@ -224,8 +225,8 @@ test("(b) unknown length: before metadata, live stream, track switch; never rend
   expect(ui.seek.disabled).toBe(true);
   expect(clean()).toBe(true);
 
-  player.cells.duration.value = Infinity; // live stream
-  player.cells.currentTime.value = 75;
+  duration.value = Infinity; // live stream
+  position.value = 75;
   expect(ui.time.textContent).toBe("1:15 / --:--");
   expect(ui.seek.disabled).toBe(true);
   expect(clean()).toBe(true);
@@ -233,27 +234,28 @@ test("(b) unknown length: before metadata, live stream, track switch; never rend
   // A drag cannot start while the length is unknown.
   ui.seek.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
   ui.seek.dispatchEvent(new Event("input", { bubbles: true }));
-  player.cells.currentTime.value = 76;
+  position.value = 76;
   expect(ui.time.textContent).toBe("1:16 / --:--");
 
-  player.cells.duration.value = 200;
+  duration.value = 200;
   expect(ui.time.textContent).toBe("1:16 / 3:20");
   expect(ui.seek.disabled).toBe(false);
   expect(ui.seek.valueAsNumber).toBe(76);
 
-  player.src = null; // resets duration to NaN
+  duration.value = NaN; // a source change resets the length
+  position.value = 0;
   expect(ui.time.textContent).toBe("0:00 / --:--");
   expect(ui.seek.disabled).toBe(true);
 
   for (const odd of [0, -1, -Infinity]) {
-    player.cells.duration.value = odd;
+    duration.value = odd;
     expect(ui.seek.disabled).toBe(true);
     expect(ui.time.textContent).toBe("0:00 / --:--");
   }
-  player.cells.duration.value = 50;
-  player.cells.currentTime.value = NaN;
+  duration.value = 50;
+  position.value = NaN;
   expect(ui.time.textContent).toBe("0:00 / 0:50");
-  player.cells.currentTime.value = 999; // past the end: clamped
+  position.value = 999; // past the end: clamped
   expect(ui.time.textContent).toBe("0:50 / 0:50");
   expect(clean()).toBe(true);
 });
