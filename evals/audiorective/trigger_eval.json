@@ -122,5 +122,9 @@
   {
     "query": "We have a Node script in CI that opens exported .dawproject files, renames tracks and moves clips, then writes them back out. No browser or audio device involved. Is there a library for the project model?",
     "should_trigger": true
+  },
+  {
+    "query": "I want a session view like Ableton's, a clip grid where I click a scene to launch clips on the next bar, in a plain web page with no DAW project. We use audiorective.",
+    "should_trigger": true
   }
 ]

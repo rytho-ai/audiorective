@@ -922,6 +922,18 @@
         "Leaves durationBeats and every other hit field unchanged, keeps no state across windows, and does not trigger or cancel audio",
         "Plugs it in with sequencer.setTransforms([...defaultStepTransforms, mine]) (or the transforms option) so lane swing keeps working"
       ]
+    },
+    {
+      "id": 70,
+      "prompt": "Build me an Ableton-style session view in the browser: a grid of clips per track, click a clip or a scene to launch it on the next bar, and some tracks are drum-machine step patterns rather than audio loops. No DAWproject file is involved. don't run anything.",
+      "expected_output": "A standalone ClipLauncher design (blocks/launcher on a Clock) with step-pattern clips driven by StepSequencer, not the DAW Workspace Session.",
+      "files": [],
+      "expectations": [
+        "Chooses `@audiorective/blocks/launcher` `ClipLauncher` on a `clock` Clock as the launch state machine, and reads `references/blocks.md#clip-launcher`",
+        "Does not build on `@audiorective/daw` `Workspace`/`workspace.launchClips`, or says its Session launches only in-memory PCM clips on Project tracks so step-pattern clips need the standalone route",
+        "Runs each step-pattern clip as a StepSequencer scheduled on the launch beat (clipped window, shifted timing), cancelling its hits when the clip stops",
+        "Builds its own grid from `launcher.state` if it needs progress, colours or per-track stop, instead of relying on `mountClipGrid` for those"
+      ]
     }
   ]
 }
