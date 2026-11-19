@@ -44,7 +44,7 @@ export class FilePlayer extends AudioProcessor<
   private readonly _playing: Cell<boolean>;
   private readonly _time: Cell<number>;
   private readonly _duration: Cell<number>;
-  private _src: string | null = null;
+  private readonly _srcCell: Cell<string | null> = cell<string | null>(null);
 
   constructor(ctx: AudioContext, opts: FilePlayerOptions = {}) {
     const audio = new Audio();
@@ -126,11 +126,11 @@ export class FilePlayer extends AudioProcessor<
   }
 
   get src(): string | null {
-    return this._src;
+    return this._srcCell.value;
   }
 
   set src(url: string | null) {
-    this._src = url;
+    this._srcCell.value = url;
     this.audio.pause();
     if (url == null) this.audio.removeAttribute("src");
     else this.audio.src = url;
@@ -206,7 +206,7 @@ export class FilePlayer extends AudioProcessor<
     this._output.disconnect();
     this.audio.removeAttribute("src");
     this.audio.load();
-    this._src = null;
+    this._srcCell.value = null;
     super.destroy();
   }
 }

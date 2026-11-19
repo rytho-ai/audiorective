@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { BufferPlayer } from "../src";
+import { BufferPlayer, cell, effect } from "../src";
 
 function makeBuffer(ctx: AudioContext, seconds = 0.5): AudioBuffer {
   return ctx.createBuffer(1, Math.max(1, Math.ceil(ctx.sampleRate * seconds)), ctx.sampleRate);
@@ -118,5 +118,37 @@ describe("BufferPlayer", () => {
     const p = new BufferPlayer(ctx, { buffer: makeBuffer(ctx, 1) });
     p.start();
     expect(() => p.destroy()).not.toThrow();
+  });
+
+  test("buffer property delegates to params.buffer and is tracked", () => {
+    const b1 = makeBuffer(ctx, 1);
+    const b2 = makeBuffer(ctx, 1);
+    const p = new BufferPlayer(ctx, { buffer: b1 });
+    const seen: Array<AudioBuffer | null> = [];
+    const stop = effect(() => {
+      seen.push(p.buffer);
+    });
+    expect(p.params.buffer.value).toBe(b1);
+    p.buffer = b2;
+    expect(p.params.buffer.value).toBe(b2);
+    expect(seen).toEqual([b1, b2]);
+    stop();
+    p.destroy();
+  });
+
+  test("constructed inside an effect, its bound params survive the effect re-running", () => {
+    const trigger = cell(0);
+    let player!: BufferPlayer;
+    const stop = effect(() => {
+      void trigger.value;
+      player ??= new BufferPlayer(ctx, { buffer: makeBuffer(ctx, 1), loop: false });
+    });
+    trigger.value = 1; // re-run the outer effect
+    player.start();
+    player.params.loop.value = true;
+    const src = (player as unknown as { _source: AudioBufferSourceNode })._source;
+    expect(src.loop).toBe(true);
+    stop();
+    player.destroy();
   });
 });

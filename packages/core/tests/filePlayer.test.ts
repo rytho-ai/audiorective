@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { FilePlayer } from "../src";
+import { FilePlayer, effect } from "../src";
 
 /** Build a valid silent WAV data URI so a real <audio> element can load + play it. */
 function wavDataUri(seconds = 0.3, sampleRate = 8000): string {
@@ -160,5 +160,19 @@ describe("FilePlayer", () => {
     await once(p.audio, "loadedmetadata");
     await p.play();
     expect(() => p.destroy()).not.toThrow();
+  });
+
+  test("src is tracked by effects", () => {
+    const p = makePlayer(ctx);
+    const seen: Array<string | null> = [];
+    const stop = effect(() => {
+      seen.push(p.src);
+    });
+    p.src = wavDataUri(0.1);
+    expect(seen.length).toBe(2);
+    expect(seen[0]).toBeNull();
+    expect(p.src).toBe(seen[1]);
+    stop();
+    p.destroy();
   });
 });

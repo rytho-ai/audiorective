@@ -1,4 +1,4 @@
-import { signal, effect as alienEffect } from "alien-signals";
+import { signal, effect as alienEffect, getActiveSub, setActiveSub } from "alien-signals";
 import type { ParamOptions, SignalAccessor } from "./types";
 
 export class Param<T> {
@@ -21,9 +21,17 @@ export class Param<T> {
     this.display = options.display;
     if (options.bind?.set) {
       const setter = options.bind.set;
-      this._stopEffect = alienEffect(() => {
-        setter(this.value);
-      });
+      // Detach from any running effect: a Param built inside a caller's effect must not
+      // become its child, or the caller's next run would dispose this bind effect.
+      const prev = getActiveSub();
+      setActiveSub(undefined);
+      try {
+        this._stopEffect = alienEffect(() => {
+          setter(this.value);
+        });
+      } finally {
+        setActiveSub(prev);
+      }
     }
   }
 

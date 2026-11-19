@@ -32,12 +32,16 @@ export interface BufferPlayerOptions {
  * session; stop() ends it and the next start() re-anchors to the base rate.
  */
 export class BufferPlayer extends AudioProcessor<
-  { volume: SchedulableParam; rate: SchedulableParam; loop: Param<boolean>; loopStart: Param<number>; loopEnd: Param<number> },
+  {
+    volume: SchedulableParam;
+    rate: SchedulableParam;
+    loop: Param<boolean>;
+    loopStart: Param<number>;
+    loopEnd: Param<number>;
+    buffer: Param<AudioBuffer | null>;
+  },
   { isPlaying: ReadonlyCell<boolean> }
 > {
-  /** Hot-swappable; the new buffer takes effect on the next start(). */
-  buffer: AudioBuffer | null;
-
   private readonly _output: GainNode;
   private readonly _baseRate: number;
   private readonly _playing: Cell<boolean>;
@@ -54,6 +58,7 @@ export class BufferPlayer extends AudioProcessor<
         // Unbound until the first start() rebinds it to a live source.playbackRate.
         rate: schedulableParam({ default: opts.playbackRate ?? 1 }),
         // Loop window controls: applied to the live source when one exists, and read by the next start().
+        buffer: param<AudioBuffer | null>({ default: opts.buffer ?? null }),
         loop: param<boolean>({
           default: opts.loop ?? false,
           bind: { set: (v) => live.player?._applyLoop(v) },
@@ -72,7 +77,6 @@ export class BufferPlayer extends AudioProcessor<
     live.player = this;
     this._playing = playing;
     this._output = output;
-    this.buffer = opts.buffer ?? null;
     this._baseRate = opts.playbackRate ?? 1;
   }
 
@@ -80,25 +84,34 @@ export class BufferPlayer extends AudioProcessor<
     return this._output;
   }
 
+  /** Hot-swappable; the new buffer takes effect on the next start(). Reads and writes `params.buffer`. */
+  get buffer(): AudioBuffer | null {
+    return this.params.buffer.value;
+  }
+  set buffer(b: AudioBuffer | null) {
+    this.params.buffer.value = b;
+  }
+
   /**
    * Begin playback at ctx-time `when` (default now), from buffer `offset` seconds.
    * A no-op if already playing or no buffer is set (single live source).
    */
   start(when: number = this.context.currentTime, offset = 0): void {
-    if (this._source || !this.buffer) return;
-    const { loop, loopStart, loopEnd } = untracked(() => ({
+    const { buffer, loop, loopStart, loopEnd } = untracked(() => ({
+      buffer: this.params.buffer.value,
       loop: this.params.loop.value,
       loopStart: this.params.loopStart.value,
       loopEnd: this.params.loopEnd.value,
     }));
+    if (this._source || !buffer) return;
     const src = new AudioBufferSourceNode(this.context, {
-      buffer: this.buffer,
+      buffer,
       loop,
       playbackRate: this._baseRate,
     });
     if (loop) {
       src.loopStart = loopStart;
-      src.loopEnd = loopEnd || this.buffer.duration;
+      src.loopEnd = loopEnd || buffer.duration;
     }
     src.connect(this._output);
     src.onended = () => {
@@ -172,7 +185,7 @@ export class BufferPlayer extends AudioProcessor<
     if (v) {
       const { loopStart, loopEnd } = untracked(() => ({ loopStart: this.params.loopStart.value, loopEnd: this.params.loopEnd.value }));
       this._source.loopStart = loopStart;
-      this._source.loopEnd = loopEnd || this.buffer?.duration || 0;
+      this._source.loopEnd = loopEnd || untracked(() => this.params.buffer.value)?.duration || 0;
     }
   }
   /** Applies the `loopStart` param to the live source. */
@@ -181,7 +194,7 @@ export class BufferPlayer extends AudioProcessor<
   }
   /** Applies the `loopEnd` param to the live source. */
   private _applyLoopEnd(v: number): void {
-    if (this._source) this._source.loopEnd = v || this.buffer?.duration || 0;
+    if (this._source) this._source.loopEnd = v || untracked(() => this.params.buffer.value)?.duration || 0;
   }
 
   override destroy(): void {

@@ -130,8 +130,17 @@ export class AudioEngine {
     return untracked(() => this._stateCell.value);
   }
 
+  private _rejectWaiters(): void {
+    this._cachedPromise = null;
+    const waiters = this._waiters;
+    this._waiters = [];
+    const error = new Error("AudioEngine destroyed before it became ready");
+    for (const w of waiters) w.reject(error);
+  }
+
   private _setState(next: EngineState): void {
     this._stateCell.value = next;
+    if (next === "destroyed") this._rejectWaiters();
     if (next === "running") {
       this._cachedPromise = null;
       const waiters = this._waiters;
@@ -224,6 +233,7 @@ export class AudioEngine {
   async start(): Promise<void> {
     if (this._peek() === "destroyed") throw new Error("Cannot start a destroyed engine");
     if (this._context.state !== "running") await this._context.resume();
+    if (this._destroyed) return;
     this._setState("running");
   }
 
@@ -234,6 +244,7 @@ export class AudioEngine {
     }
     if (this._peek() === "idle") return;
     if (this._context.state === "running") await this._context.suspend();
+    if (this._destroyed) return;
     this._setState("suspended");
   }
 
@@ -243,6 +254,7 @@ export class AudioEngine {
       return;
     }
     if (this._context.state !== "running") await this._context.resume();
+    if (this._destroyed) return;
     this._setState("running");
   }
 
@@ -303,11 +315,7 @@ export class AudioEngine {
     // close, or the browser tearing it down), and closing it again would reject.
     if (this._ownsContext && this._context.state !== "closed") void this._context.close();
     this._stateCell.value = "destroyed";
-    this._cachedPromise = null;
-    const waiters = this._waiters;
-    this._waiters = [];
-    const error = new Error("AudioEngine destroyed before it became ready");
-    for (const w of waiters) w.reject(error);
+    this._rejectWaiters();
   }
 }
 

@@ -466,4 +466,57 @@ describe("createEngine", () => {
     engine.core.destroy();
     expect(engine.core.state()).toBe("destroyed");
   });
+
+  test("an external context close rejects pending untilReady() waiters", async () => {
+    const engine = new TestEngine();
+    const pending = engine.untilReady();
+    const rejected = expect(pending).rejects.toThrow(/destroyed before it became ready/);
+    Object.defineProperty(engine.context, "state", { value: "closed", configurable: true });
+    engine.context.dispatchEvent(new Event("statechange"));
+    await rejected;
+    engine.destroy();
+  });
+
+  // The context calls are stubbed with a deferred promise so `destroy()` lands inside the await.
+  function deferred(engine: TestEngine, method: "resume" | "suspend"): () => void {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    vi.spyOn(engine.context, method).mockImplementation(() => gate);
+    return release;
+  }
+
+  test("destroy() during an in-flight start() does not flip the state back", async () => {
+    const engine = new TestEngine();
+    Object.defineProperty(engine.context, "state", { value: "suspended", configurable: true });
+    const release = deferred(engine, "resume");
+    const starting = engine.start();
+    engine.destroy();
+    release();
+    await starting;
+    expect(engine.state()).toBe("destroyed");
+  });
+
+  test("destroy() during an in-flight resume() does not flip the state back", async () => {
+    const engine = new TestEngine();
+    await engine.start();
+    Object.defineProperty(engine.context, "state", { value: "suspended", configurable: true });
+    const release = deferred(engine, "resume");
+    const resuming = engine.resume();
+    engine.destroy();
+    release();
+    await resuming;
+    expect(engine.state()).toBe("destroyed");
+  });
+
+  test("destroy() during an in-flight suspend() does not flip the state back", async () => {
+    const engine = new TestEngine();
+    await engine.start();
+    Object.defineProperty(engine.context, "state", { value: "running", configurable: true });
+    const release = deferred(engine, "suspend");
+    const suspending = engine.suspend();
+    engine.destroy();
+    release();
+    await suspending;
+    expect(engine.state()).toBe("destroyed");
+  });
 });
