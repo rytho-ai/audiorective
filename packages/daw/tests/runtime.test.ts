@@ -10,6 +10,9 @@ const fakes = vi.hoisted(() => {
     clocks: [] as Array<{ stop: ReturnType<typeof import("vitest").vi.fn>; seek: ReturnType<typeof import("vitest").vi.fn> }>,
     racks: [] as Array<{ setEffects: ReturnType<typeof import("vitest").vi.fn> }>,
     loadStateImpl: undefined as undefined | ((bytes: Uint8Array) => Promise<void>),
+    rackError: undefined as undefined | Error,
+    channels: [] as Array<{ destroy: ReturnType<typeof import("vitest").vi.fn> }>,
+    buses: [] as Array<{ define: ReturnType<typeof import("vitest").vi.fn>; undefine: ReturnType<typeof import("vitest").vi.fn> }>,
   };
   return state;
 });
@@ -25,6 +28,7 @@ vi.mock("@audiorective/effects/rack", async (importOriginal) => ({
     });
     destroy = vi.fn();
     constructor(_context: unknown, effects: readonly unknown[]) {
+      if (fakes.rackError) throw fakes.rackError;
       this.effects = effects;
       fakes.racks.push(this);
     }
@@ -39,11 +43,17 @@ vi.mock("@audiorective/effects", async (importOriginal) => ({
     params = { gain: { value: 1 }, pan: { value: 0 }, mute: { value: false }, outputEnabled: { value: true } };
     send = vi.fn(() => ({ gain: { value: 1 }, enabled: { value: true }, dispose: vi.fn() }));
     destroy = vi.fn();
+    constructor() {
+      fakes.channels.push(this);
+    }
   },
   SendBus: class {
     define = vi.fn();
     receive = vi.fn(() => ({ connect: vi.fn() }));
     undefine = vi.fn();
+    constructor() {
+      fakes.buses.push(this);
+    }
   },
 }));
 vi.mock("@audiorective/host/webclap", () => ({
@@ -129,6 +139,9 @@ beforeEach(() => {
   fakes.clocks.length = 0;
   fakes.racks.length = 0;
   fakes.loadStateImpl = undefined;
+  fakes.rackError = undefined;
+  fakes.channels.length = 0;
+  fakes.buses.length = 0;
 });
 
 describe("workspace automatic application", () => {
@@ -539,6 +552,21 @@ describe("layer placement of exports", () => {
     expect(report.pluginDependencies[0]).toMatch(/fake\.synth/);
     expect(report.limitations).toContain("note");
     workspace.destroy();
+    project.destroy();
+  });
+});
+
+describe("track creation failure", () => {
+  test("a throwing EffectRack constructor releases the channel and send-bus entry", async () => {
+    const project = new Project({ bpm: 120 });
+    project.addTrack("Keys", "midi");
+    fakes.rackError = new Error("rack failed");
+    await expect(Workspace.create(context(), project)).rejects.toThrow("rack failed");
+    const channel = fakes.channels.at(-1)!;
+    const bus = fakes.buses.at(-1)!;
+    expect(channel.destroy).toHaveBeenCalledTimes(1);
+    expect(bus.define).toHaveBeenCalledTimes(1);
+    expect(bus.undefine).toHaveBeenCalledWith(bus.define.mock.calls[0][0]);
     project.destroy();
   });
 });

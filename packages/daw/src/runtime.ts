@@ -429,12 +429,24 @@ export class Workspace {
 
   private async createTrack(track: ProjectTrack): Promise<TrackRuntime> {
     const automationGain = this.context.createGain();
-    // "max" keeps a mono source mono into the panner, so it gets the mono equal-power law.
-    // Project owns gain, pan, mute and solo; applyMixer writes them into the Channel params and nothing reads them back.
-    const channel = new Channel(this.context, { channelCountMode: "max" });
-    automationGain.connect(channel.input);
-    const sendName = `${track.id}#${this.sendSerial++}`;
-    this.sendBus.define(sendName);
+    let channel: Channel | undefined;
+    let sendName: string | undefined;
+    let rack: EffectRack;
+    try {
+      // "max" keeps a mono source mono into the panner, so it gets the mono equal-power law.
+      // Project owns gain, pan, mute and solo; applyMixer writes them into the Channel params and nothing reads them back.
+      channel = new Channel(this.context, { channelCountMode: "max" });
+      automationGain.connect(channel.input);
+      sendName = `${track.id}#${this.sendSerial++}`;
+      this.sendBus.define(sendName);
+      rack = new EffectRack(this.context, track.effects, track.effectMacros);
+    } catch (error) {
+      // Nothing is registered yet, so release whatever was built before the failure.
+      automationGain.disconnect();
+      channel?.destroy();
+      if (sendName !== undefined) this.sendBus.undefine(sendName);
+      throw error;
+    }
     const runtime: TrackRuntime = {
       kind: track.kind,
       clips: track.clips,
@@ -442,7 +454,7 @@ export class Workspace {
       deviceStates: new Map(track.devices.map((device) => [device.id, device.state])),
       channel,
       automationGain,
-      rack: new EffectRack(this.context, track.effects, track.effectMacros),
+      rack,
       effectSettings: track.effects,
       macroSettings: track.effectMacros,
       sendName,
