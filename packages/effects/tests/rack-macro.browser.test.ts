@@ -175,3 +175,22 @@ test("a wet macro continues in time across bypass and resumes at its live phase"
     rack.destroy();
   }
 });
+
+test("a macro write survives setEffects: the control, the snapshot and the retained definition agree", () => {
+  const context = new OfflineAudioContext(1, 48000, 48000);
+  const rack = new EffectRack(context, [low, high], [tone, space]);
+  try {
+    rack.macro("tone")!.param.value = 0.7;
+    rack.setEffects([high, low]);
+    rack.setEffects([low]);
+    expect(rack.macro("tone")!.param.value).toBeCloseTo(0.7);
+    expect(rack.capturePreset().macros.find(({ id }) => id === "tone")!.value).toBeCloseTo(0.7);
+    expect(rack.macro("space")!.param.value).toBe(0);
+    expect(rack.capturePreset().macros.find(({ id }) => id === "space")!.targets).toEqual([]);
+    rack.setEffects([low, high]);
+    expect(rack.macro("tone")!.param.value).toBeCloseTo(0.7);
+    expect(rack.capturePreset().macros.find(({ id }) => id === "tone")!.value).toBeCloseTo(0.7);
+  } finally {
+    rack.destroy();
+  }
+});
