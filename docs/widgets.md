@@ -201,6 +201,17 @@ const attachment = grid.attach(euclid); // attachment.destroy() removes the butt
 
 `mountMixer(root, { state, editTrack, editMaster, meter? })` binds volume, pan, mute and solo controls to an external mixer state. Give it a `Readable<MixerState>` and apply edits in the owner. To display meters, return a reader `{ sampleCount?, read(samples), destroy?() }` from `meter(id)` for each track and from `meter(null)` for the master. The caller creates and wires its own analysis node (for example an `AnalyserNode` on a post-fader tap) inside `meter`; the view only calls `read` per animation frame and calls `destroy()` when the strip goes away so the caller can disconnect. The widget touches no audio node. On `destroy()` it removes its own reactive subscription and views. Add app-specific routing controls with `appendControls(id, element)`, whose optional return value cleans up that strip. Strips are created outside the state subscription, so a reactive widget mounted there, such as `mountParameter`, keeps following its value after the mixer state changes.
 
+```typescript
+type MixerStrip = Readonly<{ id: string; name: string; volume: number; pan: number; muted: boolean; solo: boolean }>;
+type MixerState = Readonly<{ tracks: readonly MixerStrip[]; masterVolume: number }>;
+// editTrack(id, patch): patch is Partial<{ volume: number; pan: number; muted: boolean; solo: boolean }>, one or more fields per call
+// editMaster(gain: number)
+```
+
+Track `volume` spans 0..1.5 on the slider, as does the master; `pan` spans -1..1. A state built with `readonlyCell(() => ({ tracks, masterVolume }))` over your own mixer model is enough.
+
+**Markup and styling.** `mountMixer` ships no stylesheet, so the first render is bare range inputs. Style these hooks inside your own container: `.mixer` (the root), `.mixer-strip` (one per strip, the master first), `.master` (added to the master strip), `.strip-name` (a `button` when `onSelect` is set, otherwise a `span`), `.strip-actions` (holds the buttons `.mute` and `.solo`, which gain `.on` while active), `.selected` (on a strip when `selected(id)` is true), and `.ar-level-meter` (the meter, when `meter` returns a reader). Each track strip carries `data-track-id`. `appendControls(id, element)` receives the strip element, so it can add a colour swatch or routing control inside it.
+
 `mountMixer` imports only core and takes the structural `state`, `editTrack` and `editMaster` contract, so the same view works over a DAW project or your own mixer model. With a DAW `Workspace`, read `project.cells.revision` when projecting `project.tracks` and `project.masterVolume`, and bind the edit callbacks to [Workspace mixer methods](./daw.md#mixer-buses-and-sends).
 
 ## Timeline range gesture
@@ -236,6 +247,8 @@ The caller owns the envelope, applies undo and redo, and calls `setPoints()` wit
 ## Clip Grid
 
 `mountClipGrid(root, { state, launch, cancel, labels? })` renders buttons for an app-owned scene layout. Supply a reactive launcher state (a `Readable` of `{ active, queued }`, which `ClipLauncher` and `workspace.session` both provide) and a callback that handles the whole launch group. Use `setLayout({ tracks, scenes })` when the grid changes. Give each scene a label and at most one clip per track. The widget exposes `data-clip-state` as `idle`, `queued` or `active` for theming and keeps button state in sync with the borrowed launcher.
+
+**Scope.** The grid is a plain table of buttons: a scene button per row, a button per clip, Cancel for the queued group, a return-all button and a `↩` return per track. `data-clip-state` is its only visual state, and the return buttons mean "back to Arrangement", not a quantized stop to silence. It has no playback progress, per-clip colours, one-shot marker, per-track stop or Stop All, and no keyboard model beyond focusable buttons. For a performance grid that needs any of those, read the same `launcher.state` (`active` and `queued`) and build the grid in your framework; the launcher state is the contract, not the widget.
 
 The return buttons request `clipId: null` for the affected tracks. The widget's `destroy()` removes its own DOM and subscription. See the [DAW example](./daw.md#clip-launcher) for wiring and launch timing.
 
