@@ -22,6 +22,12 @@ export class SendBus {
     return this.receives.has(name);
   }
 
+  /** Disconnect and forget one receive point; dispose its sends first. No-op for an undefined name. */
+  undefine(name: string): void {
+    this.receives.get(name)?.disconnect();
+    this.receives.delete(name);
+  }
+
   /** Disconnect all receives; call after dependent sends are disposed since this cannot see their nodes. */
   destroy(): void {
     for (const node of this.receives.values()) node.disconnect();
