@@ -1,4 +1,4 @@
-import { batch, type CancellableEvent, type ReadonlyCell } from "@audiorective/core";
+import { batch, type BeatTiming, type CancellableEvent, type ReadonlyCell } from "@audiorective/core";
 import type { Timeline } from "./Timeline";
 import type { Ruler } from "./rulers/Ruler";
 import { WorkerTickSource } from "./TickSource";
@@ -19,11 +19,42 @@ export type TickWindow<TRulers extends Record<string, Ruler<unknown, unknown>>> 
   own(event: CancellableEvent, when: number): void;
 };
 
+/** The part of a tick window an attached scheduler reads: the beat span to fill, the audio time now, and `own` for cancellable events. */
+export interface SchedulerWindow {
+  beat: { start: number; end: number };
+  time: { current: number };
+  own(event: CancellableEvent, when: number): void;
+}
+
+/**
+ * A pattern, sequencer or generator that follows a clock's windows. `schedule` runs once per look-ahead window and registers its events
+ * with `window.own`; `reset` runs when the transport jumps (`start`, `pause`, `stop`, `seek`, `destroy`) after owned events are cancelled.
+ */
+export interface Scheduler {
+  schedule(window: SchedulerWindow, timing: BeatTiming): void;
+  reset?(): void;
+  /**
+   * Optional. Called once by `attach` with a handle to the transport the scheduler now follows, so it can re-queue its look-ahead after an
+   * edit (`handle.refresh()`) or leave on its own (`handle.detach()`). May return a cleanup, which runs when the scheduler is detached or the
+   * clock is destroyed, after `reset`.
+   */
+  attached?(handle: SchedulerHandle): void | (() => void);
+}
+
+/** What a scheduler learns about the transport it was attached to. */
+export interface SchedulerHandle {
+  /** The transport's `refresh()`: re-queue the look-ahead from now. Coalesced within one task. */
+  refresh(): void;
+  /** Detach this scheduler: the function `attach` returned. Idempotent. */
+  detach(): void;
+}
+
 export interface ClockOptions<TRulers extends Record<string, Ruler<unknown, unknown>>> {
   timeline: Timeline<TRulers>;
   lookAhead?: number;
   tickInterval?: number;
-  onTick: (window: TickWindow<TRulers>) => void;
+  /** Called with every window. Optional: schedulers can instead follow the clock with `attach`. */
+  onTick?: (window: TickWindow<TRulers>) => void;
   onMiss?: (gap: MissedGap) => void;
   tickSource?: TickSource;
 }
@@ -40,7 +71,9 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
 
   private readonly _timeline: Timeline<TRulers>;
   private readonly _lookAhead: number;
-  private readonly _onTick: (window: TickWindow<TRulers>) => void;
+  private readonly _onTick: ((window: TickWindow<TRulers>) => void) | undefined;
+  private readonly _schedulers = new Set<Scheduler>();
+  private readonly _attachCleanups = new Map<Scheduler, () => void>();
   private readonly _onMiss?: (gap: MissedGap) => void;
   private readonly _tickSource: TickSource;
 
@@ -69,23 +102,99 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     this._tickSource.start(() => this._tick());
   }
 
+  /** The beat/time mapping this clock plays. */
+  get timeline(): Timeline<TRulers> {
+    return this._timeline;
+  }
+
   /**
-   * Begins playback. Always a position jump (bumps `generation`): the
-   * V1 tempo-automation caveat applies when `atBeat` lands on/after a
-   * scheduled tempo event — see the clock design spec's ST-6.
+   * Follow this clock with a scheduler: it receives every window after `onTick`, with this clock's timeline as its timing. Several schedulers
+   * share one transport and stay beat-aligned. Returns a detach function (idempotent) that calls `scheduler.reset()` and stops the windows. A scheduler with an `attached(handle)` hook
+   * learns its transport that way (to `refresh()` after its own edits) and may return a cleanup that runs on detach.
+   * Attaching while playing refreshes the look-ahead so the scheduler's first hits are not missed. An error thrown by a scheduler is logged
+   * and does not stop the others.
    */
-  start(options?: { atBeat?: number }): void {
+  attach(scheduler: Scheduler): () => void {
+    if (this._destroyed) throw new Error("Clock is destroyed.");
+    if (this._schedulers.has(scheduler)) throw new Error("Clock already has this scheduler attached.");
+    this._schedulers.add(scheduler);
+    const detach = () => {
+      if (!this._schedulers.delete(scheduler)) return;
+      this._resetScheduler(scheduler);
+      this._cleanupScheduler(scheduler);
+    };
+    if (scheduler.attached) {
+      try {
+        const cleanup = scheduler.attached({ refresh: () => this.refresh(), detach });
+        if (typeof cleanup === "function") this._attachCleanups.set(scheduler, cleanup);
+      } catch (error) {
+        this._schedulers.delete(scheduler);
+        throw error;
+      }
+    }
+    this.refresh();
+    return detach;
+  }
+
+  private _cleanupScheduler(scheduler: Scheduler): void {
+    const cleanup = this._attachCleanups.get(scheduler);
+    if (!cleanup) return;
+    this._attachCleanups.delete(scheduler);
+    try {
+      cleanup();
+    } catch (error) {
+      console.error("Clock scheduler cleanup failed:", error);
+    }
+  }
+
+  private _resetSchedulers(): void {
+    for (const scheduler of [...this._schedulers]) this._resetScheduler(scheduler);
+  }
+
+  private _resetScheduler(scheduler: Scheduler): void {
+    try {
+      scheduler.reset?.();
+    } catch (error) {
+      console.error("Clock scheduler reset failed:", error);
+    }
+  }
+
+  /**
+   * Begins playback with the Web Audio shape: beat `offsetBeats` sounds at audio-context time `when`, exactly,
+   * following the tempo curve from there. Always a position jump (bumps `generation`).
+   *
+   * - `when` defaults to now. A `when` in the past is clamped to now (like `AudioScheduledSourceNode.start`).
+   * - A `when` in the future puts the transport in `"playing"` immediately; no window reaches past `offsetBeats`, so
+   *   nothing is scheduled to sound before `when`, and `position` stays at its start value until `when`.
+   * - `offsetBeats` defaults to 0 and may be negative (a count-in before beat 0).
+   *
+   * The older `start({ atBeat })` form is the same as `start(undefined, atBeat)`.
+   * The V1 tempo-automation caveat applies when the start lands on/after a scheduled tempo event; see the clock design spec's ST-6.
+   */
+  start(when?: number, offsetBeats?: number): void;
+  start(options?: { atBeat?: number }): void;
+  start(whenOrOptions?: number | { atBeat?: number }, offsetBeats?: number): void {
+    let when: number | undefined;
+    let atBeat: number;
+    if (typeof whenOrOptions === "object" && whenOrOptions !== null) {
+      atBeat = whenOrOptions.atBeat ?? 0;
+    } else {
+      when = whenOrOptions;
+      atBeat = offsetBeats ?? 0;
+    }
+    if (when !== undefined && !Number.isFinite(when)) throw new RangeError(`Clock start time must be finite seconds, got ${when}`);
+    if (!Number.isFinite(atBeat)) throw new RangeError(`Clock start offset must be finite beats, got ${atBeat}`);
     this._refillPending = false;
     this._cancelOwned();
-    const atBeat = options?.atBeat ?? 0;
+    this._resetSchedulers();
     // one change: effects watching `state` never see the new state with stale bookkeeping
-    batch(() => this._timeline._start(atBeat));
+    batch(() => this._timeline._start(atBeat, when));
     this._previousWindowEndBeat = atBeat;
     // deliberately NOT updating _previousWindowEndGeneration here: it must
     // stay stale (mismatching the just-bumped generation) so the first tick
     // recognizes this as a fresh segment and skips the miss check; _tick()
     // catches it up to the current generation once that tick has run.
-    this._startedAt = this._timeline.now;
+    this._startedAt = Math.max(this._timeline.now, when ?? 0);
   }
 
   /**
@@ -103,6 +212,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     if (this._timeline._transportState !== "playing") return;
     this._refillPending = false;
     this._cancelOwned();
+    this._resetSchedulers();
     this._timeline._pause();
   }
 
@@ -120,6 +230,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
   stop(): void {
     this._refillPending = false;
     this._cancelOwned();
+    this._resetSchedulers();
     this._timeline._stop();
     this._previousWindowEndBeat = 0;
   }
@@ -128,6 +239,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
   seek(beat: number): void {
     this._refillPending = false;
     this._cancelOwned();
+    this._resetSchedulers();
     this._timeline._seek(beat);
     this._previousWindowEndBeat = beat;
     // see start(): _previousWindowEndGeneration deliberately stays stale here too
@@ -161,6 +273,9 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     this._refillPending = false;
     this._tickSource.stop();
     this._cancelOwned();
+    this._resetSchedulers();
+    for (const scheduler of [...this._schedulers]) this._cleanupScheduler(scheduler);
+    this._schedulers.clear();
   }
 
   private _cancelOwned(fromNow = false, now = this._timeline.now): void {
@@ -239,11 +354,20 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
           generation,
           transport: { state: this._timeline._transportState, position: this._timeline.position },
         };
-        this._onTick({
+        const window = {
           ...coreWindow,
           rulers: this._timeline._readWindowRulers(coreWindow),
           own: (event: CancellableEvent, when: number) => this._own(event, when, generation),
-        } as TickWindow<TRulers>);
+        } as TickWindow<TRulers>;
+        this._onTick?.(window);
+        for (const scheduler of [...this._schedulers]) {
+          if (this._timeline.generation !== generation) break; // a callback moved the transport: this window is stale
+          try {
+            scheduler.schedule(window, this._timeline);
+          } catch (error) {
+            console.error("Clock scheduler failed:", error);
+          }
+        }
       }
 
       if (this._timeline.generation === generation) {

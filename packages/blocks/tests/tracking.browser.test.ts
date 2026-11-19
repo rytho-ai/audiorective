@@ -4,7 +4,7 @@ import { AutomationBinding, AutomationCurve, audioParamTarget } from "@audiorect
 import { AudioRecorder } from "../src/AudioRecorder";
 import { ClipLauncher, type ClipLaunchTransport } from "../src/ClipLauncher";
 import { PadBank } from "../src/PadBank";
-import { StepSequencer } from "../src/StepSequencer";
+import { Lane, StepSequencer } from "../src/StepSequencer";
 import { WavePlayer } from "../src/WavePlayer";
 import * as audioRecorderSourceModule from "../src/AudioRecorder.ts?raw";
 import * as clipLauncherSourceModule from "../src/ClipLauncher.ts?raw";
@@ -18,6 +18,7 @@ const touched = {
   audioRecorder: new Set<string>(),
   padBank: new Set<string>(),
   stepSequencer: new Set<string>(),
+  lane: new Set<string>(),
   clipLauncher: new Set<string>(),
 };
 
@@ -285,6 +286,81 @@ describe("StepSequencer readers are tracked", () => {
   });
 });
 
+describe("lane-record StepSequencer readers are tracked", () => {
+  const ctx = new OfflineAudioContext(1, 128, 8000);
+  const make = () => {
+    const sequencer = watch(
+      new StepSequencer({ k: { pattern: "X...", params: { p: { min: 0, max: 1, default: 0 } } } }, { context: ctx }),
+      touched.stepSequencer,
+    );
+    return { sequencer, lane: watch(sequencer.lanes.k!, touched.lane) };
+  };
+  test("lane readers follow their setters and the step objects follow cell writes", () => {
+    const { sequencer, lane } = make();
+    expectTracked(
+      () => lane.pattern,
+      () => (lane.pattern = "XX.."),
+    );
+    expectTracked(
+      () => lane.length,
+      () => (lane.pattern = "XX..X"),
+    );
+    expectTracked(
+      () => lane.rate,
+      () => (lane.rate = "8t"),
+    );
+    expectTracked(
+      () => lane.swing,
+      () => (lane.swing = "20%"),
+    );
+    expectTracked(
+      () => lane.mute,
+      () => (lane.mute = true),
+    );
+    expectTracked(
+      () => lane.sound,
+      () => (lane.sound = "C4"),
+    );
+    expectTracked(
+      () => lane.steps.length,
+      () => (lane.pattern = "X"),
+    );
+    expectTracked(
+      () => lane.steps[0]!.velocity,
+      () => (lane.steps[0]!.velocity = 0.5),
+    );
+    expectTracked(
+      () => lane.steps[0]!.values.p,
+      () => (lane.steps[0]!.values.p = 0.7),
+    );
+    expect(Object.keys(lane.params)).toEqual(["p"]);
+    expect(sequencer.lane("k")).toBe(sequencer.lanes.k);
+    expect(sequencer.context).toBe(ctx);
+  });
+  test("output, connect and disconnect", () => {
+    const { lane } = make();
+    const node = new GainNode(ctx);
+    expect(lane.connect(node)).toBe(node);
+    lane.disconnect();
+    expect(lane.output).toBeInstanceOf(GainNode);
+  });
+  test("attached, onhit, addEventListener, dispose and Symbol.dispose", () => {
+    const { sequencer } = make();
+    let refreshes = 0;
+    const cleanup = sequencer.attached({ refresh: () => refreshes++, detach() {} });
+    sequencer.lanes.k!.mute = true;
+    expect(refreshes).toBe(1);
+    cleanup();
+    sequencer.lanes.k!.mute = false;
+    expect(refreshes).toBe(1);
+    sequencer.onhit = () => {};
+    expect(sequencer.onhit).toBeTypeOf("function");
+    sequencer.addEventListener("hit", () => {});
+    sequencer.dispose();
+    sequencer[Symbol.dispose]();
+  });
+});
+
 describe("command methods called inside an effect do not subscribe it", () => {
   test("PadBank commands", async () => {
     const context = new AudioContext();
@@ -379,6 +455,7 @@ describe("every public member of a tracked block is covered", () => {
     ],
     ["PadBank", PadBank, padBankSourceModule.default, touched.padBank, { output: "constant gain node the caller wires; not state" }],
     ["StepSequencer", StepSequencer, stepSequencerSourceModule.default, touched.stepSequencer, {}],
+    ["Lane", Lane, stepSequencerSourceModule.default, touched.lane, {}],
     ["ClipLauncher", ClipLauncher, clipLauncherSourceModule.default, touched.clipLauncher, {}],
   ] as const)("%s", (_name, ctor, source, seen, excluded) => {
     expect(coverageGaps(ctor, source, seen, excluded)).toEqual([]);

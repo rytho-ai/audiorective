@@ -88,6 +88,12 @@ export class TempoCurve {
     return this._events.length;
   }
 
+  /** Time of the first event strictly after `time`, or Infinity when none. */
+  nextEventTimeAfter(time: number): number {
+    const next = this._events[this._indexAtOrBefore(time) + 1];
+    return next ? next.time : Infinity;
+  }
+
   /** Index of the last event with event.time <= time (always >= 0). */
   private _indexAtOrBefore(time: number): number {
     let lo = 0;

@@ -286,6 +286,8 @@ The same view works with `Workspace.create()` and `openWorkspace()`. Pass a `des
 
 ## Step Sequencer
 
+`workspace.transport` is the Workspace's Clock (`workspace.clock`): `transport.timeline`, `transport.attach(scheduler)` and `transport.refresh()` let any scheduler, such as an `@audiorective/sequencer` `Sequencer` created with `{ transport: workspace.transport, context: workspace.context }`, follow Workspace's beats and tempo. Pause, stop and seek reset attached schedulers; Workspace keeps play, pause, seek and tempo.
+
 Attach a caller-owned `StepSequencer` with `workspace.attachStepSequencer(sequence)`. Connect the instrument's output to a caller-selected mix path. The attached pattern uses Workspace's Clock windows and tempo mapping. Pattern and transform edits (`setCell`, `toggle`, `setLane`, `setSize`, `setTransforms`) refresh pending steps, and transport pause, stop and seek reset the sequence's scheduled events. Call the returned detach function to remove only this sequence. An attached live pattern belongs to the current app session. Saveable Arrangement clips belong to Project.
 
 ## Clip Launcher

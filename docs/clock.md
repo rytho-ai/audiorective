@@ -128,13 +128,15 @@ timeline.beatToTime(64); // absolute AudioContext time for beat 64
 timeline.timeToBeat(ctx.currentTime); // current beat position
 ```
 
-`timeline.bpm` is a standalone, event-list-backed tempo curve (`TempoParam`) — not an `AudioParam`. It mirrors the Web Audio scheduling methods (`setValueAtTime`, `linearRampToValueAtTime`, `exponentialRampToValueAtTime`, `cancelScheduledValues`, `cancelAndHoldAtTime`) plus a `valueAtTime(t)` query the AudioParam-backed `SchedulableParam` in `@audiorective/core` can never support (Web Audio gives no way to ask an `AudioParam` "what will your value be at time T?"). A direct write — `bpm.value = x` or `bpm.$(x)` — is a step at the current audio time. It leaves later scheduled events intact, so a queued step or ramp still overrides it when its time comes; the Clock refreshes the displayed value from the curve every tick.
+`timeline.bpm` is a standalone, event-list-backed tempo curve (`TempoParam`) — not an `AudioParam`. It mirrors the Web Audio scheduling methods (`setValueAtTime`, `linearRampToValueAtTime`, `exponentialRampToValueAtTime`, `setTargetAtTime`, `setValueCurveAtTime`, `cancelScheduledValues`, `cancelAndHoldAtTime`) plus a `valueAtTime(t)` query the AudioParam-backed `SchedulableParam` in `@audiorective/core` can never support (Web Audio gives no way to ask an `AudioParam` "what will your value be at time T?"). A direct write — `bpm.value = x` or `bpm.$(x)` — is a step at the current audio time. It leaves later scheduled events intact, so a queued step or ramp still overrides it when its time comes; the Clock refreshes the displayed value from the curve every tick.
 
 ```typescript
 class TempoParam extends Param<number> {
   setValueAtTime(value: number, time: number): this; // step at an absolute audio time
   linearRampToValueAtTime(value: number, endTime: number): this; // linear in time from the previous event to `value` at `endTime`
   exponentialRampToValueAtTime(value: number, endTime: number): this; // constant ratio per second between the same points
+  setTargetAtTime(target: number, startTime: number, timeConstant: number): this; // exponential approach to `target`, as 128 linear ramps over 8 time constants
+  setValueCurveAtTime(values: Iterable<number>, startTime: number, duration: number): this; // exact: linear between evenly spaced values, then holds the last
   cancelScheduledValues(time: number): this; // drop every event at or after `time` (an unfinished ramp reverts to its start value)
   cancelAndHoldAtTime(time: number): this; // drop later events and hold the value in force at `time`, cutting a ramp mid-way
   valueAtTime(time: number): number; // the curve's value at any audio time, interpolated across ramps
@@ -142,6 +144,8 @@ class TempoParam extends Param<number> {
 ```
 
 **Ramps.** A ramp event runs from the previous scheduled event (its time and value) to `value` at `endTime`, then holds. With no event scheduled yet it starts from the current value at the current audio time, as for an `AudioParam`. Before a ramp's start event the value holds. A ramp whose `endTime` is not after the previous event is a step. `beatToTime` and `timeToBeat` integrate the curve exactly, so beat positions stay on the grid across an accelerando: beats over a linear segment are the integral of `bpm / 60` (quadratic in time), and an exponential segment has the closed form `(v(b) - v(a)) / ln(v1 / v0) * T / 60`. `bpm.value` follows the interpolated tempo, refreshed every tick. `cancelScheduledValues(t)` removes a ramp that ends at or after `t`, so the tempo falls back to the ramp's start value; `cancelAndHoldAtTime(t)` keeps the ramp's slope up to `t` and holds the interpolated value from there.
+
+**Targets and curves.** `setValueCurveAtTime(values, startTime, duration)` is exact (at least 2 values, all above 0): the tempo is linear between evenly spaced points, which is a chain of linear ramps, then holds the last value. `setTargetAtTime(target, startTime, timeConstant)` starts from the value in force at `startTime` and approaches `target` as `target + (v0 - target) * e^(-(t - startTime) / timeConstant)`. The curve integrates beats analytically, so the approach is scheduled as 128 linear ramps over 8 time constants, each within 0.05% of the swing of the true exponential, and ends exactly on `target`; a zero time constant is a step. Both stop at the next event already scheduled after their start, and an event scheduled later inside their span cuts them there, holding the value reached. `cancelScheduledValues(t)` inside a span also cuts it at `t`.
 
 An accelerando, +40 BPM over 8 bars of 4/4 (32 beats). A linear ramp's mean tempo is the average of its ends, so the end time is `start + beats * 60 / mean`. Hold the present tempo at `start` so the ramp has a defined start event, then check the landing with `beatToTime`:
 
@@ -169,12 +173,44 @@ Scheduled steps and ramps are visible to `beatToTime` immediately, so scheduling
 ## Transport
 
 ```typescript
-clock.start(); // or clock.start({ atBeat: 16 })
+clock.start(); // beat 0 now. Also: clock.start(when, offsetBeats) or clock.start({ atBeat: 16 })
 clock.pause(); // freezes position; unowned look-ahead audio keeps sounding (an accepted tail, ~lookAhead seconds)
 clock.resume(); // continues from the frozen position, no re-scheduling
 clock.stop(); // resets to beat 0
 clock.seek(64); // jumps to beat 64
 ```
+
+### Attach several schedulers
+
+`onTick` is optional. `clock.attach(scheduler)` follows the clock with any `{ schedule(window, timing), reset?() }` and returns a detach function; several schedulers share one transport and stay beat-aligned because they all read the same windows and the clock's `timeline` (`clock.timeline`).
+
+```typescript
+const clock = new Clock({ timeline, lookAhead: 0.1 }); // no onTick
+const detach = clock.attach({
+  schedule(window, timing) {
+    // window.beat, window.time.current, window.own(event, when); timing.beatToTime(beat)
+  },
+  reset() {}, // after start, pause, stop, seek or destroy have cancelled the owned events
+});
+```
+
+`onTick` runs first, then each attached scheduler in attach order. Owned events registered by any scheduler are cancelled by `start`, `pause`, `stop`, `seek` and `destroy`, and `refresh()` re-queues every scheduler's pending events. Attaching while playing refreshes the look-ahead; `detach()` calls `reset()` once. An error thrown by one scheduler is logged and the others still run. A scheduler may also define `attached(handle)`: `attach` calls it once with `{ refresh(), detach() }` for that transport and runs the cleanup it returns on detach or `destroy`. `StepSequencer` (lane-record form, see [Step Sequencer](./blocks.md#step-sequencer)) uses it to re-queue after its own edits and to detach on `dispose()`. `Scheduler`, `SchedulerHandle` and `SchedulerWindow` are exported types; `Workspace.clock` (also `workspace.transport`) is a Clock, so the same `attach` serves a Workspace.
+
+### Start at an audio time
+
+`start(when = now, offsetBeats = 0)` has the shape of `AudioScheduledSourceNode.start`: beat `offsetBeats` sounds at audio-context time `when`, exactly, and later beats follow the tempo curve from there (the tempo in force at `when` sets the pace of the first beats).
+
+```typescript
+clock.start(ctx.currentTime + 0.5); // beat 0 sounds 0.5 s from now
+clock.start(buffer.when, 8); // beat 8 sounds at `buffer.when`, in step with a buffer started there
+```
+
+- A `when` in the past is clamped to now.
+- A `when` in the future puts the transport in `"playing"` at once. Nothing is scheduled to sound before `when`: windows begin at `offsetBeats`, `position` stays at its start value until `when`, and `refresh()` or `pause()` before `when` keep the pending start.
+- `offsetBeats` may be negative (a count-in before beat 0).
+- A non-finite `when` or `offsetBeats` throws.
+
+`start({ atBeat })` is the same as `start(undefined, atBeat)`.
 
 ### Start with a count-in
 
@@ -404,16 +440,20 @@ Two things to remember when writing assertions:
 
 ## Common errors
 
-| Message                                                                                                                             | Cause                                                                                                        | Fix                                                                                                                          |
-| ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| `Clock owned event time must be finite, non-negative seconds.`                                                                      | `window.own(event, when)` received an invalid audio time; the event is cancelled before the error is thrown. | Pass the same absolute `AudioContext` time used to schedule that event.                                                      |
-| `RangeLoop needs increasing finite source seconds and a non-negative audio start.` / `RangeLoop window needs finite audio seconds.` | The time range or window contains an invalid bound.                                                          | Use finite seconds and place the source end after its start.                                                                 |
-| `TempoParam ramp end time must be finite, got …`                                                                                    | `linearRampToValueAtTime` or `exponentialRampToValueAtTime` received NaN or an infinite end time.            | Pass the absolute `AudioContext` time at which the ramp reaches its value.                                                   |
-| `RangeLoop period is below audio time precision.`                                                                                   | Consecutive repeat boundaries collapse at the current audio time.                                            | Use a longer source range.                                                                                                   |
-| `bpm must be a finite number > 0, got …`                                                                                            | A tempo point or the `bpm` value is zero, negative or not finite.                                            | Pass a finite bpm above 0.                                                                                                   |
-| `renderTimeline: tickInterval must be positive, got …`                                                                              | `options.tickInterval` is zero, negative or NaN.                                                             | Omit it for the default, or pass seconds above 0 (and below the clock look-ahead).                                           |
-| `<option> must be a finite number > 0, got …`                                                                                       | A ruler option (`seconds`, `bars`, `numerator`, `denominator`) is zero, negative or not finite.              | Pass a finite length above 0; the ruler rejects it at construction because a zero-length cycle would hang the tick callback. |
-| `<option> must be a finite number, got …`                                                                                           | A ruler `from` offset is NaN or infinite.                                                                    | Pass a finite offset, or omit `from`.                                                                                        |
+| Message                                                                                                                             | Cause                                                                                                              | Fix                                                                                                                          |
+| ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| `Clock owned event time must be finite, non-negative seconds.`                                                                      | `window.own(event, when)` received an invalid audio time; the event is cancelled before the error is thrown.       | Pass the same absolute `AudioContext` time used to schedule that event.                                                      |
+| `RangeLoop needs increasing finite source seconds and a non-negative audio start.` / `RangeLoop window needs finite audio seconds.` | The time range or window contains an invalid bound.                                                                | Use finite seconds and place the source end after its start.                                                                 |
+| `TempoParam ramp end time must be finite, got …`                                                                                    | `linearRampToValueAtTime` or `exponentialRampToValueAtTime` received NaN or an infinite end time.                  | Pass the absolute `AudioContext` time at which the ramp reaches its value.                                                   |
+| `Clock is destroyed.` / `Clock already has this scheduler attached.`                                                                | `attach` was called on a destroyed clock, or with a scheduler that is already attached.                            | Create a new Clock, or detach the scheduler first.                                                                           |
+| `Clock start time must be finite seconds, got …` / `Clock start offset must be finite beats, got …`                                 | `start(when, offsetBeats)` or `start({ atBeat })` received NaN or an infinite number.                              | Pass a finite audio time and a finite beat.                                                                                  |
+| `TempoParam start time must be finite, got …` / `TempoParam time constant must be finite and >= 0, got …`                           | `setTargetAtTime` or `setValueCurveAtTime` received a non-finite start, or a negative or non-finite time constant. | Pass an absolute `AudioContext` time and a time constant of 0 or more.                                                       |
+| `TempoParam value curve needs at least 2 values.` / `TempoParam value curve duration must be finite and > 0, got …`                 | `setValueCurveAtTime` got fewer than two values, or a zero, negative or non-finite duration.                       | Pass two or more bpm values and a duration above 0 seconds.                                                                  |
+| `RangeLoop period is below audio time precision.`                                                                                   | Consecutive repeat boundaries collapse at the current audio time.                                                  | Use a longer source range.                                                                                                   |
+| `bpm must be a finite number > 0, got …`                                                                                            | A tempo point or the `bpm` value is zero, negative or not finite.                                                  | Pass a finite bpm above 0.                                                                                                   |
+| `renderTimeline: tickInterval must be positive, got …`                                                                              | `options.tickInterval` is zero, negative or NaN.                                                                   | Omit it for the default, or pass seconds above 0 (and below the clock look-ahead).                                           |
+| `<option> must be a finite number > 0, got …`                                                                                       | A ruler option (`seconds`, `bars`, `numerator`, `denominator`) is zero, negative or not finite.                    | Pass a finite length above 0; the ruler rejects it at construction because a zero-length cycle would hang the tick callback. |
+| `<option> must be a finite number, got …`                                                                                           | A ruler `from` offset is NaN or infinite.                                                                          | Pass a finite offset, or omit `from`.                                                                                        |
 
 ## Non-goals
 
