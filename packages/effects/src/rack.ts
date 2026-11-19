@@ -13,7 +13,6 @@ import {
   type RackPreset,
 } from "./rack-preset";
 import { LiveRackMacro, type MacroTarget, type RackMacro } from "./rack-macro";
-export { LiveRackMacro };
 export type { RackMacro };
 export { isMacroValue, normalizeRackEffects, normalizeRackPreset, rackMacroRange, retainRackMacroTargets } from "./rack-preset";
 export type { RackDelay, RackEffect, RackEq, RackFilter, RackMacroMapping, RackMacroParameter, RackMacroSettings, RackPreset } from "./rack-preset";

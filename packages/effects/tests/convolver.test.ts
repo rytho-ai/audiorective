@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { effect } from "@audiorective/core";
 import { Convolver } from "../src";
 
 describe("Convolver", () => {
@@ -42,5 +43,16 @@ describe("Convolver", () => {
     await Promise.all([fx.load("/slow.wav"), fx.load("/fast.wav")]);
     expect(fx.buffer).toBe(fastIr);
     vi.restoreAllMocks();
+  });
+  it("buffer is a tracked read: an effect re-runs when the buffer changes", () => {
+    const ctx = new OfflineAudioContext(1, 128, 44100);
+    const ir = ctx.createBuffer(1, 4, 44100);
+    const fx = new Convolver(ctx);
+    const seen: (AudioBuffer | null)[] = [];
+    const stop = effect(() => void seen.push(fx.buffer));
+    fx.buffer = ir;
+    fx.buffer = null;
+    stop();
+    expect(seen).toEqual([null, ir, null]);
   });
 });

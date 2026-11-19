@@ -4,7 +4,7 @@ import { AudioProcessor, type BuildHelpers, type BuildResult, type Param, type S
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type ParamRegistry = Record<string, Param<any>>;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type CellRegistry = Record<string, import("@audiorective/core").Cell<any>>;
+type CellRegistry = Record<string, import("@audiorective/core").Cell<any> | import("@audiorective/core").ReadonlyCell<any>>;
 
 export interface WetArm {
   input: AudioNode | AudioProcessor;

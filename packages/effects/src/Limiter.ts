@@ -1,4 +1,4 @@
-import type { Cell, SchedulableParam } from "@audiorective/core";
+import type { ReadonlyCell, SchedulableParam } from "@audiorective/core";
 import { DynamicsCore } from "./dynamics/DynamicsCore";
 import { Effect, type EffectOptions } from "./Effect";
 
@@ -9,7 +9,10 @@ export interface LimiterOptions extends EffectOptions {
 }
 
 /** Brickwall: infinite ratio, hard knee, windowed-peak detection over `lookahead`. */
-export class Limiter extends Effect<{ threshold: SchedulableParam; release: SchedulableParam }, { reduction: Cell<number>; isReady: Cell<boolean> }> {
+export class Limiter extends Effect<
+  { threshold: SchedulableParam; release: SchedulableParam },
+  { reduction: ReadonlyCell<number>; isReady: ReadonlyCell<boolean> }
+> {
   readonly ready: Promise<void>;
   private readonly core: DynamicsCore;
 

@@ -1,4 +1,4 @@
-import type { Cell, SchedulableParam } from "@audiorective/core";
+import type { ReadonlyCell, SchedulableParam } from "@audiorective/core";
 import { DynamicsCore } from "./dynamics/DynamicsCore";
 import { Effect, type EffectOptions } from "./Effect";
 
@@ -21,7 +21,7 @@ type P = {
   makeup: SchedulableParam;
 };
 
-export class Compressor extends Effect<P, { reduction: Cell<number>; isReady: Cell<boolean> }> {
+export class Compressor extends Effect<P, { reduction: ReadonlyCell<number>; isReady: ReadonlyCell<boolean> }> {
   readonly ready: Promise<void>;
   private readonly core: DynamicsCore;
 

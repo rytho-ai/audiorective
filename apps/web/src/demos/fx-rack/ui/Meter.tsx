@@ -1,11 +1,11 @@
 import { useValue } from "@audiorective/react";
-import type { Cell, Param, SchedulableParam } from "@audiorective/core";
+import type { ReadonlyCell, Param, SchedulableParam } from "@audiorective/core";
 import type { FxRack } from "../audio/FxRack";
 import { useEngine } from "../audio/engine";
 import { Knob } from "./Knob";
 
 export interface MeterSpec {
-  reduction: Cell<number>;
+  reduction: ReadonlyCell<number>;
   threshold: { param: Param<number> | SchedulableParam; min: number; max: number };
 }
 

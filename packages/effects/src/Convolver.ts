@@ -1,4 +1,4 @@
-import { AudioBufferCache, type Cell } from "@audiorective/core";
+import { AudioBufferCache, cell, readonlyCell, type Cell, type ReadonlyCell } from "@audiorective/core";
 import { Effect, type EffectOptions } from "./Effect";
 
 export interface ConvolverOptions extends EffectOptions {
@@ -19,26 +19,32 @@ function cacheFor(ctx: BaseAudioContext): AudioBufferCache {
   return c;
 }
 
-export class Convolver extends Effect<{}, { isReady: Cell<boolean> }> {
+export class Convolver extends Effect<{}, { isReady: ReadonlyCell<boolean> }> {
   private readonly node: ConvolverNode;
   private loadToken = 0;
+  private readonly _isReady: Cell<boolean>;
+  private readonly _buffer: Cell<AudioBuffer | null>;
   /** Resolves once the initial `url` (if any) has loaded. */
   readonly ready: Promise<void>;
 
   constructor(ctx: BaseAudioContext, opts: ConvolverOptions = {}) {
     const node = new ConvolverNode(ctx, { disableNormalization: opts.normalize === false });
-    super(ctx, { input: node, output: node }, ({ cell }) => ({ params: {}, cells: { isReady: cell(false) }, latency: 0 }), opts);
+    const isReady = cell(false);
+    super(ctx, { input: node, output: node }, () => ({ params: {}, cells: { isReady: readonlyCell(isReady) }, latency: 0 }), opts);
     this.node = node;
+    this._isReady = isReady;
+    this._buffer = cell<AudioBuffer | null>(null);
     if (opts.buffer) this.buffer = opts.buffer;
     this.ready = opts.url ? this.load(opts.url) : Promise.resolve();
   }
 
   get buffer(): AudioBuffer | null {
-    return this.node.buffer;
+    return this._buffer.value;
   }
   set buffer(b: AudioBuffer | null) {
     this.node.buffer = b;
-    this.cells.isReady.value = b !== null;
+    this._buffer.value = b;
+    this._isReady.value = b !== null;
   }
 
   async load(url: string): Promise<void> {

@@ -1,4 +1,4 @@
-import type { Cell, Param } from "@audiorective/core";
+import { cell, readonlyCell, type Cell, type ReadonlyCell, type Param } from "@audiorective/core";
 import { Effect, type EffectOptions } from "./Effect";
 import { GranularShifter } from "./pitch/GranularShifter";
 import { StretchShifter } from "./pitch/StretchShifter";
@@ -22,12 +22,13 @@ export interface PitchShiftOptions extends EffectOptions {
   stretch?: StretchOptions;
 }
 
-export class PitchShift extends Effect<{ pitch: Param<number> }, { isReady: Cell<boolean> }> {
+export class PitchShift extends Effect<{ pitch: Param<number> }, { isReady: ReadonlyCell<boolean> }> {
   readonly engine: PitchShiftEngine;
   /** Resolves once the engine is ready to process audio. */
   readonly ready: Promise<void>;
   private readonly core: GranularShifter | StretchShifter;
   private destroyed = false;
+  private readonly _isReady: Cell<boolean>;
 
   constructor(ctx: BaseAudioContext, opts: PitchShiftOptions = {}) {
     const engine = opts.engine ?? "granular";
@@ -35,10 +36,11 @@ export class PitchShift extends Effect<{ pitch: Param<number> }, { isReady: Cell
       engine === "stretch"
         ? new StretchShifter(ctx, opts.pitch ?? 0, opts.stretch)
         : new GranularShifter(ctx, { pitch: opts.pitch ?? 0, windowSize: opts.windowSize });
+    const isReady = cell(engine === "granular");
     super(
       ctx,
       { input: core, output: core },
-      ({ param, cell }) => ({
+      ({ param }) => ({
         params: {
           pitch: param<number>({
             default: opts.pitch ?? 0,
@@ -47,16 +49,17 @@ export class PitchShift extends Effect<{ pitch: Param<number> }, { isReady: Cell
             bind: { set: (v) => core.setPitch(v) },
           }),
         },
-        cells: { isReady: cell(engine === "granular") },
+        cells: { isReady: readonlyCell(isReady) },
       }),
       opts,
     );
     this.engine = engine;
+    this._isReady = isReady;
     this.ready =
       core instanceof StretchShifter
         ? core.ready.then(() => {
             if (this.destroyed) return;
-            this.cells.isReady.value = true;
+            this._isReady.value = true;
           })
         : Promise.resolve();
     this.core = core;
