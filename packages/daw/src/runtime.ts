@@ -1,4 +1,4 @@
-import { Clock, RangeLoop, Timeline } from "@audiorective/clock";
+import { Clock, Timeline } from "@audiorective/clock";
 import type { LoopRange, TickWindow } from "@audiorective/clock";
 import { batch, cell, effect, readonlyCell, untracked, type Cell, type Readable, type ReadonlyCell } from "@audiorective/core";
 import { AutomationBinding, AutomationCurve, audioParamTarget } from "@audiorective/core/automation";
@@ -8,7 +8,9 @@ import type { StepSequencer } from "@audiorective/blocks/sequencer";
 import type { WaveStretchAnchor, WaveStretchProcessor } from "@audiorective/blocks/player";
 import { EffectRack, retainRackMacroTargets, type RackEffect } from "@audiorective/effects/rack";
 import { AudioTrackSession } from "./audio-track-session";
+import { Audition, type RangeAuditionState } from "./audition";
 import { ClipScheduler } from "./clip-scheduler";
+import { findAudioClip } from "./project-lookup";
 import { Mixer, type MixerStrip } from "./mixer";
 import { MidiClip, Project, audioFrameCount } from "./model";
 import { normalizeClipAnchors } from "./clip-time-map";
@@ -18,10 +20,8 @@ import type { AudioClip, AudioClipGainAutomation, PcmAudioClip, ProjectTrack, Tr
 export { scheduleClipEnvelope } from "./schedule-clip-envelope";
 export type PreparedClipStretch = Readonly<{ apply(): AudioClip }>;
 
-type ClipAudition = { clip: AudioClip; cancel?: () => void };
-type RangeAudition = { range: RangeAuditionState; tracks: readonly ProjectTrack[]; clock?: Clock };
-export type RangeAuditionState = Readonly<{ start: number; end: number; trackIds: readonly string[] }>;
-import { audioChunkSeconds, type AudioClipWindow, type AudioHandle, type TrackRuntime } from "./track-runtime";
+export type { RangeAuditionState } from "./audition";
+import type { TrackRuntime } from "./track-runtime";
 
 function collectGainAutomationEdits(
   before: ProjectTrack["clips"],
@@ -89,7 +89,7 @@ export class Workspace {
   private readonly topologyPending = cell(false);
   private readonly applicationError = cell<string | null>(null);
   private readonly warningMessages = cell<readonly string[]>(Object.freeze([]));
-  private readonly auditionSource = cell<ClipAudition | RangeAudition | null>(null);
+  private readonly audition: Audition;
   readonly cells: Readonly<{
     needsSync: ReadonlyCell<boolean>;
     error: ReadonlyCell<string | null>;
@@ -132,6 +132,13 @@ export class Workspace {
     this.scheduler = new ClipScheduler(context, (message) => this.warn(message));
     this.output = context.createGain();
     this.mixer = new Mixer(context, this.output, this.tracks, () => this.project);
+    this.audition = new Audition(
+      context,
+      this.output,
+      () => this.project,
+      this.scheduler,
+      () => this.destroyed,
+    );
     if (options.destination) this.output.connect(options.destination);
     this.timeline = new Timeline({ audioContext: context, bpm: project.bpm });
     this.clock = new Clock({ timeline: this.timeline, lookAhead: 0.15, tickInterval: 0.025, onTick: (window) => this.schedule(window) });
@@ -157,16 +164,9 @@ export class Workspace {
         for (const track of this.tracks.values()) track.session?.reset();
       },
     });
-    const audition = this.auditionSource;
     this.session = this.launcher.state;
-    this.auditioningClip = readonlyCell(() => {
-      const current = audition.value;
-      return current && "clip" in current ? current.clip.id : null;
-    });
-    this.auditioningRange = readonlyCell(() => {
-      const current = audition.value;
-      return current && "range" in current ? current.range : null;
-    });
+    this.auditioningClip = this.audition.cells.clip;
+    this.auditioningRange = this.audition.cells.range;
     this.cells = Object.freeze({
       needsSync: readonlyCell(this.topologyPending),
       error: readonlyCell(this.applicationError),
@@ -206,7 +206,7 @@ export class Workspace {
   set project(project: Project) {
     if (project === this.project) return;
     batch(() => {
-      this.stopAudition();
+      this.audition.stop();
       this.projectSource.value = project;
     });
   }
@@ -357,7 +357,7 @@ export class Workspace {
   private async rebuildTracks(position = this.position): Promise<void> {
     if (this.destroyed) throw new Error("Workspace is destroyed.");
     this.recordCurrentProject();
-    this.stopStaleAudition();
+    this.audition.stopStale();
     this.stop();
     this.activeTempoMap = this.project.tempoMap;
     await this.captureStates();
@@ -533,7 +533,7 @@ export class Workspace {
     }
     this.mixer.applyRouting(tracks);
     this.mixer.applyMixer();
-    if (clipsChanged) this.stopStaleAudition();
+    if (clipsChanged) this.audition.stopStale();
     if (tempoChanged) this.seek(position);
     else if (refreshClips) this.refreshArrangement();
     else if (gainEdits.size) this.scheduler.setGainAutomation(gainEdits);
@@ -713,7 +713,7 @@ export class Workspace {
   }
   private refreshArrangementUntracked(): void {
     if (this.destroyed) throw new Error("Workspace is destroyed.");
-    this.stopStaleAudition();
+    this.audition.stopStale();
     for (const track of this.project.tracks) {
       const runtime = this.tracks.get(track.id);
       if (runtime?.kind === track.kind) runtime.clips = track.clips;
@@ -851,168 +851,22 @@ export class Workspace {
     return undefined;
   }
 
-  private findAudioClip(clipId: string): AudioClip | undefined {
-    return untracked(() => {
-      for (const track of this.project.tracks) {
-        const clip = track.clips.find((candidate) => candidate.id === clipId);
-        if (clip?.kind === "audio") return clip;
-      }
-      return undefined;
-    });
-  }
-
-  private get audition(): ClipAudition | RangeAudition | null {
-    return untracked(() => this.auditionSource.value);
-  }
-
   /** Audition the current audio clip through master output independently of Arrangement. */
-  async auditionAudioClip(clipId: string): Promise<void> {
-    if (this.destroyed) throw new Error("Workspace is destroyed.");
-    const clip = this.findAudioClip(clipId);
-    if (!clip) throw new Error("Workspace audition needs an audio clip.");
-
-    const audition: ClipAudition = { clip };
-    batch(() => {
-      this.stopAudition();
-      this.auditionSource.value = audition;
-    });
-    const finish = () => {
-      if (this.audition === audition) this.stopClipAudition();
-    };
-    try {
-      await this.context.resume();
-      if (this.audition !== audition) return;
-      if (clip.media) await this.scheduler.loadMediaBuffer(clip, 0);
-      if (this.audition !== audition) return;
-      if (this.findAudioClip(clipId) !== clip) return finish();
-
-      if (clip.media) {
-        let nextChunk = 0;
-        const chunks = Math.ceil(clip.duration / audioChunkSeconds);
-        const clock = new Clock({
-          timeline: new Timeline({ audioContext: this.context }),
-          lookAhead: 0.2,
-          onTick: (window) => {
-            const elapsed = window.time.current - window.time.started;
-            if (elapsed >= clip.duration) return finish();
-            nextChunk = Math.max(nextChunk, Math.floor(elapsed / audioChunkSeconds));
-            while (nextChunk < chunks) {
-              const when = window.time.started + nextChunk * audioChunkSeconds;
-              if (when >= window.time.lookAheadEnd) break;
-              const handle = this.scheduler.scheduleMediaAudio(clip, nextChunk++, this.output, when, 0);
-              window.own(handle, when);
-              if (nextChunk === chunks) handle.onEnded(finish);
-            }
-          },
-        });
-        audition.cancel = () => clock.destroy();
-        clock.start();
-        // The initial chunk is already preloaded. Let later ticks stream the clip.
-        clock.refresh();
-      } else {
-        const handle = this.scheduler.scheduleAudio(clip, this.output, this.context.currentTime, 0);
-        audition.cancel = () => handle.cancel();
-        handle.onEnded(finish);
-      }
-    } catch (error) {
-      if (this.audition !== audition) return;
-      finish();
-      throw error;
-    }
+  auditionAudioClip(clipId: string): Promise<void> {
+    return this.audition.auditionClip(clipId);
   }
 
   stopClipAudition(): void {
-    if (this.audition && "clip" in this.audition) this.stopAudition();
-  }
-
-  private stopStaleAudition(): void {
-    const audition = this.audition;
-    if (!audition) return;
-    const stale =
-      "clip" in audition
-        ? this.findAudioClip(audition.clip.id) !== audition.clip
-        : audition.tracks.some((track) => this.project.tracks.find(({ id }) => id === track.id)?.clips !== track.clips);
-    if (stale) this.stopAudition();
-  }
-
-  private stopAudition(): void {
-    const audition = this.audition;
-    if (!audition) return;
-    batch(() => {
-      this.auditionSource.value = null;
-      if ("clip" in audition) audition.cancel?.();
-      else audition.clock?.destroy();
-    });
+    this.audition.stopClip();
   }
 
   /** Repeat one project-second range over a group of audio tracks, independently of Arrangement. */
-  async auditionRange(range: LoopRange, options: { trackIds?: readonly string[] } = {}): Promise<void> {
-    if (this.destroyed) throw new Error("Workspace is destroyed.");
-    const { start, end } = range;
-    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end - start < 1 / this.context.sampleRate)
-      throw new RangeError("Workspace range audition needs a non-negative range at least one audio frame long.");
-    const ids = options.trackIds ? new Set(options.trackIds) : undefined;
-    const tracks = untracked(() => this.project.tracks.filter((track) => track.kind === "audio" && (!ids || ids.has(track.id))));
-    if (!tracks.length || (ids && tracks.length !== ids.size)) throw new Error("Workspace range audition needs existing audio tracks.");
-    const clips = untracked(() =>
-      tracks.flatMap((track) =>
-        track.clips.filter((clip): clip is AudioClip => clip.kind === "audio" && clip.time < end && clip.time + clip.duration > start),
-      ),
-    );
-    if (!clips.length) throw new Error("Workspace range audition needs audio in the selected range.");
-    const state = Object.freeze({ start, end, trackIds: Object.freeze(tracks.map(({ id }) => id)) });
-    const audition: RangeAudition = { range: state, tracks };
-    batch(() => {
-      this.stopAudition();
-      this.auditionSource.value = audition;
-    });
-    try {
-      await this.context.resume();
-      if (this.audition !== audition) return;
-      await Promise.all(
-        clips.map((clip) => {
-          if (!clip.media || clip.time >= start + 0.15) return undefined;
-          const index = Math.floor(Math.max(0, start - clip.time) / audioChunkSeconds);
-          return this.scheduler.loadMediaBuffer(clip, index);
-        }),
-      );
-      if (this.audition !== audition) return;
-      this.stopStaleAudition();
-      if (this.audition !== audition) return;
-
-      const loop = new RangeLoop(state, this.context.currentTime + 0.025);
-      const timeline = new Timeline({ audioContext: this.context });
-      const scheduled = new Map<string, AudioHandle>();
-      const clock = new Clock({
-        timeline,
-        lookAhead: 0.15,
-        tickInterval: 0.025,
-        onTick: (window) => {
-          const audioStart = timeline.beatToTime(window.beat.start);
-          for (const slice of loop.slices(audioStart, window.time.lookAheadEnd)) {
-            const span: AudioClipWindow = {
-              start: slice.start,
-              end: slice.end,
-              stop: end,
-              audioTime: (time) => slice.when + (time - slice.start),
-              keyPrefix: `${slice.cycle}:`,
-            };
-            for (const clip of clips) this.scheduler.scheduleAudioClipWindow(clip, this.output, span, window, scheduled);
-          }
-        },
-      });
-      audition.clock = clock;
-      clock.start();
-      clock.refresh();
-    } catch (error) {
-      if (this.audition !== audition) return;
-      this.stopAudition();
-      throw error;
-    }
+  auditionRange(range: LoopRange, options: { trackIds?: readonly string[] } = {}): Promise<void> {
+    return this.audition.auditionRange(range, options);
   }
 
   stopRangeAudition(): void {
-    if (this.audition && "range" in this.audition) this.stopAudition();
+    this.audition.stopRange();
   }
 
   /** Render a clip from its retained source and defer the project mutation to the caller's undo transaction. */
@@ -1024,7 +878,7 @@ export class Workspace {
   ): Promise<PreparedClipStretch> {
     if (this.destroyed) throw new Error("Workspace is destroyed.");
     options.signal?.throwIfAborted();
-    const clip = this.findAudioClip(clipId);
+    const clip = findAudioClip(this.project, clipId);
     if (!clip) throw new Error("Workspace clip stretch needs an audio clip.");
     const source = clip.stretch?.source ?? clip;
     const frames = audioFrameCount(source);
@@ -1145,7 +999,7 @@ export class Workspace {
     this.stopWatchingProject?.();
     this.stop();
     this.destroyed = true;
-    this.stopAudition();
+    this.audition.stop();
     for (const job of this.clipStretchJobs.values()) job.abort();
     this.clock.destroy();
     for (const detach of [...this.stepSequencers.values()]) detach();
