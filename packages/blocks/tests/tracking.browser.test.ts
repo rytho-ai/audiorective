@@ -64,6 +64,10 @@ describe("WavePlayer public getters are tracked", () => {
     ["buffer (stretch)", (p) => p.buffer, (p) => p.setStretch(2)],
     ["duration (stretch)", (p) => p.duration, (p) => p.setStretch(2)],
     ["version (stretch)", (p) => p.version, (p) => p.setStretch(2)],
+    ["sourceToOutput (load)", (p) => p.sourceToOutput(1), (p, c) => p.load(tone(c, 8000))],
+    ["outputToSource (load)", (p) => p.outputToSource(1), (p, c) => p.load(tone(c, 8000))],
+    ["sourceToOutput (stretch)", (p) => p.sourceToOutput(1), (p) => p.setStretch(2)],
+    ["outputToSource (stretch)", (p) => p.outputToSource(0.5), (p) => p.setStretch(2)],
     ["isLooping", (p) => p.isLooping, (p) => p.setLooping(true)],
     ["getSelection()", (p) => p.getSelection(), (p) => p.setSelection({ start: 0.1, end: 0.5 })],
     ["getState()", (p) => p.getState(), (p) => p.setLooping(true)],
@@ -82,8 +86,6 @@ describe("WavePlayer public getters are tracked", () => {
     const stop = effect(() => {
       runs++;
       player.setSelection({ start: 0, end: 0.5 });
-      player.sourceToOutput(0.5);
-      player.outputToSource(0.5);
     });
     await player.load(tone(context, 8000));
     stop();

@@ -223,11 +223,21 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
   private pcm(buffer: AudioBuffer): PCMData {
     return { sampleRate: buffer.sampleRate, channels: Array.from({ length: buffer.numberOfChannels }, (_, c) => buffer.getChannelData(c)) };
   }
+  /** Tracked: re-evaluates when a load or stretch changes the source/output mapping. */
   sourceToOutput(seconds: number): number {
+    void this.cells.version.value;
+    return this.mapSourceToOutput(seconds);
+  }
+  /** Tracked: re-evaluates when a load or stretch changes the source/output mapping. */
+  outputToSource(seconds: number): number {
+    void this.cells.version.value;
+    return this.mapOutputToSource(seconds);
+  }
+  private mapSourceToOutput(seconds: number): number {
     if (!Number.isFinite(seconds)) throw new RangeError("Time must be finite seconds.");
     return this.original ? (Math.max(0, Math.min(this.original.duration, seconds)) * this.length) / this.original.duration : 0;
   }
-  outputToSource(seconds: number): number {
+  private mapOutputToSource(seconds: number): number {
     if (!Number.isFinite(seconds)) throw new RangeError("Time must be finite seconds.");
     return this.length ? (Math.max(0, Math.min(this.length, seconds)) * (this.original?.duration ?? 0)) / this.length : 0;
   }
@@ -337,8 +347,8 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
     if (!source) return;
     binding.start({
       when,
-      from: this.outputToSource(offset),
-      to: this.outputToSource(end),
+      from: this.mapOutputToSource(offset),
+      to: this.mapOutputToSource(end),
       secondsPerUnit: this.length / source.duration,
     });
   }

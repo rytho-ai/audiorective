@@ -203,8 +203,6 @@ test("owner methods called inside an effect do not subscribe it", async () => {
       void player.audition();
       void player.setStretch(2);
       player.cancelLoad();
-      player.sourceToOutput(1);
-      player.outputToSource(1);
     }),
   );
   expect(runs).toBe(1);
