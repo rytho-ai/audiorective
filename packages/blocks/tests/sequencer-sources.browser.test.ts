@@ -1,7 +1,7 @@
 import { afterEach, expect, test, vi } from "vitest";
 import type { BeatTiming, CancellableEvent } from "@audiorective/core";
 import { PadBank } from "../src/PadBank";
-import { StepSequencer, type StepHit, type StepPattern, type StepWindow } from "../src/StepSequencer";
+import { StepSequencer, type StepHit, type StepPatternInput, type StepWindow } from "../src/StepSequencer";
 
 const disposers: Array<() => void | Promise<unknown>> = [];
 afterEach(async () => {
@@ -9,12 +9,11 @@ afterEach(async () => {
   for (const dispose of disposers.splice(0).reverse()) await dispose();
 });
 
-const pattern: StepPattern = {
-  steps: 4,
-  beatsPerStep: 0.5,
+const pattern: StepPatternInput = {
+  size: 8,
   lanes: [
-    { id: "kick", label: "Kick", velocities: [1, 0, 0.5, 0] },
-    { id: "snare", label: "Snare", velocities: [0, 0.75, 0, 0.25] },
+    { id: "kick", label: "Kick", steps: 4, rate: "1/8", cells: [1, 0, 0.5, 0].map((velocity) => ({ velocity })) },
+    { id: "snare", label: "Snare", steps: 4, rate: "1/8", cells: [0, 0.75, 0, 0.25].map((velocity) => ({ velocity })) },
   ],
 };
 /** 120 bpm, starting at audio time 10 so every hit lies in the future. */
@@ -137,7 +136,8 @@ test("a pattern yields identical hit times and velocities from any event source,
   });
   for (const { sequencer, source } of runs) {
     sequencer.reset();
-    expect(sequencer.currentStep.value).toBeNull();
+    expect(Object.values(sequencer.playheads.value)).toEqual([null, null]);
+    expect(sequencer.loopProgress.value).toBeNull();
     expect(source.live()).toBe(0);
   }
   expect(ended.map(({ count }) => count)).toEqual([8, 8]);

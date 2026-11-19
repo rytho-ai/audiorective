@@ -876,7 +876,7 @@
         "Puts closed and open hat in one choke group so cancelling a scheduled closed-hat hit also retracts its future choke, instead of scheduling an irreversible stop on the open hat",
         "Does not import @audiorective/daw, @audiorective/host, @audiorective/effects, @audiorective/midi, @audiorective/blocks/samples or @audiorective/blocks/player, and creates no Project or Workspace",
         "Calls sequencer.schedule(window, timeline) from the Clock tick, passing the same Timeline as the BeatTiming (the sequencer registers its hits with window.own itself), and calls clock.refresh() after pattern edits",
-        "Uses @audiorective/widgets mountStepGrid for the grid or names it as an option; a hand-written grid is acceptable when it calls the sequencer's setVelocity",
+        "Uses @audiorective/widgets mountStepGrid for the grid or names it as an option; a hand-written grid is acceptable when it calls the sequencer's setCell or toggle",
         "Cleans up by destroying the clock and PadBank and leaving the caller's AudioContext open"
       ]
     }

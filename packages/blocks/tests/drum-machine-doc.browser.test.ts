@@ -4,7 +4,7 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { Clock, Timeline } from "@audiorective/clock";
 import { PadBank } from "../src/PadBank";
-import { StepSequencer, type StepPattern } from "../src/StepSequencer";
+import { StepSequencer, type StepPatternInput } from "../src/StepSequencer";
 
 const disposers: Array<() => void | Promise<unknown>> = [];
 afterEach(async () => {
@@ -29,18 +29,19 @@ async function drumMachine() {
   ]);
   bank.output.connect(context.destination);
 
-  const steps = (...on: number[]) => Array.from({ length: 16 }, (_, step) => (on.includes(step) ? 1 : 0));
-  const pattern: StepPattern = {
-    steps: 16,
-    beatsPerStep: 0.25,
+  const steps = (...on: number[]) => Array.from({ length: 16 }, (_, step) => ({ velocity: on.includes(step) ? 1 : 0 }));
+  const pattern: StepPatternInput = {
+    size: 16, // sixteenth notes; lanes default to 1/16 and 16 steps
     lanes: [
-      { id: "kick", label: "Kick", velocities: steps(0, 4, 8, 12) },
-      { id: "snare", label: "Snare", velocities: steps(4, 12) },
-      { id: "closed", label: "Closed hat", velocities: steps(0, 4, 8, 12) },
-      { id: "open", label: "Open hat", velocities: steps(2, 10) },
+      { id: "kick", label: "Kick", cells: steps(0, 4, 8, 12) },
+      { id: "snare", label: "Snare", cells: steps(4, 12) },
+      { id: "closed", label: "Closed hat", cells: steps(0, 4, 8, 12) },
+      { id: "open", label: "Open hat", cells: steps(2, 10) },
     ],
   };
-  const sequencer = new StepSequencer(pattern, ({ laneId, velocity, when }) => bank.trigger(laneId, velocity, when));
+  const sequencer = new StepSequencer(pattern, ({ laneId, velocity, when, pitch, duration }) =>
+    bank.trigger(laneId, velocity, when, { pitch, duration }),
+  );
   const timeline = new Timeline({ audioContext: context, bpm: 120 });
   const clock = new Clock({ timeline, onTick: (window) => sequencer.schedule(window, timeline) });
   // ---- end: same code as docs/blocks.md ----
@@ -56,16 +57,17 @@ test("hits fire at step times with pattern velocities", async () => {
   const { bank, timeline, clock, sequencer } = await drumMachine();
   const spy = vi.spyOn(bank, "trigger");
   clock.start();
-  await until(() => spy.mock.calls.length >= 6);
+  await until(() => spy.mock.calls.length >= 12);
   const calls = spy.mock.calls.map(([id, velocity, when]) => ({ id, velocity, when: when! }));
-  const first = calls.find((c) => c.id === "kick")!.when;
+  // Step 0 may have started before the first window and plays "now", so anchor on the snare at step 4.
+  const first = calls.find((c) => c.id === "snare")!.when - 4 * 0.125;
   const at = (id: string, step: number) => calls.find((c) => c.id === id && Math.abs(c.when - (first + step * 0.125)) < 1e-6);
-  expect(at("closed", 0)?.velocity).toBe(1);
+  expect(at("closed", 4)?.velocity).toBe(1);
   expect(at("open", 2)?.velocity).toBe(1);
-  expect(at("kick", 4)).toBeDefined();
+  expect(at("kick", 8)).toBeDefined();
   expect(at("snare", 4)).toBeDefined();
   expect(at("snare", 2)).toBeUndefined();
-  expect(sequencer.currentStep.value).not.toBeNull();
+  expect(sequencer.playheads.value.kick).not.toBeNull();
   timeline.bpm.value = 140;
   expect(timeline.bpm.value).toBe(140);
   clock.stop();
@@ -92,7 +94,7 @@ async function openHatEndedAfterStep4(deleteClosed: boolean) {
     // The edit is synchronous, so checking the audio clock right before it is race-free.
     if (context.currentTime > when - SAFE_MARGIN) return null;
     // ---- begin: same code as docs/blocks.md ----
-    sequencer.setVelocity("closed", 4, 0);
+    sequencer.setCell("closed", 4, { velocity: 0 });
     clock.refresh();
     // ---- end: same code as docs/blocks.md ----
   } else {

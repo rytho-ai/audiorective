@@ -40,6 +40,8 @@ predates that API. See the "Version mismatches" note in the skill.
 - **core:** `AudioEngine.state` is a read-only callable (`engine.state()`, `.value`, `$()`) with no setter, and `AudioEngine.latency` is `ReadonlyCell<number>` (was `Param<number>`). Only the engine writes them.
 - **core:** `AudioEngine` does not close an `AudioContext` passed to it; only a context it created is closed on `destroy()`. It listens with `addEventListener("statechange")` instead of overwriting `onstatechange`, so a borrowed context keeps its own handler. `destroy()` rejects pending `untilReady()` calls, and `untilReady()` after `destroy()` rejects.
 - **blocks / widgets:** `mountMixer` option `output(id)` is replaced by `meter(id)`, which returns a caller-owned reader `{ sampleCount?, read, destroy? }` (or `undefined` for no meter). Migration: `output: (id) => node` becomes `meter: (id) => { const a = node.context.createAnalyser(); node.connect(a); return { sampleCount: a.fftSize, read: (d) => a.getFloatTimeDomainData(d), destroy: () => node.disconnect(a) }; }`.
+- **blocks (breaking):** `StepSequencer` has a new data model. Migration: `StepPattern { steps, beatsPerStep, lanes[{ id, label, velocities }] }` → `{ size, lanes[{ id, label, steps?, rate?, direction?, swing?, mute?, solo?, cells: [{ velocity, ... }] }] }`, where `size` is the loop length in 1/16 steps and `beatsPerStep: 0.25` becomes the lane's default `rate: "1/16"` (`0.5` → `"1/8"`, `1` → `"1/4"`; set the lane's `steps` for a shorter lane). `velocities: [1, 0]` → `cells: [{ velocity: 1 }, { velocity: 0 }]`. `setVelocity(id, step, v)` → `setCell(id, step, { velocity: v })` (or `toggle(id, step)`). `currentStep` (one index) → `playheads` (a cell index per lane ID) and `loopProgress`. The trigger's `StepHit` gains `pitch`, `duration`, `repeatIndex` and `repeatCount`. Thrown messages are new; see Common errors in `docs/blocks.md`.
+- **widgets (breaking):** `mountStepGrid`'s `sequencer` contract is `{ pattern: Readable<{ size, lanes[{ id, label, cells[{ velocity }] }] }>, playheads, setCell }` instead of `{ pattern, currentStep, setVelocity }`.
 
 ### Fixed
 
@@ -68,6 +70,9 @@ predates that API. See the "Version mismatches" note in the skill.
 - **docs:** `docs/effects.md` lists `Channel`'s `outputEnabled`, `tap` and per-send `enabled`.
 
 ### Added
+
+- **blocks:** `StepSequencer` lanes have their own `steps` (polymeter), `rate` (straight and triplet), `direction` (`forward`, `backward`, `bounce`), `swing`, `mute` and `solo`; cells have `offset`, `length`, `repeat`, `pitch` and `chance`. New commands `setCell`, `toggle`, `setLane` and `setSize`, the `playheads` and `loopProgress` cells, and an injectable `random` option.
+- **blocks:** `PadBank.trigger(id, velocity, when, { pitch, duration })`: `pitch` (semitones) sets the playback rate to `2 ** (pitch / 12)`; `duration` (seconds) closes a `gate` pad's hit at `when + duration`, retractably like choke.
 
 - **core:** `BufferPlayer.params.buffer: Param<AudioBuffer | null>`; the `buffer` property reads and writes it, like `Sampler.buffer`.
 - **effects:** `Channel` option `channelCountMode: "max"` keeps a mono input mono into the panner (equal-power mono pan law); the default `"explicit"` is unchanged.

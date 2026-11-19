@@ -144,18 +144,21 @@ describe("PadBank readers are tracked", () => {
 });
 
 describe("command methods called inside an effect do not subscribe it", () => {
-  test("StepSequencer.setVelocity and schedule", () => {
-    const pattern = { steps: 4, beatsPerStep: 1, lanes: [{ id: "k", label: "K", velocities: [1, 0, 0, 0] }] };
+  test("StepSequencer commands and schedule", () => {
+    const pattern = { size: 4, lanes: [{ id: "k", label: "K", cells: [{ velocity: 1 }] }] };
     const sequencer = new StepSequencer(pattern, () => null);
     const timing = { timeToBeat: (t: number) => t, beatToTime: (b: number) => b };
     const window = { beat: { start: 0, end: 2 }, time: { current: 0 }, own() {} };
     let runs = 0;
     const stop = effect(() => {
       runs++;
-      sequencer.setVelocity("k", 1, 0.5);
+      sequencer.setCell("k", 1, { velocity: 0.5 });
+      sequencer.toggle("k", 3);
+      sequencer.setLane("k", { swing: 0.2 });
+      sequencer.setSize(8);
       sequencer.schedule(window, timing);
     });
-    sequencer.setVelocity("k", 2, 0.5);
+    sequencer.setCell("k", 2, { velocity: 0.5 });
     sequencer.reset();
     stop();
     expect(runs).toBe(1);

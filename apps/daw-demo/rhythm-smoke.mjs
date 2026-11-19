@@ -75,9 +75,8 @@ try {
       let scheduled = 0;
       const sequencer = new StepSequencer(
         {
-          steps: 4,
-          beatsPerStep: 0.5,
-          lanes: [{ id: "closed", label: "Closed", velocities: [0, 1, 0, 0] }],
+          size: 8,
+          lanes: [{ id: "closed", label: "Closed", steps: 4, rate: "1/8", cells: [{}, { velocity: 1 }] }],
         },
         ({ laneId, velocity, when }) => {
           scheduled++;
@@ -92,12 +91,12 @@ try {
       });
       const changed = context.suspend(0.18).then(() => {
         if (scheduled < 1) throw new Error("Step was not queued before the edit");
-        if (cancelled) sequencer.setVelocity("closed", 1, 0);
+        if (cancelled) sequencer.toggle("closed", 1);
         return resume();
       });
       const [rendered] = await Promise.all([context.startRendering(), planned, changed]);
       detach();
-      if (sequencer.currentStep.value !== null) throw new Error("Detached sequencer retained its playhead");
+      if (Object.values(sequencer.playheads.value).some((head) => head !== null)) throw new Error("Detached sequencer retained its playhead");
       const frames = rendered.getChannelData(0);
       const result = [frames[9600], frames[16800]];
       workspace.destroy();

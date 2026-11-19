@@ -286,7 +286,7 @@ The same view works with `Workspace.create()` and `openWorkspace()`. Pass a `des
 
 ## Step Sequencer
 
-Attach a caller-owned `StepSequencer` with `workspace.attachStepSequencer(sequence)`. Connect the instrument's output to a caller-selected mix path. The attached pattern uses Workspace's Clock windows and tempo mapping. Velocity edits refresh pending steps, and transport pause, stop and seek reset the sequence's scheduled events. Call the returned detach function to remove only this sequence. An attached live pattern belongs to the current app session. Saveable Arrangement clips belong to Project.
+Attach a caller-owned `StepSequencer` with `workspace.attachStepSequencer(sequence)`. Connect the instrument's output to a caller-selected mix path. The attached pattern uses Workspace's Clock windows and tempo mapping. Pattern edits (`setCell`, `toggle`, `setLane`, `setSize`) refresh pending steps, and transport pause, stop and seek reset the sequence's scheduled events. Call the returned detach function to remove only this sequence. An attached live pattern belongs to the current app session. Saveable Arrangement clips belong to Project.
 
 ## Clip Launcher
 

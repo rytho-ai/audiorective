@@ -30,15 +30,14 @@ export function mountRhythmView(
   bank.output.connect(workspace.output);
   const sequence = new StepSequencer(
     {
-      steps: 16,
-      beatsPerStep: 0.25,
+      size: 16,
       lanes: lanes.map(({ id, label, hits }) => ({
         id,
         label,
-        velocities: Array.from({ length: 16 }, (_, index) => ((hits as readonly number[]).includes(index) ? 0.8 : 0)),
+        cells: Array.from({ length: 16 }, (_, index) => ({ velocity: (hits as readonly number[]).includes(index) ? 0.8 : 0 })),
       })),
     },
-    ({ laneId, velocity, when }) => bank.trigger(laneId, velocity, when),
+    ({ laneId, velocity, when, pitch, duration }) => bank.trigger(laneId, velocity, when, { pitch, duration }),
   );
 
   const element = document.createElement("div");

@@ -84,7 +84,7 @@ The attachment owns its gesture and drawing. The caller owns the points and play
 
 ## Step grid and pads
 
-`mountStepGrid(root, { sequencer })` edits the provided pattern's velocities and displays its current step. `sequencer` is a local structural contract (`pattern`, `currentStep` and `setVelocity`), so a `StepSequencer` or your own pattern model fits. Click a step to toggle and focus it to adjust its velocity. The grid follows the pattern: it rebuilds when `steps` or the lane list (IDs and labels) changes and only updates its buttons when velocities change. Destroying the view leaves the borrowed pattern available.
+`mountStepGrid(root, { sequencer })` edits the provided pattern's velocities and displays each lane's playhead. `sequencer` is a local structural contract (`pattern` with `size` and lanes of `cells[].velocity`, `playheads` and `setCell(laneId, step, { velocity })`), so a `StepSequencer` or your own pattern model fits. Click a step to toggle and focus it to adjust its velocity. The grid follows the pattern: it rebuilds when `size` or the lane list (IDs and labels) changes and only updates its buttons when velocities change. Destroying the view leaves the borrowed pattern available.
 
 `mountPadGrid(root, { pads, press })` turns pointer or focused keyboard presses into calls to `press(id)`. A one-shot callback returns nothing. For a gated sound, return a release callback for that specific press. The widget releases held inputs on key or pointer release, focus loss and destruction. It leaves the audio engine and pad mapping with the caller.
 

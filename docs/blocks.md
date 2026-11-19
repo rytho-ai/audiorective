@@ -337,15 +337,66 @@ queued?.cancel(); // removes both the hit and its future choke; manual keeps sou
 // Later: manual?.cancel(); instruments.destroy(); context.close();
 ```
 
-`trigger(id, velocity = 1, when = context.currentTime)` returns an `PadHit` with idempotent `cancel()` / `stop()` and `onEnded(listener)`, or `null` for an unknown pad ID. Velocity clamps to 0..1; a past `when` plays now. `gate: true` loops a sample until its event is cancelled or choked; otherwise it plays once. Later hits with a **different ID** in the same `group` choke earlier hits at their native audio start time, even if the later hit was scheduled first. Hits of the same ID may overlap. Choke is carried by a per-event gain gate, so cancelling an unstarted hit retracts its future choke. A choke that already reached its deadline stays committed and cannot resurrect an earlier sound. The cleanup timer retires silent nodes; it does not time the audible cutoff.
+`trigger(id, velocity = 1, when = context.currentTime, options?: { pitch?: number; duration?: number })` returns an `PadHit` with idempotent `cancel()` / `stop()` and `onEnded(listener)`, or `null` for an unknown pad ID. Velocity clamps to 0..1; a past `when` plays now. `options.pitch` is in semitones and sets the playback rate to `2 ** (pitch / 12)`. `options.duration` (seconds) applies only to `gate: true` pads: the gate closes at `when + duration`, retractably like choke, so cancelling the hit before then keeps the earlier close from applying; one-shot pads ignore it and play to the end of their buffer. `gate: true` loops a sample until its event is cancelled or choked; otherwise it plays once. Later hits with a **different ID** in the same `group` choke earlier hits at their native audio start time, even if the later hit was scheduled first. Hits of the same ID may overlap. Choke is carried by a per-event gain gate, so cancelling an unstarted hit retracts its future choke. A choke that already reached its deadline stays committed and cannot resurrect an earlier sound. The cleanup timer retires silent nodes; it does not time the audible cutoff.
 
 `assign(id, buffer)` replaces that pad's buffer, cancels its current and future hits, and retracts their future choke. `stopAll()` cancels every hit. `cells.activeEvents` is a read-only reactive count and `cells.pads` is the read-only list of current pad specs, which changes on `assign`; `params.volume` follows the normal schedulable `.value` / `$` contract. The block owns its nodes and event handles, while the caller owns output routing and the `AudioContext`. It has no polyphony cap or voice-stealing policy. For Clock-owned sequenced hits, pass the handle to `window.own(hit, when)` and call `clock.refresh()` after pattern edits; manual hits remain unregistered. See [Clock](./clock.md#own-cancellable-events-when-transport-edits-must-cut-queued-sound).
 
 ## Step Sequencer
 
-`StepSequencer` owns a repeating beat grid and per-step velocities. Give it a fixed `StepPattern` with a step count, beats per step and unique lane IDs. Zero velocity skips a hit. The supplied trigger receives `{ laneId, step, velocity, when }` and returns a `CancellableEvent` (`cancel()` and `onEnded()`) or `null`. An `PadHit` is one. The trigger can delegate to `PadBank.trigger()`. The sequencer tracks and cancels only events returned by that callback. Use a separate call to the instrument for manual hits.
+`StepSequencer` owns an editable looping pattern: per-lane length, rate, direction and swing, and per-step velocity, offset, length, repeat, pitch and chance. It borrows a beat transport and an instrument trigger and imports only `@audiorective/core`.
 
-`schedule(window, timing)` reads the caller's transport window and registers its hits via `window.own(event, when)`. `timing` is any `BeatTiming`; pass the same `Timeline` the window came from. On edits, call the clock's `refresh()` to rebuild the unplayed look-ahead horizon. `setVelocity(laneId, step, velocity)` edits one step and `currentStep` exposes the current index. `reset()` clears its playhead and scheduled hits. A `StepSequencer` holds no nodes, timers or effects, so `reset()` releases everything it owns and there is no `destroy()`. `setVelocity`, `schedule` and `reset` never subscribe an effect that calls them. [the DAW runtime](./daw.md#step-sequencer) wires the scheduling and refresh for an attached pattern.
+```ts
+type StepRate = "1/2" | "1/4" | "1/8" | "1/16" | "1/32" | "1/64" | "1/2T" | "1/4T" | "1/8T" | "1/16T" | "1/32T" | "1/64T";
+type StepDirection = "forward" | "backward" | "bounce";
+type StepCell = { velocity; offset; length; repeat; pitch; chance }; // all readonly numbers
+type StepLane = { id; label; steps; rate; direction; swing; mute; solo; cells: readonly StepCell[] };
+type StepPattern = { size: number; lanes: readonly StepLane[] };
+new StepSequencer(pattern: StepPatternInput, trigger: (hit: StepHit) => CancellableEvent | null, options?: { random?: () => number });
+```
+
+`size` is the loop length in 1/16 steps (integer 1..128, so the loop lasts `size / 4` beats). Input is partial and filled with defaults: a lane gets `label = id`, `steps = size`, `rate = "1/16"`, `direction = "forward"`, `swing = 0`, `mute`/`solo` false and every cell off; a cell gets `velocity 0`, `offset 0`, `length 1`, `repeat 1`, `pitch 0`, `chance 1`. Every lane always holds `size` cells; cells beyond its `steps` are kept but not played.
+
+| Cell field | Range           | Meaning                                            |
+| ---------- | --------------- | -------------------------------------------------- |
+| `velocity` | 0..1            | 0 turns the step off                               |
+| `offset`   | -0.5..0.5       | shift of the hit, as a fraction of one lane step   |
+| `length`   | 1/16..4         | hit duration in lane steps (divided among repeats) |
+| `repeat`   | integer 1..8    | hits evenly spaced inside the step                 |
+| `pitch`    | integer -24..24 | semitones, passed to the trigger                   |
+| `chance`   | 0..1            | probability that the step plays                    |
+
+Lane fields: `steps` (integer 1..`size`, the lane's own length, so lanes of different lengths drift against each other), `rate` (a `StepRate`; straight 1/2 = 2 beats down to 1/64 = 1/16 beat, and a `T` rate is two thirds of the straight one), `direction`, `swing` (0..1; delays every odd lane step by `swing * 0.5` lane steps), `mute` and `solo`.
+
+**Timing.** Every lane restarts at each loop boundary, measured from beat 0 of the timing; a lane whose rate does not divide the loop is cut off at the loop end. With `k` the lane step counter in the loop, the played cell is `k mod steps` going forward, `steps - 1 - (k mod steps)` backward, and a ping-pong without repeating the end cells for `bounce` (`0 1 2 1 0 1 ...` for 3 steps; a 1-step lane stays on cell 0). A hit starts at `loopStart + k * rate`, plus swing, plus `offset * rate`; a start already in the past plays at the window's current time. A step with `repeat = r` plays `r` hits at `i * rate / r` and each lasts `length * rate / r` beats, converted to seconds through the timing. A lane plays when it is not muted and either no lane is soloed or it is soloed. A step plays when `velocity > 0` and `random() < chance`; the draw happens once per step, so all repeats of a step play or none do. Pass `options.random` for deterministic tests.
+
+The trigger receives a `StepHit` and returns a `CancellableEvent` (`cancel()` and `onEnded()`) or `null`; a `PadHit` is one.
+
+```ts
+type StepHit = {
+  laneId: string;
+  step: number;
+  velocity: number;
+  pitch: number;
+  when: number;
+  duration: number; // absolute seconds / seconds
+  repeatIndex: number;
+  repeatCount: number;
+};
+```
+
+The trigger can delegate to `PadBank.trigger(id, velocity, when, { pitch, duration })`. The sequencer tracks and cancels only events returned by that callback. Use a separate call to the instrument for manual hits.
+
+`schedule(window, timing)` reads the caller's transport window and registers its hits via `window.own(event, when)`. `timing` is any `BeatTiming`; pass the same `Timeline` the window came from. On edits, call the clock's `refresh()` to rebuild the unplayed look-ahead horizon.
+
+**State and commands.** `pattern` is a read-only reactive cell of the `StepPattern`; `playheads` is a read-only cell of `Record<laneId, cellIndex | null>` (the cell each lane is on at the window's current time) and `loopProgress` is a read-only cell of the 0..1 loop position or `null`. Only the sequencer writes them. Commands:
+
+- `setCell(laneId, step, patch)` changes any subset of one cell's fields in one write.
+- `toggle(laneId, step)` turns an off cell on at velocity 1 and an on cell off; its other fields are kept.
+- `setLane(laneId, patch)` changes any of `label`, `steps`, `rate`, `direction`, `swing`, `mute`, `solo`.
+- `setSize(size)` truncates or pads every lane's cells with off cells and clamps each lane's `steps` to the new size.
+- `reset()` cancels pending events and sets every playhead and `loopProgress` to `null`.
+
+A `StepSequencer` holds no nodes, timers or effects, so `reset()` releases everything it owns and there is no `destroy()`. The commands, `schedule` and `reset` never subscribe an effect that calls them. [The DAW runtime](./daw.md#step-sequencer) wires the scheduling and refresh for an attached pattern.
 
 ### Standalone drum machine
 
@@ -354,7 +405,7 @@ A vanilla drum machine with no DAW: your decoded buffers, a `Clock` driving the 
 ```ts
 import { Clock, Timeline } from "@audiorective/clock";
 import { PadBank } from "@audiorective/blocks/pads";
-import { StepSequencer, type StepPattern } from "@audiorective/blocks/sequencer";
+import { StepSequencer, type StepPatternInput } from "@audiorective/blocks/sequencer";
 import { mountStepGrid } from "@audiorective/widgets";
 
 const context = new AudioContext(); // you own it; resume() it from a user gesture
@@ -367,18 +418,19 @@ const bank = new PadBank(context, [
 ]);
 bank.output.connect(context.destination);
 
-const steps = (...on: number[]) => Array.from({ length: 16 }, (_, step) => (on.includes(step) ? 1 : 0));
-const pattern: StepPattern = {
-  steps: 16,
-  beatsPerStep: 0.25, // sixteenth notes
+const steps = (...on: number[]) => Array.from({ length: 16 }, (_, step) => ({ velocity: on.includes(step) ? 1 : 0 }));
+const pattern: StepPatternInput = {
+  size: 16, // sixteenth notes; lanes default to 1/16 and 16 steps
   lanes: [
-    { id: "kick", label: "Kick", velocities: steps(0, 4, 8, 12) },
-    { id: "snare", label: "Snare", velocities: steps(4, 12) },
-    { id: "closed", label: "Closed hat", velocities: steps(0, 4, 8, 12) },
-    { id: "open", label: "Open hat", velocities: steps(2, 10) },
+    { id: "kick", label: "Kick", cells: steps(0, 4, 8, 12) },
+    { id: "snare", label: "Snare", cells: steps(4, 12) },
+    { id: "closed", label: "Closed hat", cells: steps(0, 4, 8, 12) },
+    { id: "open", label: "Open hat", cells: steps(2, 10) },
   ],
 };
-const sequencer = new StepSequencer(pattern, ({ laneId, velocity, when }) => bank.trigger(laneId, velocity, when));
+const sequencer = new StepSequencer(pattern, ({ laneId, velocity, when, pitch, duration }) =>
+  bank.trigger(laneId, velocity, when, { pitch, duration }),
+);
 const timeline = new Timeline({ audioContext: context, bpm: 120 });
 const clock = new Clock({ timeline, onTick: (window) => sequencer.schedule(window, timeline) });
 const grid = mountStepGrid(document.querySelector("#grid")!, { sequencer }); // click toggles, focus adjusts velocity
@@ -389,7 +441,7 @@ timeline.bpm.value = 140; // takes effect on the next look-ahead window
 
 // Edits in the grid or code apply on the next tick; refresh() re-queues the look-ahead now.
 // A deleted closed-hat step that has not played yet no longer chokes the open hat.
-sequencer.setVelocity("closed", 4, 0);
+sequencer.setCell("closed", 4, { velocity: 0 });
 clock.refresh();
 
 // Teardown: the caller keeps the AudioContext.
@@ -418,10 +470,14 @@ Pass `mode: "one-shot"` on a change to request finite playback. The playback dri
 
 ## Common errors
 
-| Step Sequencer message                                                         | Fix                                                                           |
-| ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
-| `Step Sequencer needs a positive grid and unique lanes with valid velocities.` | Give each lane a unique ID and one finite velocity from 0 to 1 for each step. |
-| `Step Sequencer needs an existing step and a velocity from zero to one.`       | Use a current lane ID and zero-based step index with a velocity from 0 to 1.  |
+| Step Sequencer message                                                                                           | Fix                                                                                                                                                  |
+| ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Step Sequencer needs an integer size from 1 to 128.`                                                            | Pass a whole `size` in 1/16 steps from 1 to 128 to the constructor or `setSize`.                                                                     |
+| `Step Sequencer needs lanes with unique, nonempty IDs.`                                                          | Give every lane a different, nonempty string `id`.                                                                                                   |
+| `Step Sequencer lane needs steps from 1 to the pattern size, a known rate and direction, ...`                    | Keep `steps` within `size`, use a listed `StepRate`, `forward`/`backward`/`bounce`, swing 0..1, boolean `mute`/`solo` and no more than `size` cells. |
+| `Step Sequencer cell needs velocity and chance from 0 to 1, offset from -0.5 to 0.5, length from 1/16 to 4, ...` | Keep cell values in range; `repeat` is an integer 1..8 and `pitch` an integer -24..24.                                                               |
+| `Step Sequencer needs an existing lane and step.`                                                                | `setCell`/`toggle` need a current lane ID and a zero-based step below `size`.                                                                        |
+| `Step Sequencer needs an existing lane.`                                                                         | `setLane` needs a current lane ID.                                                                                                                   |
 
 | Sample Library message                                       | Fix                                                                           |
 | ------------------------------------------------------------ | ----------------------------------------------------------------------------- |
@@ -454,6 +510,7 @@ Loading, selection and playback messages from `WavePlayer`. Stretch and time-map
 | `Source automation requires non-looping playback.`                                                                                                 | Loop requested with finite source automation     | Detach the binding before looping, or play the selection once.                  |
 | `Pad Bank pad IDs must be nonempty and unique.`                                                                                                    | Empty or repeated pad ID                         | Give each pad a stable unique ID.                                               |
 | `Pad hit time must be finite, non-negative seconds.` / `Pad hit velocity must be finite.`                                                          | Invalid hit time or velocity                     | Use absolute audio seconds and a finite velocity.                               |
+| `Pad hit pitch must be finite semitones.` / `Pad hit duration must be finite, positive seconds.`                                                   | Invalid `options.pitch` or `options.duration`    | Pass finite semitones and a duration above zero.                                |
 | `Unknown pad.`                                                                                                                                     | `assign()` received an ID not in the bank        | Assign to a declared pad ID.                                                    |
 | `PadBank is destroyed.`                                                                                                                            | Trigger or assign after cleanup                  | Create a new block; `destroy()` is final.                                       |
 | `AudioRecorder channels must be an integer from 1 to 32.`                                                                                          | Invalid channel option                           | Choose an integer channel count from 1 to 32.                                   |
