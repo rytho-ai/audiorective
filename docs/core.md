@@ -256,6 +256,17 @@ pattern.update((draft) => {
 pattern.value; // { steps: [true, false, false, false, true, ...], velocity: [...] }
 ```
 
+`update` runs the recipe through Immer `produce`. A recipe may mutate the draft or return a replacement value, never both. An expression-bodied arrow does both when it mutates and returns the draft, as `Object.assign` does, and Immer throws `An immer producer returned a new value *and* modified its draft. Either return a new value *or* modify the draft.` Use a block body so the arrow returns nothing:
+
+```typescript
+pattern.update((p) => Object.assign(p, patch)); // throws: mutates the draft and returns it
+pattern.update((p) => {
+  Object.assign(p, patch); // ok: block body returns undefined
+});
+```
+
+To replace the whole value, assign `pattern.value = next` instead.
+
 ### ReadonlyCell\<T\>
 
 A tracked view that cannot be written: `.value` has no setter, `$` takes no argument, and there is no `.update()`. Use it for state that may only change through its owner's methods, because the change needs validation, playback, or cancellation. The owner keeps the writable `Cell` private and registers the view.
@@ -1185,6 +1196,21 @@ Auto-registers all `AudioProcessor` instances from the returned object. Only one
 
 Throws [`EngineEnvironmentError`](#engineenvironmenterror) if the environment has no `AudioContext` constructor. Passing your own context — `createEngine(setup, { context })` — bypasses the check entirely, which is how you run against a mock or a host-provided context. The throw happens before `setup` runs, so a failed call never leaves a partly built graph behind.
 
+**What gets registered.** Only values that are `AudioProcessor` instances at the top level of the returned object are registered, and `engine.core.destroy()` destroys exactly those, then closes a context the engine created. A processor nested inside another object (a plain composite such as a drum machine that owns processors) is not registered, and neither is the composite itself. Return the composite beside its processors, so the engine destroys the processors; the composite's own non-audio state (cells, timers, a `Clock`) is yours to tear down:
+
+```typescript
+const engine = createEngine((ctx) => {
+  const kit = new Kit(ctx); // AudioProcessor: registered and destroyed by the engine
+  const machine = new DrumMachine(kit); // plain composite: kept on the result, not registered
+  return { machine, kit };
+});
+
+engine.machine.clock.destroy(); // yours to destroy
+engine.core.destroy(); // destroys kit
+```
+
+A processor you build later, outside `setup`, joins with `engine.core.register(processor)`.
+
 The `setup` callback's original one-argument form (`createEngine((ctx) => …)`) still works — `helpers` is a second argument, so no existing consumer breaks.
 
 ```typescript
@@ -1369,19 +1395,20 @@ export type {
 
 ## Common errors
 
-| Message                                                                                          | Cause                                                                                                   | Fix                                                                                         |
-| ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `AudioEngine destroyed before it became ready`                                                   | `untilReady()` was called on, or was pending when, a destroyed engine.                                  | Create a new engine; `destroy()` is final. Do not await readiness across a teardown.        |
-| `createEngine: setup returned reserved key "core"`                                               | The object returned by `setup` has a `core` property, which the engine reserves for itself.             | Rename that property; read the engine core as `engine.core`.                                |
-| `Event transform "<id>" returned an event without a finite "beat".`                              | A beat transform (the default unit) returned an event whose `beat` is missing or not finite.            | Fix that transform; return finite beats, or set `unit: "second"` to work with `when`.       |
-| `Event transform "<id>" returned an event without a finite "when".`                              | A seconds transform (`unit: "second"`) returned an event whose `when` is missing or not finite.         | Fix that transform; return finite seconds.                                                  |
-| `Event transform "<id>" returned an event whose "durationBeats" is not a finite number above 0.` | A beat transform returned an event with a `durationBeats` that is zero, negative or not finite.         | Fix that transform; omit `durationBeats` or return a finite number above 0.                 |
-| `Event transform "<id>" has a unit other than "beat" or "second".`                               | A transform's `unit` is something else, such as `"ms"`.                                                 | Use `"beat"` (or omit `unit`) or `"second"`.                                                |
-| `Event transform "<id>" returned an event whose "duration" is not a finite number above 0.`      | A seconds transform returned an event with a `duration` that is zero, negative or not finite.           | Fix that transform; omit `duration` or return a finite number above 0.                      |
-| `Event transform "<id>" returned an event whose "velocity" is not a finite number from 0 to 1.`  | A transform returned a hit with a `velocity` outside 0..1 or not finite.                                | Fix that transform; clamp velocity to 0..1.                                                 |
-| `Event transform "<id>" must return an array of events.`                                         | A transform returned something other than an array.                                                     | Return an array (possibly empty) from `apply`.                                              |
-| `<name>'s path latency is unknown: …`                                                            | A latency query on a processor that appears in no `defineGraph` (`LatencyUnknownError`).                | Wire it with `defineGraph`, its own or the engine's, instead of raw `.connect()`.           |
-| `defineGraph: <name> is a bare AudioWorkletNode …`                                               | A worklet node was used directly as an edge endpoint, so its latency is unknowable.                     | Wrap it in an `AudioProcessor` that declares `latency`.                                     |
-| `defineGraph: <name> used as source has no output` / `defineGraph: <name> has no output`         | A processor with no `output` (an input-only sink) was used as an edge source or endpoint.               | Check the edge direction; give the processor an `output` or route from a node that has one. |
-| `loadAudioBuffer: failed to fetch <url> (<status>)`                                              | The URL answered with a non-2xx HTTP status.                                                            | Check the URL and server response; decode errors surface from `decodeAudioData` instead.    |
-| `registerWorklet: this AudioContext has no audioWorklet, so "<name>" cannot be loaded. …`        | The context has no `audioWorklet` (old browser, some test contexts); this is `WorkletUnavailableError`. | Run in a browser with AudioWorklet support, or choose an engine that needs no worklet.      |
+| Message                                                                                          | Cause                                                                                                                                            | Fix                                                                                                    |
+| ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| `AudioEngine destroyed before it became ready`                                                   | `untilReady()` was called on, or was pending when, a destroyed engine.                                                                           | Create a new engine; `destroy()` is final. Do not await readiness across a teardown.                   |
+| `An immer producer returned a new value *and* modified its draft. …`                             | Immer's message, thrown from `Cell.update` when an expression-bodied recipe such as `p => Object.assign(p, x)` mutates the draft and returns it. | Use a block body, `p => { Object.assign(p, x); }`, or assign `cell.value = next` to replace the value. |
+| `createEngine: setup returned reserved key "core"`                                               | The object returned by `setup` has a `core` property, which the engine reserves for itself.                                                      | Rename that property; read the engine core as `engine.core`.                                           |
+| `Event transform "<id>" returned an event without a finite "beat".`                              | A beat transform (the default unit) returned an event whose `beat` is missing or not finite.                                                     | Fix that transform; return finite beats, or set `unit: "second"` to work with `when`.                  |
+| `Event transform "<id>" returned an event without a finite "when".`                              | A seconds transform (`unit: "second"`) returned an event whose `when` is missing or not finite.                                                  | Fix that transform; return finite seconds.                                                             |
+| `Event transform "<id>" returned an event whose "durationBeats" is not a finite number above 0.` | A beat transform returned an event with a `durationBeats` that is zero, negative or not finite.                                                  | Fix that transform; omit `durationBeats` or return a finite number above 0.                            |
+| `Event transform "<id>" has a unit other than "beat" or "second".`                               | A transform's `unit` is something else, such as `"ms"`.                                                                                          | Use `"beat"` (or omit `unit`) or `"second"`.                                                           |
+| `Event transform "<id>" returned an event whose "duration" is not a finite number above 0.`      | A seconds transform returned an event with a `duration` that is zero, negative or not finite.                                                    | Fix that transform; omit `duration` or return a finite number above 0.                                 |
+| `Event transform "<id>" returned an event whose "velocity" is not a finite number from 0 to 1.`  | A transform returned a hit with a `velocity` outside 0..1 or not finite.                                                                         | Fix that transform; clamp velocity to 0..1.                                                            |
+| `Event transform "<id>" must return an array of events.`                                         | A transform returned something other than an array.                                                                                              | Return an array (possibly empty) from `apply`.                                                         |
+| `<name>'s path latency is unknown: …`                                                            | A latency query on a processor that appears in no `defineGraph` (`LatencyUnknownError`).                                                         | Wire it with `defineGraph`, its own or the engine's, instead of raw `.connect()`.                      |
+| `defineGraph: <name> is a bare AudioWorkletNode …`                                               | A worklet node was used directly as an edge endpoint, so its latency is unknowable.                                                              | Wrap it in an `AudioProcessor` that declares `latency`.                                                |
+| `defineGraph: <name> used as source has no output` / `defineGraph: <name> has no output`         | A processor with no `output` (an input-only sink) was used as an edge source or endpoint.                                                        | Check the edge direction; give the processor an `output` or route from a node that has one.            |
+| `loadAudioBuffer: failed to fetch <url> (<status>)`                                              | The URL answered with a non-2xx HTTP status.                                                                                                     | Check the URL and server response; decode errors surface from `decodeAudioData` instead.               |
+| `registerWorklet: this AudioContext has no audioWorklet, so "<name>" cannot be loaded. …`        | The context has no `audioWorklet` (old browser, some test contexts); this is `WorkletUnavailableError`.                                          | Run in a browser with AudioWorklet support, or choose an engine that needs no worklet.                 |

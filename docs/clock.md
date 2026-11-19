@@ -70,6 +70,31 @@ for (const { time } of window.rulers.bar.grid(16)) {
 
 Writing `trigger({ time })` is the natural first draft and it does not compile — TypeScript rejects it (`'time' does not exist in type 'VoiceOptions'`). That error is the fix instruction: rename the key, don't reshape the call.
 
+### Typing the window
+
+`Timeline` accumulates its ruler types through `addRuler`, and `TickWindow<Rulers>` is the type of the `window` your `onTick` receives. To pass the window to a method or function, derive `Rulers` from the timeline instead of writing it out:
+
+```typescript
+import { Clock, Timeline, CycleBarRuler, type TickWindow } from "@audiorective/clock";
+
+const timeline = new Timeline({ audioContext: ctx, bpm: 120 }).addRuler("loop", new CycleBarRuler({ numerator: 4, denominator: 4, bars: 1 }));
+
+type Rulers = typeof timeline extends Timeline<infer R> ? R : never;
+
+class Machine {
+  schedule(window: TickWindow<Rulers>): void {
+    for (const { time, step } of window.rulers.loop.grid(16)) {
+      // schedule a hit at `time`
+    }
+  }
+}
+
+const machine = new Machine();
+const clock = new Clock({ timeline, onTick: (window) => machine.schedule(window) });
+```
+
+When a class stores the timeline or clock as a field, annotate it `Timeline<Rulers>` / `Clock<Rulers>` with the same `Rulers`. Writing the record by hand also works: `Record<"loop", Ruler<CycleBarWindow, CycleBarPoint>>`.
+
 ## The window convention
 
 **Derive each event from data the window hands you exactly once, and you will never double-schedule.** Grid iteration (`ruler.grid(division)`) does this automatically — it's the primary idiom and covers the large majority of sequencer/arpeggiator/metronome code.

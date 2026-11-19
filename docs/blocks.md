@@ -361,6 +361,8 @@ Choke is carried by a per-event gain gate, so cancelling an unstarted hit retrac
 
 `StepSequencer` owns an editable looping pattern: per-lane length, rate, direction and swing, per-step velocity, offset, length, repeat, pitch and chance, and any numbers you declare per step. It borrows a beat transport and an instrument trigger and imports only `@audiorective/core`.
 
+`StepSequencer` is the wrong tool when the pattern is not a lane-and-step grid with these per-cell fields, for example per-lane state machines, polyrhythm rules of your own, or note logic that is not a cell edit. Schedule directly instead: iterate `window.rulers.<name>.grid(division)` from a `Clock` `onTick`, trigger the sound at each point's `time`, and register the returned handle with `window.own(hit, time)` so transport edits cut it. See [Clock](./clock.md#own-cancellable-events-when-transport-edits-must-cut-queued-sound) and [Typing the window](./clock.md#typing-the-window).
+
 ```ts
 type StepRate = "1/2" | "1/4" | "1/8" | "1/16" | "1/32" | "1/64" | "1/2T" | "1/4T" | "1/8T" | "1/16T" | "1/32T" | "1/64T";
 type StepDirection = "forward" | "backward" | "bounce";
