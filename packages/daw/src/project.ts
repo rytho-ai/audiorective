@@ -3,6 +3,7 @@ export { Project, MidiClip, audioClipSourceDuration, audioClipTimeMap } from "./
 export type {
   MidiTimeUnit,
   ProjectOptions,
+  ProjectContent,
   ProjectTrack,
   ProjectClip,
   ProjectAudio,

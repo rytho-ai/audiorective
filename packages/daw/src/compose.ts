@@ -4,7 +4,11 @@ import type { OpenDawProjectResult } from "./dawproject";
 
 async function start(context: AudioContext, opened: OpenDawProjectResult, options: WorkspaceOptions): Promise<Workspace> {
   try {
-    return await Workspace.create(context, opened.project, { ...options, warnings: [...opened.warnings, ...(options.warnings ?? [])] });
+    return await Workspace.create(context, opened.project, {
+      ...options,
+      ownsProject: true,
+      warnings: [...opened.warnings, ...(options.warnings ?? [])],
+    });
   } catch (error) {
     opened.project.destroy();
     throw error;

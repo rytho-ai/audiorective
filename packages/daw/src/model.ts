@@ -10,7 +10,7 @@ import type { PCMData } from "@audiorective/core";
 import { batch, Cell, readonlyCell, ReadonlyCell, untracked } from "@audiorective/core";
 import { AutomationCurve, type AutomationPoint } from "@audiorective/core/automation";
 import { compileMidiPlaybackEvents, MidiSequence } from "@audiorective/midi";
-import type { MidiData, MidiPlaybackEvent, RecordedMidi, RecordedMidiEvent } from "@audiorective/midi";
+import type { MidiData, MidiNote, MidiPlaybackEvent, RecordedMidi, RecordedMidiEvent } from "@audiorective/midi";
 import { AudioMedia } from "./media";
 import { TempoMap } from "./tempo-map";
 import type { TempoChange } from "./tempo-map";
@@ -243,6 +243,12 @@ export type ProjectTrack = Readonly<{
   clips: readonly ProjectClip[];
 }>;
 
+/** Everything a Project persists: its structural revision plus each MIDI clip's notes, which the clip's sequence owns. */
+export type ProjectContent = Readonly<{
+  revision: number;
+  midi: ReadonlyMap<string, Readonly<{ notes: readonly MidiNote[]; duration: number }>>;
+}>;
+
 export type ProjectOptions = Readonly<{
   title?: string;
   bpm?: number;
@@ -273,7 +279,11 @@ export class Project {
   /** The only store for observable content. Written by `commit`, read tracked by the public getters. */
   private readonly store: Cell<ProjectState>;
   private readonly ids = new Set<string>();
-  readonly cells: Readonly<{ revision: ReadonlyCell<number> }>;
+  /**
+   * `revision` counts structural commits. `content` also re-runs for note and duration edits made through a
+   * `MidiClip.sequence`, which owns its notes; selection changes do not re-run it.
+   */
+  readonly cells: Readonly<{ revision: ReadonlyCell<number>; content: ReadonlyCell<ProjectContent> }>;
   private nextId = 1;
 
   /** Untracked read of the current snapshot, for the owner's own logic. */
@@ -311,7 +321,17 @@ export class Project {
       }),
     );
     const store = this.store;
-    this.cells = Object.freeze({ revision: readonlyCell(() => store.value.revision) });
+    this.cells = Object.freeze({
+      revision: readonlyCell(() => store.value.revision),
+      content: readonlyCell<ProjectContent>(() => {
+        const state = store.value;
+        const midi = new Map<string, { notes: readonly MidiNote[]; duration: number }>();
+        for (const track of state.tracks)
+          for (const clip of track.clips)
+            if (clip instanceof MidiClip) midi.set(clip.id, { notes: clip.sequence.cells.notes.value, duration: clip.sequence.cells.duration.value });
+        return Object.freeze({ revision: state.revision, midi });
+      }),
+    });
   }
 
   get hasFileBackedAudio(): boolean {

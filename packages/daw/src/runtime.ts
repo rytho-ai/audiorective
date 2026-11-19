@@ -30,6 +30,8 @@ export type WorkspaceOptions = {
   resolveBundle?: (device: WebClapDevice) => string | Promise<string | undefined> | undefined;
   /** Messages produced before the workspace existed, such as file-open warnings; they precede the workspace's own. */
   warnings?: readonly string[];
+  /** Hand the Project to the Workspace: `destroy()` destroys it too. Ownership ends if `workspace.project` is later replaced. Default: the caller owns it. */
+  ownsProject?: boolean;
 };
 /** A borrowed transport view that can be passed directly to a player widget. */
 export type WorkspacePlayer = Readonly<{
@@ -73,6 +75,8 @@ export class Workspace {
   private readonly launcher: ClipLauncher;
 
   private readonly projectSource: Cell<Project>;
+  /** The Project this Workspace destroys with itself, when it was handed one. */
+  private ownedProject?: Project;
   private readonly options: WorkspaceOptions;
   /** What a separate render workspace needs to load the same devices. */
   get deviceOptions(): Pick<WorkspaceOptions, "workletUrl" | "resolveBundle"> {
@@ -98,6 +102,7 @@ export class Workspace {
   private constructor(context: AudioContext, project: Project, options: WorkspaceOptions) {
     this.context = context;
     this.projectSource = cell(project);
+    if (options.ownsProject) this.ownedProject = project;
     this.activeTempoMap = project.tempoMap;
     this.options = options;
     this.scheduler = new ClipScheduler(context, (message) => this.warn(message));
@@ -180,6 +185,7 @@ export class Workspace {
 
   set project(project: Project) {
     if (project === this.project) return;
+    if (this.ownedProject !== project) this.ownedProject = undefined;
     batch(() => {
       this.audition.stop();
       this.projectSource.value = project;
@@ -892,5 +898,7 @@ export class Workspace {
     for (const detach of [...this.stepSequencers.values()]) detach();
     this.disposeTracks();
     this.output.disconnect();
+    this.ownedProject?.destroy();
+    this.ownedProject = undefined;
   }
 }

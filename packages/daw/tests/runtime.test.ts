@@ -580,3 +580,55 @@ describe("track creation failure", () => {
     project.destroy();
   });
 });
+
+describe("project ownership", () => {
+  test("a workspace opened from a file destroys the project it created", async () => {
+    const source = new Project();
+    source.addTrack("Keys", "midi");
+    const workspace = await openWorkspace(context(), saveDawProject(source));
+    const destroy = vi.spyOn(workspace.project, "destroy");
+    workspace.destroy();
+    expect(destroy).toHaveBeenCalledTimes(1);
+    workspace.destroy();
+    expect(destroy).toHaveBeenCalledTimes(1);
+    source.destroy();
+  });
+
+  test("a project handed to Workspace.create stays with the caller", async () => {
+    const { project, workspace } = await setup();
+    const destroy = vi.spyOn(project, "destroy");
+    workspace.destroy();
+    expect(destroy).not.toHaveBeenCalled();
+    project.destroy();
+  });
+
+  test("ownsProject hands the project over, and replacing it releases the claim", async () => {
+    const owned = new Project();
+    const first = await Workspace.create(context(), owned, { ownsProject: true });
+    const destroyOwned = vi.spyOn(owned, "destroy");
+    first.destroy();
+    expect(destroyOwned).toHaveBeenCalledTimes(1);
+    const original = new Project();
+    const second = await Workspace.create(context(), original, { ownsProject: true });
+    const replacement = new Project();
+    second.project = replacement;
+    const destroyOriginal = vi.spyOn(original, "destroy");
+    const destroyReplacement = vi.spyOn(replacement, "destroy");
+    second.destroy();
+    expect(destroyOriginal).not.toHaveBeenCalled();
+    expect(destroyReplacement).not.toHaveBeenCalled();
+    original.destroy();
+    replacement.destroy();
+  });
+});
+
+describe("workspace cell aliases", () => {
+  test("session, auditioningClip and auditioningRange are the same cell objects as workspace.cells", async () => {
+    const { project, workspace } = await setup();
+    expect(workspace.session).toBe(workspace.cells.session);
+    expect(workspace.auditioningClip).toBe(workspace.cells.auditioningClip);
+    expect(workspace.auditioningRange).toBe(workspace.cells.auditioningRange);
+    workspace.destroy();
+    project.destroy();
+  });
+});

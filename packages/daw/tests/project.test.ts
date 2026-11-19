@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { unzipSync, zipSync } from "fflate";
 import type { RecordedMidi } from "@audiorective/midi";
+import { effect } from "@audiorective/core";
 import { Project, TempoMap, openDawProject, saveDawProject } from "../src";
 
 const text = new TextDecoder();
@@ -579,6 +580,32 @@ describe("DAWproject native slice", () => {
       ]),
     ).toThrow("Project markers need unique non-negative times and names.");
     opened.project.destroy();
+    project.destroy();
+  });
+});
+
+describe("project content tracking", () => {
+  test("a note edit does not bump the structural revision, but cells.content re-runs; selection does not", () => {
+    const project = new Project();
+    const track = project.addTrack("Keys", "midi");
+    const clip = project.addMidiTake(track.id, midiTake(true), 0);
+    const structural: number[] = [];
+    const content: number[] = [];
+    const stopStructural = effect(() => void structural.push(project.cells.revision.value));
+    const stopContent = effect(() => void content.push(project.cells.content.value.revision));
+    const revision = project.cells.revision.value;
+    clip.sequence.updateNote("note-1", { pitch: 65 });
+    expect(project.cells.revision.value).toBe(revision);
+    expect(structural).toHaveLength(1);
+    expect(content).toHaveLength(2);
+    expect(project.cells.content.value.midi.get(clip.id)!.notes[0].pitch).toBe(65);
+    clip.sequence.setSelection({ start: 0, end: 0.05 });
+    expect(content).toHaveLength(2);
+    project.setTrackVolume(track.id, 0.5);
+    expect(content).toHaveLength(3);
+    expect(project.cells.content.value.revision).toBe(project.cells.revision.value);
+    stopStructural();
+    stopContent();
     project.destroy();
   });
 });
