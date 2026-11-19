@@ -25,7 +25,7 @@ const detach = host.hasEditor ? await host.mountEditor(iframe) : undefined;
 // On teardown: detach?.(); host.destroy();
 ```
 
-The [DAW demo](../apps/daw-demo/main.ts) uses a relative worklet asset URL. If `workletUrl` is omitted, `WebClapHost.load` resolves it beside its published JS module. Serve the worklet and bundle from the app's origin. `scheduleMidi` takes absolute `AudioContext` seconds and returns a handle for Clock's `window.own(handle, when)`. A host declares plug-in latency through `AudioProcessor.latency`. Applications using raw `.connect()` own any path delay compensation.
+The [DAW demo](../apps/daw-demo/main.ts) uses a relative worklet asset URL. If `workletUrl` is omitted, `WebClapHost.load` resolves it beside its published JS module. Serve the worklet and bundle from the app's origin. `scheduleMidi` takes absolute `AudioContext` seconds and returns a handle for Clock's `window.own(handle, when)`. A host declares plug-in latency through `AudioProcessor.latency`, in samples (the plug-in's reported latency). Applications using raw `.connect()` own any path delay compensation.
 
 ## Parameters and state
 

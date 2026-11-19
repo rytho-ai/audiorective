@@ -63,7 +63,7 @@ describe("WebClapHost params", () => {
     expect(host.params["7"].label).toBe("p7");
     expect(host.params["7"].max).toBe(1);
     expect(host.parameterInfo).toHaveLength(2);
-    expect(host.latency.value).toBeCloseTo(48 / 48000);
+    expect(host.latency.value).toBe(48);
   });
 
   it("forwards writes to the worklet", async () => {

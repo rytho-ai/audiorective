@@ -91,7 +91,7 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
     this.descriptor = loaded.descriptor;
     this.infoStore = infoStore;
     this.hasEditor = loaded.hasGui;
-    this.latency.value = (loaded.latencySamples ?? 0) / context.sampleRate;
+    this.latency.value = loaded.latencySamples ?? 0;
     node.port.onmessage = (event: MessageEvent<HostMessage>) => this.receive(event.data);
     for (const message of early) this.receive(message);
   }
