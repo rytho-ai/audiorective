@@ -42,12 +42,15 @@ type Hit = {
 /**
  * Sample hits with retractable same-group choke. The caller owns the AudioContext and routing.
  * A native gain gate carries future choke so cancelling the incoming hit can retract it.
+ * Each pad feeds the bank `output` through its own gain; `routePad` redirects that gain, so pads in one choke group can have separate effects.
  */
 export class PadBank extends AudioProcessor<
   { volume: SchedulableParam },
   { activeEvents: ReadonlyCell<number>; pads: ReadonlyCell<readonly PadSpec[]> }
 > {
   private readonly outputNode: GainNode;
+  /** One bank-owned gain per pad: every hit of the pad feeds it, and it feeds `output` unless routed elsewhere. */
+  private readonly padNodes = new Map<string, GainNode>();
   private readonly activeStore: Cell<number>;
   /** The only store of pad specs; `cells.pads` is its read-only view. */
   private readonly padStore: Cell<readonly PadSpec[]>;
@@ -70,6 +73,11 @@ export class PadBank extends AudioProcessor<
       cells: { activeEvents: readonlyCell(active), pads: readonlyCell(store) },
     }));
     this.outputNode = output;
+    for (const pad of pads) {
+      const node = new GainNode(context);
+      node.connect(output);
+      this.padNodes.set(pad.id, node);
+    }
     this.activeStore = active;
     this.padStore = store;
   }
@@ -165,7 +173,7 @@ export class PadBank extends AudioProcessor<
     this.settle();
     const at = Math.max(when, this.context.currentTime);
     const gate = new GainNode(this.context);
-    gate.connect(this.outputNode);
+    gate.connect(this.padNodes.get(pad.id)!);
     let hit: Hit | undefined;
     let voice: Voice;
     try {
@@ -216,6 +224,19 @@ export class PadBank extends AudioProcessor<
     };
   }
 
+  /**
+   * Send one pad's sound to `destination` instead of the bank `output`, or back to it with `null`.
+   * Choke still works across pads routed apart, because it acts on each hit's gate before the routing.
+   * The caller owns `destination`; the bank only adds and removes its own edge into it. Unknown pad IDs throw.
+   */
+  routePad(id: string, destination: AudioNode | null): void {
+    this.assertAlive();
+    const node = this.padNodes.get(id);
+    if (!node) throw new Error("Unknown pad.");
+    node.disconnect();
+    node.connect(destination ?? this.outputNode);
+  }
+
   /** Replace a pad's buffer and cancel only hits made from that pad. */
   assign(id: string, buffer: AudioBuffer): void {
     this.assertAlive();
@@ -241,6 +262,8 @@ export class PadBank extends AudioProcessor<
     if (this.disposed) return;
     this.disposed = true;
     this.stopAll();
+    for (const node of this.padNodes.values()) node.disconnect();
+    this.padNodes.clear();
     this.outputNode.disconnect();
     super.destroy();
   }

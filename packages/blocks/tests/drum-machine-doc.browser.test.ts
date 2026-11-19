@@ -4,7 +4,7 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { Clock, Timeline } from "@audiorective/clock";
 import { PadBank } from "../src/PadBank";
-import { StepSequencer, type StepPatternInput } from "../src/StepSequencer";
+import { refreshOnEdit, StepSequencer, type StepPatternInput } from "../src/StepSequencer";
 
 const disposers: Array<() => void | Promise<unknown>> = [];
 afterEach(async () => {
@@ -25,7 +25,7 @@ async function drumMachine() {
     { id: "kick", buffer: kick },
     { id: "snare", buffer: snare },
     { id: "closed", buffer: closedHat, group: "hat" },
-    { id: "open", buffer: openHat, group: "hat" },
+    { id: "open", buffer: openHat, group: "hat" }, // a one-shot (no gate) is still choked by a later closed hit
   ]);
   bank.output.connect(context.destination);
 
@@ -44,9 +44,11 @@ async function drumMachine() {
   );
   const timeline = new Timeline({ audioContext: context, bpm: 120 });
   const clock = new Clock({ timeline, onTick: (window) => sequencer.schedule(window, timeline) });
+  const stopRefresh = refreshOnEdit(sequencer, clock); // every edit re-queues the look-ahead
   // ---- end: same code as docs/blocks.md ----
 
   disposers.push(() => {
+    stopRefresh();
     clock.destroy();
     bank.destroy();
   });
@@ -95,7 +97,6 @@ async function openHatEndedAfterStep4(deleteClosed: boolean) {
     if (context.currentTime > when - SAFE_MARGIN) return null;
     // ---- begin: same code as docs/blocks.md ----
     sequencer.setCell("closed", 4, { velocity: 0 });
-    clock.refresh();
     // ---- end: same code as docs/blocks.md ----
   } else {
     expect(when).toBeGreaterThan(context.currentTime);

@@ -4,7 +4,7 @@ import { batch, cell, effect, readonlyCell, untracked, type Cell, type Readable,
 import { AutomationBinding, AutomationCurve, audioParamTarget } from "@audiorective/core/automation";
 import { WebClapHost } from "@audiorective/host/webclap";
 import { ClipLauncher, type ClipLaunch, type ClipLauncherState, type QueuedClipLaunch } from "@audiorective/blocks/launcher";
-import type { StepSequencer } from "@audiorective/blocks/sequencer";
+import { refreshOnEdit, type StepSequencer } from "@audiorective/blocks/sequencer";
 import type { WaveStretchAnchor, WaveStretchProcessor } from "@audiorective/blocks/player";
 import { EffectRack, type RackEffect } from "@audiorective/effects/rack";
 import { AudioTrackSession } from "./audio-track-session";
@@ -557,11 +557,8 @@ export class Workspace {
       sequence.reset();
     };
     this.stepSequencers.set(sequence, detach);
-    stop = effect(() => {
-      sequence.pattern.$();
-      sequence.transforms.$();
-      untracked(() => this.clock.refresh());
-    });
+    stop = refreshOnEdit(sequence, this.clock);
+    untracked(() => this.clock.refresh()); // a live attach is also an edit of the look-ahead
     return detach;
   }
 

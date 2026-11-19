@@ -2,6 +2,7 @@ import {
   applyEventTransforms,
   batch,
   cell,
+  effect,
   readonlyCell,
   untracked,
   type BeatTiming,
@@ -117,6 +118,26 @@ export function stepSwing(): EventTransform<StepHit> {
   };
 }
 
+/**
+ * Re-queue the transport's look-ahead once per committed change of `sequencer.pattern` or `sequencer.transforms`.
+ * Does not run on attach, and never subscribes a calling effect. Returns a disposer; call it before the transport goes away.
+ * `transport` is structural: a Clock, a Workspace clock or anything with `refresh()`.
+ */
+export function refreshOnEdit(sequencer: Pick<StepSequencer, "pattern" | "transforms">, transport: { refresh(): void }): () => void {
+  let armed = false;
+  return untracked(() =>
+    effect(() => {
+      sequencer.pattern.$();
+      sequencer.transforms.$();
+      if (!armed) {
+        armed = true;
+        return;
+      }
+      untracked(() => transport.refresh());
+    }),
+  );
+}
+
 export const defaultStepTransforms: readonly EventTransform<StepHit>[] = Object.freeze([stepSwing()]);
 
 const MAX_SIZE = 128;
@@ -136,8 +157,23 @@ const RATE_BEATS: Readonly<Record<StepRate, number>> = {
   "1/64T": 1 / 24,
 };
 const DIRECTIONS: readonly StepDirection[] = ["forward", "backward", "bounce"];
-const BUILTIN_CELL = { velocity: 0, offset: 0, length: 1, repeat: 1, pitch: 0, chance: 1 } as const;
-const BUILTIN_KEYS = Object.keys(BUILTIN_CELL) as (keyof typeof BUILTIN_CELL)[];
+/** The built-in cell fields as data, in display order: the one source for validation and for views. Same shape as a custom `StepParamSpec`. */
+export const stepCellParams: readonly StepParamSpec[] = Object.freeze(
+  [
+    { id: "velocity", label: "Velocity", min: 0, max: 1, default: 0, step: 0.01 },
+    { id: "offset", label: "Offset", min: -0.5, max: 0.5, default: 0, step: 0.01 },
+    { id: "length", label: "Length", min: 1 / 16, max: 4, default: 1, step: 1 / 16 },
+    { id: "repeat", label: "Repeat", min: 1, max: 8, default: 1, step: 1 },
+    { id: "pitch", label: "Pitch", min: -24, max: 24, default: 0, step: 1 },
+    { id: "chance", label: "Chance", min: 0, max: 1, default: 1, step: 0.01 },
+  ].map((spec) => Object.freeze(spec)),
+);
+/** The twelve lane rates in display order: straight from 1/2 down to 1/64, then the triplets. */
+export const stepRates: readonly StepRate[] = Object.freeze(Object.keys(RATE_BEATS) as StepRate[]);
+const BUILTIN_KEYS = stepCellParams.map((spec) => spec.id) as (keyof StepCell & string)[];
+const BUILTIN_CELL = Object.fromEntries(stepCellParams.map((spec) => [spec.id, spec.default])) as Omit<StepCell, "custom">;
+/** Built-in fields that only take whole numbers. */
+const INTEGER_KEYS: ReadonlySet<string> = new Set(["repeat", "pitch"]);
 
 const SIZE_ERROR = "Step Sequencer needs an integer size from 1 to 128.";
 const LANES_ERROR = "Step Sequencer needs lanes with unique, nonempty IDs.";
@@ -182,15 +218,9 @@ function buildParams(params: readonly StepParamSpec[] | undefined): readonly Ste
 function makeCell(base: StepCell, patch: StepCellInput, specs: readonly StepParamSpec[]): StepCell {
   const next: Record<string, unknown> = { ...base };
   for (const key of BUILTIN_KEYS) if (patch[key] !== undefined) next[key] = patch[key];
-  if (
-    !inRange(next.velocity as number, 0, 1) ||
-    !inRange(next.chance as number, 0, 1) ||
-    !inRange(next.offset as number, -0.5, 0.5) ||
-    !inRange(next.length as number, 1 / 16, 4) ||
-    !inRangeInt(next.repeat as number, 1, 8) ||
-    !inRangeInt(next.pitch as number, -24, 24)
-  )
-    throw new Error(CELL_ERROR);
+  for (const { id, min, max } of stepCellParams) {
+    if (!(INTEGER_KEYS.has(id) ? inRangeInt : inRange)(next[id] as number, min, max)) throw new Error(CELL_ERROR);
+  }
   if (patch.custom !== undefined) {
     if (typeof patch.custom !== "object" || patch.custom === null) throw new Error(CUSTOM_ERROR);
     const custom: Record<string, number> = { ...base.custom };
@@ -217,7 +247,7 @@ function makeLaneFields(base: LaneFields, patch: Partial<LaneFields>, size: numb
   if (
     typeof next.label !== "string" ||
     !inRangeInt(next.steps, 1, size) ||
-    !Object.hasOwn(RATE_BEATS, next.rate) ||
+    !stepRates.includes(next.rate) ||
     !DIRECTIONS.includes(next.direction) ||
     !inRange(next.swing, 0, 1) ||
     typeof next.mute !== "boolean" ||
@@ -269,6 +299,10 @@ export class StepSequencer {
   private readonly random: () => number;
   private readonly blank: StepCell;
   private readonly tf;
+  /** The built-in cell fields as data (same objects as `stepCellParams`), for views that edit cells. */
+  readonly cellParams: readonly StepParamSpec[] = stepCellParams;
+  /** The lane rates in display order (same list as `stepRates`). */
+  readonly rates: readonly StepRate[] = stepRates;
   /** Custom per-step parameters declared at construction. */
   readonly params: readonly StepParamSpec[];
   /** Transforms run, in order, over each window's hits. Replace with `setTransforms`. */
