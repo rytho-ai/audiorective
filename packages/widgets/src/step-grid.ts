@@ -1,4 +1,4 @@
-import { effect, type Readable } from "@audiorective/core";
+import { effect, untracked, type Readable } from "@audiorective/core";
 
 type StepPattern = Readonly<{
   steps: number;
@@ -25,15 +25,12 @@ export function mountStepGrid(
   view.className = "ar-step-grid";
   const table = doc.createElement("table");
   const head = table.createTHead().insertRow();
-  const { steps, lanes } = sequencer.pattern.value;
   function heading(row: HTMLTableRowElement, text: string, scope: "col" | "row"): void {
     const cell = doc.createElement("th");
     cell.scope = scope;
     cell.textContent = text;
     row.append(cell);
   }
-  heading(head, "", "col");
-  for (let step = 0; step < steps; step++) heading(head, String(step + 1), "col");
   const body = table.createTBody();
   const velocity = doc.createElement("input");
   velocity.type = "range";
@@ -57,33 +54,59 @@ export function mountStepGrid(
   velocity.addEventListener("input", () => {
     if (selected) sequencer.setVelocity(selected.id, selected.step, velocity.valueAsNumber);
   });
-  for (const lane of lanes) {
-    const row = body.insertRow();
-    heading(row, lane.label, "row");
-    const group = [];
-    for (let step = 0; step < steps; step++) {
-      const button = doc.createElement("button");
-      button.type = "button";
-      button.setAttribute("aria-label", formatStep(lane.label, step));
-      button.textContent = "·";
-      button.addEventListener("focus", () => {
-        selected = { id: lane.id, step };
-        refreshVelocity();
-      });
-      button.addEventListener("click", () => {
-        selected = { id: lane.id, step };
-        const current = sequencer.pattern.value.lanes.find(({ id }) => id === lane.id)!.velocities[step];
-        sequencer.setVelocity(lane.id, step, current > 0 ? 0 : 0.8);
-      });
-      row.insertCell().append(button);
-      group.push(button);
+  /** Rebuild the table for a pattern with a new step count or lane list. */
+  function build({ steps, lanes }: StepPattern): void {
+    head.replaceChildren();
+    body.replaceChildren();
+    buttons.clear();
+    heading(head, "", "col");
+    for (let step = 0; step < steps; step++) heading(head, String(step + 1), "col");
+    for (const lane of lanes) {
+      const row = body.insertRow();
+      heading(row, lane.label, "row");
+      const group = [];
+      for (let step = 0; step < steps; step++) {
+        const button = doc.createElement("button");
+        button.type = "button";
+        button.setAttribute("aria-label", formatStep(lane.label, step));
+        button.textContent = "·";
+        button.addEventListener("focus", () => {
+          selected = { id: lane.id, step };
+          refreshVelocity();
+        });
+        button.addEventListener("click", () => {
+          selected = { id: lane.id, step };
+          const current = sequencer.pattern.value.lanes.find(({ id }) => id === lane.id)!.velocities[step];
+          sequencer.setVelocity(lane.id, step, current > 0 ? 0 : 0.8);
+        });
+        row.insertCell().append(button);
+        group.push(button);
+      }
+      buttons.set(lane.id, group);
     }
-    buttons.set(lane.id, group);
+    if (selected && (selected.step >= steps || !buttons.has(selected.id))) {
+      selected = undefined;
+      velocity.disabled = true;
+    }
+    markCurrent(untracked(() => sequencer.currentStep.value));
+  }
+  function markCurrent(index: number | null): void {
+    for (const cells of buttons.values())
+      cells.forEach((button, step) => {
+        button.dataset.current = String(step === index);
+      });
   }
   view.append(table, label);
   root.append(view);
+  let shape = "";
   const stopPattern = effect(() => {
-    for (const lane of sequencer.pattern.value.lanes) {
+    const current = sequencer.pattern.value;
+    const next = JSON.stringify([current.steps, current.lanes.map(({ id, label }) => [id, label])]);
+    if (next !== shape) {
+      shape = next;
+      untracked(() => build(current));
+    }
+    for (const lane of current.lanes) {
       const cells = buttons.get(lane.id)!;
       lane.velocities.forEach((value, index) => {
         cells[index].setAttribute("aria-pressed", String(value > 0));
@@ -92,13 +115,7 @@ export function mountStepGrid(
     }
     refreshVelocity();
   });
-  const stopPlayhead = effect(() => {
-    const index = sequencer.currentStep.value;
-    for (const cells of buttons.values())
-      cells.forEach((button, step) => {
-        button.dataset.current = String(step === index);
-      });
-  });
+  const stopPlayhead = effect(() => markCurrent(sequencer.currentStep.value));
   return {
     destroy() {
       stopPattern();
