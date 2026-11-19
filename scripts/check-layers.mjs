@@ -17,9 +17,11 @@ const BLOCKS_CAPABILITIES = ["WavePlayer", "AudioRecorder", "SampleLibrary", "Pa
 const BLOCKS_HELPER_ALLOWLIST = {
   "WavePlayer.ts": ["source.ts"],
   "AudioRecorder.ts": ["recording/*"],
+  "StepSequencer.ts": ["notation.ts", "sounds.ts"],
+  "sounds.ts": ["notation.ts"],
 };
 /** Files that exist only as another capability's private helpers. */
-const BLOCKS_HELPERS = ["source.ts", "recording/*"];
+const BLOCKS_HELPERS = ["source.ts", "recording/*", "notation.ts", "sounds.ts"];
 
 const DAW_PROJECT = ["project.ts", "model.ts", "media.ts", "clip-time-map.ts", "tempo-map.ts", "clip-envelope.ts"];
 const DAW_CODEC = ["dawproject.ts"];

@@ -125,4 +125,31 @@ describe("Clock.attach", () => {
     clock.destroy();
     expect(() => clock.attach(late)).toThrow(/destroyed/);
   });
+
+  test("attached(handle) gets refresh and detach; its cleanup runs after reset on detach and on destroy", () => {
+    const { clock, tickSource } = harness();
+    const order: string[] = [];
+    let handle: { refresh(): void; detach(): void } | undefined;
+    const scheduler: Scheduler = {
+      schedule() {},
+      reset: () => void order.push("reset"),
+      attached: (h) => {
+        handle = h;
+        return () => void order.push("cleanup");
+      },
+    };
+    clock.attach(scheduler);
+    clock.start();
+    tickSource.tick();
+    order.length = 0;
+    expect(() => handle!.refresh()).not.toThrow();
+    handle!.detach();
+    handle!.detach();
+    expect(order).toEqual(["reset", "cleanup"]);
+    order.length = 0;
+    clock.attach(scheduler);
+    order.length = 0;
+    clock.destroy();
+    expect(order).toEqual(["reset", "cleanup"]);
+  });
 });

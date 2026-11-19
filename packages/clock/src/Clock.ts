@@ -33,6 +33,20 @@ export interface SchedulerWindow {
 export interface Scheduler {
   schedule(window: SchedulerWindow, timing: BeatTiming): void;
   reset?(): void;
+  /**
+   * Optional. Called once by `attach` with a handle to the transport the scheduler now follows, so it can re-queue its look-ahead after an
+   * edit (`handle.refresh()`) or leave on its own (`handle.detach()`). May return a cleanup, which runs when the scheduler is detached or the
+   * clock is destroyed, after `reset`.
+   */
+  attached?(handle: SchedulerHandle): void | (() => void);
+}
+
+/** What a scheduler learns about the transport it was attached to. */
+export interface SchedulerHandle {
+  /** The transport's `refresh()`: re-queue the look-ahead from now. Coalesced within one task. */
+  refresh(): void;
+  /** Detach this scheduler: the function `attach` returned. Idempotent. */
+  detach(): void;
 }
 
 export interface ClockOptions<TRulers extends Record<string, Ruler<unknown, unknown>>> {
@@ -59,6 +73,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
   private readonly _lookAhead: number;
   private readonly _onTick: ((window: TickWindow<TRulers>) => void) | undefined;
   private readonly _schedulers = new Set<Scheduler>();
+  private readonly _attachCleanups = new Map<Scheduler, () => void>();
   private readonly _onMiss?: (gap: MissedGap) => void;
   private readonly _tickSource: TickSource;
 
@@ -94,7 +109,8 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
 
   /**
    * Follow this clock with a scheduler: it receives every window after `onTick`, with this clock's timeline as its timing. Several schedulers
-   * share one transport and stay beat-aligned. Returns a detach function (idempotent) that calls `scheduler.reset()` and stops the windows.
+   * share one transport and stay beat-aligned. Returns a detach function (idempotent) that calls `scheduler.reset()` and stops the windows. A scheduler with an `attached(handle)` hook
+   * learns its transport that way (to `refresh()` after its own edits) and may return a cleanup that runs on detach.
    * Attaching while playing refreshes the look-ahead so the scheduler's first hits are not missed. An error thrown by a scheduler is logged
    * and does not stop the others.
    */
@@ -102,11 +118,33 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     if (this._destroyed) throw new Error("Clock is destroyed.");
     if (this._schedulers.has(scheduler)) throw new Error("Clock already has this scheduler attached.");
     this._schedulers.add(scheduler);
-    this.refresh();
-    return () => {
+    const detach = () => {
       if (!this._schedulers.delete(scheduler)) return;
       this._resetScheduler(scheduler);
+      this._cleanupScheduler(scheduler);
     };
+    if (scheduler.attached) {
+      try {
+        const cleanup = scheduler.attached({ refresh: () => this.refresh(), detach });
+        if (typeof cleanup === "function") this._attachCleanups.set(scheduler, cleanup);
+      } catch (error) {
+        this._schedulers.delete(scheduler);
+        throw error;
+      }
+    }
+    this.refresh();
+    return detach;
+  }
+
+  private _cleanupScheduler(scheduler: Scheduler): void {
+    const cleanup = this._attachCleanups.get(scheduler);
+    if (!cleanup) return;
+    this._attachCleanups.delete(scheduler);
+    try {
+      cleanup();
+    } catch (error) {
+      console.error("Clock scheduler cleanup failed:", error);
+    }
   }
 
   private _resetSchedulers(): void {
@@ -236,6 +274,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     this._tickSource.stop();
     this._cancelOwned();
     this._resetSchedulers();
+    for (const scheduler of [...this._schedulers]) this._cleanupScheduler(scheduler);
     this._schedulers.clear();
   }
 
