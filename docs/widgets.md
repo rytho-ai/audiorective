@@ -116,28 +116,31 @@ Each lane row has a header and a row of cells.
 
 **Styling.** Every colour and size is a CSS custom property with a neutral default, so a page themes the grid by setting properties on the root or an ancestor, without overriding selectors:
 
-| Property                                                                                                                    | Controls                                                           |
-| --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `--ar-step-font`, `--ar-step-color`, `--ar-step-muted`                                                                      | Text font, colour and secondary text                               |
-| `--ar-step-background`, `--ar-step-border`, `--ar-step-radius`, `--ar-step-padding`                                         | The grid frame                                                     |
-| `--ar-step-header-width` (default 320px)                                                                                    | Width of the lane header column                                    |
-| `--ar-step-header-background`, `--ar-step-name-color` (falls back to `--ar-step-header-color`)                              | The lane name block fill and its text                              |
-| `--ar-step-column-color`                                                                                                    | Column header labels and the ruler (falls back to muted)           |
-| `--ar-step-cell-height` (40px), `--ar-step-cell-min-width`, `--ar-step-cell-gap`, `--ar-step-lane-gap`, `--ar-step-bar-gap` | Cell and lane sizes, and the extra gap before every 4th step       |
-| `--ar-step-cell-background`, `--ar-step-cell-border`, `--ar-step-cell-radius`                                               | Off cells                                                          |
-| `--ar-step-cell-on-background`, `--ar-step-cell-on-border`                                                                  | Active cells                                                       |
-| `--ar-step-value-color`, `--ar-step-centre-line`                                                                            | The value bar (fill, centre bar, segments) and the centre line     |
-| `--ar-step-playhead`, `--ar-step-playhead-value-color`                                                                      | The playhead cell and its value bar                                |
-| `--ar-step-inert-opacity`                                                                                                   | Cells beyond a lane's `steps`                                      |
-| `--ar-step-focus`                                                                                                           | Keyboard focus outline                                             |
-| `--ar-step-progress`, `--ar-step-progress-track`, `--ar-step-progress-height`                                               | The loop progress bar                                              |
-| `--ar-step-label-color`, `--ar-step-label-background`                                                                       | The value label                                                    |
-| `--ar-step-control-background`, `--ar-step-control-color`, `--ar-step-control-border`, `--ar-step-control-radius`           | Header and toolbar controls                                        |
-| `--ar-step-box-background`, `--ar-step-box-color`, `--ar-step-box-border`                                                   | Number boxes, the rate picker and direction (fall back to control) |
-| `--ar-step-mute-active-background`, `--ar-step-mute-active-color`                                                           | Pressed Mute (fall back to control active)                         |
-| `--ar-step-solo-active-background`, `--ar-step-solo-active-color`                                                           | Pressed Solo (fall back to control active)                         |
-| `--ar-step-tabs-background`                                                                                                 | The segmented track behind the tabs and Fold                       |
-| `--ar-step-control-active-background`, `--ar-step-control-active-color`, `--ar-step-tab-radius`                             | Selected tab and pressed Fold; the default for Mute/Solo           |
+| Property                                                                                                                    | Controls                                                                     |
+| --------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `--ar-step-font`, `--ar-step-color`, `--ar-step-muted`                                                                      | Text font, colour and secondary text                                         |
+| `--ar-step-background`, `--ar-step-border`, `--ar-step-radius`, `--ar-step-padding`                                         | The grid frame                                                               |
+| `--ar-step-header-width` (default 340px, 300px in a container 900px wide or narrower)                                       | Width of the lane header column                                              |
+| `--ar-step-header-background`, `--ar-step-name-color` (falls back to `--ar-step-header-color`)                              | The lane name block fill and its text                                        |
+| `--ar-step-column-color`                                                                                                    | Column header labels and the ruler (falls back to muted)                     |
+| `--ar-step-cell-height` (40px), `--ar-step-cell-min-width`, `--ar-step-cell-gap`, `--ar-step-lane-gap`, `--ar-step-bar-gap` | Cell and lane sizes, and the extra gap before every 4th step                 |
+| `--ar-step-cell-background`, `--ar-step-cell-border`, `--ar-step-cell-radius`                                               | Off cells                                                                    |
+| `--ar-step-cell-on-background`, `--ar-step-cell-on-border`                                                                  | Active cells                                                                 |
+| `--ar-step-value-color`, `--ar-step-centre-line`                                                                            | The value bar (fill, centre bar, segments) and the centre line               |
+| `--ar-step-cap-height` (4px), `--ar-step-fill-inset` (3px)                                                                  | The on-colour cap above an active cell's value bar, and the bar's side inset |
+| `--ar-step-playhead`, `--ar-step-playhead-value-color`                                                                      | The playhead cell and its value bar                                          |
+| `--ar-step-inert-opacity`                                                                                                   | Cells beyond a lane's `steps`                                                |
+| `--ar-step-focus`                                                                                                           | Keyboard focus outline                                                       |
+| `--ar-step-progress`, `--ar-step-progress-track`, `--ar-step-progress-height`                                               | The loop progress bar                                                        |
+| `--ar-step-label-color`, `--ar-step-label-background`                                                                       | The value label                                                              |
+| `--ar-step-control-background`, `--ar-step-control-color`, `--ar-step-control-border`, `--ar-step-control-radius`           | Header and toolbar controls                                                  |
+| `--ar-step-box-background`, `--ar-step-box-color`, `--ar-step-box-border`                                                   | Number boxes, the rate picker and direction (fall back to control)           |
+| `--ar-step-mute-active-background`, `--ar-step-mute-active-color`                                                           | Pressed Mute (fall back to control active)                                   |
+| `--ar-step-solo-active-background`, `--ar-step-solo-active-color`                                                           | Pressed Solo (fall back to control active)                                   |
+| `--ar-step-tabs-background`                                                                                                 | The segmented track behind the tabs and Fold                                 |
+| `--ar-step-control-active-background`, `--ar-step-control-active-color`, `--ar-step-tab-radius`                             | Selected tab and pressed Fold; the default for Mute/Solo                     |
+
+**Responsive layout.** The widget root is a size container. At 900px or narrower the header column drops to 300px, controls and column labels compact, and cells shrink to a 14px minimum with a 2px gap and 6px bar gap, so a 768px container shows 16 steps and names such as "Tom even" without scrolling. Properties you set (`--ar-step-header-width`, `--ar-step-cell-min-width`, `--ar-step-cell-gap`, `--ar-step-bar-gap`) apply at every width. Below the minimum width the grid scrolls horizontally inside the widget. The widget needs a width from its parent, so avoid mounting it in a shrink-to-fit container.
 
 ### Step grid plugins
 
