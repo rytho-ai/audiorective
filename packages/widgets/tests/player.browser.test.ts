@@ -260,6 +260,52 @@ test("(b) unknown length: before metadata, live stream, track switch; never rend
   expect(clean()).toBe(true);
 });
 
+test("(b) unknown length through the real FilePlayer adapter: element events drive duration and position", async () => {
+  const ctx = context();
+  const player = new FilePlayer(ctx);
+  disposers.push(() => player.destroy());
+  // The element reports whatever the test defines; FilePlayer reads it on loadedmetadata / timeupdate / seeking.
+  const report = (duration: number, currentTime: number) => {
+    Object.defineProperty(player.audio, "duration", { configurable: true, get: () => duration });
+    Object.defineProperty(player.audio, "currentTime", { configurable: true, get: () => currentTime, set: () => {} });
+    player.audio.dispatchEvent(new Event("loadedmetadata"));
+    player.audio.dispatchEvent(new Event("timeupdate"));
+  };
+  const root = host();
+  const view = mountPlayer(root, { player: fromFilePlayer(player) });
+  disposers.push(() => view.destroy());
+  const ui = parts(root);
+  const clean = () => !/NaN|Infinity/.test(root.textContent ?? "") && !/NaN|Infinity/.test(ui.seek.max + ui.seek.value);
+
+  expect(ui.time.textContent).toBe("0:00 / --:--");
+  expect(ui.seek.disabled).toBe(true);
+
+  report(Infinity, 75); // live stream
+  expect(ui.time.textContent).toBe("1:15 / --:--");
+  expect(ui.seek.disabled).toBe(true);
+  expect(clean()).toBe(true);
+
+  report(200, 76); // the length arrives
+  expect(ui.time.textContent).toBe("1:16 / 3:20");
+  expect(ui.seek.disabled).toBe(false);
+  expect(ui.seek.valueAsNumber).toBe(76);
+
+  player.src = null; // a source change resets both cells
+  expect(ui.time.textContent).toBe("0:00 / --:--");
+  expect(ui.seek.disabled).toBe(true);
+
+  for (const odd of [0, -1, -Infinity]) {
+    report(odd, 0);
+    expect(ui.seek.disabled).toBe(true);
+    expect(ui.time.textContent).toBe("0:00 / --:--");
+  }
+  report(50, NaN);
+  expect(ui.time.textContent).toBe("0:00 / 0:50");
+  report(50, 999); // past the end: clamped
+  expect(ui.time.textContent).toBe("0:50 / 0:50");
+  expect(clean()).toBe(true);
+});
+
 test("(b) mounted mid-track, the slider is at the real position (max is set before value)", async () => {
   const { player } = await track(200);
   player.seek(150);
