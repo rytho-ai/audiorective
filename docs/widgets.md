@@ -84,7 +84,102 @@ The attachment owns its gesture and drawing. The caller owns the points and play
 
 ## Step grid and pads
 
-`mountStepGrid(root, { sequencer })` edits the provided pattern's velocities and displays each lane's playhead. `sequencer` is a local structural contract (`pattern` with `size` and lanes of `cells[].velocity`, `playheads` and `setCell(laneId, step, { velocity })`), so a `StepSequencer` or your own pattern model fits. Click a step to toggle and focus it to adjust its velocity. The grid follows the pattern: it rebuilds when `size` or the lane list (IDs and labels) changes and only updates its buttons when velocities change. Destroying the view leaves the borrowed pattern available.
+`mountStepGrid(root, { sequencer, formatStep?, labels? })` is a lane-aware, pluggable step editor. `sequencer` is a local structural contract, so a `StepSequencer` or your own pattern model fits; the widget imports no block values. Destroying the view leaves the borrowed sequencer available.
+
+```typescript
+interface StepGridSequencer {
+  pattern: Readable<{ size: number; lanes: readonly Lane[] }>; // Lane: id, label, steps, rate, direction, swing, mute, solo, cells[]
+  playheads: Readable<Readonly<Record<string, number | null>>>;
+  loopProgress: Readable<number | null>;
+  params?: readonly { id: string; label?: string; min: number; max: number; default: number; step?: number }[];
+  setCell(laneId: string, step: number, patch: Partial<Cell>): void;
+  toggle(laneId: string, step: number): void;
+  setLane(laneId: string, patch: Partial<Omit<Lane, "id" | "cells">>): void;
+}
+```
+
+Each lane row has a header and a row of cells.
+
+- **Header:** the label, Mute and Solo toggles, `Steps` (number, committed on change), `Rate` (select over the 12 rates), `Dir` (click cycles `→`, `←`, `↔`) and `Swing` (percent). Every control calls `setLane`.
+- **Parameter tabs:** a strip under the grid selects which cell value the grid shows and edits: Velocity, Offset, Length, Repeat, Pitch and Chance, then one tab for each entry of `sequencer.params`. Velocity, chance, length and custom values draw as a fill height, offset and pitch as a bar from the centre line, repeat as segment marks.
+- **Cells:** click toggles. A vertical drag edits the active parameter. A fill-height value covers its range over one cell height, repeat takes 12 px per hit and pitch 3 px per semitone; repeat and pitch snap to integers and every value stays inside its range. A value label (`65%`, `+3 st`, `x4`) shows while editing, on hover and on focus. A drag does not also toggle.
+- **Polymeter:** cells beyond a lane's `steps` are dimmed and inert. Each lane's playhead cell is highlighted, a bar across the top shows `loopProgress`, and the ruler marks every 4th step (1, 5, 9, 13 …).
+- **Fold:** the Fold toggle hides lanes with no active step.
+- **Keyboard:** the grid is one tab stop (roving `tabindex`). Left and Right (or Home and End) move along a lane, Alt+Up and Alt+Down move between lanes, Enter and Space toggle, Up and Down adjust the active parameter by a fine step, PageUp and PageDown by a coarse one (velocity 5% and 25%; pitch 1 and 12 semitones).
+- **Updates:** the widget keeps every element across pattern changes and repaints only the cells, headers and playheads whose values changed. It rebuilds cells only when `size` or the lane list changes.
+
+`formatStep(label, step)` names each cell for assistive technology (default `Kick step 3`). `labels` overrides the built-in strings (`grid`, `velocity`, `offset`, `length`, `repeat`, `pitch`, `chance`, `fold`, `mute`, `solo`, `steps`, `rate`, `direction`, `swing`); custom tabs use the param's `label`.
+
+**Styling.** Every colour and size is a CSS custom property with a neutral default, so a page themes the grid by setting properties on the root or an ancestor, without overriding selectors:
+
+| Property                                                                                                             | Controls                                                       |
+| -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `--ar-step-font`, `--ar-step-color`, `--ar-step-muted`                                                               | Text font, colour and secondary text                           |
+| `--ar-step-background`, `--ar-step-border`, `--ar-step-radius`, `--ar-step-padding`                                  | The grid frame                                                 |
+| `--ar-step-header-width`, `--ar-step-header-color`                                                                   | Lane header column width and lane label colour                 |
+| `--ar-step-cell-height`, `--ar-step-cell-min-width`, `--ar-step-cell-gap`, `--ar-step-lane-gap`, `--ar-step-bar-gap` | Cell and lane sizes, and the extra gap before every 4th step   |
+| `--ar-step-cell-background`, `--ar-step-cell-border`, `--ar-step-cell-radius`                                        | Off cells                                                      |
+| `--ar-step-cell-on-background`, `--ar-step-cell-on-border`                                                           | Active cells                                                   |
+| `--ar-step-value-color`, `--ar-step-centre-line`                                                                     | The value bar (fill, centre bar, segments) and the centre line |
+| `--ar-step-playhead`, `--ar-step-playhead-value-color`                                                               | The playhead cell and its value bar                            |
+| `--ar-step-inert-opacity`                                                                                            | Cells beyond a lane's `steps`                                  |
+| `--ar-step-focus`                                                                                                    | Keyboard focus outline                                         |
+| `--ar-step-progress`, `--ar-step-progress-track`, `--ar-step-progress-height`                                        | The loop progress bar                                          |
+| `--ar-step-label-color`, `--ar-step-label-background`                                                                | The value label                                                |
+| `--ar-step-control-background`, `--ar-step-control-color`, `--ar-step-control-border`, `--ar-step-control-radius`    | Header and tab controls                                        |
+| `--ar-step-control-active-background`, `--ar-step-control-active-color`, `--ar-step-tab-radius`                      | Pressed Mute/Solo/Fold and the selected tab                    |
+
+### Step grid plugins
+
+`mountStepGrid` returns `{ attach(plugin), destroy() }` and implements `PluginTarget<StepGridPluginContext>`, the same host that backs the waveform, piano roll and selector. Registrations are released when the attachment is destroyed, and a throwing plugin or listener does not break the grid. Plugin attachments are destroyed with the grid.
+
+`StepGridPluginContext` extends `WidgetPluginContext` (`listen`, `onCleanup`) with:
+
+- `surface`: the positioned element that holds the lanes.
+- `sequencer`: the borrowed sequencer, so a plugin writes cells through `setCell` and `setLane`.
+- `cellElement(laneId, step)`: the cell element, or `null` for an unknown lane or step.
+- `cellRect(laneId, step)`: `{ x, y, width, height }` in CSS pixels relative to `surface`, or `null`.
+- `mountOverlay(element)`: add a full-surface overlay (`pointer-events: none` by default). Returns its cleanup.
+- `addToolbarItem(element)`: add an element to the toolbar strip beside the parameter tabs. Returns its cleanup.
+- `activeParameter`: a `Readable<string>` of the selected tab id, and `setActiveParameter(id)` to select a built-in or custom tab.
+- `onPatternChange(listener)`: called after the grid has updated for each pattern change. Returns its cleanup.
+
+```typescript
+import { mountStepGrid, type WidgetPlugin, type StepGridPluginContext } from "@audiorective/widgets";
+
+// Fills a lane with N evenly spread pulses from a toolbar button.
+const euclid: WidgetPlugin<StepGridPluginContext> = {
+  attach(context) {
+    const button = document.createElement("button");
+    button.textContent = "Euclid 5/16 kick";
+    context.addToolbarItem(button);
+    context.listen(button, "click", () => {
+      for (let step = 0; step < 16; step++) {
+        const hit = Math.floor(((step + 1) * 5) / 16) > Math.floor((step * 5) / 16);
+        context.sequencer.setCell("kick", step, { velocity: hit ? 1 : 0 });
+      }
+      context.setActiveParameter("velocity");
+    });
+    const marker = document.createElement("div");
+    context.mountOverlay(marker);
+    context.onPatternChange(() => {
+      const rect = context.cellRect("kick", 0);
+      if (rect)
+        Object.assign(marker.style, {
+          position: "absolute",
+          left: `${rect.x}px`,
+          top: `${rect.y}px`,
+          width: `${rect.width}px`,
+          height: "2px",
+          background: "orange",
+        });
+    });
+  },
+};
+
+const grid = mountStepGrid(document.querySelector<HTMLElement>("#grid")!, { sequencer });
+const attachment = grid.attach(euclid); // attachment.destroy() removes the button and overlay
+```
 
 `mountPadGrid(root, { pads, press })` turns pointer or focused keyboard presses into calls to `press(id)`. A one-shot callback returns nothing. For a gated sound, return a release callback for that specific press. The widget releases held inputs on key or pointer release, focus loss and destruction. It leaves the audio engine and pad mapping with the caller.
 
@@ -488,21 +583,24 @@ DOM classes use the `ar-` prefix to scope widget presentation. Internal class na
 
 Messages thrown by the plain player adapters, waveform view, its plugins and the complete selector. Waveform loading and playback messages come from the borrowed player: see [Blocks](./blocks.md#common-errors).
 
-| Message                                                     | Cause                                                                         | Fix                                                                                 |
-| ----------------------------------------------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `No track is loaded.`                                       | The plain player view requested FilePlayer playback with no `src`             | Set `player.src` before pressing Play.                                              |
-| `Timeline zoom needs a positive increasing scale range.`    | Invalid arrangement zoom limits                                               | Use finite positive `minScale` and a larger `maxScale`.                             |
-| `No audio is loaded.`                                       | A WavePlayer or BufferPlayer adapter has no buffer                            | Load audio before pressing Play.                                                    |
-| `Audio is still loading.`                                   | The WavePlayer adapter was asked to play before loading finished              | Await `player.load(...)`.                                                           |
-| `The audio context is closed.`                              | The BufferPlayer adapter cannot start a closed context                        | Create a new context and player.                                                    |
-| `Waveform selector is destroyed.`                           | Calling `load` or `setSelection` after cleanup                                | Mount a new selector.                                                               |
-| `Waveform is destroyed.`                                    | Mutating a destroyed waveform or attaching after waveform or selector cleanup | Mount a new view or selector.                                                       |
-| `Waveform data needs finite peaks and a positive duration.` | Invalid peaks or duration                                                     | Supply nonempty finite peaks, matching extrema arrays, and finite positive seconds. |
-| `Zoom must be finite and at least 1.`                       | Invalid zoom factor                                                           | Use `1` to fit, or a larger finite factor.                                          |
-| `Amplitude zoom must be finite and from 1 to 32.`           | Invalid display-only amplitude factor                                         | Pass a finite factor from `1` through `32`.                                         |
-| `Playhead must be finite or null.`                          | Invalid playhead                                                              | Supply finite source seconds or `null` to hide it.                                  |
-| `Plugin is already attached to this waveform.`              | Duplicate attachment of one instance                                          | Reuse its attachment or detach it before attaching again.                           |
-| `Plugin attachment is destroyed.`                           | Mounting an overlay from a disposed attachment                                | Stop asynchronous work during cleanup; use a live attachment context.               |
-| `Selection plugin is not attached.`                         | Setting metadata before attachment or after detach                            | Call `view.attach(selection)` before `selection.setSelection`.                      |
-| `Selection plugin is already attached.`                     | Reusing a selection plugin across live views                                  | Detach first, or create one plugin per view.                                        |
-| `Waveform already has a Selection owner.`                   | Multiple selection plugins on one view                                        | Keep one selection plugin per view.                                                 |
+| Message                                                     | Cause                                                                         | Fix                                                                                            |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `No track is loaded.`                                       | The plain player view requested FilePlayer playback with no `src`             | Set `player.src` before pressing Play.                                                         |
+| `Timeline zoom needs a positive increasing scale range.`    | Invalid arrangement zoom limits                                               | Use finite positive `minScale` and a larger `maxScale`.                                        |
+| `No audio is loaded.`                                       | A WavePlayer or BufferPlayer adapter has no buffer                            | Load audio before pressing Play.                                                               |
+| `Audio is still loading.`                                   | The WavePlayer adapter was asked to play before loading finished              | Await `player.load(...)`.                                                                      |
+| `The audio context is closed.`                              | The BufferPlayer adapter cannot start a closed context                        | Create a new context and player.                                                               |
+| `Waveform selector is destroyed.`                           | Calling `load` or `setSelection` after cleanup                                | Mount a new selector.                                                                          |
+| `Waveform is destroyed.`                                    | Mutating a destroyed waveform or attaching after waveform or selector cleanup | Mount a new view or selector.                                                                  |
+| `Waveform data needs finite peaks and a positive duration.` | Invalid peaks or duration                                                     | Supply nonempty finite peaks, matching extrema arrays, and finite positive seconds.            |
+| `Zoom must be finite and at least 1.`                       | Invalid zoom factor                                                           | Use `1` to fit, or a larger finite factor.                                                     |
+| `Amplitude zoom must be finite and from 1 to 32.`           | Invalid display-only amplitude factor                                         | Pass a finite factor from `1` through `32`.                                                    |
+| `Playhead must be finite or null.`                          | Invalid playhead                                                              | Supply finite source seconds or `null` to hide it.                                             |
+| `Plugin is already attached to this waveform.`              | Duplicate attachment of one instance                                          | Reuse its attachment or detach it before attaching again.                                      |
+| `Step grid has no parameter "…".`                           | `setActiveParameter` with an id that is not a tab                             | Use `velocity`, `offset`, `length`, `repeat`, `pitch`, `chance` or a declared custom param id. |
+| `Step grid is destroyed.`                                   | Attaching a plugin to a destroyed step grid                                   | Mount a new grid.                                                                              |
+| `Plugin is already attached to this step grid.`             | Duplicate attachment of one plugin instance                                   | Detach it first, or create one plugin per grid.                                                |
+| `Plugin attachment is destroyed.`                           | Mounting an overlay from a disposed attachment                                | Stop asynchronous work during cleanup; use a live attachment context.                          |
+| `Selection plugin is not attached.`                         | Setting metadata before attachment or after detach                            | Call `view.attach(selection)` before `selection.setSelection`.                                 |
+| `Selection plugin is already attached.`                     | Reusing a selection plugin across live views                                  | Detach first, or create one plugin per view.                                                   |
+| `Waveform already has a Selection owner.`                   | Multiple selection plugins on one view                                        | Keep one selection plugin per view.                                                            |

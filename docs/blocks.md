@@ -480,7 +480,7 @@ const sequencer = new StepSequencer(pattern, ({ laneId, velocity, when, pitch, d
 );
 const timeline = new Timeline({ audioContext: context, bpm: 120 });
 const clock = new Clock({ timeline, onTick: (window) => sequencer.schedule(window, timeline) });
-const grid = mountStepGrid(document.querySelector("#grid")!, { sequencer }); // click toggles, focus adjusts velocity
+const grid = mountStepGrid(document.querySelector("#grid")!, { sequencer }); // click toggles; drag a cell or use the arrow keys to edit the active parameter
 
 await context.resume();
 clock.start(); // clock.stop() ends playback and cancels queued hits
