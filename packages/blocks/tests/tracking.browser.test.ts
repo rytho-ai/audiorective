@@ -1,10 +1,25 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { effect } from "@audiorective/core";
+import { AutomationBinding, AutomationCurve, audioParamTarget } from "@audiorective/core/automation";
 import { AudioRecorder } from "../src/AudioRecorder";
 import { ClipLauncher, type ClipLaunchTransport } from "../src/ClipLauncher";
 import { PadBank } from "../src/PadBank";
 import { StepSequencer } from "../src/StepSequencer";
 import { WavePlayer } from "../src/WavePlayer";
+import * as audioRecorderSourceModule from "../src/AudioRecorder.ts?raw";
+import * as clipLauncherSourceModule from "../src/ClipLauncher.ts?raw";
+import * as padBankSourceModule from "../src/PadBank.ts?raw";
+import * as stepSequencerSourceModule from "../src/StepSequencer.ts?raw";
+import * as wavePlayerSourceModule from "../src/WavePlayer.ts?raw";
+import { coverageGaps, watch } from "../../../scripts/tracking-coverage.mjs";
+
+const touched = {
+  wavePlayer: new Set<string>(),
+  audioRecorder: new Set<string>(),
+  padBank: new Set<string>(),
+  stepSequencer: new Set<string>(),
+  clipLauncher: new Set<string>(),
+};
 
 const disposers: Array<() => void | Promise<unknown>> = [];
 afterEach(async () => {
@@ -45,11 +60,12 @@ describe("WavePlayer public getters are tracked", () => {
         }),
       },
     });
+    const watched = watch(player, touched.wavePlayer);
     disposers.push(
       () => context.close(),
       () => player.destroy(),
     );
-    return { context, player };
+    return { context, player: watched };
   };
   const loaded = async () => {
     const f = await fixture();
@@ -72,6 +88,7 @@ describe("WavePlayer public getters are tracked", () => {
     ["getSelection()", (p) => p.getSelection(), (p) => p.setSelection({ start: 0.1, end: 0.5 })],
     ["getState()", (p) => p.getState(), (p) => p.setLooping(true)],
     ["getState() (load)", (p) => p.getState(), (p, c) => p.load(tone(c, 8000))],
+    ["isPlaying (play)", (p) => p.isPlaying, (p) => p.play()],
   ];
   test.each(rows)("%s", async (_name, read, mutate) => {
     const { context, player } = await loaded();
@@ -79,6 +96,61 @@ describe("WavePlayer public getters are tracked", () => {
       () => read(player),
       () => mutate(player, context),
     );
+  });
+  test("isPlaying follows pause and stop", async () => {
+    const { player } = await loaded();
+    await player.play();
+    await expectTracked(
+      () => player.isPlaying,
+      () => player.pause(),
+    );
+    await player.play();
+    await expectTracked(
+      () => player.isPlaying,
+      () => player.stop(),
+    );
+  });
+  test("subscribe notifies on change", async () => {
+    const { context, player } = await loaded();
+    let notified = 0;
+    const unsubscribe = player.subscribe(() => notified++);
+    await player.load(tone(context, 8000));
+    unsubscribe();
+    expect(notified).toBeGreaterThan(0);
+  });
+  test("playback commands called inside an effect do not subscribe it", async () => {
+    const { context, player } = await loaded();
+    const target = context.createGain();
+    const binding = new AutomationBinding(context, new AutomationCurve([{ time: 0, value: 0, shape: "linear" }]), audioParamTarget(target.gain));
+    let runs = 0;
+    const stop = effect(() => {
+      runs++;
+      player.attachSourceAutomation(binding)();
+      void player.play();
+      player.seek(0.1);
+      player.pause();
+      player.stop();
+      player.cancelLoad();
+      player.subscribe(() => {})();
+      void player.audition();
+    });
+    await player.load(tone(context, 8000));
+    player.setLooping(false);
+    player.setSelection({ start: 0.1, end: 0.4 });
+    player.seek(0.2);
+    stop();
+    expect(runs).toBe(1);
+    binding.destroy();
+  });
+  test("destroy called inside an effect does not subscribe it", async () => {
+    const { player } = await loaded();
+    let runs = 0;
+    const stop = effect(() => {
+      runs++;
+      player.destroy();
+    });
+    stop();
+    expect(runs).toBe(1);
   });
   test("owner methods called inside an effect do not subscribe it to buffer or duration", async () => {
     const { context, player } = await loaded();
@@ -96,7 +168,7 @@ describe("WavePlayer public getters are tracked", () => {
 describe("AudioRecorder readers are tracked", () => {
   test("cells.state follows start and cancel", async () => {
     const context = new OfflineAudioContext(1, 48_000, 48_000);
-    const recorder = new AudioRecorder(context, { channels: 1 });
+    const recorder = watch(new AudioRecorder(context, { channels: 1 }), touched.audioRecorder);
     disposers.push(() => recorder.destroy());
     const states: string[] = [];
     const stop = effect(() => void states.push(recorder.cells.state.value));
@@ -112,10 +184,49 @@ describe("AudioRecorder readers are tracked", () => {
   });
 });
 
+describe("AudioRecorder commands drive tracked state", () => {
+  const take = async (stream: boolean) => {
+    const sampleRate = 48_000;
+    const context = new OfflineAudioContext(1, sampleRate / 2, sampleRate);
+    const recorder = watch(new AudioRecorder(context, { channels: 1 }), touched.audioRecorder);
+    disposers.push(() => recorder.destroy());
+    const states: string[] = [];
+    let runs = 0;
+    const stopEffect = effect(() => {
+      runs++;
+      states.push(recorder.cells.state.value);
+    });
+    await recorder.ready;
+    if (stream) {
+      await recorder.startStream(() => {}, { when: 0.1 });
+      const pending = recorder.stopStream({ when: 0.3 });
+      await context.startRendering();
+      await pending;
+    } else {
+      await recorder.start({ when: 0.1 });
+      const pending = recorder.stop({ when: 0.3 });
+      await context.startRendering();
+      await pending;
+    }
+    stopEffect();
+    return { states, runs };
+  };
+  test.each([
+    ["start and stop", false],
+    ["startStream and stopStream", true],
+  ])("cells.state follows %s", async (_name, stream) => {
+    const { states, runs } = await take(stream);
+    expect(states[0]).toBe("idle");
+    expect(states.some((state) => state !== "idle")).toBe(true);
+    expect(states[states.length - 1]).toBe("idle");
+    expect(runs).toBe(states.length);
+  });
+});
+
 describe("PadBank readers are tracked", () => {
   test("cells.activeEvents follows trigger and stopAll", async () => {
     const context = new AudioContext();
-    const bank = new PadBank(context, [{ id: "kick", buffer: tone(context) }]);
+    const bank = watch(new PadBank(context, [{ id: "kick", buffer: tone(context) }]), touched.padBank);
     disposers.push(
       () => context.close(),
       () => bank.destroy(),
@@ -131,7 +242,7 @@ describe("PadBank readers are tracked", () => {
   });
   test("cells.pads follows assign", async () => {
     const context = new AudioContext();
-    const bank = new PadBank(context, [{ id: "kick", buffer: tone(context) }]);
+    const bank = watch(new PadBank(context, [{ id: "kick", buffer: tone(context) }]), touched.padBank);
     disposers.push(
       () => context.close(),
       () => bank.destroy(),
@@ -143,10 +254,63 @@ describe("PadBank readers are tracked", () => {
   });
 });
 
+describe("StepSequencer readers are tracked", () => {
+  const make = () =>
+    watch(new StepSequencer({ size: 4, lanes: [{ id: "k", label: "K", cells: [{ velocity: 1 }] }] }, () => null), touched.stepSequencer);
+  test("pattern follows setCell, toggle, setLane and setSize", () => {
+    const sequencer = make();
+    expectTracked(
+      () => sequencer.pattern.value,
+      () => sequencer.setCell("k", 1, { velocity: 0.5 }),
+    );
+    expectTracked(
+      () => sequencer.pattern.value,
+      () => sequencer.toggle("k", 2),
+    );
+    expectTracked(
+      () => sequencer.pattern.value,
+      () => sequencer.setLane("k", { swing: 0.3 }),
+    );
+    expectTracked(
+      () => sequencer.pattern.value,
+      () => sequencer.setSize(8),
+    );
+  });
+  test("transforms follows setTransforms", () => {
+    const sequencer = make();
+    expectTracked(
+      () => sequencer.transforms.value,
+      () => sequencer.setTransforms([]),
+    );
+  });
+});
+
 describe("command methods called inside an effect do not subscribe it", () => {
+  test("PadBank commands", async () => {
+    const context = new AudioContext();
+    const bank = watch(new PadBank(context, [{ id: "kick", buffer: tone(context) }]), touched.padBank);
+    disposers.push(
+      () => context.close(),
+      () => bank.destroy(),
+    );
+    const destination = context.createGain();
+    let runs = 0;
+    const stop = effect(() => {
+      runs++;
+      bank.trigger("kick", 1, context.currentTime + 5);
+      bank.routePad("kick", destination);
+      bank.assign("kick", tone(context, 8000));
+      bank.stopAll();
+    });
+    bank.assign("kick", tone(context, 4000));
+    bank.routePad("kick", null);
+    stop();
+    expect(runs).toBe(1);
+  });
+
   test("StepSequencer commands and schedule", () => {
     const pattern = { size: 4, lanes: [{ id: "k", label: "K", cells: [{ velocity: 1 }] }] };
-    const sequencer = new StepSequencer(pattern, () => null);
+    const sequencer = watch(new StepSequencer(pattern, () => null), touched.stepSequencer);
     const timing = { timeToBeat: (t: number) => t, beatToTime: (b: number) => b };
     const window = { beat: { start: 0, end: 2 }, time: { current: 0 }, own() {} };
     let runs = 0;
@@ -156,6 +320,7 @@ describe("command methods called inside an effect do not subscribe it", () => {
       sequencer.toggle("k", 3);
       sequencer.setLane("k", { swing: 0.2 });
       sequencer.setSize(8);
+      sequencer.setTransforms([]);
       sequencer.schedule(window, timing);
     });
     sequencer.setCell("k", 2, { velocity: 0.5 });
@@ -173,7 +338,7 @@ describe("command methods called inside an effect do not subscribe it", () => {
       schedule: () => ({ cancel() {}, commit() {} }),
       reset() {},
     };
-    const launcher = new ClipLauncher(transport);
+    const launcher = watch(new ClipLauncher(transport), touched.clipLauncher);
     let runs = 0;
     const stop = effect(() => {
       runs++;
@@ -187,5 +352,35 @@ describe("command methods called inside an effect do not subscribe it", () => {
     launcher.reset();
     stop();
     expect(runs).toBe(1);
+  });
+});
+
+describe("every public member of a tracked block is covered", () => {
+  test.each([
+    [
+      "WavePlayer",
+      WavePlayer,
+      wavePlayerSourceModule.default,
+      touched.wavePlayer,
+      {
+        output: "constant gain node the caller wires; not state",
+        position: "clock-derived playhead; a plain getter by design, read per frame (AGENTS.md rule 10)",
+      },
+    ],
+    [
+      "AudioRecorder",
+      AudioRecorder,
+      audioRecorderSourceModule.default,
+      touched.audioRecorder,
+      {
+        input: "constant gain node the caller wires; not state",
+        output: "always undefined; the recorder is a sink",
+      },
+    ],
+    ["PadBank", PadBank, padBankSourceModule.default, touched.padBank, { output: "constant gain node the caller wires; not state" }],
+    ["StepSequencer", StepSequencer, stepSequencerSourceModule.default, touched.stepSequencer, {}],
+    ["ClipLauncher", ClipLauncher, clipLauncherSourceModule.default, touched.clipLauncher, {}],
+  ] as const)("%s", (_name, ctor, source, seen, excluded) => {
+    expect(coverageGaps(ctor, source, seen, excluded)).toEqual([]);
   });
 });

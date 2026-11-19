@@ -1,17 +1,37 @@
 import { describe, expect, test } from "vitest";
 import { effect } from "@audiorective/core";
-import { MidiClip, Project } from "../src";
+import { AudioMedia, MidiClip, Project, type AudioClip } from "../src";
+import * as modelSourceModule from "../src/model.ts?raw";
+import { coverageGaps, watch } from "../../../scripts/tracking-coverage.mjs";
 
-type Ctx = { project: Project; trackId: string; audioTrackId: string; clip: MidiClip; beatClip: MidiClip; audioClipId: string };
+const touchedProject = new Set<string>();
+const touchedClip = new Set<string>();
+
+type Ctx = {
+  project: Project;
+  trackId: string;
+  audioTrackId: string;
+  busId: string;
+  deviceId: string;
+  clip: MidiClip;
+  beatClip: MidiClip;
+  audioClipId: string;
+};
+
+const media = () => new AudioMedia(new Blob([new Uint8Array(400)]), 100, 1, 100);
+const filter = { id: "f", type: "filter", enabled: true, wet: 1, mode: "lowpass", frequency: 800, q: 1 } as const;
+const macros = [{ id: "tone", value: 0.4, targets: [{ slotId: "f", parameter: "frequency", min: 200, max: 8000, scale: "exponential" }] }] as const;
 
 function fixture(): Ctx {
-  const project = new Project({ bpm: 120 });
+  const project = watch(new Project({ bpm: 120 }), touchedProject);
   const trackId = project.addTrack("Keys", "midi").id;
   const audioTrackId = project.addTrack("Audio", "audio").id;
-  const clip = project.addMidiClip(trackId, { duration: 1, notes: [] }, 1);
-  const beatClip = project.addMidiClip(trackId, { duration: 1, notes: [] }, 4, { timeUnit: "beats" });
+  const clip = watch(project.addMidiClip(trackId, { duration: 1, notes: [] }, 1), touchedClip);
+  const beatClip = watch(project.addMidiClip(trackId, { duration: 1, notes: [] }, 4, { timeUnit: "beats" }), touchedClip);
   const audioClipId = project.addAudioClip(audioTrackId, { sampleRate: 8000, channels: [new Float32Array(800)] }, 0).id;
-  return { project, trackId, audioTrackId, clip, beatClip, audioClipId };
+  const busId = project.addTrack("Bus", "bus").id;
+  const deviceId = project.addWebClapDevice(trackId, { pluginId: "q", name: "Q", vendor: "v", version: "1", bundleUrl: "/q" }).id;
+  return { project, trackId, audioTrackId, busId, deviceId, clip, beatClip, audioClipId };
 }
 
 /** Each public stateful reader is read inside an effect, changed through the owner's public method, and must re-run with a new value. */
@@ -43,6 +63,65 @@ const rows: Array<{ name: string; read: (ctx: Ctx) => unknown; mutate: (ctx: Ctx
   { name: "Project.tracks (splitClip)", read: (c) => c.project.tracks[1].clips, mutate: (c) => void c.project.splitClip(c.audioClipId, 0.05) },
   { name: "Project.tracks (trimClip)", read: (c) => c.project.tracks[1].clips, mutate: (c) => void c.project.trimClip(c.audioClipId, 0, 0.05) },
   { name: "Project.tracks (duplicateClip)", read: (c) => c.project.tracks[1].clips, mutate: (c) => void c.project.duplicateClip(c.audioClipId, 1) },
+  { name: "Project.masterVolume", read: (c) => c.project.masterVolume, mutate: (c) => c.project.setMasterVolume(0.3) },
+  {
+    name: "Project.hasFileBackedAudio",
+    read: (c) => c.project.hasFileBackedAudio,
+    mutate: (c) => void c.project.addAudioMediaClip(c.audioTrackId, media(), 0),
+  },
+  {
+    name: "Project.tracks (addAudioMediaClip)",
+    read: (c) => c.project.tracks[1].clips,
+    mutate: (c) => void c.project.addAudioMediaClip(c.audioTrackId, media(), 1),
+  },
+  {
+    name: "Project.tracks (addMidiTake)",
+    read: (c) => c.project.tracks[0].clips,
+    mutate: (c) => void c.project.addMidiTake(c.trackId, { duration: 1, notes: [], startTime: 0, endTime: 1, events: [] }, 2),
+  },
+  {
+    name: "Project.tracks (applyAudioClipStretch)",
+    read: (c) => c.project.tracks[1].clips,
+    mutate: (c) =>
+      void c.project.applyAudioClipStretch(c.project.tracks[1].clips[0] as AudioClip, 2, { sampleRate: 8000, channels: [new Float32Array(1600)] }),
+  },
+  {
+    name: "Project.tracks (setAudioClipEnvelope)",
+    read: (c) => c.project.tracks[1].clips,
+    mutate: (c) => void c.project.setAudioClipEnvelope(c.audioClipId, { gain: 0.5, fadeIn: 0, fadeOut: 0 }),
+  },
+  {
+    name: "Project.tracks (setAudioClipGainAutomation)",
+    read: (c) => c.project.tracks[1].clips,
+    mutate: (c) => void c.project.setAudioClipGainAutomation(c.audioClipId, [{ time: 0, value: 0.5, shape: "linear" }]),
+  },
+  {
+    name: "Project.tracks (setTrackRouting)",
+    read: (c) => c.project.tracks[0].routing,
+    mutate: (c) => c.project.setTrackRouting(c.trackId, { outputBusId: c.busId, sends: [] }),
+  },
+  {
+    name: "Project.tracks (setTrackRackPreset)",
+    read: (c) => c.project.tracks[0].effectMacros,
+    mutate: (c) => c.project.setTrackRackPreset(c.trackId, { effects: [filter], macros }),
+  },
+  {
+    name: "Project.tracks (setTrackMacroValue)",
+    read: (c) => {
+      const macro = c.project.tracks[0].effectMacros[0];
+      return macro?.value ?? null;
+    },
+    mutate: (c) => {
+      c.project.setTrackRackPreset(c.trackId, { effects: [filter], macros });
+      c.project.setTrackMacroValue(c.trackId, "tone", 0.9);
+    },
+  },
+  {
+    name: "Project.tracks (setDeviceState)",
+    read: (c) => c.project.tracks[0].devices[0].state,
+    mutate: (c) => c.project.setDeviceState(c.deviceId, new Uint8Array([1, 2, 3])),
+  },
+  { name: "Project.tracks (removeDevice)", read: (c) => c.project.tracks[0].devices, mutate: (c) => c.project.removeDevice(c.deviceId) },
   { name: "Project.tempoMap", read: (c) => c.project.tempoMap, mutate: (c) => c.project.setTempoChanges([{ beat: 4, bpm: 60 }]) },
   { name: "Project.markers", read: (c) => c.project.markers, mutate: (c) => c.project.setMarkers([{ time: 1, name: "A" }]) },
   { name: "Project.cells.revision", read: (c) => c.project.cells.revision.value, mutate: (c) => c.project.setTitle("Revised") },
@@ -144,5 +223,19 @@ describe("Project has one store", () => {
     project.setTempoChanges([{ beat: 1, bpm: 30 }]);
     expect(project.tracks[0].clips.map((clip) => clip.id)).toEqual([seconds.id, beats.id]);
     project.destroy();
+  });
+});
+
+describe("every public Project and MidiClip member is covered", () => {
+  test("Project", () => {
+    expect(coverageGaps(Project, modelSourceModule.default, touchedProject, {})).toEqual([]);
+  });
+  test("MidiClip", () => {
+    expect(
+      coverageGaps(MidiClip, modelSourceModule.default, touchedClip, {
+        events: "immutable copy of the construction-time source events; nothing changes it",
+        destroy: "teardown owned by Project (removeClip, removeTrack, destroy); a destroyed clip leaves the tracks it was removed from",
+      }),
+    ).toEqual([]);
   });
 });
