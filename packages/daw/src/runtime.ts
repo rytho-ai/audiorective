@@ -2,65 +2,27 @@ import { Clock, RangeLoop, Timeline } from "@audiorective/clock";
 import type { LoopRange, TickWindow } from "@audiorective/clock";
 import { batch, cell, effect, readonlyCell, untracked, type Cell, type Readable, type ReadonlyCell } from "@audiorective/core";
 import { AutomationBinding, AutomationCurve, audioParamTarget } from "@audiorective/core/automation";
-import type { AutomationPoint } from "@audiorective/core/automation";
 import { WebClapHost } from "@audiorective/host/webclap";
 import { ClipLauncher, type ClipLaunch, type ClipLauncherState, type QueuedClipLaunch } from "@audiorective/blocks/launcher";
 import type { StepSequencer } from "@audiorective/blocks/sequencer";
 import type { WaveStretchAnchor, WaveStretchProcessor } from "@audiorective/blocks/player";
-import { Channel, SendBus, type Send } from "@audiorective/effects";
-import { EffectRack, retainRackMacroTargets, type RackEffect, type RackMacroSettings } from "@audiorective/effects/rack";
+import { Channel, SendBus } from "@audiorective/effects";
+import { EffectRack, retainRackMacroTargets, type RackEffect } from "@audiorective/effects/rack";
 import { AudioTrackSession } from "./audio-track-session";
-import { clipGainAt } from "./clip-envelope";
-import { scheduleClipEnvelope } from "./schedule-clip-envelope";
+import { ClipScheduler } from "./clip-scheduler";
 import { soloRouting } from "./mixer-routing";
-import { MidiClip, Project, audioClipTimeMap, audioFrameCount } from "./model";
+import { MidiClip, Project, audioFrameCount } from "./model";
 import { normalizeClipAnchors } from "./clip-time-map";
 import type { TempoMap } from "./tempo-map";
-import type { AudioMedia } from "./media";
 import type { AudioClip, AudioClipGainAutomation, PcmAudioClip, ProjectTrack, TrackRouting, WebClapDevice } from "./model";
 
 export { scheduleClipEnvelope } from "./schedule-clip-envelope";
 export type PreparedClipStretch = Readonly<{ apply(): AudioClip }>;
 
-type AudioHandle = {
-  clipId: string;
-  setGainAutomation(automation: AudioClipGainAutomation | undefined): void;
-  cancel(): void;
-  onEnded(listener: () => void): void;
-};
 type ClipAudition = { clip: AudioClip; cancel?: () => void };
 type RangeAudition = { range: RangeAuditionState; tracks: readonly ProjectTrack[]; clock?: Clock };
 export type RangeAuditionState = Readonly<{ start: number; end: number; trackIds: readonly string[] }>;
-type AudioClipWindow = {
-  start: number;
-  end: number;
-  stop: number;
-  audioTime(seconds: number): number;
-  keyPrefix: string;
-};
-type TrackRuntime = {
-  kind: ProjectTrack["kind"];
-  clips: ProjectTrack["clips"];
-  deviceKeys: readonly string[];
-  deviceStates: Map<string, Uint8Array>;
-  channel: Channel;
-  automationGain: GainNode;
-  rack: EffectRack;
-  effectSettings: readonly RackEffect[];
-  macroSettings: readonly RackMacroSettings[];
-  automationPoints?: readonly AutomationPoint[];
-  automationCurve?: AutomationCurve;
-  automationBinding?: AutomationBinding;
-  outputDestination?: AudioNode;
-  /** Name of this track's receive point on the workspace SendBus. */
-  sendName: string;
-  sends: Map<string, { target: TrackRuntime; send: Send }>;
-  input: AudioNode;
-  session?: AudioTrackSession;
-  hosts: Map<string, WebClapHost>;
-  midiHost?: WebClapHost;
-};
-const audioChunkSeconds = 2;
+import { audioChunkSeconds, type AudioClipWindow, type AudioHandle, type TrackRuntime } from "./track-runtime";
 
 function collectGainAutomationEdits(
   before: ProjectTrack["clips"],
@@ -148,10 +110,7 @@ export class Workspace {
   }
   private readonly tracks = new Map<string, TrackRuntime>();
   private readonly stepSequencers = new Map<StepSequencer, () => void>();
-  private readonly scheduledAudio = new Map<string, AudioHandle>();
-  private readonly audioBuffers = new WeakMap<PcmAudioClip["channels"], AudioBuffer>();
-  private readonly sessionAudioBuffers = new WeakMap<PcmAudioClip, AudioBuffer>();
-  private readonly mediaBuffers = new WeakMap<AudioMedia, Map<string, Promise<AudioBuffer>>>();
+  private readonly scheduler: ClipScheduler;
   private readonly sequenceOff: Array<() => void> = [];
   private readonly seekPoint = cell({ seconds: 0 });
   private activeTempoMap: TempoMap;
@@ -172,6 +131,7 @@ export class Workspace {
     this.projectSource = cell(project);
     this.activeTempoMap = project.tempoMap;
     this.options = options;
+    this.scheduler = new ClipScheduler(context, (message) => this.warn(message));
     this.output = context.createGain();
     this.sendBus = new SendBus(context);
     if (options.destination) this.output.connect(options.destination);
@@ -184,7 +144,7 @@ export class Workspace {
       schedule: (changes, when) => {
         const endsAt = new Map<string, number>();
         const transitions = changes.map(({ trackId, clipId, mode }) => {
-          const buffer = clipId === null ? null : this.sessionBufferFor(this.launchableClip(trackId, clipId));
+          const buffer = clipId === null ? null : this.scheduler.sessionBufferFor(this.launchableClip(trackId, clipId));
           const transition = this.tracks.get(trackId)!.session!.schedule(buffer, when, mode !== "one-shot");
           if (transition.end !== undefined) endsAt.set(trackId, transition.end);
           return transition;
@@ -585,8 +545,7 @@ export class Workspace {
     if (clipsChanged) this.stopStaleAudition();
     if (tempoChanged) this.seek(position);
     else if (refreshClips) this.refreshArrangement();
-    else if (gainEdits.size)
-      for (const handle of this.scheduledAudio.values()) if (gainEdits.has(handle.clipId)) handle.setGainAutomation(gainEdits.get(handle.clipId));
+    else if (gainEdits.size) this.scheduler.setGainAutomation(gainEdits);
     if (tempoChanged && refreshClips) this.bindSequences();
     this.topologyPending.value = false;
   }
@@ -677,7 +636,7 @@ export class Workspace {
       if (this.destroyed || this.clock.state.value !== "playing") throw new Error("Start Workspace playback before launching clips.");
       for (const { trackId, clipId } of changes) {
         if (!this.tracks.get(trackId)?.session) throw new Error("Clip Launcher requires an audio track.");
-        if (clipId !== null) this.sessionBufferFor(this.launchableClip(trackId, clipId));
+        if (clipId !== null) this.scheduler.sessionBufferFor(this.launchableClip(trackId, clipId));
       }
       return this.launcher.queue(changes, quantumBeats);
     });
@@ -993,7 +952,7 @@ export class Workspace {
     try {
       await this.context.resume();
       if (this.audition !== audition) return;
-      if (clip.media) await this.loadMediaBuffer(clip, 0);
+      if (clip.media) await this.scheduler.loadMediaBuffer(clip, 0);
       if (this.audition !== audition) return;
       if (this.findAudioClip(clipId) !== clip) return finish();
 
@@ -1010,7 +969,7 @@ export class Workspace {
             while (nextChunk < chunks) {
               const when = window.time.started + nextChunk * audioChunkSeconds;
               if (when >= window.time.lookAheadEnd) break;
-              const handle = this.scheduleMediaAudio(clip, nextChunk++, this.output, when, 0);
+              const handle = this.scheduler.scheduleMediaAudio(clip, nextChunk++, this.output, when, 0);
               window.own(handle, when);
               if (nextChunk === chunks) handle.onEnded(finish);
             }
@@ -1021,7 +980,7 @@ export class Workspace {
         // The initial chunk is already preloaded. Let later ticks stream the clip.
         clock.refresh();
       } else {
-        const handle = this.scheduleAudio(clip, this.output, this.context.currentTime, 0);
+        const handle = this.scheduler.scheduleAudio(clip, this.output, this.context.currentTime, 0);
         audition.cancel = () => handle.cancel();
         handle.onEnded(finish);
       }
@@ -1084,7 +1043,7 @@ export class Workspace {
         clips.map((clip) => {
           if (!clip.media || clip.time >= start + 0.15) return undefined;
           const index = Math.floor(Math.max(0, start - clip.time) / audioChunkSeconds);
-          return this.loadMediaBuffer(clip, index);
+          return this.scheduler.loadMediaBuffer(clip, index);
         }),
       );
       if (this.audition !== audition) return;
@@ -1108,7 +1067,7 @@ export class Workspace {
               audioTime: (time) => slice.when + (time - slice.start),
               keyPrefix: `${slice.cycle}:`,
             };
-            for (const clip of clips) this.scheduleAudioClipWindow(clip, this.output, span, window, scheduled);
+            for (const clip of clips) this.scheduler.scheduleAudioClipWindow(clip, this.output, span, window, scheduled);
           }
         },
       });
@@ -1197,17 +1156,8 @@ export class Workspace {
     return this.project;
   }
 
-  private async prefetchMediaAt(position: number): Promise<void> {
-    await Promise.all(
-      [...this.tracks.values()].flatMap((track) =>
-        track.clips.flatMap((clip) => {
-          if (clip.kind !== "audio" || !clip.media || position < clip.time || position >= clip.time + clip.duration) return [];
-          const framesPerChunk = clip.sampleRate * audioChunkSeconds;
-          const index = Math.floor(((position - clip.time) * clip.sampleRate) / framesPerChunk);
-          return [this.loadMediaBuffer(clip, index)];
-        }),
-      ),
-    );
+  private prefetchMediaAt(position: number): Promise<void> {
+    return this.scheduler.prefetchMediaAt(this.tracks.values(), position);
   }
 
   private async captureStates(): Promise<void> {
@@ -1233,277 +1183,7 @@ export class Workspace {
   private schedule(window: TickWindow<Record<never, never>>): void {
     this.launcher.advance();
     for (const sequence of this.stepSequencers.keys()) sequence.schedule(window, this.timeline);
-    const map = this.activeTempoMap;
-    const span: AudioClipWindow = {
-      start: map.beatToSeconds(window.beat.start),
-      end: map.beatToSeconds(window.beat.end),
-      stop: Infinity,
-      audioTime: (seconds) => this.timeline.beatToTime(map.secondsToBeat(seconds)),
-      keyPrefix: "",
-    };
-    for (const runtime of this.tracks.values()) {
-      for (const clip of runtime.clips) {
-        if (clip.kind === "midi") {
-          if (!runtime.midiHost) continue;
-          for (const event of clip.playbackEvents()) {
-            const beat = clip.timeUnit === "beats" ? clip.time + event.time : map.secondsToBeat(clip.time + event.time);
-            if (beat < window.beat.start - 1e-8 || beat >= window.beat.end - 1e-8) continue;
-            const when = this.timeline.beatToTime(beat);
-            window.own(runtime.midiHost.scheduleMidi(event.data, when), when);
-          }
-        } else {
-          this.scheduleAudioClipWindow(clip, runtime.session?.arrangementInput ?? runtime.input, span, window, this.scheduledAudio);
-        }
-      }
-    }
-  }
-
-  private scheduleAudioClipWindow(
-    clip: AudioClip,
-    destination: AudioNode,
-    span: AudioClipWindow,
-    window: TickWindow<Record<never, never>>,
-    scheduled: Map<string, AudioHandle>,
-  ): void {
-    if (clip.time >= span.end || clip.time + clip.duration <= span.start) return;
-    const own = (key: string, handle: AudioHandle, when: number) => {
-      scheduled.set(key, handle);
-      handle.onEnded(() => {
-        if (scheduled.get(key) === handle) scheduled.delete(key);
-      });
-      window.own(handle, when);
-    };
-    if (clip.media) {
-      const framesPerChunk = clip.sampleRate * audioChunkSeconds;
-      const first = Math.floor((Math.max(0, span.start - clip.time) * clip.sampleRate) / framesPerChunk);
-      const last = Math.min(Math.ceil(clip.frameCount / framesPerChunk), Math.ceil(((span.end - clip.time) * clip.sampleRate) / framesPerChunk));
-      for (let index = first; index < last; index++) {
-        const key = `${span.keyPrefix}${clip.id}:${index}`;
-        if (scheduled.has(key)) continue;
-        const chunkTime = clip.time + index * audioChunkSeconds;
-        const from = Math.max(chunkTime, span.start);
-        const when = span.audioTime(from);
-        own(key, this.scheduleMediaAudio(clip, index, destination, when, from - chunkTime, span.stop - chunkTime), when);
-      }
-    } else {
-      const key = `${span.keyPrefix}${clip.id}`;
-      if (scheduled.has(key)) return;
-      const from = Math.max(clip.time, span.start);
-      const when = span.audioTime(from);
-      own(key, this.scheduleAudio(clip, destination, when, from - clip.time, span.stop - clip.time), when);
-    }
-  }
-
-  private loadMediaBuffer(clip: AudioClip & { media: AudioMedia; startFrame: number; frameCount: number }, index: number): Promise<AudioBuffer> {
-    const framesPerChunk = clip.sampleRate * audioChunkSeconds;
-    const offset = index * framesPerChunk;
-    const count = Math.min(framesPerChunk, clip.frameCount - offset);
-    if (count < 1) return Promise.reject(new RangeError("Workspace media chunk is outside the clip."));
-    let cache = this.mediaBuffers.get(clip.media);
-    if (!cache) this.mediaBuffers.set(clip.media, (cache = new Map()));
-    const key = `${clip.startFrame + offset}:${count}`;
-    const existing = cache.get(key);
-    if (existing) return existing;
-    const pending = clip.media
-      .readFrames(clip.startFrame + offset, count)
-      .then((channels) => {
-        const buffer = this.context.createBuffer(channels.length, count, clip.sampleRate);
-        channels.forEach((samples, channel) => buffer.copyToChannel(samples as Float32Array<ArrayBuffer>, channel));
-        return buffer;
-      })
-      .catch((error: unknown) => {
-        cache!.delete(key);
-        throw error;
-      });
-    cache.set(key, pending);
-    if (cache.size > 8) cache.delete(cache.keys().next().value!);
-    return pending;
-  }
-
-  private connectClipSource(
-    source: AudioBufferSourceNode,
-    destination: AudioNode,
-    clip: AudioClip,
-    when: number,
-    offset: number,
-    length: number,
-  ): { setAutomation(automation: AudioClipGainAutomation | undefined): void; dispose(): void } {
-    let output: AudioNode = source;
-    let envelopeGain: GainNode | undefined;
-    if (clip.envelope) {
-      envelopeGain = this.context.createGain();
-      scheduleClipEnvelope(envelopeGain.gain, clip.envelope, clip.duration, { when, offset, length });
-      output = source.connect(envelopeGain);
-    }
-    output.connect(destination);
-    let timeMap: ReturnType<typeof audioClipTimeMap> | undefined;
-    let gain: GainNode | undefined;
-    let binding: AutomationBinding | undefined;
-    const setAutomation = (automation: AudioClipGainAutomation | undefined) => {
-      if (!automation) {
-        binding?.destroy();
-        binding = undefined;
-        gain?.gain.setValueAtTime(1, this.context.currentTime);
-        return;
-      }
-      if (!(length > 0)) return;
-      timeMap ??= audioClipTimeMap(clip);
-      const points = timeMap.projectGain(automation.points, automation.sourceStart);
-      if (binding) {
-        binding.curve.value = points;
-        return;
-      }
-      if (!gain) {
-        gain = this.context.createGain();
-        output.disconnect(destination);
-        output.connect(gain).connect(destination);
-      }
-      binding = new AutomationBinding(this.context, new AutomationCurve(points), audioParamTarget(gain.gain));
-      const elapsed = Math.max(0, this.context.currentTime - when);
-      const to = offset + length;
-      binding.start({ when, from: Math.min(to, offset + elapsed), to });
-    };
-    return {
-      setAutomation,
-      dispose() {
-        binding?.destroy();
-        envelopeGain?.disconnect();
-        gain?.disconnect();
-      },
-    };
-  }
-
-  private scheduleMediaAudio(
-    clip: AudioClip & { media: AudioMedia; startFrame: number; frameCount: number },
-    index: number,
-    destination: AudioNode,
-    when: number,
-    offset: number,
-    endOffset = Infinity,
-  ): AudioHandle {
-    let cancelled = false;
-    let ended = false;
-    let source: AudioBufferSourceNode | undefined;
-    let stage: ReturnType<Workspace["connectClipSource"]> | undefined;
-    let automation = clip.gainAutomation;
-    const listeners = new Set<() => void>();
-    const end = () => {
-      if (ended) return;
-      ended = true;
-      source?.disconnect();
-      stage?.dispose();
-      for (const listener of listeners) listener();
-      listeners.clear();
-    };
-    void this.loadMediaBuffer(clip, index)
-      .then((buffer) => {
-        if (cancelled) return end();
-        source = this.context.createBufferSource();
-        source.buffer = buffer;
-        source.onended = end;
-        const start = Math.max(when, this.context.currentTime);
-        const adjustedOffset = offset + Math.max(0, start - when);
-        const length = Math.min(buffer.duration, endOffset) - adjustedOffset;
-        if (length <= 0) return end();
-        stage = this.connectClipSource(source, destination, clip, start, index * audioChunkSeconds + adjustedOffset, length);
-        stage.setAutomation(automation);
-        source.start(start, adjustedOffset, length);
-      })
-      .catch((error: unknown) => {
-        this.warn(`Audio clip ${clip.id} could not read its media: ${String(error)}`);
-        end();
-      });
-    return {
-      clipId: clip.id,
-      setGainAutomation: (next) => {
-        automation = next;
-        stage?.setAutomation(next);
-      },
-      cancel: () => {
-        cancelled = true;
-        if (source && !ended)
-          try {
-            source.stop();
-          } catch {
-            /* already stopped */
-          }
-        end();
-      },
-      onEnded: (listener) => {
-        if (ended) listener();
-        else listeners.add(listener);
-      },
-    };
-  }
-
-  private bufferFor(clip: PcmAudioClip): AudioBuffer {
-    let buffer = this.audioBuffers.get(clip.channels);
-    if (!buffer) {
-      buffer = this.context.createBuffer(clip.channels.length, clip.channels[0].length, clip.sampleRate);
-      clip.channels.forEach((samples, index) => buffer!.getChannelData(index).set(samples));
-      this.audioBuffers.set(clip.channels, buffer);
-    }
-    return buffer;
-  }
-
-  private sessionBufferFor(clip: PcmAudioClip): AudioBuffer {
-    const { envelope, gainAutomation } = clip;
-    if (!envelope && !gainAutomation) return this.bufferFor(clip);
-    let buffer = this.sessionAudioBuffers.get(clip);
-    if (!buffer) {
-      buffer = this.context.createBuffer(clip.channels.length, clip.channels[0].length, clip.sampleRate);
-      const output = clip.channels.map((_, index) => buffer!.getChannelData(index));
-      const curve = gainAutomation && new AutomationCurve(audioClipTimeMap(clip).projectGain(gainAutomation.points, gainAutomation.sourceStart));
-      for (let frame = 0; frame < buffer.length; frame++) {
-        const time = frame / clip.sampleRate;
-        const gain = (envelope ? clipGainAt(envelope, clip.duration, time) : 1) * (curve?.valueAt(time) ?? 1);
-        for (let channel = 0; channel < output.length; channel++) output[channel][frame] = clip.channels[channel][frame] * gain;
-      }
-      this.sessionAudioBuffers.set(clip, buffer);
-    }
-    return buffer;
-  }
-
-  private scheduleAudio(clip: PcmAudioClip, destination: AudioNode, when: number, offset: number, endOffset = Infinity): AudioHandle {
-    const source = this.context.createBufferSource();
-    source.buffer = this.bufferFor(clip);
-    const start = Math.max(when, this.context.currentTime);
-    const adjustedOffset = Math.min(clip.duration, offset + Math.max(0, start - when));
-    const length = Math.max(0, Math.min(clip.duration, endOffset) - adjustedOffset);
-    const stage = this.connectClipSource(source, destination, clip, start, adjustedOffset, length);
-    stage.setAutomation(clip.gainAutomation);
-    let ended = false;
-    const listeners = new Set<() => void>();
-    const end = () => {
-      if (ended) return;
-      ended = true;
-      source.onended = null;
-      source.disconnect();
-      stage.dispose();
-      for (const listener of listeners) listener();
-      listeners.clear();
-    };
-    source.onended = end;
-    source.start(start, adjustedOffset, length);
-    return {
-      clipId: clip.id,
-      setGainAutomation: (automation) => stage.setAutomation(automation),
-      cancel: () => {
-        if (!ended) {
-          try {
-            source.stop();
-          } catch {
-            /* already stopped */
-          } finally {
-            end();
-          }
-        }
-      },
-      onEnded: (listener) => {
-        if (ended) listener();
-        else listeners.add(listener);
-      },
-    };
+    this.scheduler.scheduleArrangement(this.tracks.values(), window, this.activeTempoMap, this.timeline);
   }
 
   private panic(): void {
@@ -1511,8 +1191,7 @@ export class Workspace {
   }
 
   private cancelAudio(): void {
-    for (const handle of this.scheduledAudio.values()) handle.cancel();
-    this.scheduledAudio.clear();
+    this.scheduler.cancelAudio();
   }
 
   private disposeTrack(runtime: TrackRuntime): void {
@@ -1530,7 +1209,7 @@ export class Workspace {
     for (const off of this.sequenceOff.splice(0)) off();
     for (const runtime of this.tracks.values()) this.disposeTrack(runtime);
     this.tracks.clear();
-    this.scheduledAudio.clear();
+    this.scheduler.forget();
   }
 
   destroy(): void {
