@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { PitchShift } from "../src";
 import { dominantHz, renderShift } from "./helpers/spectrum";
 
@@ -22,5 +22,13 @@ describe("PitchShift (stretch)", () => {
     fx.destroy();
     await fx.ready;
     expect(fx.cells.isReady.value).toBe(false);
+  });
+  it("destroy() disconnects the input and output gains", () => {
+    const ctx = new OfflineAudioContext(2, 4096, 44100);
+    const fx = new PitchShift(ctx, { engine: "stretch", stretch: { blockMs: 40 } });
+    const core = (fx as unknown as { core: { input: GainNode; output: GainNode } }).core;
+    const spies = [vi.spyOn(core.input, "disconnect"), vi.spyOn(core.output, "disconnect")];
+    fx.destroy();
+    for (const s of spies) expect(s).toHaveBeenCalled();
   });
 });

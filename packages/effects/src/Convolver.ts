@@ -19,21 +19,25 @@ function cacheFor(ctx: BaseAudioContext): AudioBufferCache {
   return c;
 }
 
-export class Convolver extends Effect<{}, { isReady: ReadonlyCell<boolean> }> {
+export class Convolver extends Effect<{}, { isReady: ReadonlyCell<boolean>; buffer: ReadonlyCell<AudioBuffer | null> }> {
   private readonly node: ConvolverNode;
   private loadToken = 0;
-  private readonly _isReady: Cell<boolean>;
+  private destroyed = false;
   private readonly _buffer: Cell<AudioBuffer | null>;
   /** Resolves once the initial `url` (if any) has loaded. */
   readonly ready: Promise<void>;
 
   constructor(ctx: BaseAudioContext, opts: ConvolverOptions = {}) {
     const node = new ConvolverNode(ctx, { disableNormalization: opts.normalize === false });
-    const isReady = cell(false);
-    super(ctx, { input: node, output: node }, () => ({ params: {}, cells: { isReady: readonlyCell(isReady) }, latency: 0 }), opts);
+    const buffer = cell<AudioBuffer | null>(null);
+    super(
+      ctx,
+      { input: node, output: node },
+      () => ({ params: {}, cells: { isReady: readonlyCell(() => buffer.value !== null), buffer: readonlyCell(buffer) }, latency: 0 }),
+      opts,
+    );
     this.node = node;
-    this._isReady = isReady;
-    this._buffer = cell<AudioBuffer | null>(null);
+    this._buffer = buffer;
     if (opts.buffer) this.buffer = opts.buffer;
     this.ready = opts.url ? this.load(opts.url) : Promise.resolve();
   }
@@ -44,13 +48,17 @@ export class Convolver extends Effect<{}, { isReady: ReadonlyCell<boolean> }> {
   set buffer(b: AudioBuffer | null) {
     this.node.buffer = b;
     this._buffer.value = b;
-    this._isReady.value = b !== null;
   }
 
   async load(url: string): Promise<void> {
     const token = ++this.loadToken;
     const buffer = await cacheFor(this.context).load(url);
-    if (token !== this.loadToken) return;
+    if (this.destroyed || token !== this.loadToken) return;
     this.buffer = buffer;
+  }
+
+  override destroy(): void {
+    this.destroyed = true;
+    super.destroy();
   }
 }

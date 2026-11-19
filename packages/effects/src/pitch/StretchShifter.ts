@@ -91,6 +91,8 @@ export class StretchShifter extends AudioProcessor<{}, {}> {
       this.node.disconnect();
       this.node = null;
     }
+    this._input.disconnect();
+    this._output.disconnect();
     this.latency.destroy();
     super.destroy();
   }

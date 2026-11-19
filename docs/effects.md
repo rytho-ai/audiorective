@@ -80,7 +80,7 @@ If you see `Equalizer frequency response arrays must have the same length.`, all
 - **PingPongDelay.** Input is summed to mono and enters on the left delay line, then bounces through the cross-feedback path to the right and back. Echoes that have crossed that feedback path arrive one render quantum (128 samples) later than `delayTime`, since a cycle in a Web Audio graph always delays one of its nodes by a quantum.
 - **Compressor / Limiter.** See [Compressor and Limiter](#compressor-and-limiter) below.
 - **PitchShift.** See [PitchShift engines](#pitchshift-engines) below.
-- **Convolver.load().** The latest call to `load(url)` wins — an in-flight load that's superseded by a newer one is discarded silently. `ready` resolves once the constructor's initial `url` option (if given) has loaded; it is not re-armed by a later `load()` call. The `buffer` accessor is a tracked read: an effect that reads `convolver.buffer` re-runs when the buffer changes (assignment or `load`).
+- **Convolver.load().** The latest call to `load(url)` wins — an in-flight load that's superseded by a newer one is discarded silently. `ready` resolves once the constructor's initial `url` option (if given) has loaded; it is not re-armed by a later `load()` call. `isReady` is derived from the buffer (`true` while a buffer is set), and `cells.buffer` is the read-only cell behind the `buffer` accessor. A `load()` that settles after `destroy()` is ignored. The `buffer` accessor is a tracked read: an effect that reads `convolver.buffer` re-runs when the buffer changes (assignment or `load`).
 
 ## PitchShift engines
 

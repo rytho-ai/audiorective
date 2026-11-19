@@ -55,4 +55,32 @@ describe("Convolver", () => {
     stop();
     expect(seen).toEqual([null, ir, null]);
   });
+  it("isReady is derived from the buffer cell and buffer is a registered read-only cell", () => {
+    const ctx = new OfflineAudioContext(1, 128, 44100);
+    const ir = ctx.createBuffer(1, 4, 44100);
+    const fx = new Convolver(ctx);
+    const seen: boolean[] = [];
+    const stop = effect(() => void seen.push(fx.cells.isReady.value));
+    expect(fx.cells.buffer.value).toBeNull();
+    fx.buffer = ir;
+    expect(fx.cells.buffer.value).toBe(ir);
+    fx.buffer = null;
+    stop();
+    expect(seen).toEqual([false, true, false]);
+  });
+  it("a load that settles after destroy() is ignored", async () => {
+    const ctx = new OfflineAudioContext(1, 128, 44100);
+    const ir = ctx.createBuffer(1, 4, 44100);
+    const core = await import("@audiorective/core");
+    let resolve!: (b: AudioBuffer) => void;
+    vi.spyOn(core.AudioBufferCache.prototype, "load").mockImplementation(() => new Promise((r) => (resolve = r)));
+    const fx = new Convolver(ctx);
+    const pending = fx.load("/late.wav");
+    fx.destroy();
+    resolve(ir);
+    await pending;
+    expect(fx.buffer).toBeNull();
+    expect(fx.cells.isReady.value).toBe(false);
+    vi.restoreAllMocks();
+  });
 });
