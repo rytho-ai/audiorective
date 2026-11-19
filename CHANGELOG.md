@@ -58,6 +58,10 @@ predates that API. See the "Version mismatches" note in the skill.
 - **blocks:** `WavePlayer.destroy()` stops subscribers before it resets state, so no listener runs after the player is destroyed.
 - **midi:** `MidiSequence.subscribe` is an effect over `cells.state`; it notifies once per committed change, after the enclosing `batch`/effect flush, so several commits inside one outer `batch` produce one notification.
 - **daw:** a failure while building a track (for example a throwing `EffectRack`) releases its channel, automation gain and send-bus entry.
+- **host:** `WebClapHost.latency` is reported in samples (it was seconds), so graph PDC compensates a plug-in's latency correctly.
+- **blocks:** `WavePlayer.sourceToOutput` and `outputToSource` are tracked readers: an effect that calls them re-runs when the source is loaded or stretched.
+- **daw:** `Workspace.stop`, `auditionAudioClip`, `auditionRange` and `prepareAudioClipStretch` no longer subscribe a calling effect to Project edits.
+- **widgets:** `mountParameter`, `mountLevelMeter`, `mountWaveformSelector` and the selection plugin create elements in the mount root's own document, so they work inside iframes.
 - **docs:** `docs/effects.md` lists `Channel`'s `outputEnabled`, `tap` and per-send `enabled`.
 
 ### Added
