@@ -1174,7 +1174,17 @@ engine.core.context; // AudioContext
 Structural types let capability modules cooperate without importing each other. A module that needs one declares it as a parameter type; any object with the same members satisfies it.
 
 ```typescript
-import type { BeatTiming, CancellableEvent, ScheduledEvent, TimedEvent, EventTransform, EventTransformContext } from "@audiorective/core";
+import type {
+  BeatTiming,
+  CancellableEvent,
+  ScheduledEvent,
+  TimedEvent,
+  BeatEvent,
+  TimedBeatEvent,
+  SecondsOf,
+  EventTransform,
+  EventTransformContext,
+} from "@audiorective/core";
 import { applyEventTransforms, withCancel } from "@audiorective/core";
 
 interface CancellableEvent {
@@ -1183,26 +1193,45 @@ interface CancellableEvent {
 }
 type BeatTiming = Readonly<{ beatToTime(beat: number): number; timeToBeat(time: number): number }>;
 
-type ScheduledEvent = Readonly<{ when: number }>; // base of every scheduler's outgoing event
+// Seconds form: what a scheduler triggers.
+type ScheduledEvent = Readonly<{ when: number }>; // audio-context seconds
 type TimedEvent = ScheduledEvent & Readonly<{ duration: number; velocity: number }>;
+// Beat form: what a transform reads and returns by default.
+type BeatEvent = Readonly<{ beat: number }>;
+type TimedBeatEvent = BeatEvent & Readonly<{ durationBeats: number; velocity: number }>;
+type SecondsOf<E extends BeatEvent> = /* E with `beat` -> `when` and `durationBeats` -> `duration`; other fields unchanged */;
+
 type EventTransformContext = Readonly<{ now: number; timing: BeatTiming; random: () => number }>;
-type EventTransform<E extends ScheduledEvent = ScheduledEvent> = Readonly<{
-  id: string;
-  params?: Readonly<Record<string, unknown>>; // serialisable settings
-  apply(events: readonly E[], context: EventTransformContext): readonly E[];
-}>;
-applyEventTransforms<E extends ScheduledEvent>(events: readonly E[], transforms: readonly EventTransform<E>[], context: EventTransformContext): E[];
+type EventTransform<E extends BeatEvent = BeatEvent> = Readonly<{ id: string; params?: Readonly<Record<string, unknown>> }> &
+  (
+    | Readonly<{ unit?: "beat"; apply(events: readonly E[], context: EventTransformContext): readonly E[] }>
+    | Readonly<{ unit: "second"; apply(events: readonly SecondsOf<E>[], context: EventTransformContext): readonly SecondsOf<E>[] }>
+  );
+applyEventTransforms<E extends BeatEvent>(events: readonly E[], transforms: readonly EventTransform<E>[], context: EventTransformContext): SecondsOf<E>[];
 withCancel(event: CancellableEvent | null, undo: () => void): CancellableEvent;
 ```
 
 A structural contract that exposes reactive state, such as a sequencer's `pattern` or a plugin context's cells, types it as `Readable<T>` (see [Readable](#readablet)). Read it with `.value` or with the raw accessor `$()`; both are tracked inside an effect and give the same value.
 
 - `CancellableEvent` is a consumer-owned audio event that a scheduler may revoke after a transport or edit change. `Clock`'s `window.own(event, when)` accepts one (`@audiorective/clock` re-exports the type), and `PadHit` extends it.
-- `BeatTiming` converts between beats and absolute audio-context time. `Timeline` satisfies it, and `StepSequencer.schedule(window, timing)` and `ClipLauncher`'s transport take it.
-- `ScheduledEvent` is the minimum a scheduler's event needs: `when`, absolute audio-context seconds. `TimedEvent` adds `duration` (seconds) and `velocity` (0..1) for note-like events such as `StepHit`. A scheduler whose events have no duration or velocity (a clip launch) uses `ScheduledEvent` and the same transform contract.
-- `EventTransform<E>` is a pluggable step a scheduler runs between computing its events and triggering them. It is data-shaped (`id`, serialisable `params`, a pure `apply`) so it can be saved later. `context.now` is the earliest time an event may sound, `context.timing` maps beats to seconds, and `context.random` is the scheduler's injectable random source and the only randomness a transform may use. A transform keeps no state across windows and never triggers or cancels audio.
+- `BeatTiming` converts between beats and absolute audio-context time. `Timeline` satisfies it, `applyEventTransforms` uses it for the unit conversions, and `StepSequencer.schedule(window, timing)` and `ClipLauncher`'s transport take it.
+- An event has two forms. Inside a transform pipeline it is positioned in beats: `BeatEvent` is `{ beat }`, and `TimedBeatEvent` adds `durationBeats` and `velocity` (0..1) for note-like events such as a step hit. What a scheduler triggers is the seconds form: `ScheduledEvent` is `{ when }`, absolute audio-context seconds, and `TimedEvent` adds `duration` (seconds) and `velocity`. `SecondsOf<E>` is the seconds form of a beat event type `E` (`beat` becomes `when`, `durationBeats` becomes `duration`, every other field is kept). Because the two are distinct types, a trigger's event type says "final, clamped, seconds". A scheduler whose events have no duration or velocity (a clip launch) uses `BeatEvent` and the same transform contract.
+- `EventTransform<E>` is a pluggable step a scheduler runs between computing its events and triggering them. It is data-shaped (`id`, serialisable `params`, a pure `apply`) so it can be saved later. By default it reads and returns beat events, so swing, offset and nudges are beat arithmetic that holds at any tempo. Set `unit: "second"` to read and return the seconds form instead, for adjustments that are really about time, such as millisecond jitter. `context.now` is the earliest position an event may sound, in the transform's own unit (beats for a beat transform, seconds for a seconds transform), `context.timing` maps between beats and seconds, and `context.random` is the scheduler's injectable random source and the only randomness a transform may use. A transform keeps no state across windows and never triggers or cancels audio.
+
+```ts
+// Beat transform (default): push every event a sixteenth of a beat late, at any tempo.
+const late: EventTransform<TimedBeatEvent> = { id: "late", apply: (events) => events.map((e) => ({ ...e, beat: e.beat + 0.0625 })) };
+
+// Seconds transform: jitter each event by up to 5 ms either way.
+const jitter: EventTransform<TimedBeatEvent> = {
+  id: "jitter",
+  unit: "second",
+  apply: (events, { random }) => events.map((e) => ({ ...e, when: e.when + (random() - 0.5) * 0.01 })),
+};
+```
+
 - `withCancel(event, undo)` returns a `CancellableEvent` whose `cancel()` cancels `event`, then runs `undo` once (later calls do nothing); `onEnded` passes through to `event`. Use it when a trigger does more than start a sound, such as scheduling a filter change: a scheduler that cancels and re-triggers pending events (a Clock `refresh()`, a stop, a `StepSequencer.reset()`) then retracts the extra scheduling too. `undo` does not run for an event that already ended. With a `null` event it still runs on cancel, and the returned event ends at that cancel.
-- `applyEventTransforms` is the enforcement every scheduler shares: it runs the transforms in array order, throws `Event transform "<id>" ...` naming the transform for an output with a non-finite `when`, a `duration` that is not a finite number above 0, or a `velocity` outside 0..1 (`duration` and `velocity` are checked only on events that have them), drops events with `velocity` 0, and moves events earlier than `context.now` to `now`. The scheduler then triggers and owns every returned event. `StepSequencer` uses it ([Blocks](./blocks.md#transform-sockets)).
+- `applyEventTransforms(events, transforms, context)` is the enforcement every scheduler shares. `events` are beat events and `context.now` is in seconds. It runs the transforms in array order and converts the events through `context.timing` only where the unit changes: a seconds transform gets the events as `when` and `duration`, and its output is mapped back to `beat` and `durationBeats` before the next beat transform, so consecutive transforms of one unit never round-trip. It throws `Event transform "<id>" ...` naming the transform for an output with a non-finite `beat` (`when` for a seconds transform), a `durationBeats` (`duration`) that is not a finite number above 0, or a `velocity` outside 0..1 (checked only on events that have them), or for a `unit` other than `"beat"` or `"second"`, and it drops events with `velocity` 0. After the last transform it converts to seconds, moves any event earlier than `context.now` to `now`, and returns the seconds events. The scheduler then triggers and owns every returned event. `StepSequencer` uses it ([Blocks](./blocks.md#transform-sockets)).
 
 ## registerWorklet
 
@@ -1225,7 +1254,7 @@ signals/src/
 ├── Spatial.ts           # AudioProcessor wrapping a PannerNode
 ├── Analyser.ts          # AudioProcessor wrapping an AnalyserNode (spectrum/waveform tap)
 ├── peaks.ts             # pure PCM summaries and frame/time bin ranges
-├── contracts.ts         # CancellableEvent, BeatTiming and EventTransform contracts + applyEventTransforms, withCancel
+├── contracts.ts         # CancellableEvent, BeatTiming and EventTransform contracts (beat and seconds event forms) + applyEventTransforms, withCancel
 ├── types.ts             # SignalAccessor, ComputedAccessor, Readable, ParamBind, etc.
 └── index.ts             # public exports
 ```
@@ -1280,15 +1309,19 @@ export type {
 
 ## Common errors
 
-| Message                                                                                         | Cause                                                                                                   | Fix                                                                                         |
-| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `AudioEngine destroyed before it became ready`                                                  | `untilReady()` was called on, or was pending when, a destroyed engine.                                  | Create a new engine; `destroy()` is final. Do not await readiness across a teardown.        |
-| `createEngine: setup returned reserved key "core"`                                              | The object returned by `setup` has a `core` property, which the engine reserves for itself.             | Rename that property; read the engine core as `engine.core`.                                |
-| `Event transform "<id>" returned an event whose "duration" is not a finite number above 0.`     | A transform returned a hit with a `duration` that is zero, negative or not finite.                      | Fix that transform; omit `duration` or return a finite number above 0.                      |
-| `Event transform "<id>" returned an event whose "velocity" is not a finite number from 0 to 1.` | A transform returned a hit with a `velocity` outside 0..1 or not finite.                                | Fix that transform; clamp velocity to 0..1.                                                 |
-| `Event transform "<id>" must return an array of events.`                                        | A transform returned something other than an array.                                                     | Return an array (possibly empty) from `apply`.                                              |
-| `<name>'s path latency is unknown: …`                                                           | A latency query on a processor that appears in no `defineGraph` (`LatencyUnknownError`).                | Wire it with `defineGraph`, its own or the engine's, instead of raw `.connect()`.           |
-| `defineGraph: <name> is a bare AudioWorkletNode …`                                              | A worklet node was used directly as an edge endpoint, so its latency is unknowable.                     | Wrap it in an `AudioProcessor` that declares `latency`.                                     |
-| `defineGraph: <name> used as source has no output` / `defineGraph: <name> has no output`        | A processor with no `output` (an input-only sink) was used as an edge source or endpoint.               | Check the edge direction; give the processor an `output` or route from a node that has one. |
-| `loadAudioBuffer: failed to fetch <url> (<status>)`                                             | The URL answered with a non-2xx HTTP status.                                                            | Check the URL and server response; decode errors surface from `decodeAudioData` instead.    |
-| `registerWorklet: this AudioContext has no audioWorklet, so "<name>" cannot be loaded. …`       | The context has no `audioWorklet` (old browser, some test contexts); this is `WorkletUnavailableError`. | Run in a browser with AudioWorklet support, or choose an engine that needs no worklet.      |
+| Message                                                                                          | Cause                                                                                                   | Fix                                                                                         |
+| ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `AudioEngine destroyed before it became ready`                                                   | `untilReady()` was called on, or was pending when, a destroyed engine.                                  | Create a new engine; `destroy()` is final. Do not await readiness across a teardown.        |
+| `createEngine: setup returned reserved key "core"`                                               | The object returned by `setup` has a `core` property, which the engine reserves for itself.             | Rename that property; read the engine core as `engine.core`.                                |
+| `Event transform "<id>" returned an event without a finite "beat".`                              | A beat transform (the default unit) returned an event whose `beat` is missing or not finite.            | Fix that transform; return finite beats, or set `unit: "second"` to work with `when`.       |
+| `Event transform "<id>" returned an event without a finite "when".`                              | A seconds transform (`unit: "second"`) returned an event whose `when` is missing or not finite.         | Fix that transform; return finite seconds.                                                  |
+| `Event transform "<id>" returned an event whose "durationBeats" is not a finite number above 0.` | A beat transform returned an event with a `durationBeats` that is zero, negative or not finite.         | Fix that transform; omit `durationBeats` or return a finite number above 0.                 |
+| `Event transform "<id>" has a unit other than "beat" or "second".`                               | A transform's `unit` is something else, such as `"ms"`.                                                 | Use `"beat"` (or omit `unit`) or `"second"`.                                                |
+| `Event transform "<id>" returned an event whose "duration" is not a finite number above 0.`      | A seconds transform returned an event with a `duration` that is zero, negative or not finite.           | Fix that transform; omit `duration` or return a finite number above 0.                      |
+| `Event transform "<id>" returned an event whose "velocity" is not a finite number from 0 to 1.`  | A transform returned a hit with a `velocity` outside 0..1 or not finite.                                | Fix that transform; clamp velocity to 0..1.                                                 |
+| `Event transform "<id>" must return an array of events.`                                         | A transform returned something other than an array.                                                     | Return an array (possibly empty) from `apply`.                                              |
+| `<name>'s path latency is unknown: …`                                                            | A latency query on a processor that appears in no `defineGraph` (`LatencyUnknownError`).                | Wire it with `defineGraph`, its own or the engine's, instead of raw `.connect()`.           |
+| `defineGraph: <name> is a bare AudioWorkletNode …`                                               | A worklet node was used directly as an edge endpoint, so its latency is unknowable.                     | Wrap it in an `AudioProcessor` that declares `latency`.                                     |
+| `defineGraph: <name> used as source has no output` / `defineGraph: <name> has no output`         | A processor with no `output` (an input-only sink) was used as an edge source or endpoint.               | Check the edge direction; give the processor an `output` or route from a node that has one. |
+| `loadAudioBuffer: failed to fetch <url> (<status>)`                                              | The URL answered with a non-2xx HTTP status.                                                            | Check the URL and server response; decode errors surface from `decodeAudioData` instead.    |
+| `registerWorklet: this AudioContext has no audioWorklet, so "<name>" cannot be loaded. …`        | The context has no `audioWorklet` (old browser, some test contexts); this is `WorkletUnavailableError`. | Run in a browser with AudioWorklet support, or choose an engine that needs no worklet.      |

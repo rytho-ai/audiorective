@@ -883,10 +883,10 @@
     {
       "id": 66,
       "prompt": "my audiorective StepSequencer needs a humanize effect that nudges each hit's timing by a few milliseconds, and the lane swing must keep working. don't fork the block and don't run anything.",
-      "expected_output": "A page-local EventTransform plugged into the sequencer's transforms socket, composed with the default transforms.",
+      "expected_output": "A page-local seconds-unit transform plugged into the sequencer's transforms socket, composed with the default transforms.",
       "files": [],
       "expectations": [
-        "Writes an EventTransform<StepHit> object with an id and a pure apply that returns adjusted hits, imported types from @audiorective/core and @audiorective/blocks/sequencer",
+        "Writes a StepTransform (EventTransform<StepEvent>) object with an id, `unit: \"second\"` and a pure apply that adjusts `when` on the hits, because the jitter is in milliseconds; types come from @audiorective/blocks/sequencer",
         "Plugs it in with sequencer.setTransforms([...defaultStepTransforms, humanize]) (or the transforms option) so stepSwing keeps lane swing working",
         "Takes randomness from the transform context's random, and does not trigger or cancel audio or keep state across windows inside the transform"
       ]
@@ -910,6 +910,17 @@
       "expectations": [
         "Types the definitions as ParamSpec imported from @audiorective/core (or StepParamSpec from @audiorective/blocks/sequencer, its alias), not a hand-written { id, min, max, default } interface",
         "Passes the list to the StepSequencer params option and checks min < max and default within min..max, keeping step as an editing hint rather than enforcing it"
+      ]
+    },
+    {
+      "id": 69,
+      "prompt": "In my audiorective StepSequencer I want a transform that pushes every hit on an odd lane step a 32nd note (an eighth of a beat) late, and it has to stay musically the same when I automate the tempo. don't fork the block and don't run anything.",
+      "expected_output": "A beat-unit StepTransform that moves hit.beat, composed with the default transforms.",
+      "files": [],
+      "expectations": [
+        "Writes a StepTransform with an id and no `unit` (or `unit: \"beat\"`) whose apply returns hits with `beat` increased by 0.125, instead of adding seconds to `when` or converting with context.timing",
+        "Leaves durationBeats and every other hit field unchanged, keeps no state across windows, and does not trigger or cancel audio",
+        "Plugs it in with sequencer.setTransforms([...defaultStepTransforms, mine]) (or the transforms option) so lane swing keeps working"
       ]
     }
   ]

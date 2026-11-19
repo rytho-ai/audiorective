@@ -358,7 +358,7 @@ type StepDirection = "forward" | "backward" | "bounce";
 type StepCell = { velocity; offset; length; repeat; pitch; chance; custom: Readonly<Record<string, number>> };
 type StepLane = { id; label; steps; rate; direction; swing; mute; solo; cells: readonly StepCell[] };
 type StepPattern = { size: number; lanes: readonly StepLane[] };
-new StepSequencer(pattern: StepPatternInput, trigger: (hit: StepHit) => CancellableEvent | null, options?: { random?: () => number; params?: readonly StepParamSpec[]; transforms?: readonly EventTransform<StepHit>[] });
+new StepSequencer(pattern: StepPatternInput, trigger: (hit: StepHit) => CancellableEvent | null, options?: { random?: () => number; params?: readonly StepParamSpec[]; transforms?: readonly StepTransform[] });
 ```
 
 `size` is the loop length in 1/16 steps (integer 1..128, so the loop lasts `size / 4` beats). Input is partial and filled with defaults: a lane gets `label = id`, `steps = size`, `rate = "1/16"`, `direction = "forward"`, `swing = 0`, `mute`/`solo` false and every cell off; a cell gets `velocity 0`, `offset 0`, `length 1`, `repeat 1`, `pitch 0`, `chance 1` and `custom` set to each declared param's default (`{}` without `params`). Every lane always holds `size` cells; cells beyond its `steps` are kept but not played.
@@ -374,30 +374,32 @@ new StepSequencer(pattern: StepPatternInput, trigger: (hit: StepHit) => Cancella
 
 The ranges are data, in one place. `sequencer.cellParams` (also exported as `stepCellParams`) lists these six fields as `readonly StepParamSpec[]` in the order above, as core `ParamSpec`s, the same `{ id, label, min, max, default, step }` shape as a custom param (`step` is the editing hint; `repeat` and `pitch` are enforced as integers). `sequencer.rates` (also `stepRates`) lists the twelve `StepRate`s in display order, straight 1/2 to 1/64 then the triplets. Validation and views read the same constants, so a view needs no copy of them.
 
-Lane fields: `steps` (integer 1..`size`, the lane's own length, so lanes of different lengths drift against each other), `rate` (a `StepRate`; straight 1/2 = 2 beats down to 1/64 = 1/16 beat, and a `T` rate is two thirds of the straight one), `direction`, `swing` (0..1; the `stepSwing` transform delays every odd lane step by `swing * 0.5` lane steps), `mute` and `solo`.
+Lane fields: `steps` (integer 1..`size`, the lane's own length, so lanes of different lengths drift against each other), `rate` (a `StepRate`; straight 1/2 = 2 beats down to 1/64 = 1/16 beat, and a `T` rate is two thirds of the straight one), `direction`, `swing` (0..1; the `stepSwing` transform delays every odd lane step by `swing * 0.5` lane steps, a fixed beat offset at any tempo), `mute` and `solo`.
 
-**Timing.** Every lane restarts at each loop boundary, measured from beat 0 of the timing; a lane whose rate does not divide the loop is cut off at the loop end. With `k` the lane step counter in the loop, the played cell is `k mod steps` going forward, `steps - 1 - (k mod steps)` backward, and a ping-pong without repeating the end cells for `bounce` (`0 1 2 1 0 1 ...` for 3 steps; a 1-step lane stays on cell 0). A hit starts at `loopStart + k * rate`, plus `offset * rate`, then the transforms run (by default `stepSwing` adds swing); a start already in the past plays at the window's current time. A step with `repeat = r` plays `r` hits at `i * rate / r` and each lasts `length * rate / r` beats, converted to seconds through the timing. A lane plays when it is not muted and either no lane is soloed or it is soloed. A step plays when `velocity > 0` and `random() < chance`; the draw happens once per step, so all repeats of a step play or none do. Pass `options.random` for deterministic tests.
+**Timing.** Every lane restarts at each loop boundary, measured from beat 0 of the timing; a lane whose rate does not divide the loop is cut off at the loop end. With `k` the lane step counter in the loop, the played cell is `k mod steps` going forward, `steps - 1 - (k mod steps)` backward, and a ping-pong without repeating the end cells for `bounce` (`0 1 2 1 0 1 ...` for 3 steps; a 1-step lane stays on cell 0). A hit starts at beat `loopStart + k * rate`, plus `offset * rate`, then the transforms run in beats (by default `stepSwing` adds swing); the result is converted to seconds through the timing and a start already in the past plays at the window's current time. A step with `repeat = r` plays `r` hits at `i * rate / r` and each lasts `length * rate / r` beats. A lane plays when it is not muted and either no lane is soloed or it is soloed. A step plays when `velocity > 0` and `random() < chance`; the draw happens once per step, so all repeats of a step play or none do. Pass `options.random` for deterministic tests.
 
 The trigger receives a `StepHit` and returns a `CancellableEvent` (`cancel()` and `onEnded()`) or `null`; a `PadHit` is one.
 
 ```ts
-type StepHit = TimedEvent & {
-  // when, duration, velocity (core)
+type StepEvent = TimedBeatEvent & {
+  // beat, durationBeats, velocity (core): where the hit sounds and how long, in beats, after offset and repeat
   laneId: string;
   step: number; // cell index
   count: number; // the lane's step counter k within the loop
-  beat: number; // beat of the lane step boundary (before offset, repeat and transforms)
+  stepBeat: number; // beat of the lane step boundary (before offset and repeat)
   rateBeats: number;
   swing: number; // the lane's swing value
   pitch: number;
   custom: Readonly<Record<string, number>>;
-  loop: number; // floor(beat / loopBeats): loops since timing beat 0
+  loop: number; // floor(stepBeat / loopBeats): loops since timing beat 0
   repeatIndex: number;
   repeatCount: number;
 };
+type StepHit = SecondsOf<StepEvent>; // the same fields with beat -> when and durationBeats -> duration
 ```
 
-`when` is absolute audio-context seconds and `duration` is seconds. `loop` supports conditional triggers such as "every 2nd loop" (`hit.loop % 2 === 0`) without the block knowing about them.
+`StepEvent` is what transforms read and return. `StepHit` is what the trigger receives: final, after the transforms and the clamp to the window's current time.
+On a `StepHit`, `when` is absolute audio-context seconds and `duration` is seconds. `loop` supports conditional triggers such as "every 2nd loop" (`hit.loop % 2 === 0`) without the block knowing about them.
 
 The trigger can delegate to `PadBank.trigger(id, velocity, when, { pitch, duration })`. The sequencer tracks and cancels only events returned by that callback. Use a separate call to the instrument for manual hits.
 
@@ -458,25 +460,36 @@ Ids must be unique, nonempty, differ from the built-in cell keys and from `custo
 
 ### Transform sockets
 
-New expressive behaviour plugs in as an `EventTransform<StepHit>` (a core contract, see [Core](./core.md#shared-contracts)) instead of growing the block. After the sequencer has computed a window's hits it runs the `transforms` in array order over them, then triggers every result.
+New expressive behaviour plugs in as a `StepTransform` (an `EventTransform<StepEvent>`, a core contract, see [Core](./core.md#shared-contracts)) instead of growing the block. After the sequencer has computed a window's hits it runs the `transforms` in array order over them, converts the result to seconds, then triggers every hit.
+
+A transform works in beats by default: it reads and returns `StepEvent`s with `beat` and `durationBeats`, so moves are tempo-independent beat arithmetic. A transform that sets `unit: "second"` reads and returns the same hits as seconds (`when`, `duration`); the sequencer converts through the timing before it and back to beats after it.
 
 ```ts
-import { defaultStepTransforms, stepSwing, StepSequencer } from "@audiorective/blocks/sequencer";
+import { defaultStepTransforms, stepSwing, StepSequencer, type StepTransform } from "@audiorective/blocks/sequencer";
 
-const humanize: EventTransform<StepHit> = {
+// Beat transform: push odd lane steps late by a sixteenth of a beat, whatever the tempo.
+const lazy: StepTransform = {
+  id: "lazy",
+  apply: (hits) => hits.map((hit) => (hit.count % 2 ? { ...hit, beat: hit.beat + 0.0625 } : hit)),
+};
+
+// Seconds transform: humanize each hit by up to 5 ms either way.
+const humanize: StepTransform = {
   id: "humanize",
+  unit: "second",
   apply: (hits, { random }) => hits.map((hit) => ({ ...hit, when: hit.when + (random() - 0.5) * 0.01 })),
 };
-sequencer.setTransforms([...defaultStepTransforms, humanize]); // keep swing, add mine
+sequencer.setTransforms([...defaultStepTransforms, lazy, humanize]); // keep swing, add mine
 ```
 
-`defaultStepTransforms` is `[stepSwing()]`, and it is the default for the `transforms` option. `stepSwing()` (`id: "step-swing"`) delays hits whose `count` is odd by `swing * 0.5 * rateBeats`, converted to seconds through `context.timing`. Passing `transforms: []` or a list without it makes every lane's `swing` inert and gives straight timing.
+`defaultStepTransforms` is `[stepSwing()]`, and it is the default for the `transforms` option. `stepSwing()` (`id: "step-swing"`) delays hits whose `count` is odd by `swing * 0.5 * rateBeats` beats, so swing stays a fixed beat offset when the tempo changes. Passing `transforms: []` or a list without it makes every lane's `swing` inert and gives straight timing.
 
 Rules the sequencer enforces and never leaves to the transform:
 
-- Transforms run in array order on each window's hits, before anything is triggered.
-- A hit earlier than `context.now` plays at `now`.
-- A returned hit with a non-finite `when`, a `duration` that is not above 0, or a `velocity` outside 0..1 throws an error that names the transform `id`. `velocity` 0 drops the hit.
+- Transforms run in array order on each window's hits, before anything is triggered. The hits are converted between beats and seconds only where consecutive transforms differ in `unit`.
+- `context.now` is the window's current time in the transform's unit (beats for a beat transform, seconds for a seconds transform).
+- After the last transform the hits are converted to seconds through the timing, and a hit earlier than the window's current time plays at that time. The trigger never sees a `when` before it.
+- A returned hit with a non-finite `beat` (`when` in a seconds transform), a `durationBeats` (`duration`) that is not above 0, or a `velocity` outside 0..1 throws an error that names the transform `id`; so does a `unit` other than `"beat"` or `"second"`. `velocity` 0 drops the hit.
 - A transform never triggers or cancels audio. The sequencer triggers every returned hit and owns it with `window.own`, so `reset()`, stop and seek still retract added hits.
 - A transform keeps no hidden state across windows: what it needs (beat, loop, lane data) is on the hit. Randomness comes only from `context.random`, the sequencer's injectable `random` option.
 
@@ -557,18 +570,18 @@ Pass `mode: "one-shot"` on a change to request finite playback. The playback dri
 
 ## Common errors
 
-| Step Sequencer message                                                                                                        | Fix                                                                                                                                                        |
-| ----------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Step Sequencer needs an integer size from 1 to 128.`                                                                         | Pass a whole `size` in 1/16 steps from 1 to 128 to the constructor or `setSize`.                                                                           |
-| `Step Sequencer needs lanes with unique, nonempty IDs.`                                                                       | Give every lane a different, nonempty string `id`.                                                                                                         |
-| `Step Sequencer lane needs steps from 1 to the pattern size, a known rate and direction, ...`                                 | Keep `steps` within `size`, use a listed `StepRate`, `forward`/`backward`/`bounce`, swing 0..1, boolean `mute`/`solo` and no more than `size` cells.       |
-| `Step Sequencer cell needs velocity and chance from 0 to 1, offset from -0.5 to 0.5, length from 1/16 to 4, ...`              | Keep cell values in range; `repeat` is an integer 1..8 and `pitch` an integer -24..24.                                                                     |
-| `Step Sequencer params need unique nonempty ids that differ from the built-in cell keys ...`                                  | Fix the `params` option: unique ids that are not `velocity`, `offset`, `length`, `repeat`, `pitch`, `chance` or `custom`, `min < max`, `default` in range. |
-| `Step Sequencer custom values need declared param ids and finite numbers from each param's min to max.`                       | Declare the id in `params` at construction, and keep each `custom` value within that param's range.                                                        |
-| `Step Sequencer transforms need an array of objects that each have a nonempty string id and an apply function.`               | Pass `transforms` / `setTransforms` a list of `{ id, apply }` objects.                                                                                     |
-| `Event transform "<id>" returned an event without a finite "when".` (also `"duration"`, `"velocity"`, `must return an array`) | The named transform returned a hit with a non-finite `when`, a `duration` not above 0, a `velocity` outside 0..1, or a non-array. Fix that transform.      |
-| `Step Sequencer needs an existing lane and step.`                                                                             | `setCell`/`toggle` need a current lane ID and a zero-based step below `size`.                                                                              |
-| `Step Sequencer needs an existing lane.`                                                                                      | `setLane` needs a current lane ID.                                                                                                                         |
+| Step Sequencer message                                                                                                                                                              | Fix                                                                                                                                                                                                                                                      |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Step Sequencer needs an integer size from 1 to 128.`                                                                                                                               | Pass a whole `size` in 1/16 steps from 1 to 128 to the constructor or `setSize`.                                                                                                                                                                         |
+| `Step Sequencer needs lanes with unique, nonempty IDs.`                                                                                                                             | Give every lane a different, nonempty string `id`.                                                                                                                                                                                                       |
+| `Step Sequencer lane needs steps from 1 to the pattern size, a known rate and direction, ...`                                                                                       | Keep `steps` within `size`, use a listed `StepRate`, `forward`/`backward`/`bounce`, swing 0..1, boolean `mute`/`solo` and no more than `size` cells.                                                                                                     |
+| `Step Sequencer cell needs velocity and chance from 0 to 1, offset from -0.5 to 0.5, length from 1/16 to 4, ...`                                                                    | Keep cell values in range; `repeat` is an integer 1..8 and `pitch` an integer -24..24.                                                                                                                                                                   |
+| `Step Sequencer params need unique nonempty ids that differ from the built-in cell keys ...`                                                                                        | Fix the `params` option: unique ids that are not `velocity`, `offset`, `length`, `repeat`, `pitch`, `chance` or `custom`, `min < max`, `default` in range.                                                                                               |
+| `Step Sequencer custom values need declared param ids and finite numbers from each param's min to max.`                                                                             | Declare the id in `params` at construction, and keep each `custom` value within that param's range.                                                                                                                                                      |
+| `Step Sequencer transforms need an array of objects that each have a nonempty string id and an apply function.`                                                                     | Pass `transforms` / `setTransforms` a list of `{ id, apply }` objects.                                                                                                                                                                                   |
+| `Event transform "<id>" returned an event without a finite "beat".` (also `"when"`, `"durationBeats"`, `"duration"`, `"velocity"`, `must return an array`, `has a unit other than`) | The named transform returned a hit with a non-finite `beat` (`when` if it sets `unit: "second"`), a `durationBeats` (`duration`) not above 0, a `velocity` outside 0..1, a non-array, or a `unit` other than `"beat"` or `"second"`. Fix that transform. |
+| `Step Sequencer needs an existing lane and step.`                                                                                                                                   | `setCell`/`toggle` need a current lane ID and a zero-based step below `size`.                                                                                                                                                                            |
+| `Step Sequencer needs an existing lane.`                                                                                                                                            | `setLane` needs a current lane ID.                                                                                                                                                                                                                       |
 
 | Sample Library message                                       | Fix                                                                           |
 | ------------------------------------------------------------ | ----------------------------------------------------------------------------- |
