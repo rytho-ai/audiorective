@@ -364,6 +364,7 @@ Choke is carried by a per-event gain gate, so cancelling an unstarted hit retrac
 ### Lane-record form
 
 ```ts
+import { Clock } from "@audiorective/clock";
 import { StepSequencer } from "@audiorective/blocks/sequencer";
 
 const seq = new StepSequencer(
@@ -380,11 +381,12 @@ const seq = new StepSequencer(
     },
   },
 );
+const clock = new Clock({ context: ctx, bpm: 120 }); // one object: it makes its own Timeline
 const detach = clock.attach(seq); // or workspace.transport.attach(seq)
-clock.start(ctx.currentTime + 0.5);
+clock.start(ctx.currentTime + 0.5); // clock.bpm.value = 140 changes tempo
 ```
 
-Patterns are `X` (velocity 1), `x` (0.8), `1`..`9` (tenths), `.` (rest), spaces ignored; or an array of velocities. Each lane loops forever on its own length at its own rate (true polymeter: lanes of 5, 16 and 8 steps drift apart and realign), starting at beat 0. `rate` is a `Time`: `"16n"` (a quarter of a beat), `"16n."` dotted, `"8t"` triplet, `"1m"` four beats; `"250ms"`, `"2s"` or a number are seconds, converted to beats at the tempo at beat 0. The `StepRate` names (`"1/16"`) also work. `swing` is 0..1 or `"30%"` and delays every second step by that fraction of half a step. Index counts from 0: `hit.index` and `steps[i]` are zero-based.
+Patterns are `X` (velocity 1), `x` (0.8), `1`..`9` (tenths), `.` (rest), spaces ignored; or an array of velocities. Each lane loops forever on its own length at its own rate (true polymeter: lanes of 5, 16 and 8 steps drift apart and realign), starting at beat 0. `rate` is a `Time`: `"16n"` (a quarter of a beat), `"16n."` dotted, `"8t"` triplet, `"1m"` four beats; `"250ms"`, `"2s"` or a number are seconds, converted to beats at the tempo at beat 0. The `StepRate` names (`"1/16"`) also work. `swing` is 0..1 or `"30%"` and delays every second step by that fraction of half a step. Index counts from 0: `hit.index` and `steps[i]` are zero-based: `steps[0]` is the first step, `steps[6]` the seventh.
 
 - **Hear each hit.** `onHit(hit)` runs ahead of time for every hit that will sound; `seq.addEventListener("hit", (e) => e.hit)` and `seq.onhit = fn` receive the same `HitEvent`. A lane can also carry its own `onHit`.
 - **Automate on a hit, and undo it.** `onHit` may return a cleanup. When a pending hit is retracted (an edit re-queues it, the transport stops, pauses or seeks, or `dispose()` runs) the cleanup runs, like a React effect cleanup, so `filter.frequency.setValueAtTime(hit.values.cutoff, hit.when)` with cleanup `filter.frequency.cancelScheduledValues(hit.when)` never lingers or doubles. `onHit` can run again for the same hit after a re-queue, after its cleanup ran.

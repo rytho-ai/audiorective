@@ -17,6 +17,19 @@ timeline.bpm.setValueAtTime(140, timeline.beatToTime(64));
 sampler.trigger({ when: timeline.beatToTime(nextBarBeat) }); // same unit everywhere
 ```
 
+## Quick start — one object
+
+```typescript
+import { Clock } from "@audiorective/clock";
+
+const clock = new Clock({ context: ctx, bpm: 120 }); // creates its own Timeline
+clock.attach(sequencer); // any { schedule(window, timing) }
+clock.start();
+clock.bpm.linearRampToValueAtTime(140, ctx.currentTime + 4); // clock.bpm is clock.timeline.bpm
+```
+
+`context` (also spelled `audioContext`, as on `Timeline`) is the `AudioContext`. The Clock creates a `Timeline` from it, exposed as `clock.timeline`, and `bpm` (default 120) is that Timeline's starting tempo. A Clock that created its Timeline owns it; a Timeline has no resources of its own, so `clock.destroy()` stops the tick loop and that is all the teardown there is. A Clock given a `timeline` borrows it: `destroy()` leaves it usable, so other code can share it. Pass `timeline` or `context`, not both. Rulers need a Timeline you build yourself, as below.
+
 ## Quick start — a metronome
 
 ```typescript
@@ -41,8 +54,10 @@ clock.start();
 
 ```typescript
 interface ClockOptions<TRulers> {
-  timeline: Timeline<TRulers>;
-  onTick: (window: TickWindow<TRulers>) => void; // called once per tick while playing
+  timeline?: Timeline<TRulers>; // borrow this Timeline ...
+  context?: TimeSource; // ... or create one from this AudioContext (alias: audioContext)
+  bpm?: number; // starting tempo of the created Timeline. Default 120; only with `context`
+  onTick?: (window: TickWindow<TRulers>) => void; // called once per tick while playing
   lookAhead?: number; // seconds scheduled ahead of now. Default 0.1
   tickInterval?: number; // seconds between ticks for the default source. Default 0.025
   onMiss?: (gap: MissedGap) => void; // a tick landed past the previous window's end
@@ -440,20 +455,21 @@ Two things to remember when writing assertions:
 
 ## Common errors
 
-| Message                                                                                                                             | Cause                                                                                                              | Fix                                                                                                                          |
-| ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| `Clock owned event time must be finite, non-negative seconds.`                                                                      | `window.own(event, when)` received an invalid audio time; the event is cancelled before the error is thrown.       | Pass the same absolute `AudioContext` time used to schedule that event.                                                      |
-| `RangeLoop needs increasing finite source seconds and a non-negative audio start.` / `RangeLoop window needs finite audio seconds.` | The time range or window contains an invalid bound.                                                                | Use finite seconds and place the source end after its start.                                                                 |
-| `TempoParam ramp end time must be finite, got …`                                                                                    | `linearRampToValueAtTime` or `exponentialRampToValueAtTime` received NaN or an infinite end time.                  | Pass the absolute `AudioContext` time at which the ramp reaches its value.                                                   |
-| `Clock is destroyed.` / `Clock already has this scheduler attached.`                                                                | `attach` was called on a destroyed clock, or with a scheduler that is already attached.                            | Create a new Clock, or detach the scheduler first.                                                                           |
-| `Clock start time must be finite seconds, got …` / `Clock start offset must be finite beats, got …`                                 | `start(when, offsetBeats)` or `start({ atBeat })` received NaN or an infinite number.                              | Pass a finite audio time and a finite beat.                                                                                  |
-| `TempoParam start time must be finite, got …` / `TempoParam time constant must be finite and >= 0, got …`                           | `setTargetAtTime` or `setValueCurveAtTime` received a non-finite start, or a negative or non-finite time constant. | Pass an absolute `AudioContext` time and a time constant of 0 or more.                                                       |
-| `TempoParam value curve needs at least 2 values.` / `TempoParam value curve duration must be finite and > 0, got …`                 | `setValueCurveAtTime` got fewer than two values, or a zero, negative or non-finite duration.                       | Pass two or more bpm values and a duration above 0 seconds.                                                                  |
-| `RangeLoop period is below audio time precision.`                                                                                   | Consecutive repeat boundaries collapse at the current audio time.                                                  | Use a longer source range.                                                                                                   |
-| `bpm must be a finite number > 0, got …`                                                                                            | A tempo point or the `bpm` value is zero, negative or not finite.                                                  | Pass a finite bpm above 0.                                                                                                   |
-| `renderTimeline: tickInterval must be positive, got …`                                                                              | `options.tickInterval` is zero, negative or NaN.                                                                   | Omit it for the default, or pass seconds above 0 (and below the clock look-ahead).                                           |
-| `<option> must be a finite number > 0, got …`                                                                                       | A ruler option (`seconds`, `bars`, `numerator`, `denominator`) is zero, negative or not finite.                    | Pass a finite length above 0; the ruler rejects it at construction because a zero-length cycle would hang the tick callback. |
-| `<option> must be a finite number, got …`                                                                                           | A ruler `from` offset is NaN or infinite.                                                                          | Pass a finite offset, or omit `from`.                                                                                        |
+| Message                                                                                                                                                                | Cause                                                                                                              | Fix                                                                                                                          |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| `Clock owned event time must be finite, non-negative seconds.`                                                                                                         | `window.own(event, when)` received an invalid audio time; the event is cancelled before the error is thrown.       | Pass the same absolute `AudioContext` time used to schedule that event.                                                      |
+| `RangeLoop needs increasing finite source seconds and a non-negative audio start.` / `RangeLoop window needs finite audio seconds.`                                    | The time range or window contains an invalid bound.                                                                | Use finite seconds and place the source end after its start.                                                                 |
+| `TempoParam ramp end time must be finite, got …`                                                                                                                       | `linearRampToValueAtTime` or `exponentialRampToValueAtTime` received NaN or an infinite end time.                  | Pass the absolute `AudioContext` time at which the ramp reaches its value.                                                   |
+| `Clock takes either timeline or context, not both.` / `Clock needs a timeline or a context.` / `Clock bpm only applies with context; set it on the timeline you pass.` | The options named both a Timeline and a context, neither, or a `bpm` next to a `timeline`.                         | Pass `{ context, bpm? }` for a Clock-made Timeline, or `{ timeline }` and set the tempo on that Timeline.                    |
+| `Clock is destroyed.` / `Clock already has this scheduler attached.`                                                                                                   | `attach` was called on a destroyed clock, or with a scheduler that is already attached.                            | Create a new Clock, or detach the scheduler first.                                                                           |
+| `Clock start time must be finite seconds, got …` / `Clock start offset must be finite beats, got …`                                                                    | `start(when, offsetBeats)` or `start({ atBeat })` received NaN or an infinite number.                              | Pass a finite audio time and a finite beat.                                                                                  |
+| `TempoParam start time must be finite, got …` / `TempoParam time constant must be finite and >= 0, got …`                                                              | `setTargetAtTime` or `setValueCurveAtTime` received a non-finite start, or a negative or non-finite time constant. | Pass an absolute `AudioContext` time and a time constant of 0 or more.                                                       |
+| `TempoParam value curve needs at least 2 values.` / `TempoParam value curve duration must be finite and > 0, got …`                                                    | `setValueCurveAtTime` got fewer than two values, or a zero, negative or non-finite duration.                       | Pass two or more bpm values and a duration above 0 seconds.                                                                  |
+| `RangeLoop period is below audio time precision.`                                                                                                                      | Consecutive repeat boundaries collapse at the current audio time.                                                  | Use a longer source range.                                                                                                   |
+| `bpm must be a finite number > 0, got …`                                                                                                                               | A tempo point or the `bpm` value is zero, negative or not finite.                                                  | Pass a finite bpm above 0.                                                                                                   |
+| `renderTimeline: tickInterval must be positive, got …`                                                                                                                 | `options.tickInterval` is zero, negative or NaN.                                                                   | Omit it for the default, or pass seconds above 0 (and below the clock look-ahead).                                           |
+| `<option> must be a finite number > 0, got …`                                                                                                                          | A ruler option (`seconds`, `bars`, `numerator`, `denominator`) is zero, negative or not finite.                    | Pass a finite length above 0; the ruler rejects it at construction because a zero-length cycle would hang the tick callback. |
+| `<option> must be a finite number, got …`                                                                                                                              | A ruler `from` offset is NaN or infinite.                                                                          | Pass a finite offset, or omit `from`.                                                                                        |
 
 ## Non-goals
 

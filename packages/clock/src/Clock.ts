@@ -1,9 +1,10 @@
 import { batch, type BeatTiming, type CancellableEvent, type ReadonlyCell } from "@audiorective/core";
-import type { Timeline } from "./Timeline";
+import { Timeline } from "./Timeline";
 import type { Ruler } from "./rulers/Ruler";
+import type { TempoParam } from "./TempoParam";
 import { WorkerTickSource } from "./TickSource";
 import type { TickSource } from "./TickSource";
-import type { CoreTickWindow, TransportState } from "./types";
+import type { CoreTickWindow, TimeSource, TransportState } from "./types";
 
 export type { CancellableEvent };
 
@@ -50,7 +51,13 @@ export interface SchedulerHandle {
 }
 
 export interface ClockOptions<TRulers extends Record<string, Ruler<unknown, unknown>>> {
-  timeline: Timeline<TRulers>;
+  /** Follow an existing Timeline (borrowed, so other code can share it). Pass this or `context`, not both. */
+  timeline?: Timeline<TRulers>;
+  /** The AudioContext (or any `{ currentTime }`): the Clock creates and owns its own Timeline. `audioContext` is the same option under Timeline's name. */
+  context?: TimeSource;
+  audioContext?: TimeSource;
+  /** Starting tempo of the Clock's own Timeline. Default 120. Only with `context`. */
+  bpm?: number;
   lookAhead?: number;
   tickInterval?: number;
   /** Called with every window. Optional: schedulers can instead follow the clock with `attach`. */
@@ -93,13 +100,22 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
   private _cancelling = 0;
 
   constructor(options: ClockOptions<TRulers>) {
-    this._timeline = options.timeline;
+    const source = options.context ?? options.audioContext;
+    if (options.timeline && source) throw new Error("Clock takes either timeline or context, not both.");
+    if (!options.timeline && !source) throw new Error("Clock needs a timeline or a context.");
+    if (options.timeline && options.bpm !== undefined) throw new Error("Clock bpm only applies with context; set it on the timeline you pass.");
+    this._timeline = options.timeline ?? (new Timeline({ audioContext: source!, bpm: options.bpm }) as Timeline<TRulers>);
     this._lookAhead = options.lookAhead ?? 0.1;
     this._onTick = options.onTick;
     this._onMiss = options.onMiss;
     this._tickSource = options.tickSource ?? new WorkerTickSource((options.tickInterval ?? 0.025) * 1000);
-    this.state = options.timeline.state;
+    this.state = this._timeline.state;
     this._tickSource.start(() => this._tick());
+  }
+
+  /** The tempo: this clock's `timeline.bpm`. */
+  get bpm(): TempoParam {
+    return this._timeline.bpm;
   }
 
   /** The beat/time mapping this clock plays. */

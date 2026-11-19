@@ -1132,7 +1132,7 @@ export class Lane {
     this.host.disconnect(this.name);
   }
 
-  /** 0-based array; steps[0] is the first step. Edits take effect on the next pass. */
+  /** 0-based array; steps[0] is the first step, steps[6] the seventh. Edits take effect on the next pass. */
   get steps(): readonly Step[] {
     const length = this.length;
     while (this.cache.length < length) this.cache.push(this.makeStep(this.cache.length));
