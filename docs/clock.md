@@ -103,20 +103,41 @@ timeline.beatToTime(64); // absolute AudioContext time for beat 64
 timeline.timeToBeat(ctx.currentTime); // current beat position
 ```
 
-`timeline.bpm` is a standalone, event-list-backed tempo curve (`TempoParam`) — not an `AudioParam`. It mirrors the Web Audio scheduling method names (`setValueAtTime`, `cancelScheduledValues`, `cancelAndHoldAtTime`) plus a `valueAtTime(t)` query the AudioParam-backed `SchedulableParam` in `@audiorective/core` can never support (Web Audio gives no way to ask an `AudioParam` "what will your value be at time T?"). Tempo changes are steps only: `linearRampToValueAtTime` and `exponentialRampToValueAtTime` throw, because the beat integral is defined over a stepwise curve. A direct write — `bpm.value = x` or `bpm.$(x)` — is a step at the current audio time that leaves later scheduled events intact, and the Clock refreshes the displayed value from the curve every tick.
+`timeline.bpm` is a standalone, event-list-backed tempo curve (`TempoParam`) — not an `AudioParam`. It mirrors the Web Audio scheduling methods (`setValueAtTime`, `linearRampToValueAtTime`, `exponentialRampToValueAtTime`, `cancelScheduledValues`, `cancelAndHoldAtTime`) plus a `valueAtTime(t)` query the AudioParam-backed `SchedulableParam` in `@audiorective/core` can never support (Web Audio gives no way to ask an `AudioParam` "what will your value be at time T?"). A direct write — `bpm.value = x` or `bpm.$(x)` — is a step at the current audio time. It leaves later scheduled events intact, so a queued step or ramp still overrides it when its time comes; the Clock refreshes the displayed value from the curve every tick.
 
 ```typescript
 class TempoParam extends Param<number> {
   setValueAtTime(value: number, time: number): this; // step at an absolute audio time
-  cancelScheduledValues(time: number): this; // drop every event at or after `time`
-  cancelAndHoldAtTime(time: number): this; // drop later events and hold the value in force at `time`
-  valueAtTime(time: number): number; // the curve's value at any audio time
-  linearRampToValueAtTime(value: number, endTime: number): this; // throws, steps only
-  exponentialRampToValueAtTime(value: number, endTime: number): this; // throws, steps only
+  linearRampToValueAtTime(value: number, endTime: number): this; // linear in time from the previous event to `value` at `endTime`
+  exponentialRampToValueAtTime(value: number, endTime: number): this; // constant ratio per second between the same points
+  cancelScheduledValues(time: number): this; // drop every event at or after `time` (an unfinished ramp reverts to its start value)
+  cancelAndHoldAtTime(time: number): this; // drop later events and hold the value in force at `time`, cutting a ramp mid-way
+  valueAtTime(time: number): number; // the curve's value at any audio time, interpolated across ramps
 }
 ```
 
-Scheduled steps are visible to `beatToTime` immediately, so scheduling a staircase one step at a time and converting beats in between is valid. A user edit while future steps are queued needs `cancelAndHoldAtTime(now)` first, or the next queued step overwrites it.
+**Ramps.** A ramp event runs from the previous scheduled event (its time and value) to `value` at `endTime`, then holds. With no event scheduled yet it starts from the current value at the current audio time, as for an `AudioParam`. Before a ramp's start event the value holds. A ramp whose `endTime` is not after the previous event is a step. `beatToTime` and `timeToBeat` integrate the curve exactly, so beat positions stay on the grid across an accelerando: beats over a linear segment are the integral of `bpm / 60` (quadratic in time), and an exponential segment has the closed form `(v(b) - v(a)) / ln(v1 / v0) * T / 60`. `bpm.value` follows the interpolated tempo, refreshed every tick. `cancelScheduledValues(t)` removes a ramp that ends at or after `t`, so the tempo falls back to the ramp's start value; `cancelAndHoldAtTime(t)` keeps the ramp's slope up to `t` and holds the interpolated value from there.
+
+An accelerando, +40 BPM over 8 bars of 4/4 (32 beats). A linear ramp's mean tempo is the average of its ends, so the end time is `start + beats * 60 / mean`. Hold the present tempo at `start` so the ramp has a defined start event, then check the landing with `beatToTime`:
+
+```typescript
+const start = ctx.currentTime;
+const from = timeline.bpm.valueAtTime(start);
+timeline.bpm.cancelAndHoldAtTime(start); // clear anything queued; a step at `start` is the ramp's first event
+const endTime = start + (32 * 60) / (from + 20); // mean tempo = from + 20
+timeline.bpm.linearRampToValueAtTime(from + 40, endTime);
+// while playing, the ramp ends exactly 8 bars on:
+timeline.beatToTime(timeline.timeToBeat(start) + 32); // === endTime
+```
+
+A user edit during a ramp needs `cancelAndHoldAtTime(now)` first: `bpm.value = x` alone is a step at `now`, but the ramp's end event is still queued and takes the tempo back toward its target. Hold, then write:
+
+```typescript
+timeline.bpm.cancelAndHoldAtTime(ctx.currentTime); // freeze the ramp where it is
+timeline.bpm.value = 100; // the user's tempo, with nothing queued to override it
+```
+
+Scheduled steps and ramps are visible to `beatToTime` immediately, so scheduling a staircase or an accelerando one segment at a time and converting beats in between is valid.
 
 **What "beat" means:** the axis unit is defined by the tempo curve and nothing else — `bpm` is axis-units per minute, so the unit is literally the B in BPM. It carries no time signature, no bars, no downbeat; it's musically meaningless on its own (like MIDI's quarter-note-normalized ppq ticks) until a ruler interprets it. This is Ableton Link's convention: a float beat plus a bpm, "beat = quarter note" by shared convention.
 
@@ -362,7 +383,7 @@ Two things to remember when writing assertions:
 | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
 | `Clock owned event time must be finite, non-negative seconds.`                                                                      | `window.own(event, when)` received an invalid audio time; the event is cancelled before the error is thrown. | Pass the same absolute `AudioContext` time used to schedule that event.                                                      |
 | `RangeLoop needs increasing finite source seconds and a non-negative audio start.` / `RangeLoop window needs finite audio seconds.` | The time range or window contains an invalid bound.                                                          | Use finite seconds and place the source end after its start.                                                                 |
-| `TempoParam.linearRampToValueAtTime is V2 (tempo ramps) …` / `TempoParam.exponentialRampToValueAtTime is V2 (tempo ramps) …`        | A ramp was scheduled on `timeline.bpm`.                                                                      | Tempo supports steps only; use `setValueAtTime` or `bpm.value = x`.                                                          |
+| `TempoParam ramp end time must be finite, got …`                                                                                    | `linearRampToValueAtTime` or `exponentialRampToValueAtTime` received NaN or an infinite end time.            | Pass the absolute `AudioContext` time at which the ramp reaches its value.                                                   |
 | `RangeLoop period is below audio time precision.`                                                                                   | Consecutive repeat boundaries collapse at the current audio time.                                            | Use a longer source range.                                                                                                   |
 | `bpm must be a finite number > 0, got …`                                                                                            | A tempo point or the `bpm` value is zero, negative or not finite.                                            | Pass a finite bpm above 0.                                                                                                   |
 | `renderTimeline: tickInterval must be positive, got …`                                                                              | `options.tickInterval` is zero, negative or NaN.                                                             | Omit it for the default, or pass seconds above 0 (and below the clock look-ahead).                                           |

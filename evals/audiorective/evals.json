@@ -934,6 +934,18 @@
         "Runs each step-pattern clip as a StepSequencer scheduled on the launch beat (clipped window, shifted timing), cancelling its hits when the clip stops",
         "Builds its own grid from `launcher.state` if it needs progress, colours or per-track stop, instead of relying on `mountClipGrid` for those"
       ]
+    },
+    {
+      "id": 71,
+      "prompt": "In my audiorective app a drum machine runs on a clock and I want a one-click accelerando: speed up from the current tempo by 40 BPM over the next 8 bars of 4/4, then if the user drags the tempo slider mid-ramp their value must win. don't run anything.",
+      "expected_output": "A TempoParam linear ramp scheduled on timeline.bpm, with cancelAndHoldAtTime before a user edit, instead of a setValueAtTime staircase.",
+      "files": [],
+      "expectations": [
+        "Schedules the accelerando with timeline.bpm.linearRampToValueAtTime(target, endTime) on the Timeline's bpm, not a staircase of setValueAtTime calls or a timer rewriting bpm.value",
+        "Computes endTime in audio-clock seconds (32 beats at the mean tempo, or via beatToTime), and starts the ramp from a held present value (cancelAndHoldAtTime(now) or setValueAtTime(current, now))",
+        "Calls timeline.bpm.cancelAndHoldAtTime(ctx.currentTime) before writing the slider's bpm.value, so the still-queued ramp end does not overwrite the user's tempo",
+        "Does not claim tempo ramps are unsupported"
+      ]
     }
   ]
 }
