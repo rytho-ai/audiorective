@@ -17,6 +17,19 @@
 //          --json <out-file>   --md <out-file> (desire: markdown cluster report)
 //          --regrade <results.json> (guess: re-grade the stored samples of an earlier run with the
 //          current grader and compile check; no solver calls)
+//          --checks-only <results.json> (guess: re-run only the deterministic checks on the stored
+//          samples; no solver, grader or tsc calls; the stored LLM verdicts are kept for comparison)
+//
+// Deterministic checks: a task may carry `checks`, each bound to one expectation by index:
+//   { "expectation": 1, "label": "...", "all": [re, ...], "any": [re, ...], "none": [re, ...] }
+// The check passes when every `all` pattern matches, at least one `any` pattern matches (if any are
+// given) and no `none` pattern matches, tested against the sample's code with comments stripped.
+// A check overrides the LLM verdict for its expectation (both are recorded). Patterns are regex
+// sources with placeholders: `{sN}` is task step N as an index in the variant's numbering, and
+// `{call:N}` matches any common call shape addressing step N (`steps[i]`, `.set(i`, `setStep(i`,
+// `step(i`, `at(i`, `getStep(i`, `<ar-step step="i"` / `index="i"`). The variant declares its base
+// with a first-line `// @step-base 0|1` comment in its .d.ts (stripped before the solver or grader
+// sees it). A variant without the declaration gets no checks.
 
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -28,12 +41,25 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..");
 
 const args = process.argv.slice(2);
-const flagsWithValue = new Set(["mode", "variant", "ids", "runs", "concurrency", "model", "grader-model", "timeout", "json", "md", "regrade"]);
+const flagsWithValue = new Set([
+  "mode",
+  "variant",
+  "ids",
+  "runs",
+  "concurrency",
+  "model",
+  "grader-model",
+  "timeout",
+  "json",
+  "md",
+  "regrade",
+  "checks-only",
+]);
 const suitePath = args.find((a, i) => !a.startsWith("--") && !(args[i - 1]?.startsWith("--") && flagsWithValue.has(args[i - 1].slice(2))));
 const usage = (msg) => {
   if (msg) console.error(`error: ${msg}`);
   console.error(
-    "usage: node evals/run_guess_evals.mjs <suite.json> --mode desire|guess [--variant f.d.ts] [--ids T1,T2] [--runs n] [--concurrency n] [--model m] [--grader-model m] [--timeout s] [--json f] [--md f] [--regrade results.json]",
+    "usage: node evals/run_guess_evals.mjs <suite.json> --mode desire|guess [--variant f.d.ts] [--ids T1,T2] [--runs n] [--concurrency n] [--model m] [--grader-model m] [--timeout s] [--json f] [--md f] [--regrade results.json] [--checks-only results.json]",
   );
   process.exit(2);
 };
@@ -48,7 +74,8 @@ const positiveInt = (name, fallback) => {
   if (!Number.isInteger(n) || n < 1) usage(`--${name} must be a positive integer, got ${JSON.stringify(raw)}`);
   return n;
 };
-const mode = opt("mode", null);
+const checksOnlyPath = opt("checks-only", null);
+const mode = opt("mode", checksOnlyPath ? "guess" : null);
 if (mode !== "desire" && mode !== "guess") usage("--mode must be desire or guess");
 const runs = positiveInt("runs", 3);
 const concurrency = positiveInt("concurrency", 4);
@@ -57,16 +84,20 @@ const model = opt("model", null);
 const graderModel = opt("grader-model", model);
 const jsonOut = opt("json", null);
 const mdOut = opt("md", null);
-const regradePath = opt("regrade", null);
+const regradePath = opt("regrade", checksOnlyPath);
+if (checksOnlyPath && opt("regrade", null)) usage("use --regrade or --checks-only, not both");
 if (regradePath && mode !== "guess") usage("--regrade needs --mode guess");
 if (regradePath && !existsSync(regradePath)) usage(`--regrade file not found: ${regradePath}`);
 const stored = regradePath ? JSON.parse(readFileSync(regradePath, "utf8")) : null;
 const ids = opt("ids", null)
   ?.split(",")
   .map((s) => s.trim());
-const variantPath = opt("variant", null);
+const variantPath = opt("variant", checksOnlyPath && stored?.variant ? resolve(stored.variant) : null);
 if (mode === "guess" && (!variantPath || !existsSync(variantPath))) usage("guess mode needs --variant <existing file.d.ts>");
-const variantDts = mode === "guess" ? readFileSync(variantPath, "utf8") : null;
+const variantRaw = mode === "guess" ? readFileSync(variantPath, "utf8") : null;
+const STEP_BASE_LINE = /^[ \t]*\/\/[ \t]*@step-base[ \t]+([01])[ \t]*\r?\n?/m;
+const stepBase = variantRaw ? Number(variantRaw.match(STEP_BASE_LINE)?.[1] ?? NaN) : NaN; // NaN: undeclared
+const variantDts = variantRaw?.replace(STEP_BASE_LINE, "") ?? null; // the declaration never reaches the solver
 
 const suite = JSON.parse(readFileSync(resolve(suitePath), "utf8"));
 let tasks = suite.tasks;
@@ -82,8 +113,8 @@ function findTsc() {
   ];
   return candidates.find(existsSync);
 }
-const tsc = mode === "guess" ? findTsc() : null;
-if (mode === "guess" && !tsc) usage("could not find the repo's TypeScript (run pnpm install)");
+const tsc = mode === "guess" && !checksOnlyPath ? findTsc() : null;
+if (mode === "guess" && !checksOnlyPath && !tsc) usage("could not find the repo's TypeScript (run pnpm install)");
 
 const env = { ...process.env };
 delete env.CLAUDECODE; // allow nesting claude -p inside a Claude Code session
@@ -317,6 +348,60 @@ async function gradeWithRetry(task, code, html, tscResult) {
   return { error: `grader: ${lastError}`, cost };
 }
 
+// ---- deterministic checks --------------------------------------------------
+
+function stripComments(code) {
+  return code
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/(^|[^:"'\\])\/\/.*$/gm, "$1");
+}
+
+// Call shapes that address task step `n` (1-based) with index `i`.
+const callShape = (i) =>
+  `(?:steps\\[\\s*${i}\\s*\\]|\\.set\\(\\s*${i}\\b|setStep\\(\\s*${i}\\b|\\bstep\\(\\s*${i}\\b|\\bat\\(\\s*${i}\\b|getStep\\(\\s*${i}\\b|<ar-step\\b[^>]*\\b(?:step|index)\\s*=\\s*["']${i}["'])`;
+
+function expandPattern(source) {
+  return source
+    .replace(/\{call:(\d+)\}/g, (_, n) => callShape(Number(n) - 1 + stepBase))
+    .replace(/\{s(\d+)\}/g, (_, n) => String(Number(n) - 1 + stepBase));
+}
+
+// -> [{ expectation, label, pass, detail }]; empty when the task has no checks or the variant no base.
+function runChecks(task, ts, html) {
+  if (!task.checks?.length || Number.isNaN(stepBase)) return [];
+  const code = `${stripComments(ts)}\n${stripComments(html)}`;
+  return task.checks.map((c) => {
+    const test = (src) => new RegExp(expandPattern(src)).test(code);
+    const missing = (c.all ?? []).filter((r) => !test(r));
+    const anyOk = !c.any?.length || c.any.some(test);
+    const forbidden = (c.none ?? []).filter(test);
+    const detail = [
+      ...missing.map((r) => `missing: ${r}`),
+      ...(anyOk ? [] : [`none of any matched: ${c.any.join(" | ")}`]),
+      ...forbidden.map((r) => `forbidden matched: ${r}`),
+    ].join("; ");
+    return { expectation: c.expectation, label: c.label ?? `expectation ${c.expectation}`, pass: !detail, detail };
+  });
+}
+
+// Deterministic checks override the LLM verdict of their expectation; both stay on record.
+function applyChecks(task, ts, html, grade) {
+  const checks = runChecks(task, ts, html);
+  grade.expectations.forEach((e) => {
+    e.llmMet = e.llmMet ?? e.met;
+    delete e.deterministic;
+    e.met = e.llmMet;
+  });
+  for (const c of checks) {
+    const e = grade.expectations[c.expectation];
+    if (!e) continue;
+    e.deterministic = { label: c.label, pass: c.pass, detail: c.detail };
+    e.met = c.pass;
+  }
+  return grade;
+}
+
 // ---- one solver run --------------------------------------------------------
 
 async function runOne(task, replay) {
@@ -324,6 +409,17 @@ async function runOne(task, replay) {
   if (replay) {
     if (replay.error && !replay.ts && !replay.html) return { error: replay.error };
     solved = { text: replay.raw ?? "", costUsd: 0 };
+    if (checksOnlyPath) {
+      if (!replay.grade) return { error: replay.error ?? "no stored grade" };
+      const { ts = "", html = "" } = replay;
+      return {
+        ...replay,
+        ts,
+        html,
+        tsc: replay.tsc ?? { passed: false, diagnostics: 0 },
+        grade: applyChecks(task, ts, html, structuredClone(replay.grade)),
+      };
+    }
   } else {
     solved = await claude(solverPrompt(task), model);
     if (solved.error) return { error: `solver: ${solved.error}` };
@@ -344,7 +440,7 @@ async function runOne(task, replay) {
   const graded = await gradeWithRetry(task, ts, html, tscResult);
   base.costUsd += graded.cost;
   if (graded.error) return { ...base, tsc: tscResult, error: graded.error };
-  return { ...base, tsc: tscResult, grade: graded.grade };
+  return { ...base, tsc: tscResult, grade: applyChecks(task, ts, html, graded.grade) };
 }
 
 // ---- desire clustering -----------------------------------------------------
@@ -428,8 +524,13 @@ const results = tasks.map((task, ti) => {
     out.expectations = task.expectations.map((text, i) => ({
       text,
       met: ok.filter((x) => x.grade.expectations[i].met).length,
+      llmMet: ok.filter((x) => x.grade.expectations[i].llmMet).length,
+      deterministic: ok.some((x) => x.grade.expectations[i].deterministic)
+        ? ok.filter((x) => x.grade.expectations[i].deterministic?.pass).length
+        : null,
       of: ok.length,
       evidence: ok.map((x) => x.grade.expectations[i].evidence),
+      checks: ok.map((x) => x.grade.expectations[i].deterministic ?? null),
     }));
     out.errorKinds = Object.fromEntries(ERROR_KINDS.map((k) => [k, sum(ok, (x) => x.grade.errors.filter((e) => e.kind === k).length)]));
   }
@@ -496,10 +597,23 @@ for (const r of results) {
         .filter(([, n]) => n)
         .map(([k, n]) => `${k}:${n}`)
         .join(" ") || "none";
+    const det = r.expectations.filter((e) => e.deterministic !== null);
+    const detCol = det.length ? `${sum(det, (e) => e.deterministic)}/${sum(det, (e) => e.of)}` : "-";
     console.log(
-      `${mark} ${r.id.padEnd(20)} compile ${r.compilePassed}/${r.completed}  expectations ${pct(met, of)}  LOC ${r.meanLoc.toFixed(1)}  errors ${kinds}`,
+      `${mark} ${r.id.padEnd(20)} compile ${r.compilePassed}/${r.completed}  expectations ${pct(met, of)}  deterministic ${detCol}  LOC ${r.meanLoc.toFixed(1)}  errors ${kinds}`,
     );
     for (const e of r.expectations) if (e.of && e.met < e.of) console.log(`        x ${e.met}/${e.of}  ${e.text.slice(0, 100)}`);
+    r.expectations.forEach((e, i) => {
+      if (e.deterministic === null) return;
+      console.log(`        deterministic [${i}] ${e.deterministic}/${e.of} pass (LLM said ${e.llmMet}/${e.of})  ${e.text.slice(0, 70)}`);
+      r.samples.forEach((smp, k) => {
+        const g = smp.grade?.expectations[i];
+        if (g?.deterministic && g.deterministic.pass !== g.llmMet)
+          console.log(
+            `          disagree sample ${k + 1}: check ${g.deterministic.pass ? "pass" : "FAIL"} (${g.deterministic.detail || "matched"}), LLM ${g.llmMet ? "met" : "unmet"}: ${g.evidence}`,
+          );
+      });
+    });
   } else {
     console.log(`${mark} ${r.id.padEnd(20)} ${r.completed}/${r.runs} samples  LOC ${r.meanLoc.toFixed(1)}`);
   }
@@ -520,6 +634,11 @@ if (mode === "guess") {
     )})`,
   );
   console.log(`expectations met:  ${met}/${of} (${pct(met, of)})`);
+  const detAll = scored.flatMap((r) => r.expectations.filter((e) => e.deterministic !== null));
+  if (detAll.length)
+    console.log(
+      `deterministic:     ${sum(detAll, (e) => e.deterministic)}/${sum(detAll, (e) => e.of)} checked expectations pass (LLM said ${sum(detAll, (e) => e.llmMet)})`,
+    );
   console.log(`mean LOC:          ${mean(scored.map((r) => r.meanLoc)).toFixed(1)}`);
   console.log(
     `error kinds:       ${

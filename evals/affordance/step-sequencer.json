@@ -40,6 +40,13 @@
         "Sets step 1 to 400 and step 9 to 6000 (index translated correctly).",
         "Has a low-pass filter for that lane between its sound and the output.",
         "Applies the cutoff at the hit's scheduled audio time (e.g. setValueAtTime(value, when)), not immediately when the callback runs."
+      ],
+      "checks": [
+        {
+          "expectation": 1,
+          "label": "step 1 -> 400 and step 9 -> 6000 at the variant's index",
+          "all": ["{call:1}[^;]{0,200}?\\b400(?:\\.0+)?\\b", "{call:9}[^;]{0,200}?\\b(?:6000(?:\\.0+)?|6e3)\\b"]
+        }
       ]
     },
     {
@@ -61,6 +68,13 @@
         "Does not stop/restart playback to make the edit take effect (or relies on an API that re-queues automatically (explicitly or by its documented default), or calls the API's documented refresh).",
         "Stops playback so that no further hits sound.",
         "Releases/destroys the resources the sequencer created (nodes, timers, subscriptions) via the API's teardown."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "snare step 7 -> velocity 0.8 at the variant's index",
+          "all": ["{call:7}[^;]{0,200}?(?:\\b0?\\.8\\b|[\"']x[\"'])"]
+        }
       ]
     }
   ]
