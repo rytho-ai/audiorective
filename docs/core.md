@@ -753,10 +753,11 @@ deck.params.rate
 **Public surface:**
 
 ```typescript
-player.buffer: AudioBuffer | null      // hot-swap; takes effect on next start()
+player.buffer: AudioBuffer | null      // hot-swap; takes effect on next start(). Reads and writes `params.buffer`
 player.output: AudioNode               // output gain; connect → Spatial / EQ / destination
 player.params.volume: SchedulableParam // output gain 0..1
 player.params.rate: SchedulableParam   // playback rate — schedulable (the point of this primitive)
+player.params.buffer: Param<AudioBuffer | null> // `player.buffer` reads and writes it; tracked by effects
 player.params.loop: Param<boolean>      // `player.loop` reads and writes it; applies to a playing source immediately
 player.params.loopStart: Param<number> // `player.loopStart`
 player.params.loopEnd: Param<number>   // `player.loopEnd`
@@ -814,7 +815,7 @@ player.destroy();
 ```typescript
 player.audio: HTMLAudioElement         // escape hatch for direct DOM access
 player.output: AudioNode               // MediaElementSource → connect here
-player.src: string | null              // getter/setter; setter loads + resets state
+player.src: string | null              // getter/setter; setter loads + resets state; the getter is tracked by effects
 player.params.volume: SchedulableParam
 player.params.loop: Param<boolean>
 player.params.playbackRate: Param<number>

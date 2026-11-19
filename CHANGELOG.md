@@ -50,9 +50,18 @@ predates that API. See the "Version mismatches" note in the skill.
 - **core:** `SchedulableParam` raw writes `$(x)` update the AudioParam like `.value`; before, they changed only the signal. `AudioEngine.start`, `suspend`, `resume` and `untilReady` no longer subscribe a calling effect. `AudioProcessor.destroy()` stops its constant sources and disconnects the internal silencer. `AutomationBinding.start` no longer tracks the curve, and `AutomationCurve.$(points)` validates, sorts and freezes like `.value`.
 - **widgets:** Mixer strips keep reactive widgets mounted through `appendControls` when the track list changes. `attachClipGesture` restores the element's original `left` after a drag. The selection plugin's edge-scroll `requestAnimationFrame` loop runs only during a drag.
 - **blocks:** `SampleLibrary.preview()` can be called from an effect and releases its lease when starting the preview fails. `StepSequencer` and `ClipLauncher` commands do not subscribe a calling effect.
+- **core:** a `Param` created inside a running `effect()` no longer becomes that effect's child, so its bind effect survives the outer effect re-running. Constructing a processor (`BufferPlayer`, `Sampler`, …) inside an effect is safe, and `SampleLibrary.preview()` keeps its loop and rate bindings.
+- **core:** `FilePlayer.src` is a tracked read.
+- **core:** `AudioEngine` rejects pending `untilReady()` calls when its context closes externally, and `start()`, `resume()` and `suspend()` no longer flip the state back after a `destroy()` during their await.
+- **host:** a timed-out `saveState()`, `loadState()` or `mountEditor()` no longer leaves its waiter queued; the next reply settles the next real caller instead of the dead one.
+- **blocks:** `WavePlayer.destroy()` stops subscribers before it resets state, so no listener runs after the player is destroyed.
+- **midi:** `MidiSequence.subscribe` is an effect over `cells.state`; it notifies once per committed change.
+- **daw:** a failure while building a track (for example a throwing `EffectRack`) releases its channel, automation gain and send-bus entry.
+- **docs:** `docs/effects.md` lists `Channel`'s `outputEnabled`, `tap` and per-send `enabled`.
 
 ### Added
 
+- **core:** `BufferPlayer.params.buffer: Param<AudioBuffer | null>`; the `buffer` property reads and writes it, like `Sampler.buffer`.
 - **effects:** `Channel` option `channelCountMode: "max"` keeps a mono input mono into the panner (equal-power mono pan law); the default `"explicit"` is unchanged.
 - **effects:** `Channel.params.outputEnabled` gates the main output, `Channel.tap` is the post-mute node sends read from, and `Send.enabled` gates one send; `SendBus.undefine(name)` removes a receive point.
 - **daw:** `workspace.cells.session`, `cells.auditioningClip` and `cells.auditioningRange` are read-only cells; `workspace.session` is a `ReadonlyCell`. `Workspace.deviceOptions` returns the `workletUrl` and `resolveBundle` options used to create a matching Workspace.
