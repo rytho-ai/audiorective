@@ -17,7 +17,8 @@ export type SampleLease = Readonly<{ buffer: AudioBuffer; release(): void }>;
 export type SampleLibraryOptions = { maxFileBytes?: number; maxDecodedBytes?: number };
 
 type Resource = { buffer: AudioBuffer; bytes: number; hash?: string; owners: number };
-type Row = { id: string; name: string; resource?: Resource; error?: string; finish(id: string | null): void };
+/** Non-observable bookkeeping for a row. Everything a reader can see lives in `state`. */
+type Job = { resource?: Resource; finish(id: string | null): void };
 
 const empty = Object.freeze({ rows: Object.freeze([]), decodedBytes: 0, previewId: null, previewPlaying: false });
 
@@ -26,16 +27,38 @@ export class SampleLibrary {
   readonly output: GainNode;
   private readonly source = cell<SampleLibraryState>(empty);
   readonly state = readonlyCell(this.source);
-  private readonly rows = new Map<string, Row>();
+  private readonly jobs = new Map<string, Job>();
   private readonly resources = new Map<string, Resource>();
-  private readonly queue: { row: Row; file: File }[] = [];
+  private readonly queue: { id: string; file: File }[] = [];
   private readonly maxFileBytes: number;
   private readonly maxDecodedBytes: number;
-  private bytes = 0;
   private nextId = 0;
   private working = false;
   private destroyed = false;
   private previewVoice?: { id: string; player: BufferPlayer; lease: SampleLease; unsubscribe(): void };
+
+  private get snapshot(): SampleLibraryState {
+    return untracked(() => this.source.value);
+  }
+
+  /** Commit a change to the observable state. */
+  private patch(change: Partial<SampleLibraryState>): void {
+    this.source.value = Object.freeze({ ...this.snapshot, ...change });
+  }
+
+  private setRow(row: SampleRow): void {
+    const rows = this.snapshot.rows;
+    const index = rows.findIndex(({ id }) => id === row.id);
+    this.patch({ rows: Object.freeze(index === -1 ? [...rows, Object.freeze(row)] : rows.map((r, i) => (i === index ? Object.freeze(row) : r))) });
+  }
+
+  private dropRow(id: string): void {
+    this.patch({ rows: Object.freeze(this.snapshot.rows.filter((row) => row.id !== id)) });
+  }
+
+  private fail(id: string, name: string, error: string): void {
+    this.setRow({ id, name, status: "error", error });
+  }
 
   constructor(
     private readonly context: AudioContext,
@@ -51,20 +74,23 @@ export class SampleLibrary {
   /** Load files in order. Duplicate bytes resolve to the current row; a removed job resolves to null. */
   importFiles(files: readonly File[]): Promise<readonly (string | null)[]> {
     this.assertAlive();
-    const results = files.map(
-      (file) =>
-        new Promise<string | null>((finish) => {
-          const row: Row = { id: `sample-${++this.nextId}`, name: file.name, finish };
-          this.rows.set(row.id, row);
-          if (file.size > this.maxFileBytes) {
-            row.error = "File byte limit exceeded.";
-            finish(row.id);
-          } else {
-            this.queue.push({ row, file });
-          }
-        }),
-    );
-    this.publish();
+    const results: Promise<string | null>[] = [];
+    batch(() => {
+      for (const file of files)
+        results.push(
+          new Promise<string | null>((finish) => {
+            const id = `sample-${++this.nextId}`;
+            this.jobs.set(id, { finish });
+            if (file.size > this.maxFileBytes) {
+              this.fail(id, file.name, "File byte limit exceeded.");
+              finish(id);
+            } else {
+              this.setRow({ id, name: file.name, status: "loading" });
+              this.queue.push({ id, file });
+            }
+          }),
+        );
+    });
     void this.decode();
     return Promise.all(results);
   }
@@ -74,41 +100,48 @@ export class SampleLibrary {
     this.working = true;
     try {
       while (!this.destroyed && this.queue.length) {
-        const { row, file } = this.queue.shift()!;
+        const { id, file } = this.queue.shift()!;
         try {
           const data = await file.arrayBuffer();
-          if (!this.rows.has(row.id)) continue;
+          if (!this.jobs.has(id)) continue;
           const digest = await globalThis.crypto?.subtle?.digest("SHA-256", data);
           const hash = digest && Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-          if (!this.rows.has(row.id)) continue;
+          if (!this.jobs.has(id)) continue;
+          const job = this.jobs.get(id)!;
           const existing = hash ? this.resources.get(hash) : undefined;
           if (existing) {
-            const owner = [...this.rows.values()].find((candidate) => candidate.resource === existing);
+            const owner = [...this.jobs].find(([, candidate]) => candidate.resource === existing);
             if (owner) {
-              this.rows.delete(row.id);
-              row.finish(owner.id);
+              this.jobs.delete(id);
+              this.dropRow(id);
+              job.finish(owner[0]);
               continue;
             }
             existing.owners++;
-            row.resource = existing;
+            job.resource = existing;
           } else {
             const buffer = await this.context.decodeAudioData(data);
-            if (!this.rows.has(row.id)) continue;
+            if (!this.jobs.has(id)) continue;
             const bytes = buffer.length * buffer.numberOfChannels * Float32Array.BYTES_PER_ELEMENT;
-            if (bytes > this.maxDecodedBytes - this.bytes) throw new Error("Decoded PCM budget exceeded.");
+            if (bytes > this.maxDecodedBytes - this.snapshot.decodedBytes) throw new Error("Decoded PCM budget exceeded.");
             const resource = { buffer, bytes, hash, owners: 1 };
             if (hash) this.resources.set(hash, resource);
-            row.resource = resource;
-            this.bytes += bytes;
+            job.resource = resource;
+            batch(() => {
+              this.patch({ decodedBytes: this.snapshot.decodedBytes + bytes });
+              this.setRow({ id, name: file.name, status: "ready", duration: buffer.duration });
+            });
+            job.finish(id);
+            continue;
           }
-          row.finish(row.id);
+          this.setRow({ id, name: file.name, status: "ready", duration: job.resource.buffer.duration });
+          job.finish(id);
         } catch (error) {
-          if (this.rows.has(row.id)) {
-            row.error = error instanceof Error ? error.message : String(error);
-            row.finish(row.id);
+          const job = this.jobs.get(id);
+          if (job) {
+            this.fail(id, file.name, error instanceof Error ? error.message : String(error));
+            job.finish(id);
           }
-        } finally {
-          this.publish();
         }
       }
     } finally {
@@ -119,7 +152,7 @@ export class SampleLibrary {
   /** Borrow decoded PCM until release, including after its browser row has been removed. */
   acquire(id: string): SampleLease {
     this.assertAlive();
-    const resource = this.rows.get(id)?.resource;
+    const resource = this.jobs.get(id)?.resource;
     if (!resource) throw new Error("Sample Library needs a ready sample.");
     resource.owners++;
     let reference: Resource | undefined = resource;
@@ -132,47 +165,56 @@ export class SampleLibrary {
         if (!reference) return;
         this.release(reference);
         reference = undefined;
-        this.publish();
       },
     };
   }
 
   remove(id: string): void {
-    const row = this.rows.get(id);
-    if (!row) return;
+    const job = this.jobs.get(id);
+    if (!job) return;
     batch(() => {
-      this.rows.delete(id);
-      const queued = this.queue.findIndex((item) => item.row === row);
+      this.jobs.delete(id);
+      const queued = this.queue.findIndex((item) => item.id === id);
       if (queued !== -1) this.queue.splice(queued, 1);
       if (this.previewVoice?.id === id) this.stopPreview();
-      if (row.resource) this.release(row.resource);
-      row.finish(null);
-      this.publish();
+      this.dropRow(id);
+      if (job.resource) this.release(job.resource);
+      job.finish(null);
     });
   }
 
   async preview(id: string): Promise<void> {
     const lease = this.acquire(id);
     this.stopPreview();
-    const player = new BufferPlayer(this.context, { buffer: lease.buffer });
-    player.output.connect(this.output);
+    let player: BufferPlayer | undefined;
+    try {
+      player = new BufferPlayer(this.context, { buffer: lease.buffer });
+      player.output.connect(this.output);
+    } catch (error) {
+      player?.destroy();
+      lease.release();
+      throw error;
+    }
     const voice = {
       id,
       player,
       lease,
-      unsubscribe: effect(() => {
-        void player.cells.isPlaying.value;
-        this.publish();
-      }),
+      // Detached from any effect that called `preview`, which would otherwise dispose this on its next run.
+      unsubscribe: untracked(() =>
+        effect(() => {
+          const playing = player.cells.isPlaying.value;
+          if (this.previewVoice?.player === player) untracked(() => this.patch({ previewPlaying: playing }));
+        }),
+      ),
     };
     this.previewVoice = voice;
+    batch(() => this.patch({ previewId: id }));
     try {
       player.start();
     } catch (error) {
       this.stopPreview();
       throw error;
     }
-    this.publish();
   }
 
   stopPreview(): void {
@@ -183,33 +225,14 @@ export class SampleLibrary {
       voice.unsubscribe();
       voice.player.destroy();
       voice.lease.release();
+      this.patch({ previewId: null, previewPlaying: false });
     });
   }
 
   private release(resource: Resource): void {
     if (--resource.owners !== 0) return;
-    this.bytes -= resource.bytes;
+    this.patch({ decodedBytes: this.snapshot.decodedBytes - resource.bytes });
     if (resource.hash) this.resources.delete(resource.hash);
-  }
-
-  private publish(): void {
-    this.source.value = Object.freeze({
-      rows: Object.freeze(
-        [...this.rows.values()].map(
-          ({ id, name, error, resource }): SampleRow =>
-            Object.freeze({
-              id,
-              name,
-              status: resource ? "ready" : error !== undefined ? "error" : "loading",
-              ...(resource ? { duration: resource.buffer.duration } : {}),
-              ...(error === undefined ? {} : { error }),
-            }),
-        ),
-      ),
-      decodedBytes: this.bytes,
-      previewId: this.previewVoice?.id ?? null,
-      previewPlaying: untracked(() => this.previewVoice?.player.cells.isPlaying.value) ?? false,
-    });
   }
 
   private assertAlive(): void {
@@ -221,7 +244,7 @@ export class SampleLibrary {
     this.destroyed = true;
     batch(() => {
       this.stopPreview();
-      for (const id of this.rows.keys()) this.remove(id);
+      for (const id of [...this.jobs.keys()]) this.remove(id);
     });
     this.output.disconnect();
   }

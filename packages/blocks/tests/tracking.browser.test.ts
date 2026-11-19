@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { effect } from "@audiorective/core";
 import { AudioRecorder } from "../src/AudioRecorder";
+import { ClipLauncher, type ClipLaunchTransport } from "../src/ClipLauncher";
 import { PadBank } from "../src/PadBank";
+import { StepSequencer } from "../src/StepSequencer";
 import { WavePlayer } from "../src/WavePlayer";
 
 const disposers: Array<() => void | Promise<unknown>> = [];
@@ -124,5 +126,61 @@ describe("PadBank readers are tracked", () => {
       () => bank.cells.activeEvents.value,
       () => bank.stopAll(),
     );
+  });
+  test("cells.pads follows assign", async () => {
+    const context = new AudioContext();
+    const bank = new PadBank(context, [{ id: "kick", buffer: tone(context) }]);
+    disposers.push(
+      () => context.close(),
+      () => bank.destroy(),
+    );
+    await expectTracked(
+      () => bank.cells.pads.value,
+      () => bank.assign("kick", tone(context, 8000)),
+    );
+  });
+});
+
+describe("command methods called inside an effect do not subscribe it", () => {
+  test("StepSequencer.setVelocity and schedule", () => {
+    const pattern = { steps: 4, beatsPerStep: 1, lanes: [{ id: "k", label: "K", velocities: [1, 0, 0, 0] }] };
+    const sequencer = new StepSequencer(pattern, () => null);
+    const timing = { timeToBeat: (t: number) => t, beatToTime: (b: number) => b };
+    const window = { beat: { start: 0, end: 2 }, time: { current: 0 }, own() {} };
+    let runs = 0;
+    const stop = effect(() => {
+      runs++;
+      sequencer.setVelocity("k", 1, 0.5);
+      sequencer.schedule(window, timing);
+    });
+    sequencer.setVelocity("k", 2, 0.5);
+    sequencer.reset();
+    stop();
+    expect(runs).toBe(1);
+  });
+
+  test("ClipLauncher.queue, cancel and advance", () => {
+    let now = 0;
+    const transport: ClipLaunchTransport = {
+      now: () => now,
+      timeToBeat: (t) => t,
+      beatToTime: (b) => b,
+      schedule: () => ({ cancel() {}, commit() {} }),
+      reset() {},
+    };
+    const launcher = new ClipLauncher(transport);
+    let runs = 0;
+    const stop = effect(() => {
+      runs++;
+      launcher.queue([{ trackId: "a", clipId: "x" }]);
+      launcher.advance();
+      launcher.cancel();
+    });
+    launcher.queue([{ trackId: "a", clipId: "y" }]);
+    now = 5;
+    launcher.advance();
+    launcher.reset();
+    stop();
+    expect(runs).toBe(1);
   });
 });

@@ -408,3 +408,32 @@ test.each(["effect", "subscribe"] as const)(
     expect(player.getState().isPlaying).toBe(false);
   },
 );
+
+test("the isPlaying getter and cell agree, through a queued start, playback and its natural end", async () => {
+  const { context, player } = fixture();
+  await player.load(audio(context, 4000));
+  const seen: Array<[boolean, boolean]> = [];
+  const check = () => seen.push([player.isPlaying, player.cells.isPlaying.value]);
+  disposers.push(effect(check), player.subscribe(check));
+  await player.play({ when: context.currentTime + 0.05 });
+  check();
+  await expect.poll(() => player.cells.isPlaying.value, { timeout: 3000 }).toBe(false);
+  check();
+  expect(seen.length).toBeGreaterThan(2);
+  for (const [getter, cell] of seen) expect(getter).toBe(cell);
+});
+
+test("an unsubscribed listener is not called, and destroy releases subscribers", async () => {
+  const { context, player } = fixture();
+  await player.load(audio(context));
+  const kept = vi.fn(),
+    dropped = vi.fn();
+  player.subscribe(kept);
+  player.subscribe(dropped)();
+  player.setLooping(true);
+  expect(dropped).not.toHaveBeenCalled();
+  expect(kept).toHaveBeenCalledTimes(1);
+  player.destroy();
+  kept.mockClear();
+  expect(kept).not.toHaveBeenCalled();
+});

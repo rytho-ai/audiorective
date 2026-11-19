@@ -3,6 +3,7 @@ import {
   BufferPlayer,
   batch,
   cell,
+  effect,
   readonlyCell,
   untracked,
   type Cell,
@@ -78,7 +79,12 @@ type Store = {
   error: Cell<string | null>;
   processing: Cell<boolean>;
   version: Cell<PlaybackVersion | null>;
+  /** Playhead position while not advancing; `position` derives from it and the audio clock. */
+  held: Cell<number>;
+  /** The running play anchor, replaced on every start, seek or loop change. */
+  anchor: Cell<Anchor | null>;
 };
+type Anchor = { time: number; offset: number; start: number; end: number };
 
 /** Headless audio loading, range playback and non-destructive stretch. The caller owns context and routing. */
 export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, WavePlayerCells> {
@@ -87,14 +93,11 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
   private readonly audioContext: AudioContext;
   /** The only store. Writable here, read-only on `cells`. */
   private readonly store: Store;
-  private held = 0;
-  private anchor: { time: number; offset: number; start: number; end: number } | null = null;
   private request = 0;
   private command = 0;
   private abort: AbortController | null = null;
   private disposed = false;
-  private depth = 0;
-  private readonly listeners = new Set<() => void>();
+  private readonly subscribers = new Set<() => void>();
   private readonly sourceAutomations = new Set<AutomationBinding>();
   private original: AudioBuffer | null = null;
   private sourceRevision = 0;
@@ -115,6 +118,8 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
       error: cell<string | null>(null),
       processing: cell(false),
       version: cell<PlaybackVersion | null>(null),
+      held: cell(0),
+      anchor: cell<Anchor | null>(null),
     };
     super(context, ({ param }) => ({
       params: { volume: param({ default: 1, bind: gain.gain, min: 0, max: 1 }) },
@@ -134,10 +139,19 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
     this.player = player;
     this.store = store;
     this.defineGraph(() => [[this.player, gain]]);
-    this.effect(() => {
-      void this.player.cells.isPlaying.value;
-      this.notify();
-    });
+  }
+
+  private get held(): number {
+    return untracked(() => this.store.held.value);
+  }
+  private set held(value: number) {
+    this.store.held.value = value;
+  }
+  private get anchor(): Anchor | null {
+    return untracked(() => this.store.anchor.value);
+  }
+  private set anchor(value: Anchor | null) {
+    this.store.anchor.value = value;
   }
 
   // Internal reads never subscribe a caller's effect. Public readers below are tracked.
@@ -219,8 +233,13 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
     const time = a.offset + Math.max(0, this.context.currentTime - a.time);
     return this.looping ? a.start + ((((time - a.start) % (a.end - a.start)) + a.end - a.start) % (a.end - a.start)) : Math.min(a.end, time);
   }
+  /** Tracked. The transport flag, identical to `cells.isPlaying`. */
   get isPlaying(): boolean {
-    return this.cells.isPlaying.value && (this.cells.isLooping.value || this.position < (this.anchor?.end ?? this.duration));
+    return this.cells.isPlaying.value;
+  }
+  /** Internal untracked check for commands: the transport flag, or false once a non-looping run has reached its end. */
+  private get running(): boolean {
+    return untracked(() => this.cells.isPlaying.value && (this.looping || this.position < (this.anchor?.end ?? this.length)));
   }
   get isLooping(): boolean {
     return this.cells.isLooping.value;
@@ -248,8 +267,40 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
   /** Change notifications exclude clock-only playhead movement. Read position per frame. */
   subscribe(listener: () => void): () => void {
     this.assertAlive();
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    let first = true;
+    const stop = untracked(() =>
+      effect(() => {
+        const { store, cells } = this;
+        for (const source of [
+          cells.selection,
+          cells.isLooping,
+          cells.isPlaying,
+          cells.loading,
+          cells.loadProgress,
+          cells.error,
+          cells.processing,
+          cells.version,
+          store.held,
+          store.anchor,
+        ])
+          void source.value;
+        if (first) {
+          first = false;
+          return;
+        }
+        try {
+          untracked(listener);
+        } catch (error) {
+          console.error("WavePlayer listener failed.", error);
+        }
+      }),
+    );
+    const unsubscribe = () => {
+      stop();
+      this.subscribers.delete(unsubscribe);
+    };
+    this.subscribers.add(unsubscribe);
+    return unsubscribe;
   }
   /** Borrow a source-time binding and follow this player's non-looping playback. Detach before manual target writes. */
   attachSourceAutomation(binding: AutomationBinding): () => void {
@@ -260,7 +311,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
       binding.stop();
       this.sourceAutomations.add(binding);
       try {
-        if (this.anchor && this.isPlaying) this.startSourceAutomation(binding, this.position, this.anchor.end, this.startTime());
+        if (this.anchor && this.running) this.startSourceAutomation(binding, this.position, this.anchor.end, this.startTime());
       } catch (error) {
         this.sourceAutomations.delete(binding);
         throw error;
@@ -290,24 +341,8 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
   private assertAlive(): void {
     if (this.disposed) throw new Error("WavePlayer is destroyed.");
   }
-  private notify(): void {
-    if (this.depth) return;
-    for (const listener of [...this.listeners]) {
-      if (!this.listeners.has(listener)) continue;
-      try {
-        untracked(listener);
-      } catch (error) {
-        console.error("WavePlayer listener failed.", error);
-      }
-    }
-  }
   private change(action: () => void): void {
-    this.depth++;
-    try {
-      batch(() => untracked(action));
-    } finally {
-      if (--this.depth === 0) this.notify();
-    }
+    batch(() => untracked(action));
   }
   private bounds(): AudioRange {
     return this.range ?? { start: 0, end: this.length };
@@ -359,7 +394,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
     this.assertAlive();
     const when = options.when ?? 0;
     if (!Number.isFinite(when) || when < 0) throw new RangeError("Start time must be finite, non-negative seconds.");
-    if (!this.player.buffer || untracked(() => this.isPlaying)) return null;
+    if (!this.player.buffer || this.running) return null;
     const command = ++this.command;
     await this.audioContext.resume();
     if (this.disposed || command !== this.command || !this.player.buffer) return null;
@@ -387,7 +422,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
     this.assertAlive();
     if (!Number.isFinite(position)) throw new RangeError("Position must be finite seconds.");
     this.change(() => {
-      const playing = this.isPlaying,
+      const playing = this.running,
         when = this.startTime();
       this.halt();
       this.held = Math.max(0, Math.min(this.length, position));
@@ -408,7 +443,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
     }
     if (selection?.start === this.range?.start && selection?.end === this.range?.end && (selection !== null || !this.looping)) return;
     this.change(() => {
-      const playing = this.isPlaying,
+      const playing = this.running,
         position = this.position;
       if (!playing && this.sourceAutomations.size) ++this.command; // invalidate a play still awaiting context.resume()
       this.range = selection ? { start: selection.start, end: selection.end } : null;
@@ -428,7 +463,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
     if (looping && this.sourceAutomations.size) throw new Error("Source automation requires non-looping playback.");
     if (this.looping === looping) return;
     this.change(() => {
-      const playing = this.isPlaying,
+      const playing = this.running,
         position = this.position;
       this.looping = looping;
       if (playing) this.begin(position, this.startTime());
@@ -456,7 +491,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
     if (!original) throw new Error("No audio source is loaded.");
     if (ratio !== 1 && !this.options.stretch) throw new Error("WavePlayer needs a stretch processor.");
     const controller = new AbortController();
-    // Fix this request's identity before observers run: `change` notifies effects and listeners,
+    // Fix this request's identity before observers run: `change` commits, then notifies subscribers,
     // and one of them may start a newer stretch re-entrantly.
     let id = 0,
       sourceRevision = 0;
@@ -621,6 +656,6 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
       super.destroy();
       this.gain.disconnect();
     });
-    this.listeners.clear();
+    for (const unsubscribe of [...this.subscribers]) unsubscribe();
   }
 }

@@ -3,6 +3,7 @@ import {
   Voice,
   cell,
   readonlyCell,
+  untracked,
   type CancellableEvent,
   type Cell,
   type ReadonlyCell,
@@ -32,10 +33,14 @@ type Hit = {
  * Sample hits with retractable same-group choke. The caller owns the AudioContext and routing.
  * A native gain gate carries future choke so cancelling the incoming hit can retract it.
  */
-export class PadBank extends AudioProcessor<{ volume: SchedulableParam }, { activeEvents: ReadonlyCell<number> }> {
+export class PadBank extends AudioProcessor<
+  { volume: SchedulableParam },
+  { activeEvents: ReadonlyCell<number>; pads: ReadonlyCell<readonly PadSpec[]> }
+> {
   private readonly outputNode: GainNode;
   private readonly activeStore: Cell<number>;
-  private readonly pads: Map<string, PadSpec>;
+  /** The only store of pad specs; `cells.pads` is its read-only view. */
+  private readonly padStore: Cell<readonly PadSpec[]>;
   private readonly hits = new Set<Hit>();
   private nextOrder = 0;
   private cleanupTimer: ReturnType<typeof setTimeout> | undefined;
@@ -49,17 +54,22 @@ export class PadBank extends AudioProcessor<{ volume: SchedulableParam }, { acti
     }
     const output = new GainNode(context);
     const active = cell(0);
+    const store = cell<readonly PadSpec[]>(Object.freeze(pads.map((pad) => Object.freeze({ ...pad }))));
     super(context, ({ param }) => ({
       params: { volume: param({ default: 1, bind: output.gain }) },
-      cells: { activeEvents: readonlyCell(active) },
+      cells: { activeEvents: readonlyCell(active), pads: readonlyCell(store) },
     }));
     this.outputNode = output;
     this.activeStore = active;
-    this.pads = new Map(pads.map((pad) => [pad.id, Object.freeze({ ...pad })]));
+    this.padStore = store;
   }
 
   override get output(): GainNode {
     return this.outputNode;
+  }
+
+  private pad(id: string): PadSpec | undefined {
+    return untracked(() => this.padStore.value).find((pad) => pad.id === id);
   }
 
   private assertAlive(): void {
@@ -133,7 +143,7 @@ export class PadBank extends AudioProcessor<{ volume: SchedulableParam }, { acti
     this.assertAlive();
     if (!Number.isFinite(when) || when < 0) throw new RangeError("Pad hit time must be finite, non-negative seconds.");
     if (!Number.isFinite(velocity)) throw new RangeError("Pad hit velocity must be finite.");
-    const pad = this.pads.get(id);
+    const pad = this.pad(id);
     if (!pad) return null;
     this.settle();
     const at = Math.max(when, this.context.currentTime);
@@ -176,11 +186,13 @@ export class PadBank extends AudioProcessor<{ volume: SchedulableParam }, { acti
   /** Replace a pad's buffer and cancel only hits made from that pad. */
   assign(id: string, buffer: AudioBuffer): void {
     this.assertAlive();
-    const pad = this.pads.get(id);
+    const pad = this.pad(id);
     if (!pad) throw new Error("Unknown pad.");
     this.settle();
     for (const hit of [...this.hits]) if (hit.pad.id === id) this.finish(hit);
-    this.pads.set(id, Object.freeze({ ...pad, buffer }));
+    this.padStore.value = Object.freeze(
+      untracked(() => this.padStore.value).map((item) => (item === pad ? Object.freeze({ ...pad, buffer }) : item)),
+    );
     this.rebuild();
   }
 

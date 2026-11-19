@@ -1,5 +1,5 @@
-import { afterEach, expect, test } from "vitest";
-import { effect } from "@audiorective/core";
+import { afterEach, expect, test, vi } from "vitest";
+import { cell, effect } from "@audiorective/core";
 import { SampleLibrary } from "../src/SampleLibrary";
 
 const disposers: Array<() => void | Promise<unknown>> = [];
@@ -58,4 +58,55 @@ test("preview publishes playing state and returns to idle when a short sample en
 
   library.stopPreview();
   expect(library.state.value.previewId).toBeNull();
+});
+
+async function readyLibrary(seconds = 0.15) {
+  const context = new AudioContext();
+  await context.resume();
+  const library = new SampleLibrary(context);
+  disposers.push(
+    () => library.destroy(),
+    () => context.close(),
+  );
+  const [id] = await library.importFiles([wav(seconds)]);
+  return { library, id: id! };
+}
+
+test("a preview started inside an effect keeps publishing after that effect re-runs", async () => {
+  const { library, id } = await readyLibrary();
+  const trigger = cell(0);
+  let started = false;
+  disposers.push(
+    effect(() => {
+      void trigger.value;
+      if (started) return;
+      started = true;
+      void library.preview(id);
+    }),
+  );
+  await expect.poll(() => library.state.value.previewPlaying).toBe(true);
+  trigger.value = 1;
+  await expect.poll(() => library.state.value.previewPlaying, { timeout: 3000, interval: 10 }).toBe(false);
+  expect(library.state.value.previewId).toBe(id);
+});
+
+test("the state cell is the store: rows, decoded bytes and preview change in single commits", async () => {
+  const { library, id } = await readyLibrary();
+  const states: unknown[] = [];
+  disposers.push(effect(() => void states.push(library.state.value)));
+  expect(library.state.value.decodedBytes).toBeGreaterThan(0);
+  library.remove(id);
+  expect(library.state.value).toMatchObject({ rows: [], decodedBytes: 0, previewId: null, previewPlaying: false });
+  expect(states).toHaveLength(2);
+});
+
+test("a failed preview releases its lease", async () => {
+  const { library, id } = await readyLibrary();
+  const connect = vi.spyOn(AudioNode.prototype, "connect").mockImplementationOnce(() => {
+    throw new Error("connect failed");
+  });
+  await expect(library.preview(id)).rejects.toThrow("connect failed");
+  connect.mockRestore();
+  library.remove(id);
+  expect(library.state.value.decodedBytes).toBe(0);
 });

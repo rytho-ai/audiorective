@@ -1,4 +1,4 @@
-import { cell, readonlyCell, type BeatTiming, type CancellableEvent } from "@audiorective/core";
+import { cell, readonlyCell, untracked, type BeatTiming, type CancellableEvent } from "@audiorective/core";
 
 export type StepLane = Readonly<{ id: string; label: string; velocities: readonly number[] }>;
 export type StepPattern = Readonly<{ steps: number; beatsPerStep: number; lanes: readonly StepLane[] }>;
@@ -44,7 +44,7 @@ export class StepSequencer {
   }
 
   setVelocity(laneId: string, step: number, velocity: number): void {
-    const pattern = this.data.value;
+    const pattern = untracked(() => this.data.value);
     const lane = pattern.lanes.find(({ id }) => id === laneId);
     if (!lane || !Number.isSafeInteger(step) || step < 0 || step >= pattern.steps || !validVelocity(velocity))
       throw new Error("Step Sequencer needs an existing step and a velocity from zero to one.");
@@ -56,7 +56,7 @@ export class StepSequencer {
   }
 
   schedule(window: StepWindow, timing: BeatTiming): void {
-    const { steps, beatsPerStep, lanes } = this.data.value;
+    const { steps, beatsPerStep, lanes } = untracked(() => this.data.value);
     const absoluteStep = Math.floor(timing.timeToBeat(window.time.current) / beatsPerStep + 1e-9);
     this.step.value = ((absoluteStep % steps) + steps) % steps;
     const first = Math.max(0, Math.ceil(window.beat.start / beatsPerStep - 1e-9));
