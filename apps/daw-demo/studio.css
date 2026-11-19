@@ -1345,30 +1345,25 @@ input[type="range"] {
   color: var(--accent);
 }
 .ar-step-grid {
-  overflow-x: auto;
-}
-.ar-step-grid table {
-  border-spacing: 3px;
-  margin-bottom: 5px;
-}
-.ar-step-grid th {
-  font-weight: 500;
-  color: var(--secondary);
-  white-space: nowrap;
-}
-.ar-step-grid th[scope="row"] {
-  text-align: left;
-  padding-right: 5px;
-}
-.ar-step-grid button {
-  min-width: 32px;
-  padding-inline: 4px;
-}
-.ar-step-grid button[data-current="true"] {
-  border-color: var(--accent);
-}
-.ar-step-grid button[aria-pressed="true"] {
-  background: var(--accent-wash);
+  --ar-step-background: transparent;
+  --ar-step-border: transparent;
+  --ar-step-padding: 0;
+  --ar-step-header-width: 250px;
+  --ar-step-cell-on-background: var(--accent-wash);
+  --ar-step-cell-on-border: var(--accent);
+  --ar-step-value-color: var(--accent);
+  --ar-step-playhead: var(--accent);
+  --ar-step-playhead-value-color: var(--accent);
+  --ar-step-control-active-background: var(--accent);
+  --ar-step-color: var(--ink);
+  --ar-step-header-color: var(--ink);
+  --ar-step-cell-background: var(--lane);
+  --ar-step-cell-border: var(--border);
+  --ar-step-control-background: var(--toolbar);
+  --ar-step-control-border: var(--border-strong);
+  --ar-step-control-active-color: var(--accent-ink);
+  --ar-step-progress: var(--accent);
+  --ar-step-muted: var(--secondary);
 }
 
 .rack-spectrum {

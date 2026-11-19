@@ -890,6 +890,17 @@
         "Plugs it in with sequencer.setTransforms([...defaultStepTransforms, humanize]) (or the transforms option) so stepSwing keeps lane swing working",
         "Takes randomness from the transform context's random, and does not trigger or cancel audio or keep state across windows inside the transform"
       ]
+    },
+    {
+      "id": 67,
+      "prompt": "In my vanilla audiorective drum machine I want the step grid to also edit a per-step filter cutoff, and a button on the grid that fills the kick lane with a euclidean rhythm. I don't want to fork the widget or the sequencer. don't run anything.",
+      "expected_output": "A custom StepSequencer param shown as a grid tab, and a page-local step grid plugin attached through grid.attach.",
+      "files": [],
+      "expectations": [
+        "Declares the cutoff with the StepSequencer params option ({ id, min, max, default }) and reads it from hit.custom in the trigger; mountStepGrid shows it as an extra tab with no widget change",
+        "Writes the euclidean button as a plugin object with attach(context) passed to grid.attach, using context.addToolbarItem and context.sequencer.setCell (or toggle), not by querying the widget's internal markup",
+        "Registers listeners through context.listen or context.onCleanup so attachment.destroy() or grid.destroy() releases them, and does not import @audiorective/daw"
+      ]
     }
   ]
 }

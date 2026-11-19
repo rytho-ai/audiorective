@@ -36,17 +36,22 @@ try {
   await page.goto("http://127.0.0.1:18779/");
   await page.waitForFunction(() => window.__daw?.workspace && window.rhythmFixture);
   await page.locator(".rhythm-panel summary").click();
-  const secondKick = page.getByRole("button", { name: "Kick 第 2 格", exact: true });
+  const secondKick = page.locator('.ar-sg-cell[data-lane="kick"][data-step="1"]');
   assert.equal(await secondKick.getAttribute("aria-pressed"), "false");
   await secondKick.click();
   assert.equal(await secondKick.getAttribute("aria-pressed"), "true");
-  await page.getByRole("slider", { name: "力度 · Kick 第 2 格", exact: true }).fill("0.35");
-  assert.equal(await secondKick.textContent(), "35");
+  await secondKick.focus();
+  for (let press = 0; press < 9; press++) await page.keyboard.press("ArrowDown");
+  assert.equal(await secondKick.getAttribute("aria-label"), "Kick 第 2 格, 力度 55%");
+  const kickHeader = page.locator('.ar-sg-lane[data-lane="kick"]');
+  await kickHeader.getByRole("button", { name: "Kick 靜音", exact: true }).click();
+  assert.equal(await kickHeader.getByRole("button", { name: "Kick 靜音", exact: true }).getAttribute("aria-pressed"), "true");
+  await kickHeader.getByRole("button", { name: "Kick 靜音", exact: true }).click();
   await page.getByRole("button", { name: "啟用鼓機", exact: true }).click();
-  await page.waitForFunction(() => window.__daw.workspace.player.isPlaying.value && document.querySelector(".ar-step-grid [data-current=true]"));
+  await page.waitForFunction(() => window.__daw.workspace.player.isPlaying.value && document.querySelector(".ar-sg-cell[data-current=true]"));
   if (process.env.DAW_RHYTHM_SCREENSHOT) await page.screenshot({ path: process.env.DAW_RHYTHM_SCREENSHOT });
   await page.getByRole("button", { name: "停止鼓機", exact: true }).click();
-  assert.equal(await page.locator(".ar-step-grid [data-current=true]").count(), 0);
+  assert.equal(await page.locator(".ar-sg-cell[data-current=true]").count(), 0);
 
   const levels = await page.evaluate(async () => {
     const { PadBank, StepSequencer } = window.rhythmFixture;

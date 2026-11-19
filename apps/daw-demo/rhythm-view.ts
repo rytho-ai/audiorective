@@ -124,7 +124,25 @@ export function mountRhythmView(
         .catch(onError);
     },
   });
-  const grid = mountStepGrid(element, { sequencer: sequence, formatStep: (label, step) => `${label} 第 ${step + 1} 格`, velocityLabel: "力度" });
+  const grid = mountStepGrid(element, {
+    sequencer: sequence,
+    formatStep: (label, step) => `${label} 第 ${step + 1} 格`,
+    labels: {
+      velocity: "力度",
+      offset: "偏移",
+      length: "長度",
+      repeat: "重複",
+      pitch: "音高",
+      chance: "機率",
+      fold: "收合",
+      mute: "靜音",
+      solo: "獨奏",
+      steps: "步數",
+      rate: "速率",
+      direction: "方向",
+      swing: "搖擺",
+    },
+  });
   element.append(assignments);
   host.append(element);
 

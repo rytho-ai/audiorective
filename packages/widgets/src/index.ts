@@ -31,7 +31,7 @@ export type { MixerOptions, MixerState, MixerStrip } from "./mixer";
 export { mountSampleBrowser } from "./sample-browser";
 export type { SampleBrowserOptions } from "./sample-browser";
 export { mountStepGrid } from "./step-grid";
-export type { StepGridOptions } from "./step-grid";
+export type * from "./step-grid-types";
 export { mountPadGrid } from "./pad-grid";
 export type { PadControl, PadGridOptions } from "./pad-grid";
 export { mountEqEditor, mountSpectrum } from "./frequency-plot";
