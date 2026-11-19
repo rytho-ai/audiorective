@@ -248,6 +248,11 @@ function gradePrompt(task, code, tscResult) {
     "You are grading code that an agent wrote for a task, against fixed expectations. Judge only what the code actually does.",
     "An expectation is met only if the code clearly satisfies it; if the code is silent on something the expectation requires, it is not met. Where an expectation says 'or an equivalent', accept any approach that achieves the same thing.",
     "You are not told which library API the agent was given. Use the TypeScript compiler diagnostics as evidence of misused or invented API.",
+    ...(mode === "guess"
+      ? [
+          "The API's type declarations are included below. Judge only against the declared API plus standard Web Audio/DOM. Behaviour that the declarations document as a default counts as met when the code relies on it.",
+        ]
+      : []),
     "Also list every error you find in the code, each with a kind: wrong-name (identifier does not exist but a similar one probably does), wrong-signature (right thing, wrong arguments/units/order/types), wrong-concept (misunderstands what the API does or how to use it), invented-api (uses something that does not exist at all), platform-misuse (Web Audio/DOM/browser misuse, e.g. autoplay, timing), other.",
     'Reply with JSON only, no prose, no code fence: {"expectations":[{"met":true,"evidence":"short reason"}, ...one per expectation in order], "errors":[{"kind":"wrong-name","detail":"..."}]}. "errors" may be empty.',
     "",
@@ -257,6 +262,7 @@ function gradePrompt(task, code, tscResult) {
     "## Expectations",
     ...task.expectations.map((e, i) => `${i}. ${e}`),
     "",
+    ...(mode === "guess" ? ["## The API's type declarations", "```ts", variantDts, "```", ""] : []),
     "## Code",
     "```ts",
     code,

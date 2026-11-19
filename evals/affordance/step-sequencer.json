@@ -9,7 +9,7 @@
         "Creates or resumes the audio context inside the click handler (or calls an API documented as doing so).",
         "Defines a 16-step pattern with four lanes whose on-steps match the request (1-based steps 1,5,9,13 / 5,13 / odd / 15, translated correctly if the API is 0-based).",
         "Sets the tempo to 120 BPM.",
-        "Playback loops indefinitely rather than playing once.",
+        "Playback loops indefinitely (set explicitly, or by the API's documented default).",
         "Each lane is connected to a sound source and the result reaches the speakers."
       ]
     },
@@ -58,7 +58,7 @@
       "prompt": "While the sequencer is playing, turn snare step 7 on with velocity 0.8 so it is heard the next time step 7 comes round, without stopping playback. Later, stop playback and release every audio resource the sequencer created, with no sound continuing afterwards.",
       "expectations": [
         "Edits the single cell (lane snare, step 7, velocity 0.8; index translated correctly) through the API while playing.",
-        "Does not stop/restart playback to make the edit take effect (or relies on an API that re-queues automatically, or calls the API's documented refresh).",
+        "Does not stop/restart playback to make the edit take effect (or relies on an API that re-queues automatically (explicitly or by its documented default), or calls the API's documented refresh).",
         "Stops playback so that no further hits sound.",
         "Releases/destroys the resources the sequencer created (nodes, timers, subscriptions) via the API's teardown."
       ]
