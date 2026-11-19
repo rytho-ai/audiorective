@@ -559,6 +559,7 @@ export class Workspace {
     this.stepSequencers.set(sequence, detach);
     stop = effect(() => {
       sequence.pattern.$();
+      sequence.transforms.$();
       untracked(() => this.clock.refresh());
     });
     return detach;

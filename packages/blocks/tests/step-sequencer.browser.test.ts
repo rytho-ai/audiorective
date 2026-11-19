@@ -1,6 +1,16 @@
 import { describe, expect, test } from "vitest";
 import { effect, type BeatTiming, type CancellableEvent } from "@audiorective/core";
-import { StepSequencer, type StepCellInput, type StepHit, type StepLaneInput, type StepWindow } from "../src/StepSequencer";
+import {
+  defaultStepTransforms,
+  StepSequencer,
+  stepSwing,
+  type StepCellInput,
+  type StepHit,
+  type StepLaneInput,
+  type StepParamSpec,
+  type StepSequencerOptions,
+  type StepWindow,
+} from "../src/StepSequencer";
 
 /** 120 bpm starting at audio time 10: one beat is 0.5 s. */
 const timing: BeatTiming = { beatToTime: (beat) => 10 + beat * 0.5, timeToBeat: (time) => (time - 10) * 2 };
@@ -11,7 +21,7 @@ const cellsAt = (size: number, active: Record<number, StepCellInput | number>): 
     return value === undefined ? {} : typeof value === "number" ? on(value) : value;
   });
 
-function rig(size: number, lanes: StepLaneInput[], random?: () => number) {
+function rig(size: number, lanes: StepLaneInput[], random?: () => number, options: Omit<StepSequencerOptions, "random"> = {}) {
   const hits: StepHit[] = [];
   const events: Array<CancellableEvent & { cancelled: number }> = [];
   const sequencer = new StepSequencer(
@@ -28,7 +38,7 @@ function rig(size: number, lanes: StepLaneInput[], random?: () => number) {
       events.push(event);
       return event;
     },
-    { random },
+    { random, ...options },
   );
   /** Schedule one window over [start, end) beats; `current` defaults to the window start. */
   const run = (start: number, end: number, current = timing.beatToTime(start)) => {
@@ -54,8 +64,8 @@ describe("model", () => {
     expect(size).toBe(4);
     expect(lanes[0]).toMatchObject({ id: "k", label: "k", steps: 4, rate: "1/16", direction: "forward", swing: 0, mute: false, solo: false });
     expect(lanes[0].cells).toHaveLength(4);
-    expect(lanes[0].cells[0]).toEqual({ velocity: 0.5, offset: 0, length: 1, repeat: 1, pitch: 0, chance: 1 });
-    expect(lanes[0].cells[3]).toEqual({ velocity: 0, offset: 0, length: 1, repeat: 1, pitch: 0, chance: 1 });
+    expect(lanes[0].cells[0]).toEqual({ velocity: 0.5, offset: 0, length: 1, repeat: 1, pitch: 0, chance: 1, custom: {} });
+    expect(lanes[0].cells[3]).toEqual({ velocity: 0, offset: 0, length: 1, repeat: 1, pitch: 0, chance: 1, custom: {} });
     expect(sequencer.playheads.value).toEqual({ k: null });
     expect(sequencer.loopProgress.value).toBeNull();
     expect(Object.isFrozen(lanes[0].cells[0])).toBe(true);
@@ -395,5 +405,237 @@ describe("scheduling", () => {
     const owned: unknown[] = [];
     sequencer.schedule({ beat: { start: 0, end: 1 }, time: { current: 10 }, own: (event) => owned.push(event) }, timing);
     expect(owned).toHaveLength(0);
+  });
+});
+
+describe("custom step params", () => {
+  const params: StepParamSpec[] = [
+    { id: "cutoff", min: 0, max: 1, default: 0.5 },
+    { id: "pan", label: "Pan", min: -1, max: 1, default: 0, step: 0.1 },
+  ];
+
+  test("declaration validation", () => {
+    const make = (list: StepParamSpec[]) => () => new StepSequencer({ size: 4, lanes: [] }, () => null, { params: list });
+    expect(make(params)).not.toThrow();
+    for (const bad of [
+      [{ id: "", min: 0, max: 1, default: 0 }],
+      [params[0], params[0]],
+      [{ id: "velocity", min: 0, max: 1, default: 0 }],
+      [{ id: "custom", min: 0, max: 1, default: 0 }],
+      [{ id: "x", min: 1, max: 1, default: 1 }],
+      [{ id: "x", min: 0, max: NaN, default: 0 }],
+      [{ id: "x", min: 0, max: 1, default: 2 }],
+    ])
+      expect(make(bad), JSON.stringify(bad)).toThrow(/^Step Sequencer params need/);
+  });
+
+  test("defaults, exposure and partial merge", () => {
+    const { sequencer } = rig(4, [{ id: "a" }], undefined, { params });
+    expect(sequencer.params.map((p) => p.id)).toEqual(["cutoff", "pan"]);
+    expect(sequencer.pattern.value.lanes[0].cells[2].custom).toEqual({ cutoff: 0.5, pan: 0 });
+    sequencer.setCell("a", 1, { custom: { cutoff: 0.4 } });
+    expect(sequencer.pattern.value.lanes[0].cells[1].custom).toEqual({ cutoff: 0.4, pan: 0 });
+    sequencer.setCell("a", 1, { custom: { pan: -1 } });
+    expect(sequencer.pattern.value.lanes[0].cells[1].custom).toEqual({ cutoff: 0.4, pan: -1 });
+    // A no-op custom edit is no change.
+    const before = sequencer.pattern.value;
+    sequencer.setCell("a", 1, { custom: { pan: -1 } });
+    expect(sequencer.pattern.value).toBe(before);
+    // Constructor cells and setSize padding carry the defaults.
+    const made = rig(2, [{ id: "a", cells: [{ custom: { pan: 0.5 } }] }], undefined, { params });
+    expect(made.sequencer.pattern.value.lanes[0].cells[0].custom).toEqual({ cutoff: 0.5, pan: 0.5 });
+    made.sequencer.setSize(3);
+    expect(made.sequencer.pattern.value.lanes[0].cells[2].custom).toEqual({ cutoff: 0.5, pan: 0 });
+  });
+
+  test("range and undeclared ids throw and change nothing", () => {
+    const { sequencer } = rig(4, [{ id: "a" }], undefined, { params });
+    const before = sequencer.pattern.value;
+    expect(() => sequencer.setCell("a", 0, { custom: { cutoff: 1.1 } })).toThrow(/^Step Sequencer custom values need/);
+    expect(() => sequencer.setCell("a", 0, { velocity: 1, custom: { nope: 0 } })).toThrow(/^Step Sequencer custom values need/);
+    expect(() => sequencer.setCell("a", 0, { custom: { cutoff: NaN } })).toThrow(/^Step Sequencer custom values need/);
+    expect(sequencer.pattern.value).toBe(before);
+    expect(() => rig(2, [{ id: "a", cells: [{ custom: { cutoff: 5 } }] }], undefined, { params })).toThrow(/^Step Sequencer custom values need/);
+    // Without declared params every custom id is undeclared.
+    expect(() => rig(2, [{ id: "a", cells: [{ custom: { cutoff: 0 } }] }])).toThrow(/^Step Sequencer custom values need/);
+  });
+
+  test("hits carry the cell's custom values; no params means an empty record", () => {
+    const { run, hits } = rig(4, [{ id: "a", cells: [{ velocity: 1, custom: { cutoff: 0.9 } }] }], undefined, { params });
+    run(0, 1);
+    expect(hits[0].custom).toEqual({ cutoff: 0.9, pan: 0 });
+    const plain = rig(4, [{ id: "a", cells: cellsAt(4, { 0: 1 }) }]);
+    plain.run(0, 1);
+    expect(plain.hits[0].custom).toEqual({});
+    expect(plain.sequencer.params).toEqual([]);
+  });
+});
+
+describe("hit fields", () => {
+  test("count, beat, rateBeats, swing and loop across two loops", () => {
+    const { run, hits } = rig(4, [{ id: "a", rate: "1/8", swing: 0.4, steps: 2, cells: cellsAt(4, { 0: 1, 1: 1 }) }]);
+    run(0, 4);
+    // The loop is 1 beat: two 1/8 steps per loop.
+    expect(hits.map((hit) => [hit.loop, hit.count, hit.step, hit.beat, hit.rateBeats, hit.swing])).toEqual([
+      [0, 0, 0, 0, 0.5, 0.4],
+      [0, 1, 1, 0.5, 0.5, 0.4],
+      [1, 0, 0, 1, 0.5, 0.4],
+      [1, 1, 1, 1.5, 0.5, 0.4],
+      [2, 0, 0, 2, 0.5, 0.4],
+      [2, 1, 1, 2.5, 0.5, 0.4],
+      [3, 0, 0, 3, 0.5, 0.4],
+      [3, 1, 1, 3.5, 0.5, 0.4],
+    ]);
+  });
+});
+
+describe("transform sockets", () => {
+  const four = cellsAt(4, { 0: 1, 1: 1, 2: 1, 3: 1 });
+  const named = (id: string, apply: (events: readonly StepHit[]) => readonly StepHit[]) => ({
+    id,
+    apply: (events: readonly StepHit[]) => apply(events),
+  });
+
+  test("defaults are exposed and equal phase 1 swing timing; an empty list is straight", () => {
+    const lane = { id: "a", swing: 0.5, cells: four };
+    const withDefault = rig(4, [lane]);
+    expect(withDefault.sequencer.transforms.value).toBe(withDefault.sequencer.transforms.value);
+    expect(withDefault.sequencer.transforms.value.map((t) => t.id)).toEqual(["step-swing"]);
+    expect(defaultStepTransforms.map((t) => t.id)).toEqual(["step-swing"]);
+    withDefault.run(0, 1);
+    close(withDefault.beats(), [0, 0.25 + 0.0625, 0.5, 0.75 + 0.0625]);
+    const straight = rig(4, [lane], undefined, { transforms: [] });
+    straight.run(0, 1);
+    close(straight.beats(), [0, 0.25, 0.5, 0.75]);
+    // Swing composes with offset and repeat as before.
+    const mixed = rig(4, [{ id: "a", swing: 1, cells: cellsAt(4, { 1: { velocity: 1, offset: 0.5, repeat: 2 } }) }]);
+    mixed.run(0, 1);
+    close(mixed.beats(), [0.25 + 0.125 + 0.125, 0.25 + 0.125 + 0.125 + 0.125]);
+    expect(stepSwing().id).toBe("step-swing");
+  });
+
+  test("transforms run in array order on each window's hits", () => {
+    const calls: string[] = [];
+    const shift = (id: string, by: number) =>
+      named(id, (events) => {
+        calls.push(`${id}:${events.length}`);
+        return events.map((hit) => ({ ...hit, when: hit.when + by }));
+      });
+    const { run, hits } = rig(4, [{ id: "a", cells: four }], undefined, { transforms: [shift("one", 1), shift("two", 10)] });
+    run(0, 1);
+    expect(calls).toEqual(["one:4", "two:4"]);
+    expect(hits[0].when).toBe(timing.beatToTime(0) + 11);
+    // Order matters: the second sees the first's output.
+    const order: number[] = [];
+    const seen = rig(4, [{ id: "a", cells: four }], undefined, {
+      transforms: [shift("one", 1), named("peek", (events) => (order.push(events[0].when), events))],
+    });
+    seen.run(0, 1);
+    expect(order).toEqual([timing.beatToTime(0) + 1]);
+  });
+
+  test("an event earlier than now plays at now", () => {
+    const early = named("early", (events) => events.map((hit) => ({ ...hit, when: 0 })));
+    const { run, hits } = rig(4, [{ id: "a", cells: four }], undefined, { transforms: [early] });
+    run(0, 1, 12);
+    expect(hits.map((hit) => hit.when)).toEqual([12, 12, 12, 12]);
+  });
+
+  test("invalid outputs throw an error that names the transform", () => {
+    const bad = (patch: Partial<StepHit>) => {
+      const { run } = rig(4, [{ id: "a", cells: four }], undefined, {
+        transforms: [named("culprit", (events) => events.map((hit) => ({ ...hit, ...patch })))],
+      });
+      return () => run(0, 1);
+    };
+    expect(bad({ when: NaN })).toThrow('Event transform "culprit" returned an event without a finite "when".');
+    expect(bad({ when: Infinity })).toThrow(/"culprit"/);
+    expect(bad({ duration: 0 })).toThrow(/"culprit".*"duration"/);
+    expect(bad({ duration: -1 })).toThrow(/"culprit".*"duration"/);
+    expect(bad({ duration: NaN })).toThrow(/"culprit".*"duration"/);
+    expect(bad({ velocity: 1.1 })).toThrow(/"culprit".*"velocity"/);
+    expect(bad({ velocity: -0.1 })).toThrow(/"culprit".*"velocity"/);
+    expect(bad({ velocity: NaN })).toThrow(/"culprit".*"velocity"/);
+    const { run } = rig(4, [{ id: "a", cells: four }], undefined, { transforms: [{ id: "arr", apply: () => undefined as never }] });
+    expect(() => run(0, 1)).toThrow(/"arr" must return an array/);
+  });
+
+  test("velocity 0 drops the event", () => {
+    const dropOdd = named("drop", (events) => events.map((hit) => (hit.step % 2 ? { ...hit, velocity: 0 } : hit)));
+    const { run, steps } = rig(4, [{ id: "a", cells: four }], undefined, { transforms: [dropOdd] });
+    const owned = run(0, 1);
+    expect(steps("a")).toEqual([0, 2]);
+    expect(owned).toHaveLength(2);
+  });
+
+  test("an added event is triggered and owned, and reset cancels it", () => {
+    const ratchet = named("ratchet", (events) => events.flatMap((hit) => [hit, { ...hit, when: hit.when + 0.01, repeatIndex: 9 }]));
+    const { sequencer, run, events, hits } = rig(4, [{ id: "a", cells: cellsAt(4, { 0: 1 }) }], undefined, { transforms: [ratchet] });
+    const owned = run(0, 1);
+    expect(hits.map((hit) => hit.repeatIndex)).toEqual([0, 9]);
+    expect(owned.map((o) => o.when)).toEqual(hits.map((hit) => hit.when));
+    sequencer.reset();
+    expect(events.map((event) => event.cancelled)).toEqual([1, 1]);
+  });
+
+  test("randomness comes from context.random, which is the injected source", () => {
+    let seenRandom: (() => number) | undefined;
+    const t = {
+      id: "jitter",
+      apply: (events: readonly StepHit[], context: { random: () => number }) => (
+        (seenRandom = context.random),
+        events.map((hit) => ({ ...hit, when: hit.when + context.random() }))
+      ),
+    };
+    let n = 0;
+    const random = () => [0.25, 0.75][n++ % 2];
+    const { run, hits } = rig(4, [{ id: "a", cells: cellsAt(4, { 0: 1, 1: 1 }) }], random, { transforms: [t] });
+    run(0, 1);
+    // Chance draws 0.25 then 0.75 for the two steps; the transform then draws 0.25 and 0.75 again for the two hits.
+    expect(hits[0].when).toBeCloseTo(timing.beatToTime(0) + 0.25, 9);
+    expect(hits[1].when).toBeCloseTo(timing.beatToTime(0.25) + 0.75, 9);
+    expect(typeof seenRandom).toBe("function");
+  });
+
+  test("setTransforms is a tracked owner write; invalid lists throw", () => {
+    const { sequencer, run, beats } = rig(4, [{ id: "a", swing: 0.5, cells: four }]);
+    let runs = 0;
+    const stop = effect(() => {
+      void sequencer.transforms.value;
+      runs++;
+    });
+    sequencer.setTransforms([]);
+    expect(runs).toBe(2);
+    expect(sequencer.transforms.value).toEqual([]);
+    run(0, 1);
+    close(beats(), [0, 0.25, 0.5, 0.75]);
+    // @ts-expect-error transforms is a ReadonlyCell: there is no setter
+    expect(() => (sequencer.transforms.value = [])).toThrow();
+    expect(() => sequencer.setTransforms([{ id: "", apply: (e) => e }])).toThrow(/^Step Sequencer transforms need/);
+    expect(() => sequencer.setTransforms([{ id: "x" } as never])).toThrow(/^Step Sequencer transforms need/);
+    expect(() => new StepSequencer({ size: 4, lanes: [] }, () => null, { transforms: "no" as never })).toThrow(/^Step Sequencer transforms need/);
+    expect(runs).toBe(2);
+    // Calling it inside an effect does not subscribe that effect.
+    let inner = 0;
+    const stop2 = effect(() => {
+      inner++;
+      sequencer.setTransforms(defaultStepTransforms);
+    });
+    sequencer.setTransforms([]);
+    expect(inner).toBe(1);
+    stop();
+    stop2();
+  });
+
+  test("a custom transform composes after the defaults", () => {
+    const evenLoops = named("even-loops", (events) => events.filter((hit) => hit.loop % 2 === 0));
+    const { sequencer, run, hits } = rig(4, [{ id: "a", swing: 0.5, cells: cellsAt(4, { 0: 1, 1: 1 }) }]);
+    sequencer.setTransforms([...defaultStepTransforms, evenLoops]);
+    run(0, 2);
+    expect(hits.map((hit) => hit.loop)).toEqual([0, 0]);
+    close(
+      hits.map((hit) => (hit.when - 10) * 2),
+      [0, 0.25 + 0.0625],
+    );
   });
 });

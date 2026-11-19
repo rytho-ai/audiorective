@@ -1,4 +1,15 @@
-import { batch, cell, readonlyCell, untracked, type BeatTiming, type CancellableEvent, type ReadonlyCell } from "@audiorective/core";
+import {
+  applyEventTransforms,
+  batch,
+  cell,
+  readonlyCell,
+  untracked,
+  type BeatTiming,
+  type CancellableEvent,
+  type EventTransform,
+  type ReadonlyCell,
+  type TimedEvent,
+} from "@audiorective/core";
 
 export type StepRate = "1/2" | "1/4" | "1/8" | "1/16" | "1/32" | "1/64" | "1/2T" | "1/4T" | "1/8T" | "1/16T" | "1/32T" | "1/64T";
 export type StepDirection = "forward" | "backward" | "bounce";
@@ -17,6 +28,19 @@ export type StepCell = Readonly<{
   pitch: number;
   /** 0..1 probability that the step plays. */
   chance: number;
+  /** One number per declared `params` entry, and nothing else. `{}` when none are declared. */
+  custom: Readonly<Record<string, number>>;
+}>;
+
+/** A caller-defined per-step number. The sequencer stores and validates it and passes it to the trigger; it never interprets it. */
+export type StepParamSpec = Readonly<{
+  id: string;
+  label?: string;
+  min: number;
+  max: number;
+  default: number;
+  /** Editing granularity hint for views; not enforced. */
+  step?: number;
 }>;
 
 export type StepLane = Readonly<{
@@ -37,24 +61,33 @@ export type StepLane = Readonly<{
 /** `size` counts 1/16 steps (integer 1..128) and sets the loop length. */
 export type StepPattern = Readonly<{ size: number; lanes: readonly StepLane[] }>;
 
-export type StepCellInput = Partial<StepCell>;
+export type StepCellInput = Readonly<Partial<Omit<StepCell, "custom">> & { custom?: Readonly<Record<string, number>> }>;
 export type StepLaneInput = Readonly<Partial<Omit<StepLane, "cells">> & { id: string; cells?: readonly StepCellInput[] }>;
 export type StepPatternInput = Readonly<{ size: number; lanes: readonly StepLaneInput[] }>;
 
-export type StepHit = Readonly<{
-  laneId: string;
-  /** Index of the cell that produced this hit. */
-  step: number;
-  velocity: number;
-  /** Semitones. */
-  pitch: number;
-  /** Absolute audio-context seconds. */
-  when: number;
-  /** Seconds. */
-  duration: number;
-  repeatIndex: number;
-  repeatCount: number;
-}>;
+/** One hit before the transforms run. `when` and `duration` are absolute audio-context seconds and seconds. */
+export type StepHit = TimedEvent &
+  Readonly<{
+    laneId: string;
+    /** Index of the cell that produced this hit. */
+    step: number;
+    /** The lane's step counter within the loop (before direction is applied). */
+    count: number;
+    /** Beat of the lane step boundary, before offset, repeat and any transform. */
+    beat: number;
+    /** The lane's step length in beats. */
+    rateBeats: number;
+    /** The lane's swing value (0..1). */
+    swing: number;
+    /** Semitones. */
+    pitch: number;
+    /** The cell's custom values. */
+    custom: Readonly<Record<string, number>>;
+    /** Loops since timing beat 0: `floor(beat / loopBeats)`. */
+    loop: number;
+    repeatIndex: number;
+    repeatCount: number;
+  }>;
 
 export type StepWindow = Readonly<{
   beat: { start: number; end: number };
@@ -65,7 +98,26 @@ export type StepWindow = Readonly<{
 export type StepSequencerOptions = Readonly<{
   /** Source of chance draws in [0, 1). Default `Math.random`. */
   random?: () => number;
+  /** Custom per-step parameters, fixed at construction. */
+  params?: readonly StepParamSpec[];
+  /** Transforms run in order over each window's hits. Default `defaultStepTransforms`. */
+  transforms?: readonly EventTransform<StepHit>[];
 }>;
+
+/** Delays every hit whose lane step count is odd by `swing * 0.5` lane steps. Without it, lane `swing` has no effect. */
+export function stepSwing(): EventTransform<StepHit> {
+  return {
+    id: "step-swing",
+    apply: (events, { timing }) =>
+      events.map((hit) =>
+        hit.count % 2 === 1 && hit.swing > 0
+          ? { ...hit, when: hit.when + timing.beatToTime(hit.beat + hit.swing * 0.5 * hit.rateBeats) - timing.beatToTime(hit.beat) }
+          : hit,
+      ),
+  };
+}
+
+export const defaultStepTransforms: readonly EventTransform<StepHit>[] = Object.freeze([stepSwing()]);
 
 const MAX_SIZE = 128;
 const EPS = 1e-9;
@@ -84,7 +136,8 @@ const RATE_BEATS: Readonly<Record<StepRate, number>> = {
   "1/64T": 1 / 24,
 };
 const DIRECTIONS: readonly StepDirection[] = ["forward", "backward", "bounce"];
-const DEFAULT_CELL: StepCell = Object.freeze({ velocity: 0, offset: 0, length: 1, repeat: 1, pitch: 0, chance: 1 });
+const BUILTIN_CELL = { velocity: 0, offset: 0, length: 1, repeat: 1, pitch: 0, chance: 1 } as const;
+const BUILTIN_KEYS = Object.keys(BUILTIN_CELL) as (keyof typeof BUILTIN_CELL)[];
 
 const SIZE_ERROR = "Step Sequencer needs an integer size from 1 to 128.";
 const LANES_ERROR = "Step Sequencer needs lanes with unique, nonempty IDs.";
@@ -92,6 +145,10 @@ const LANE_ERROR =
   "Step Sequencer lane needs steps from 1 to the pattern size, a known rate and direction, swing from 0 to 1, boolean mute and solo, and at most size cells.";
 const CELL_ERROR =
   "Step Sequencer cell needs velocity and chance from 0 to 1, offset from -0.5 to 0.5, length from 1/16 to 4, an integer repeat from 1 to 8 and an integer pitch from -24 to 24.";
+const PARAMS_ERROR =
+  "Step Sequencer params need unique nonempty ids that differ from the built-in cell keys (and from custom), a finite min below max, and a default from min to max.";
+const CUSTOM_ERROR = "Step Sequencer custom values need declared param ids and finite numbers from each param's min to max.";
+const TRANSFORMS_ERROR = "Step Sequencer transforms need an array of objects that each have a nonempty string id and an apply function.";
 const TARGET_ERROR = "Step Sequencer needs an existing lane and step.";
 const LANE_TARGET_ERROR = "Step Sequencer needs an existing lane.";
 
@@ -99,20 +156,56 @@ const inRange = (value: number, min: number, max: number) => typeof value === "n
 const inRangeInt = (value: number, min: number, max: number) => inRange(value, min, max) && Number.isInteger(value);
 const validSize = (size: number) => inRangeInt(size, 1, MAX_SIZE);
 
-function makeCell(base: StepCell, patch: StepCellInput): StepCell {
-  const next = { ...base };
-  for (const key of Object.keys(DEFAULT_CELL) as (keyof StepCell)[]) if (patch[key] !== undefined) next[key] = patch[key];
+function buildParams(params: readonly StepParamSpec[] | undefined): readonly StepParamSpec[] {
+  if (params === undefined) return Object.freeze([]);
+  if (!Array.isArray(params)) throw new Error(PARAMS_ERROR);
+  const ids = new Set<string>();
+  for (const spec of params) {
+    if (
+      !spec ||
+      typeof spec.id !== "string" ||
+      !spec.id ||
+      ids.has(spec.id) ||
+      spec.id === "custom" ||
+      (BUILTIN_KEYS as readonly string[]).includes(spec.id) ||
+      !Number.isFinite(spec.min) ||
+      !Number.isFinite(spec.max) ||
+      !(spec.min < spec.max) ||
+      !inRange(spec.default, spec.min, spec.max)
+    )
+      throw new Error(PARAMS_ERROR);
+    ids.add(spec.id);
+  }
+  return Object.freeze(params.map((spec) => Object.freeze({ ...spec })));
+}
+
+function makeCell(base: StepCell, patch: StepCellInput, specs: readonly StepParamSpec[]): StepCell {
+  const next: Record<string, unknown> = { ...base };
+  for (const key of BUILTIN_KEYS) if (patch[key] !== undefined) next[key] = patch[key];
   if (
-    !inRange(next.velocity, 0, 1) ||
-    !inRange(next.chance, 0, 1) ||
-    !inRange(next.offset, -0.5, 0.5) ||
-    !inRange(next.length, 1 / 16, 4) ||
-    !inRangeInt(next.repeat, 1, 8) ||
-    !inRangeInt(next.pitch, -24, 24)
+    !inRange(next.velocity as number, 0, 1) ||
+    !inRange(next.chance as number, 0, 1) ||
+    !inRange(next.offset as number, -0.5, 0.5) ||
+    !inRange(next.length as number, 1 / 16, 4) ||
+    !inRangeInt(next.repeat as number, 1, 8) ||
+    !inRangeInt(next.pitch as number, -24, 24)
   )
     throw new Error(CELL_ERROR);
-  return Object.freeze(next);
+  if (patch.custom !== undefined) {
+    if (typeof patch.custom !== "object" || patch.custom === null) throw new Error(CUSTOM_ERROR);
+    const custom: Record<string, number> = { ...base.custom };
+    for (const [id, value] of Object.entries(patch.custom)) {
+      const spec = specs.find((item) => item.id === id);
+      if (!spec || !inRange(value, spec.min, spec.max)) throw new Error(CUSTOM_ERROR);
+      custom[id] = value;
+    }
+    next.custom = Object.freeze(custom);
+  }
+  return Object.freeze(next) as StepCell;
 }
+
+const sameCell = (a: StepCell, b: StepCell) =>
+  BUILTIN_KEYS.every((key) => a[key] === b[key]) && Object.keys(a.custom).every((id) => a.custom[id] === b.custom[id]);
 
 type LaneFields = Omit<StepLane, "id" | "cells">;
 
@@ -134,7 +227,7 @@ function makeLaneFields(base: LaneFields, patch: Partial<LaneFields>, size: numb
   return next;
 }
 
-function buildPattern(input: StepPatternInput): StepPattern {
+function buildPattern(input: StepPatternInput, specs: readonly StepParamSpec[], blank: StepCell): StepPattern {
   if (!input || !validSize(input.size)) throw new Error(SIZE_ERROR);
   const { size } = input;
   const ids = new Set<string>();
@@ -148,7 +241,7 @@ function buildPattern(input: StepPatternInput): StepPattern {
       lane,
       size,
     );
-    const cells = Array.from({ length: size }, (_, index) => makeCell(DEFAULT_CELL, supplied[index] ?? {}));
+    const cells = Array.from({ length: size }, (_, index) => makeCell(blank, supplied[index] ?? {}, specs));
     return Object.freeze({ id: lane.id, ...fields, cells: Object.freeze(cells) });
   });
   return Object.freeze({ size, lanes: Object.freeze(lanes) });
@@ -165,7 +258,8 @@ function cellIndex(direction: StepDirection, steps: number, k: number): number {
 
 /**
  * An editable looping pattern over a borrowed beat transport and instrument trigger.
- * Each lane has its own length, rate, direction and swing; each cell its own velocity, offset, length, repeat, pitch and chance.
+ * Each lane has its own length, rate, direction and swing; each cell its own velocity, offset, length, repeat, pitch, chance and caller-declared custom values.
+ * Swing and any other timing plug-in run as `transforms` over each window's hits.
  */
 export class StepSequencer {
   private readonly data;
@@ -173,6 +267,12 @@ export class StepSequencer {
   private readonly progress;
   private readonly events = new Set<CancellableEvent>();
   private readonly random: () => number;
+  private readonly blank: StepCell;
+  private readonly tf;
+  /** Custom per-step parameters declared at construction. */
+  readonly params: readonly StepParamSpec[];
+  /** Transforms run, in order, over each window's hits. Replace with `setTransforms`. */
+  readonly transforms: ReadonlyCell<readonly EventTransform<StepHit>[]>;
   readonly pattern: ReadonlyCell<StepPattern>;
   /** Current cell index per lane, or `null` when stopped. */
   readonly playheads: ReadonlyCell<Readonly<Record<string, number | null>>>;
@@ -184,14 +284,34 @@ export class StepSequencer {
     private readonly trigger: (hit: StepHit) => CancellableEvent | null,
     options: StepSequencerOptions = {},
   ) {
-    const built = buildPattern(pattern);
+    this.params = buildParams(options.params);
+    this.blank = Object.freeze({
+      ...BUILTIN_CELL,
+      custom: Object.freeze(Object.fromEntries(this.params.map((spec) => [spec.id, spec.default]))),
+    });
+    const built = buildPattern(pattern, this.params, this.blank);
     this.random = options.random ?? Math.random;
+    this.tf = cell<readonly EventTransform<StepHit>[]>(this.checkTransforms(options.transforms ?? defaultStepTransforms));
+    this.transforms = readonlyCell(this.tf);
     this.data = cell<StepPattern>(built);
     this.heads = cell<Readonly<Record<string, number | null>>>(this.stopped(built));
     this.progress = cell<number | null>(null);
     this.pattern = readonlyCell(this.data);
     this.playheads = readonlyCell(this.heads);
     this.loopProgress = readonlyCell(this.progress);
+  }
+
+  private checkTransforms(list: readonly EventTransform<StepHit>[]): readonly EventTransform<StepHit>[] {
+    if (!Array.isArray(list) || list.some((item) => !item || typeof item.id !== "string" || !item.id || typeof item.apply !== "function"))
+      throw new Error(TRANSFORMS_ERROR);
+    return Object.freeze([...list]);
+  }
+
+  /** Replace the transform list in one write. Compose with `[...defaultStepTransforms, mine]` to keep swing. */
+  setTransforms(list: readonly EventTransform<StepHit>[]): void {
+    untracked(() => {
+      this.tf.value = this.checkTransforms(list);
+    });
   }
 
   private stopped(pattern: StepPattern): Readonly<Record<string, number | null>> {
@@ -214,8 +334,8 @@ export class StepSequencer {
       if (index < 0 || !Number.isInteger(step) || step < 0 || step >= pattern.size) throw new Error(TARGET_ERROR);
       const lane = pattern.lanes[index];
       const before = lane.cells[step];
-      const after = makeCell(before, patch);
-      if ((Object.keys(after) as (keyof StepCell)[]).every((key) => after[key] === before[key])) return;
+      const after = makeCell(before, patch, this.params);
+      if (sameCell(after, before)) return;
       const cells = Object.freeze(lane.cells.map((item, i) => (i === step ? after : item)));
       this.data.value = this.replaceLane(pattern, index, Object.freeze({ ...lane, cells }));
     });
@@ -255,7 +375,7 @@ export class StepSequencer {
         Object.freeze({
           ...lane,
           steps: Math.min(lane.steps, size),
-          cells: Object.freeze(Array.from({ length: size }, (_, i) => lane.cells[i] ?? DEFAULT_CELL)),
+          cells: Object.freeze(Array.from({ length: size }, (_, i) => lane.cells[i] ?? this.blank)),
         }),
       );
       batch(() => {
@@ -273,6 +393,7 @@ export class StepSequencer {
       const soloed = pattern.lanes.some((lane) => lane.solo);
       const firstLoop = Math.floor(Math.max(0, window.beat.start) / loopBeats + EPS);
       const endLoop = Math.ceil(window.beat.end / loopBeats - EPS);
+      const planned: StepHit[] = [];
       for (let loop = firstLoop; loop < endLoop; loop++) {
         const loopStart = loop * loopBeats;
         for (const lane of pattern.lanes) {
@@ -285,28 +406,37 @@ export class StepSequencer {
             const step = cellIndex(lane.direction, lane.steps, k);
             const cellData = lane.cells[step];
             if (cellData.velocity <= 0 || !(this.random() < cellData.chance)) continue;
-            const trigger = loopStart + k * rate + (k % 2 === 1 ? lane.swing * 0.5 * rate : 0) + cellData.offset * rate;
+            const beat = loopStart + k * rate;
+            const trigger = beat + cellData.offset * rate;
             for (let repeat = 0; repeat < cellData.repeat; repeat++) {
               const start = trigger + (repeat * rate) / cellData.repeat;
-              const when = Math.max(timing.beatToTime(start), now);
-              const duration = timing.beatToTime(start + (cellData.length * rate) / cellData.repeat) - timing.beatToTime(start);
-              const event = this.trigger({
+              planned.push({
                 laneId: lane.id,
                 step,
+                count: k,
+                beat,
+                rateBeats: rate,
+                swing: lane.swing,
                 velocity: cellData.velocity,
                 pitch: cellData.pitch,
-                when,
-                duration,
+                custom: cellData.custom,
+                loop,
+                when: timing.beatToTime(start),
+                duration: timing.beatToTime(start + (cellData.length * rate) / cellData.repeat) - timing.beatToTime(start),
                 repeatIndex: repeat,
                 repeatCount: cellData.repeat,
               });
-              if (!event) continue;
-              this.events.add(event);
-              event.onEnded(() => this.events.delete(event));
-              window.own(event, when);
             }
           }
         }
+      }
+      // The scheduler, not the transforms, validates, clamps to `now`, triggers and owns every output.
+      for (const hit of applyEventTransforms(planned, this.tf.value, { now, timing, random: this.random })) {
+        const event = this.trigger(hit);
+        if (!event) continue;
+        this.events.add(event);
+        event.onEnded(() => this.events.delete(event));
+        window.own(event, hit.when);
       }
       this.publishPosition(pattern, timing.timeToBeat(now), loopBeats);
     });
