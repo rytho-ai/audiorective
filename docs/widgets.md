@@ -143,7 +143,7 @@ Each lane row has a header and a row of cells.
 
 `mountStepGrid` returns `{ attach(plugin), destroy() }` and implements `PluginTarget<StepGridPluginContext>`, the same host that backs the waveform, piano roll and selector. Registrations are released when the attachment is destroyed, and a throwing plugin or listener does not break the grid. Plugin attachments are destroyed with the grid.
 
-`StepGridPluginContext` extends `WidgetPluginContext` (`listen`, `onCleanup`) with:
+`StepGridPluginContext` extends `WidgetPluginContext` (`listen`, `onCleanup`) with the members below; `StepGridPlugin` is `WidgetPlugin<StepGridPluginContext>`:
 
 - `surface`: the positioned element that holds the lanes.
 - `sequencer`: the borrowed sequencer, so a plugin writes cells through `setCell` and `setLane`.
@@ -155,10 +155,10 @@ Each lane row has a header and a row of cells.
 - `onPatternChange(listener)`: called after the grid has updated for each pattern change. Returns its cleanup.
 
 ```typescript
-import { mountStepGrid, type WidgetPlugin, type StepGridPluginContext } from "@audiorective/widgets";
+import { mountStepGrid, type StepGridPlugin } from "@audiorective/widgets";
 
 // Fills a lane with N evenly spread pulses from a toolbar button.
-const euclid: WidgetPlugin<StepGridPluginContext> = {
+const euclid: StepGridPlugin = {
   attach(context) {
     const button = document.createElement("button");
     button.textContent = "Euclid 5/16 kick";

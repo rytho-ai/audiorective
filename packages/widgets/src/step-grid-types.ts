@@ -1,5 +1,5 @@
 import type { Readable } from "@audiorective/core";
-import type { PluginTarget, Unsubscribe, WidgetPluginContext } from "./types";
+import type { PluginTarget, Unsubscribe, WidgetPlugin, WidgetPluginContext } from "./types";
 
 export type StepGridRate = "1/2" | "1/4" | "1/8" | "1/16" | "1/32" | "1/64" | "1/2T" | "1/4T" | "1/8T" | "1/16T" | "1/32T" | "1/64T";
 export type StepGridDirection = "forward" | "backward" | "bounce";
@@ -104,6 +104,8 @@ export interface StepGridPluginContext extends WidgetPluginContext {
   /** Called after the grid has updated for each pattern change. */
   onPatternChange(listener: (pattern: StepGridPattern) => void): Unsubscribe;
 }
+
+export type StepGridPlugin = WidgetPlugin<StepGridPluginContext>;
 
 export interface StepGridHandle extends PluginTarget<StepGridPluginContext> {
   destroy(): void;
