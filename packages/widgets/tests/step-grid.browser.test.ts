@@ -84,6 +84,18 @@ describe("rendering", () => {
     expect(root.querySelectorAll(".ar-sg-cell")).toHaveLength(48);
   });
 
+  test("an active cell at full value still shows the on colour beside the value band", () => {
+    const { root } = mount();
+    const on = cellAt(root, "kick", 4);
+    expect(on.dataset.on).toBe("true");
+    expect((on.querySelector(".ar-sg-fill") as HTMLElement).style.height).toBe("100%");
+    const cap = getComputedStyle(on, "::after");
+    expect(parseFloat(cap.height)).toBeGreaterThan(0);
+    expect(cap.backgroundColor).toBe(getComputedStyle(on).backgroundColor);
+    const fill = getComputedStyle(on.querySelector(".ar-sg-fill")!);
+    expect(parseFloat(fill.left)).toBeGreaterThan(0);
+  });
+
   test("a column header row labels the controls and each lane row matches its cell height", () => {
     const { root } = mount();
     expect([...root.querySelectorAll(".ar-sg-colname")].map((item) => item.textContent)).toEqual(["Steps", "Rate", "Dir", "Swing"]);

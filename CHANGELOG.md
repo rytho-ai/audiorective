@@ -13,6 +13,10 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ## [Unreleased]
 
+### Changed
+
+- **widgets:** `mountStepGrid` keeps the on colour visible at any value: an active cell draws a cap (`--ar-step-cap-height`, default 4px) in `--ar-step-cell-on-background` above the value band, and the band is inset from the cell sides (`--ar-step-fill-inset`, default 3px). The lane header is 340px by default and the widget adapts to its own width: at 900px or narrower (a container query on the widget root) the header is 300px with compact controls and cells shrink to 14px, so a 768px container fits 16 steps without scrolling and names such as "Tom even" are not truncated.
+
 ### Added
 
 - **core:** `ValueRange` (`{ min, max }`), `ParamRange` (adds `default` and an optional `step`) and `ParamSpec` (adds `id` and an optional `label`) describe a numeric parameter's range once. `StepParamSpec` and `StepGridParamSpec` are aliases of `ParamSpec`; `ParamOptions`, `LfoOptions`, `RackMacroMapping` and `WebClapParameter` reuse the same fields. No behaviour change.
