@@ -1035,7 +1035,7 @@ createEngine() / new Engine()  â†’  context created (suspended)               â†
 
 \* **Context ownership.** An engine that creates its own `AudioContext` closes it on `destroy()`. A context passed in (`new AudioEngine(ctx)`, `createEngine(setup, { context })`) is borrowed and is never closed by the engine; the caller closes it. The engine listens with `addEventListener("statechange")` rather than assigning `onstatechange`, so a borrowed context keeps its own handler, and `destroy()` removes the engine's listener.
 
-`engine.state` and `engine.latency` are read-only: `state` is a callable view (`engine.state()`, `.value`, `$()`) and `latency` is a `ReadonlyCell<number>`. Only the engine writes them. `start()`, `suspend()`, `resume()` and `untilReady()` read the state untracked, so calling them inside an effect does not subscribe it. `destroy()` rejects any pending `untilReady()` with an error, and a call made after `destroy()` rejects at once.
+`engine.state` and `engine.latency` are read-only: `state` is a callable view (`engine.state()`, `.value`, `$()`) and `latency` is a `ReadonlyCell<number>`. Only the engine writes them. `start()`, `suspend()`, `resume()` and `untilReady()` read the state untracked, so calling them inside an effect does not subscribe it. `destroy()` and an external close of the context (state `"destroyed"`) reject any pending `untilReady()` with an error, and a call made once the engine is destroyed rejects at once. A `start()`, `resume()` or `suspend()` still awaiting the context when it closes leaves the state `"destroyed"`.
 
 Calling `.core.start()` on a destroyed engine throws. Calling `.core.suspend()`/`.core.resume()` on a destroyed engine warns and no-ops.
 

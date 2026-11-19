@@ -55,7 +55,7 @@ predates that API. See the "Version mismatches" note in the skill.
 - **core:** `AudioEngine` rejects pending `untilReady()` calls when its context closes externally, and `start()`, `resume()` and `suspend()` no longer flip the state back after a `destroy()` during their await.
 - **host:** a timed-out `saveState()`, `loadState()` or `mountEditor()` no longer leaves its waiter queued; the next reply settles the next real caller instead of the dead one.
 - **blocks:** `WavePlayer.destroy()` stops subscribers before it resets state, so no listener runs after the player is destroyed.
-- **midi:** `MidiSequence.subscribe` is an effect over `cells.state`; it notifies once per committed change.
+- **midi:** `MidiSequence.subscribe` is an effect over `cells.state`; it notifies once per committed change, after the enclosing `batch`/effect flush, so several commits inside one outer `batch` produce one notification.
 - **daw:** a failure while building a track (for example a throwing `EffectRack`) releases its channel, automation gain and send-bus entry.
 - **docs:** `docs/effects.md` lists `Channel`'s `outputEnabled`, `tap` and per-send `enabled`.
 

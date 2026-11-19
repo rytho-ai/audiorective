@@ -257,6 +257,23 @@ describe("AudioEngine", () => {
     engine.destroy();
   });
 
+  test("an external close during an awaited resume() keeps the engine destroyed", async () => {
+    const engine = new TestEngine();
+    await engine.start();
+    await engine.suspend();
+    const ctx = engine.context;
+    Object.defineProperty(ctx, "state", { value: "suspended", configurable: true });
+    ctx.resume = () =>
+      new Promise<void>((resolve) => {
+        // The context closes while resume() is pending, then the promise settles.
+        Object.defineProperty(ctx, "state", { value: "closed", configurable: true });
+        ctx.dispatchEvent(new Event("statechange"));
+        resolve();
+      });
+    await engine.resume();
+    expect(engine.state()).toBe("destroyed");
+  });
+
   test("statechange to 'closed' marks the engine 'destroyed'", async () => {
     const engine = new TestEngine();
     await engine.start();

@@ -233,7 +233,7 @@ export class AudioEngine {
   async start(): Promise<void> {
     if (this._peek() === "destroyed") throw new Error("Cannot start a destroyed engine");
     if (this._context.state !== "running") await this._context.resume();
-    if (this._destroyed) return;
+    if (this._destroyed || this._peek() === "destroyed") return;
     this._setState("running");
   }
 
@@ -244,7 +244,7 @@ export class AudioEngine {
     }
     if (this._peek() === "idle") return;
     if (this._context.state === "running") await this._context.suspend();
-    if (this._destroyed) return;
+    if (this._destroyed || this._peek() === "destroyed") return;
     this._setState("suspended");
   }
 
@@ -254,7 +254,7 @@ export class AudioEngine {
       return;
     }
     if (this._context.state !== "running") await this._context.resume();
-    if (this._destroyed) return;
+    if (this._destroyed || this._peek() === "destroyed") return;
     this._setState("running");
   }
 
