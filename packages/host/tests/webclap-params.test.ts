@@ -117,4 +117,41 @@ describe("WebClapHost params", () => {
       [0.8, 0.8],
     ]);
   });
+
+  it("destroy() clears the response timers and rejects pending saveState/loadState/mountEditor", async () => {
+    vi.useFakeTimers();
+    try {
+      const { host } = await load();
+      const save = host.saveState();
+      const loadState = host.loadState(new Uint8Array([1]));
+      const results = Promise.allSettled([save, loadState]);
+      expect(vi.getTimerCount()).toBe(2);
+      host.destroy();
+      expect(vi.getTimerCount()).toBe(0);
+      const settled = await results;
+      for (const r of settled) {
+        expect(r.status).toBe("rejected");
+        expect((r as PromiseRejectedResult).reason.message).toBe("WebCLAP host is destroyed.");
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a plug-in error message rejects pending waiters with a clear message", async () => {
+    vi.useFakeTimers();
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { host } = await load();
+      const save = host.saveState();
+      const assertion = expect(save).rejects.toThrow("WebCLAP plug-in error: boom");
+      (host.node.port as unknown as FakePort).onmessage?.({ data: { type: "error", message: "boom" } });
+      await assertion;
+      expect(vi.getTimerCount()).toBe(0);
+      expect(log).toHaveBeenCalled();
+    } finally {
+      log.mockRestore();
+      vi.useRealTimers();
+    }
+  });
 });

@@ -1,4 +1,4 @@
-import { AudioProcessor, batch, cell, readonlyCell, type Cell, type Param, type ReadonlyCell } from "@audiorective/core";
+import { AudioProcessor, batch, cell, readonlyCell, type CancellableEvent, type Cell, type Param, type ReadonlyCell } from "@audiorective/core";
 
 export type WebClapDescriptor = Readonly<{ id: string; name: string; vendor: string; version: string; features: readonly string[] }>;
 export type WebClapParameter = Readonly<{
@@ -12,7 +12,7 @@ export type WebClapParameter = Readonly<{
   flags?: number;
 }>;
 export type WebClapBundle = Readonly<{ url: string; pluginId?: string; pluginIndex?: number; workletUrl?: string }>;
-export type WebClapEvent = { cancel(): void; onEnded(listener: () => void): void };
+export type WebClapEvent = CancellableEvent;
 
 type LoadedMessage = {
   type: "loaded";
@@ -232,6 +232,18 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
     });
   }
 
+  /** Clears every pending response timer and rejects the callers still waiting on `saveState()`, `loadState()` or `mountEditor()`. */
+  private rejectWaiters(error: Error): void {
+    const waiters: Waiter<never>[] = [...this.stateWaiters, ...this.loadStateWaiters, ...(this.guiWaiter ? [this.guiWaiter] : [])] as Waiter<never>[];
+    this.stateWaiters = [];
+    this.loadStateWaiters = [];
+    this.guiWaiter = undefined;
+    for (const waiter of waiters) {
+      clearTimeout(waiter.timer);
+      waiter.reject(error);
+    }
+  }
+
   private settle<T>(waiter: Waiter<T> | undefined, value: T): void {
     if (!waiter) return;
     clearTimeout(waiter.timer);
@@ -285,6 +297,7 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
       case "error": {
         const error = new Error(String(message.message));
         console.error(error);
+        this.rejectWaiters(new Error(`WebCLAP plug-in error: ${error.message}`));
         break;
       }
     }
@@ -293,6 +306,7 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
   override destroy(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.rejectWaiters(new Error("WebCLAP host is destroyed."));
     if (this.editor) this.unmountEditor();
     this.panic();
     this.node.port.postMessage({ type: "dispose" });
