@@ -624,7 +624,7 @@
       "expectations": [
         "Creates an effect bus via Project.addTrack, puts one fully wet delay on the return and waits with workspace.flush before using the live bus",
         "Uses Workspace.setTrackRouting with outputBusId null and one post-fader send per source and explains that live routing preserves transport",
-        "Wires mountMixer to reactive state, Workspace edit actions, trackMixerOutput and the master output, with proper destruction",
+        "Wires mountMixer to reactive state and Workspace edit actions, supplying level readers through meter(id) from trackMixerOutput and the master output (the caller creates and disconnects its own analysers), with proper destruction",
         "Uses DAWproject save and reopen for routes and avoids claiming untested third-party compatibility"
       ]
     },

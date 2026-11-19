@@ -1,7 +1,7 @@
-import type { WavePlayer, WavePlayerState } from "@audiorective/blocks/player";
+import type { WavePlayerState } from "@audiorective/blocks/player";
 
 /** The playback version a selector currently displays. */
-export type SelectorVersion = WavePlayer["version"];
+export type SelectorVersion = Readonly<{ revision: number; sourceRevision: number; buffer: { readonly duration: number }; peaks: WaveformPeaks }>;
 
 /** Selection boundaries in the currently committed buffer's output seconds. */
 export type Selection = { start: number; end: number };
@@ -10,15 +10,37 @@ export type WaveformSelectorState = WavePlayerState & {
   pixelsPerSecond: number;
 };
 
+/**
+ * What the selector reads and drives. `WavePlayer` satisfies it; so can any model that exposes these members.
+ * `version`, `isPlaying` and `isLooping` are read inside `subscribe` notifications.
+ */
+export interface SelectorPlayer extends SelectionModel {
+  readonly output: AudioNode;
+  readonly version: SelectorVersion | null;
+  readonly isPlaying: boolean;
+  readonly isLooping: boolean;
+  getState(): WavePlayerState;
+  load(source: string | File): Promise<void>;
+  cancelLoad(): void;
+  play(): Promise<unknown>;
+  audition(): Promise<void>;
+  pause(): void;
+  stop(): void;
+  seek(seconds: number): void;
+  setLooping(looping: boolean): void;
+  sourceToOutput(seconds: number): number;
+  destroy(): void;
+}
+
 export type WaveformSelectorOptions = (
   | {
       /** The selector creates its own player through this factory, owns it and destroys it. */
-      createPlayer: () => WavePlayer;
+      createPlayer: () => SelectorPlayer;
       player?: never;
     }
   | {
       /** Shared player belongs to the caller; destroying a view leaves it alive. */
-      player: WavePlayer;
+      player: SelectorPlayer;
       createPlayer?: never;
     }
 ) & {

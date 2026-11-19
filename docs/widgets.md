@@ -32,7 +32,7 @@ gesture.destroy();
 
 The caller renders lanes and clip appearance, supplies compatible track hit testing, and keeps shared selection/history. `time` and `onMove.time` use `timeUnit` (seconds by default, or beats); the widget converts through `timeMap` for its second-based pointer geometry and beat keyboard nudges. The widget never creates an AudioContext or changes the Project by itself. This interaction entry has no dependency on `@audiorective/daw`.
 
-`attachTimelineZoom` from the same entry owns continuous zoom gestures over a caller-rendered time axis. It connects an optional range input and Ctrl/⌘+wheel, keeps the project time under the pointer (or viewport center for the slider), and batches redraws to animation frames. The caller supplies `getScale()` in pixels per project second and `onScale(next)` to redraw its arrangement; `ruler()` returns the current time-axis element after that redraw. Buttons can call `zoom.zoomBy(1.45)` and fit-to-project can call `zoom.zoomTo(scale, leftEdgeX)`. Call `zoom.cancel()` when switching projects and `zoom.destroy()` when removing the view. The default range is 2–2000 pixels per second; `minScale` and `maxScale` can change it.
+`attachTimelineZoom` from the same entry owns continuous zoom gestures over a caller-rendered time axis. It connects an optional range input and Ctrl/⌘+wheel, keeps the project time under the pointer (or viewport center for the slider), and batches redraws to animation frames. The caller supplies `getScale()` in pixels per project second and `onScale(next)` to redraw its arrangement; `ruler()` returns the current time-axis element after that redraw. Buttons can call `zoom.zoomBy(1.45)` and fit-to-project can call `zoom.zoomTo(scale, leftEdgeX)`. Call `zoom.cancel()` when switching projects and `zoom.destroy()` when removing the view. The default range is 2–2000 pixels per second; `minScale` and `maxScale` can change it. The slider's `aria-valuetext` reads "<n> px/s"; pass `labels: { scale(pixelsPerSecond) }` to localize it.
 
 The widgets implement their own waveform display and interaction. They require no UI framework or WaveSurfer dependency. The selector uses [WavePlayer](./blocks.md) for audio and selection. Pass a shared `player`, or supply `createPlayer` to let the selector construct, own and destroy one. Its public audio connection is `handle.output`.
 
@@ -94,7 +94,7 @@ The attachment owns its gesture and drawing. The caller owns the points and play
 
 ## Mixer controls
 
-`mountMixer(root, { state, editTrack, editMaster, output? })` binds volume, pan, mute and solo controls to an external mixer state. Give it a `Readable<MixerState>` and apply edits in the owner. To display meters, return each track's post-fader `AudioNode` from `output(id)` and the master from `output(null)`. The widget detaches only its own analysis branches and reactive subscription on `destroy()`. Add app-specific routing controls with `appendControls(id, element)`, whose optional return value cleans up that strip.
+`mountMixer(root, { state, editTrack, editMaster, meter? })` binds volume, pan, mute and solo controls to an external mixer state. Give it a `Readable<MixerState>` and apply edits in the owner. To display meters, return a reader `{ sampleCount?, read(samples), destroy?() }` from `meter(id)` for each track and from `meter(null)` for the master. The caller creates and wires its own analysis node (for example an `AnalyserNode` on a post-fader tap) inside `meter`; the view only calls `read` per animation frame and calls `destroy()` when the strip goes away so the caller can disconnect. The widget touches no audio node. On `destroy()` it removes its own reactive subscription and views. Add app-specific routing controls with `appendControls(id, element)`, whose optional return value cleans up that strip. Strips are created outside the state subscription, so a reactive widget mounted there, such as `mountParameter`, keeps following its value after the mixer state changes.
 
 `mountMixer` imports only core and takes the structural `state`, `editTrack` and `editMaster` contract, so the same view works over a DAW project or your own mixer model. With a DAW `Workspace`, read `project.cells.revision` when projecting `project.tracks` and `project.masterVolume`, and bind the edit callbacks to [Workspace mixer methods](./daw.md#mixer-buses-and-sends).
 
@@ -239,7 +239,7 @@ The caller owns the context and routing. The selector resumes the player's conte
 
 ### Interaction
 
-To share audio and selection across views, call `mountWaveformSelector(root, { player })` with a `WavePlayer` from `@audiorective/blocks/player`. Supply either `createPlayer` or `player`. The view does not destroy a supplied player or cancel its loads when detached. Route the shared output once. Loading or changing selection through any view updates the player and all its views; renderer, zoom and snap remain local. See [Blocks](./blocks.md#share-a-block-between-widgets).
+To share audio and selection across views, call `mountWaveformSelector(root, { player })` with a `WavePlayer` from `@audiorective/blocks/player`. Supply either `createPlayer` or `player`. `SelectorPlayer` is a structural contract (`getState`, `version`, `isPlaying`, `isLooping`, `load`, `cancelLoad`, `play`, `audition`, `pause`, `stop`, `seek`, `setLooping`, `sourceToOutput`, `output`, `destroy`, plus the selection model's `getSelection`, `setSelection` and `subscribe`); `WavePlayer` satisfies it and so can your own model. The view does not destroy a supplied player or cancel its loads when detached. Route the shared output once. Loading or changing selection through any view updates the player and all its views; renderer, zoom and snap remain local. See [Blocks](./blocks.md#share-a-block-between-widgets).
 
 - Load an audio URL or local file using the built-in controls. Loading does not start playback.
 - Drag in either direction to create a range and start looping its audition. The endpoints are normalized to increasing seconds.
@@ -254,7 +254,7 @@ To share audio and selection across views, call `mountWaveformSelector(root, { p
 type Selection = { start: number; end: number };
 
 type WaveformSelectorOptions = {
-  createPlayer: () => WavePlayer; // alternatively supply player: WavePlayer, without createPlayer
+  createPlayer: () => SelectorPlayer; // alternatively supply player: SelectorPlayer, without createPlayer
   source?: string | File;
   grid?: { beats: number[]; downbeats: number[] };
   onSelectionChange?: (selection: Selection | null) => void;

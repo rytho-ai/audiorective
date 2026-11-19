@@ -109,6 +109,7 @@ export function createSelectionPlugin(options: SelectionPluginOptions = {}): Sel
         const g = gesture;
         gesture = null;
         if (!g) return;
+        stop();
         if (ctx.surface.hasPointerCapture(g.id)) ctx.surface.releasePointerCapture(g.id);
         if (revert && g.moved) change(g.original);
       }
@@ -163,6 +164,7 @@ export function createSelectionPlugin(options: SelectionPluginOptions = {}): Sel
         gesture.alt = e.altKey;
         gesture.moved ||= Math.abs(e.clientX - gesture.originX) >= 3;
         update();
+        schedule();
       });
       ctx.listen(ctx.surface, "pointerup", (event) => {
         const e = event as PointerEvent;
@@ -213,7 +215,16 @@ export function createSelectionPlugin(options: SelectionPluginOptions = {}): Sel
         else change(null);
       });
       if (options.model) ctx.onCleanup(options.model.subscribe(() => redraw()));
+      // The edge-scroll loop runs only while a drag is in progress.
+      function schedule(): void {
+        if (!frame && !disposed && gesture?.moved) frame = requestAnimationFrame(tick);
+      }
+      function stop(): void {
+        cancelAnimationFrame(frame);
+        frame = 0;
+      }
       function tick(): void {
+        frame = 0;
         if (disposed) return;
         if (gesture?.moved) {
           const rect = ctx.getViewportRect();
@@ -223,16 +234,15 @@ export function createSelectionPlugin(options: SelectionPluginOptions = {}): Sel
             update();
           }
         }
-        if (!disposed) frame = requestAnimationFrame(tick);
+        schedule();
       }
       range = null;
       redraw();
-      frame = requestAnimationFrame(tick);
       const destroy: Unsubscribe = () => {
         if (disposed) return;
         disposed = true;
         cancel(false);
-        cancelAnimationFrame(frame);
+        stop();
         range = null;
         redraw = () => {};
         context = null;

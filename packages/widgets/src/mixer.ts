@@ -1,21 +1,27 @@
-import { effect, type Readable } from "@audiorective/core";
-import { mountLevelMeter } from "./level-meter";
+import { effect, untracked, type Readable } from "@audiorective/core";
+import { mountLevelMeter, type LevelMeterOptions } from "./level-meter";
 
 type StripSettings = Readonly<{ volume: number; pan: number; muted: boolean; solo: boolean }>;
 export type MixerStrip = StripSettings & Readonly<{ id: string; name: string }>;
 export type MixerState = Readonly<{ tracks: readonly MixerStrip[]; masterVolume: number }>;
+/**
+ * A caller-owned level reader for one strip or the master (`null`). The caller creates and wires its analysis node;
+ * the view only reads samples and calls `destroy` when the strip goes away so the caller can disconnect.
+ */
+export type MixerMeter = Readonly<{ sampleCount?: number; read: LevelMeterOptions["read"]; destroy?(): void }>;
 export type MixerOptions = {
   state: Readable<MixerState>;
   editTrack(id: string, patch: Partial<StripSettings>): void;
   editMaster(gain: number): void;
-  output?(id: string | null): AudioNode | undefined;
+  /** Called once per strip, and once for the master with `null`. Return undefined to show no meter. */
+  meter?(id: string | null): MixerMeter | undefined;
   onSelect?(id: string): void;
   selected?(id: string): boolean;
   appendControls?(id: string, root: HTMLElement): void | (() => void);
   labels?: Partial<{ pan: string; volume: string; master: string; mute: string; solo: string }>;
 };
 
-/** Mixer controls and borrowed output meters. The caller owns all mix settings and routing. */
+/** Mixer controls and caller-supplied level readers. The caller owns all mix settings and routing. */
 export function mountMixer(root: HTMLElement, options: MixerOptions) {
   const doc = root.ownerDocument;
   const labels = { pan: "Pan", volume: "Volume", master: "Master", mute: "Mute", solo: "Solo", ...options.labels };
@@ -37,19 +43,12 @@ export function mountMixer(root: HTMLElement, options: MixerOptions) {
   }
 
   function meter(root: HTMLElement, id: string | null, label: string) {
-    const node = options.output?.(id);
-    if (!node) return;
-    const reader = node.context.createAnalyser();
-    reader.fftSize = 512;
-    node.connect(reader);
-    const view = mountLevelMeter(root, { sampleCount: reader.fftSize, label, read: (data) => reader.getFloatTimeDomainData(data) });
+    const reader = options.meter?.(id);
+    if (!reader) return;
+    const view = mountLevelMeter(root, { sampleCount: reader.sampleCount, label, read: reader.read });
     return () => {
       view.destroy();
-      try {
-        node.disconnect(reader);
-      } catch (error) {
-        if (!(error instanceof DOMException) || error.name !== "InvalidAccessError") throw error;
-      }
+      reader.destroy?.();
     };
   }
 
@@ -124,14 +123,15 @@ export function mountMixer(root: HTMLElement, options: MixerOptions) {
     const ids = new Set(tracks.map(({ id }) => id));
     for (const [id, strip] of strips)
       if (!ids.has(id)) {
-        strip.destroy();
+        untracked(() => strip.destroy());
         strips.delete(id);
       }
     let next = mixer.firstElementChild;
     for (const track of tracks) {
       let strip = strips.get(track.id);
       if (!strip) {
-        strip = add(track);
+        // Detached from this effect: widgets mounted by `appendControls` own effects that must outlive its re-runs.
+        strip = untracked(() => add(track));
         strips.set(track.id, strip);
       }
       strip.update(track);

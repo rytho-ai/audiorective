@@ -37,7 +37,7 @@ export const mountWaveformSelector: MountWaveformSelector = (root, options) => {
   let destroyed = false,
     playbackError: string | null = null,
     animation = 0;
-  let displayed: SelectorVersion | undefined;
+  let displayed: SelectorVersion | null | undefined;
   let previous: Selection | null = player.getSelection();
   const disposers: Array<() => void> = [];
   const selection = createSelectionPlugin({

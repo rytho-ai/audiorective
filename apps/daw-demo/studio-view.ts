@@ -223,6 +223,7 @@ export class StudioView {
       viewport: arrangement,
       ruler: () => arrangement.querySelector<HTMLElement>(".ruler-row .ruler"),
       slider: $<HTMLInputElement>("timeline-zoom"),
+      labels: { scale: (scale) => `${Math.round(scale)} 像素／秒` },
       getScale: () => this.pixelsPerSecond,
       onScale: (scale) => {
         this.pixelsPerSecond = scale;
@@ -1394,7 +1395,24 @@ export class StudioView {
         if (patch.solo !== undefined) workspace.setTrackSolo(id, patch.solo);
       },
       editMaster: (gain) => workspace.setMasterVolume(gain),
-      output: (id) => (id === null ? workspace.output : workspace.trackMixerOutput(id)),
+      meter: (id) => {
+        const node = id === null ? workspace.output : workspace.trackMixerOutput(id);
+        if (!node) return;
+        const analyser = node.context.createAnalyser();
+        analyser.fftSize = 512;
+        node.connect(analyser);
+        return {
+          sampleCount: analyser.fftSize,
+          read: (samples) => analyser.getFloatTimeDomainData(samples),
+          destroy() {
+            try {
+              node.disconnect(analyser);
+            } catch (error) {
+              if (!(error instanceof DOMException) || error.name !== "InvalidAccessError") throw error;
+            }
+          },
+        };
+      },
       selected: (id) => this.selectedTrackId === id,
       onSelect: (id) => this.selectTrack(id),
       appendControls: (id, strip) => this.addMixerRouting(workspace, id, strip),

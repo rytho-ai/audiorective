@@ -36,6 +36,8 @@ export type TimelineZoomOptions = Readonly<{
   slider?: HTMLInputElement;
   minScale?: number;
   maxScale?: number;
+  /** Slider text for the current scale. Default: "<n> px/s". */
+  labels?: Partial<{ scale(pixelsPerSecond: number): string }>;
 }>;
 
 export interface TimelineZoomHandle {
@@ -119,7 +121,7 @@ export function attachTimelineZoom(options: TimelineZoomOptions): TimelineZoomHa
   const sync = () => {
     if (!slider) return;
     slider.value = String(Math.round((Math.log(options.getScale() / minimum) / Math.log(maximum / minimum)) * Number(slider.max)));
-    slider.setAttribute("aria-valuetext", `${Math.round(options.getScale())} 像素／秒`);
+    slider.setAttribute("aria-valuetext", (options.labels?.scale ?? ((scale: number) => `${Math.round(scale)} px/s`))(options.getScale()));
   };
   const cancel = () => {
     if (frame !== undefined) cancelAnimationFrame(frame);
@@ -175,7 +177,7 @@ export function attachTimelineZoom(options: TimelineZoomOptions): TimelineZoomHa
 
 /** Attach move/open behavior while the caller retains rendering and Project ownership. */
 export function attachClipGesture(element: HTMLElement, options: ClipGestureOptions): ClipGestureHandle {
-  let drag: { pointerId: number; startX: number; x: number; y: number; moved: boolean; time: number } | undefined;
+  let drag: { pointerId: number; startX: number; x: number; y: number; moved: boolean; time: number; left: string } | undefined;
   let destroyed = false;
   const toSeconds = (time: number) => (options.timeUnit === "beats" ? options.timeMap.beatToSeconds(time) : time);
   const fromSeconds = (seconds: number) => (options.timeUnit === "beats" ? options.timeMap.secondsToBeat(seconds) : seconds);
@@ -183,9 +185,10 @@ export function attachClipGesture(element: HTMLElement, options: ClipGestureOpti
 
   const cleanup = () => {
     const pointerId = drag?.pointerId;
+    // Only a drag moves the caller's element; give back what it had when the drag began.
+    if (drag?.moved) element.style.left = drag.left;
     drag = undefined;
     element.classList.remove("dragging");
-    element.style.left = `${startSeconds * options.pixelsPerSecond()}px`;
     if (pointerId !== undefined && element.hasPointerCapture(pointerId)) element.releasePointerCapture(pointerId);
   };
   const candidate = (x: number, alt: boolean) => {
@@ -197,7 +200,15 @@ export function attachClipGesture(element: HTMLElement, options: ClipGestureOpti
     event.stopPropagation();
     options.onSelect();
     element.setPointerCapture(event.pointerId);
-    drag = { pointerId: event.pointerId, startX: event.clientX, x: event.clientX, y: event.clientY, moved: false, time: startSeconds };
+    drag = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      x: event.clientX,
+      y: event.clientY,
+      moved: false,
+      time: startSeconds,
+      left: element.style.left,
+    };
   };
   const move = (event: PointerEvent) => {
     if (!drag || event.pointerId !== drag.pointerId) return;
