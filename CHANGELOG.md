@@ -13,12 +13,18 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ## [Unreleased]
 
+### Fixed
+
+- **blocks:** `StepSequencer` randomness is a pure function of a step's position. Before, `chance` and `context.random` drew from one stateful source, so any re-queue (an edit through `refreshOnEdit`, `clock.refresh()`, a seek) redrew every pending step: a chance step could flip between sounding and silent and humanize jitter jumped, and offline renders with different tick sizes differed. Now the chance draw is keyed by `seed`, lane, loop and step counter, and `context.randomFor` by the hit's lane, loop, step counter and repeat index, so the same step gets the same numbers in every window. Pass `options.random` to keep the old sequential source (the old instability comes with it).
+
 ### Changed
 
 - **widgets:** `mountStepGrid` keeps the on colour visible at any value: an active cell draws a cap (`--ar-step-cap-height`, default 4px) in `--ar-step-cell-on-background` above the value band, and the band is inset from the cell sides (`--ar-step-fill-inset`, default 3px). The lane header is 340px by default and the widget adapts to its own width: at 900px or narrower (a container query on the widget root) the header is 300px with compact controls and cells shrink to 14px, so a 768px container fits 16 steps without scrolling and names such as "Tom even" are not truncated.
 
 ### Added
 
+- **core:** `hash01(...parts)` hashes numbers and strings to a number in [0, 1); `EventTransformContext.randomFor(event, key?)` gives a transform a number that is stable per event; `applyEventTransforms` takes an `EventTransformInput` (`seed?`, `keyOf?` besides the old fields) and builds `randomFor` from it. `context.random` stays, documented as a sequential, unstable source.
+- **blocks:** `StepSequencerOptions.seed` (default 0) seeds the stable chance and `randomFor` draws.
 - **clock:** `TempoParam.linearRampToValueAtTime(value, endTime)` and `exponentialRampToValueAtTime(value, endTime)` schedule tempo ramps with Web Audio semantics (from the previous event, or from the current value at the current time when nothing is scheduled). `beatToTime`, `timeToBeat`, rulers, Clock windows and `bpm.value` follow the ramp exactly; `valueAtTime` interpolates, and `cancelAndHoldAtTime` cuts a ramp at the interpolated value. A non-finite end time throws `TempoParam ramp end time must be finite`. Both methods previously threw `TempoParam.<method> is V2 (tempo ramps)`.
 - **core:** `ValueRange` (`{ min, max }`), `ParamRange` (adds `default` and an optional `step`) and `ParamSpec` (adds `id` and an optional `label`) describe a numeric parameter's range once. `StepParamSpec` and `StepGridParamSpec` are aliases of `ParamSpec`; `ParamOptions`, `LfoOptions`, `RackMacroMapping` and `WebClapParameter` reuse the same fields. No behaviour change.
 - **blocks:** `refreshOnEdit(sequencer, transport)` in `@audiorective/blocks/sequencer` calls `transport.refresh()` once per committed change of a `StepSequencer`'s `pattern` or `transforms` (not on attach) and returns a disposer. `transport` is any `{ refresh(): void }`. `Workspace.attachStepSequencer` in `@audiorective/daw` uses it.

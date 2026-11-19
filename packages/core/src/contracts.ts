@@ -1,3 +1,5 @@
+import { hash01 } from "./hash";
+
 /** A consumer-owned audio event that a scheduler may revoke after a transport or edit change. */
 export interface CancellableEvent {
   cancel(): void;
@@ -73,8 +75,16 @@ export type EventTransformContext = Readonly<{
   now: number;
   /** Beat to seconds mapping for the scheduler's transport. */
   timing: BeatTiming;
-  /** The scheduler's injectable random source; the only randomness a transform may use. */
+  /**
+   * The scheduler's sequential random source. Each call advances a stream, so a re-queued window draws different numbers:
+   * use it only where the result may change when events are rescheduled. Prefer `randomFor`.
+   */
   random: () => number;
+  /**
+   * A number in [0, 1) that is a pure function of the event's identity (the scheduler's `keyOf`) and `key`, so the same event
+   * gets the same number in every window, re-queue and seek. Pass different `key`s to draw several independent numbers for one event.
+   */
+  randomFor(event: object, key?: number | string): number;
 }>;
 
 /**
@@ -89,6 +99,14 @@ export type EventTransform<E extends BeatEvent = BeatEvent> = Readonly<{ id: str
     | Readonly<{ unit?: "beat"; apply(events: readonly E[], context: EventTransformContext): readonly E[] }>
     | Readonly<{ unit: "second"; apply(events: readonly SecondsOf<E>[], context: EventTransformContext): readonly SecondsOf<E>[] }>
   );
+
+/**
+ * What a scheduler passes to `applyEventTransforms`: the context minus `randomFor`, which is built from `seed` and `keyOf`.
+ * `keyOf` returns the event's stable identity (for example lane, loop and step counter) from fields that survive a transform's
+ * `{ ...event }` copy; without it the event's `beat` (or `when`) is the identity, which is stable only while no earlier transform moves it.
+ * `seed` defaults to 0.
+ */
+export type EventTransformInput = Omit<EventTransformContext, "randomFor"> & Readonly<{ seed?: number; keyOf?: (event: never) => number | string }>;
 
 type AnyEvent = Record<string, unknown>;
 
@@ -130,9 +148,16 @@ function secondsToBeats(event: AnyEvent, timing: BeatTiming): AnyEvent {
 export function applyEventTransforms<E extends BeatEvent>(
   events: readonly E[],
   transforms: readonly EventTransform<E>[],
-  context: EventTransformContext,
+  context: EventTransformInput,
 ): SecondsOf<E>[] {
   const { timing } = context;
+  const { seed = 0, keyOf, ...base } = context;
+  const identity = (event: object): number | string => {
+    if (keyOf) return (keyOf as (event: object) => number | string)(event);
+    const e = event as { beat?: number; when?: number };
+    return e.beat ?? e.when ?? 0;
+  };
+  const randomFor = (event: object, key: number | string = 0) => hash01(seed, identity(event), key);
   let unit: EventTransformUnit = "beat";
   let current: readonly AnyEvent[] = events as readonly unknown[] as readonly AnyEvent[];
   for (const transform of transforms) {
@@ -143,7 +168,8 @@ export function applyEventTransforms<E extends BeatEvent>(
       unit = wanted;
     }
     const output = (transform.apply as (events: readonly AnyEvent[], context: EventTransformContext) => readonly AnyEvent[])(current, {
-      ...context,
+      ...base,
+      randomFor,
       now: unit === "beat" ? timing.timeToBeat(context.now) : context.now,
     });
     if (!Array.isArray(output)) throw new Error(`Event transform "${transform.id}" must return an array of events.`);

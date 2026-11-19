@@ -1252,8 +1252,9 @@ import type {
   SecondsOf,
   EventTransform,
   EventTransformContext,
+  EventTransformInput,
 } from "@audiorective/core";
-import { applyEventTransforms, withCancel } from "@audiorective/core";
+import { applyEventTransforms, withCancel, hash01 } from "@audiorective/core";
 
 interface CancellableEvent {
   cancel(): void;
@@ -1269,13 +1270,16 @@ type BeatEvent = Readonly<{ beat: number }>;
 type TimedBeatEvent = BeatEvent & Readonly<{ durationBeats: number; velocity: number }>;
 type SecondsOf<E extends BeatEvent> = /* E with `beat` -> `when` and `durationBeats` -> `duration`; other fields unchanged */;
 
-type EventTransformContext = Readonly<{ now: number; timing: BeatTiming; random: () => number }>;
+type EventTransformContext = Readonly<{ now: number; timing: BeatTiming; random: () => number; randomFor(event: object, key?: number | string): number }>;
+// What a scheduler passes to applyEventTransforms: the context without randomFor, plus the inputs randomFor is built from.
+type EventTransformInput = Omit<EventTransformContext, "randomFor"> & Readonly<{ seed?: number; keyOf?: (event: never) => number | string }>;
+hash01(...parts: readonly (number | string)[]): number; // pure 32-bit hash to [0, 1)
 type EventTransform<E extends BeatEvent = BeatEvent> = Readonly<{ id: string; params?: Readonly<Record<string, unknown>> }> &
   (
     | Readonly<{ unit?: "beat"; apply(events: readonly E[], context: EventTransformContext): readonly E[] }>
     | Readonly<{ unit: "second"; apply(events: readonly SecondsOf<E>[], context: EventTransformContext): readonly SecondsOf<E>[] }>
   );
-applyEventTransforms<E extends BeatEvent>(events: readonly E[], transforms: readonly EventTransform<E>[], context: EventTransformContext): SecondsOf<E>[];
+applyEventTransforms<E extends BeatEvent>(events: readonly E[], transforms: readonly EventTransform<E>[], context: EventTransformInput): SecondsOf<E>[];
 withCancel(event: CancellableEvent | null, undo: () => void): CancellableEvent;
 ```
 
@@ -1284,7 +1288,7 @@ A structural contract that exposes reactive state, such as a sequencer's `patter
 - `CancellableEvent` is a consumer-owned audio event that a scheduler may revoke after a transport or edit change. `Clock`'s `window.own(event, when)` accepts one (`@audiorective/clock` re-exports the type), and `PadHit` extends it.
 - `BeatTiming` converts between beats and absolute audio-context time. `Timeline` satisfies it, `applyEventTransforms` uses it for the unit conversions, and `StepSequencer.schedule(window, timing)` and `ClipLauncher`'s transport take it.
 - An event has two forms. Inside a transform pipeline it is positioned in beats: `BeatEvent` is `{ beat }`, and `TimedBeatEvent` adds `durationBeats` and `velocity` (0..1) for note-like events such as a step hit. What a scheduler triggers is the seconds form: `ScheduledEvent` is `{ when }`, absolute audio-context seconds, and `TimedEvent` adds `duration` (seconds) and `velocity`. `SecondsOf<E>` is the seconds form of a beat event type `E` (`beat` becomes `when`, `durationBeats` becomes `duration`, every other field is kept). Because the two are distinct types, a trigger's event type says "final, clamped, seconds". A scheduler whose events have no duration or velocity (a clip launch) uses `BeatEvent` and the same transform contract.
-- `EventTransform<E>` is a pluggable step a scheduler runs between computing its events and triggering them. It is data-shaped (`id`, serialisable `params`, a pure `apply`) so it can be saved later. By default it reads and returns beat events, so swing, offset and nudges are beat arithmetic that holds at any tempo. Set `unit: "second"` to read and return the seconds form instead, for adjustments that are really about time, such as millisecond jitter. `context.now` is the earliest position an event may sound, in the transform's own unit (beats for a beat transform, seconds for a seconds transform), `context.timing` maps between beats and seconds, and `context.random` is the scheduler's injectable random source and the only randomness a transform may use. A transform keeps no state across windows and never triggers or cancels audio.
+- `EventTransform<E>` is a pluggable step a scheduler runs between computing its events and triggering them. It is data-shaped (`id`, serialisable `params`, a pure `apply`) so it can be saved later. By default it reads and returns beat events, so swing, offset and nudges are beat arithmetic that holds at any tempo. Set `unit: "second"` to read and return the seconds form instead, for adjustments that are really about time, such as millisecond jitter. `context.now` is the earliest position an event may sound, in the transform's own unit (beats for a beat transform, seconds for a seconds transform), `context.timing` maps between beats and seconds, `context.randomFor(event, key?)` is the randomness a transform should use: a number in [0, 1) that is a pure function of the scheduler's `seed`, the event's identity and `key`, so an event gets the same number however often or in whichever window it is scheduled (different `key`s give independent numbers for one event). The scheduler gives `applyEventTransforms` a `keyOf(event)` that builds the identity from fields that survive a transform's `{ ...event }` copy (a step hit uses lane, loop, step counter and repeat index); without `keyOf` the identity is the event's `beat` (or `when`), which is stable only while no earlier transform moves it. `context.random` is the scheduler's sequential source: it advances on every call, so a re-queue draws new numbers and results that use it are not stable. `hash01(...parts)` is the pure hash behind `randomFor`, for a scheduler that draws its own position-keyed numbers. A transform keeps no state across windows and never triggers or cancels audio.
 
 ```ts
 // Beat transform (default): push every event a sixteenth of a beat late, at any tempo.
@@ -1294,12 +1298,12 @@ const late: EventTransform<TimedBeatEvent> = { id: "late", apply: (events) => ev
 const jitter: EventTransform<TimedBeatEvent> = {
   id: "jitter",
   unit: "second",
-  apply: (events, { random }) => events.map((e) => ({ ...e, when: e.when + (random() - 0.5) * 0.01 })),
+  apply: (events, { randomFor }) => events.map((e) => ({ ...e, when: e.when + (randomFor(e) - 0.5) * 0.01 })),
 };
 ```
 
 - `withCancel(event, undo)` returns a `CancellableEvent` whose `cancel()` cancels `event`, then runs `undo` once (later calls do nothing); `onEnded` passes through to `event`. Use it when a trigger does more than start a sound, such as scheduling a filter change: a scheduler that cancels and re-triggers pending events (a Clock `refresh()`, a stop, a `StepSequencer.reset()`) then retracts the extra scheduling too. `undo` does not run for an event that already ended. With a `null` event it still runs on cancel, and the returned event ends at that cancel.
-- `applyEventTransforms(events, transforms, context)` is the enforcement every scheduler shares. `events` are beat events and `context.now` is in seconds. It runs the transforms in array order and converts the events through `context.timing` only where the unit changes: a seconds transform gets the events as `when` and `duration`, and its output is mapped back to `beat` and `durationBeats` before the next beat transform, so consecutive transforms of one unit never round-trip. It throws `Event transform "<id>" ...` naming the transform for an output with a non-finite `beat` (`when` for a seconds transform), a `durationBeats` (`duration`) that is not a finite number above 0, or a `velocity` outside 0..1 (checked only on events that have them), or for a `unit` other than `"beat"` or `"second"`, and it drops events with `velocity` 0. After the last transform it converts to seconds, moves any event earlier than `context.now` to `now`, and returns the seconds events. The scheduler then triggers and owns every returned event. `StepSequencer` uses it ([Blocks](./blocks.md#transform-sockets)).
+- `applyEventTransforms(events, transforms, context)` (`context` is an `EventTransformInput`) is the enforcement every scheduler shares. `events` are beat events and `context.now` is in seconds. It runs the transforms in array order and converts the events through `context.timing` only where the unit changes: a seconds transform gets the events as `when` and `duration`, and its output is mapped back to `beat` and `durationBeats` before the next beat transform, so consecutive transforms of one unit never round-trip. It throws `Event transform "<id>" ...` naming the transform for an output with a non-finite `beat` (`when` for a seconds transform), a `durationBeats` (`duration`) that is not a finite number above 0, or a `velocity` outside 0..1 (checked only on events that have them), or for a `unit` other than `"beat"` or `"second"`, and it drops events with `velocity` 0. After the last transform it converts to seconds, moves any event earlier than `context.now` to `now`, and returns the seconds events. The scheduler then triggers and owns every returned event. `StepSequencer` uses it ([Blocks](./blocks.md#transform-sockets)).
 
 ## registerWorklet
 
@@ -1322,7 +1326,7 @@ signals/src/
 ├── Spatial.ts           # AudioProcessor wrapping a PannerNode
 ├── Analyser.ts          # AudioProcessor wrapping an AnalyserNode (spectrum/waveform tap)
 ├── peaks.ts             # pure PCM summaries and frame/time bin ranges
-├── contracts.ts         # CancellableEvent, BeatTiming and EventTransform contracts (beat and seconds event forms) + applyEventTransforms, withCancel
+├── contracts.ts         # CancellableEvent, BeatTiming and EventTransform contracts (beat and seconds event forms) + applyEventTransforms, withCancel; hash.ts: hash01
 ├── types.ts             # SignalAccessor, ComputedAccessor, Readable, ParamBind, etc.
 └── index.ts             # public exports
 ```
@@ -1342,7 +1346,7 @@ export { EngineEnvironmentError, LatencyUnknownError, WorkletUnavailableError };
 export { createEngine, cell, readonlyCell, defineGraph };
 export { batch, untracked, effect, computed };
 export { loadAudioBuffer, registerWorklet, reverseBuffer, renderOffline };
-export { applyEventTransforms, withCancel };
+export { applyEventTransforms, withCancel, hash01 };
 export { summarizePeaks, peakFrameRange };
 
 // Constants
@@ -1378,6 +1382,7 @@ export type {
   SecondsOf,
   EventTransformUnit,
   EventTransformContext,
+  EventTransformInput,
   EventTransform,
   RenderOfflineOptions,
   GraphEdge,

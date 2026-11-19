@@ -369,7 +369,7 @@ type StepDirection = "forward" | "backward" | "bounce";
 type StepCell = { velocity; offset; length; repeat; pitch; chance; custom: Readonly<Record<string, number>> };
 type StepLane = { id; label; steps; rate; direction; swing; mute; solo; cells: readonly StepCell[] };
 type StepPattern = { size: number; lanes: readonly StepLane[] };
-new StepSequencer(pattern: StepPatternInput, trigger: (hit: StepHit) => CancellableEvent | null, options?: { random?: () => number; params?: readonly StepParamSpec[]; transforms?: readonly StepTransform[] });
+new StepSequencer(pattern: StepPatternInput, trigger: (hit: StepHit) => CancellableEvent | null, options?: { seed?: number; random?: () => number; params?: readonly StepParamSpec[]; transforms?: readonly StepTransform[] });
 ```
 
 `size` is the loop length in 1/16 steps (integer 1..128, so the loop lasts `size / 4` beats). Input is partial and filled with defaults: a lane gets `label = id`, `steps = size`, `rate = "1/16"`, `direction = "forward"`, `swing = 0`, `mute`/`solo` false and every cell off; a cell gets `velocity 0`, `offset 0`, `length 1`, `repeat 1`, `pitch 0`, `chance 1` and `custom` set to each declared param's default (`{}` without `params`). Every lane always holds `size` cells; cells beyond its `steps` are kept but not played.
@@ -387,7 +387,7 @@ The ranges are data, in one place. `sequencer.cellParams` (also exported as `ste
 
 Lane fields: `steps` (integer 1..`size`, the lane's own length, so lanes of different lengths drift against each other), `rate` (a `StepRate`; straight 1/2 = 2 beats down to 1/64 = 1/16 beat, and a `T` rate is two thirds of the straight one), `direction`, `swing` (0..1; the `stepSwing` transform delays every odd lane step by `swing * 0.5` lane steps, a fixed beat offset at any tempo), `mute` and `solo`.
 
-**Timing.** Every lane restarts at each loop boundary, measured from beat 0 of the timing; a lane whose rate does not divide the loop is cut off at the loop end. With `k` the lane step counter in the loop, the played cell is `k mod steps` going forward, `steps - 1 - (k mod steps)` backward, and a ping-pong without repeating the end cells for `bounce` (`0 1 2 1 0 1 ...` for 3 steps; a 1-step lane stays on cell 0). A hit starts at beat `loopStart + k * rate`, plus `offset * rate`, then the transforms run in beats (by default `stepSwing` adds swing); the result is converted to seconds through the timing and a start already in the past plays at the window's current time. A step with `repeat = r` plays `r` hits at `i * rate / r` and each lasts `length * rate / r` beats. A lane plays when it is not muted and either no lane is soloed or it is soloed. A step plays when `velocity > 0` and `random() < chance`; the draw happens once per step, so all repeats of a step play or none do. Pass `options.random` for deterministic tests.
+**Timing.** Every lane restarts at each loop boundary, measured from beat 0 of the timing; a lane whose rate does not divide the loop is cut off at the loop end. With `k` the lane step counter in the loop, the played cell is `k mod steps` going forward, `steps - 1 - (k mod steps)` backward, and a ping-pong without repeating the end cells for `bounce` (`0 1 2 1 0 1 ...` for 3 steps; a 1-step lane stays on cell 0). A hit starts at beat `loopStart + k * rate`, plus `offset * rate`, then the transforms run in beats (by default `stepSwing` adds swing); the result is converted to seconds through the timing and a start already in the past plays at the window's current time. A step with `repeat = r` plays `r` hits at `i * rate / r` and each lasts `length * rate / r` beats. A lane plays when it is not muted and either no lane is soloed or it is soloed. A step plays when `velocity > 0` and its chance draw is below `chance`. The draw is a pure function of `options.seed` (default 0), the lane `id`, the loop and the step counter, so it is the same in every window, re-queue, edit and seek, and it happens once per step: all repeats of a step play or none do. Pass a different `seed` per instance or run for a different pattern. `options.random` replaces the draw with a sequential source (each call advances it, so a re-queue draws new numbers and pending chance steps can flip); use it only to script exact draws in tests.
 
 The trigger receives a `StepHit` and returns a `CancellableEvent` (`cancel()` and `onEnded()`) or `null`; a `PadHit` is one.
 
@@ -533,7 +533,7 @@ const lazy: StepTransform = {
 const humanize: StepTransform = {
   id: "humanize",
   unit: "second",
-  apply: (hits, { random }) => hits.map((hit) => ({ ...hit, when: hit.when + (random() - 0.5) * 0.01 })),
+  apply: (hits, { randomFor }) => hits.map((hit) => ({ ...hit, when: hit.when + (randomFor(hit) - 0.5) * 0.01 })),
 };
 sequencer.setTransforms([...defaultStepTransforms, lazy, humanize]); // keep swing, add mine
 ```
@@ -547,7 +547,7 @@ Rules the sequencer enforces and never leaves to the transform:
 - After the last transform the hits are converted to seconds through the timing, and a hit earlier than the window's current time plays at that time. The trigger never sees a `when` before it.
 - A returned hit with a non-finite `beat` (`when` in a seconds transform), a `durationBeats` (`duration`) that is not above 0, or a `velocity` outside 0..1 throws an error that names the transform `id`; so does a `unit` other than `"beat"` or `"second"`. `velocity` 0 drops the hit.
 - A transform never triggers or cancels audio. The sequencer triggers every returned hit and owns it with `window.own`, so `reset()`, stop and seek still retract added hits.
-- A transform keeps no hidden state across windows: what it needs (beat, loop, lane data) is on the hit. Randomness comes only from `context.random`, the sequencer's injectable `random` option.
+- A transform keeps no hidden state across windows: what it needs (beat, loop, lane data) is on the hit. Randomness comes only from `context.randomFor(hit, key?)`, a number in [0, 1) that is a pure function of `options.seed`, the hit's lane, loop, step counter and repeat index, and `key`, so a hit gets the same number however often or in whichever window it is scheduled; pass different `key`s for several independent draws per hit. `context.random` is a sequential source (`Math.random` unless `options.random` is set) whose numbers change on every re-queue, so a transform that uses it is not stable.
 
 Chance, repeat, offset, mute/solo, direction and polymeter stay built in. `setTransforms` is a command like the others: it changes the `transforms` cell once and never subscribes a calling effect. Call the clock's `refresh()` afterwards to rebuild the unplayed look-ahead.
 

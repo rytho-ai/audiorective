@@ -3,6 +3,7 @@ import {
   batch,
   cell,
   effect,
+  hash01,
   readonlyCell,
   untracked,
   type BeatTiming,
@@ -100,7 +101,17 @@ export type StepWindow = Readonly<{
 }>;
 
 export type StepSequencerOptions = Readonly<{
-  /** Source of chance draws in [0, 1). Default `Math.random`. */
+  /**
+   * Seeds the stable randomness: each step's `chance` draw and `context.randomFor` in transforms are pure functions of `seed` and the
+   * step's position (lane, loop, step counter), so an edit, re-queue, seek or different tick size never changes them. Default 0;
+   * pass a different number per instance or run for a different pattern.
+   */
+  seed?: number;
+  /**
+   * A sequential source in [0, 1), used for `chance` and as `context.random` instead of the stable draw. Each call advances it, so a
+   * re-queue draws new numbers and pending chance steps can flip; keep it for tests that script exact draws. Default: `chance` is
+   * stable from `seed`, and `context.random` is `Math.random`.
+   */
   random?: () => number;
   /** Custom per-step parameters, fixed at construction. */
   params?: readonly StepParamSpec[];
@@ -286,6 +297,9 @@ function cellIndex(direction: StepDirection, steps: number, k: number): number {
   return q < steps ? q : 2 * steps - 2 - q;
 }
 
+/** A step hit's identity, from fields that survive a transform's `{ ...hit }` copy. */
+const stepKey = (hit: StepEvent): string => `${hit.laneId}:${hit.loop}:${hit.count}:${hit.repeatIndex}`;
+
 /**
  * An editable looping pattern over a borrowed beat transport and instrument trigger.
  * Each lane has its own length, rate, direction and swing; each cell its own velocity, offset, length, repeat, pitch, chance and caller-declared custom values.
@@ -297,6 +311,8 @@ export class StepSequencer {
   private readonly progress;
   private readonly events = new Set<CancellableEvent>();
   private readonly random: () => number;
+  private readonly drawChance: ((lane: string, loop: number, count: number) => number) | undefined;
+  private readonly seed: number;
   private readonly blank: StepCell;
   private readonly tf;
   /** The built-in cell fields as data (same objects as `stepCellParams`), for views that edit cells. */
@@ -324,7 +340,10 @@ export class StepSequencer {
       custom: Object.freeze(Object.fromEntries(this.params.map((spec) => [spec.id, spec.default]))),
     });
     const built = buildPattern(pattern, this.params, this.blank);
+    this.seed = options.seed ?? 0;
     this.random = options.random ?? Math.random;
+    const injected = options.random;
+    this.drawChance = injected ? undefined : (lane, loop, count) => hash01(this.seed, "chance", lane, loop, count);
     this.tf = cell<readonly StepTransform[]>(this.checkTransforms(options.transforms ?? defaultStepTransforms));
     this.transforms = readonlyCell(this.tf);
     this.data = cell<StepPattern>(built);
@@ -439,7 +458,7 @@ export class StepSequencer {
           for (let k = first; k < end; k++) {
             const step = cellIndex(lane.direction, lane.steps, k);
             const cellData = lane.cells[step];
-            if (cellData.velocity <= 0 || !(this.random() < cellData.chance)) continue;
+            if (cellData.velocity <= 0 || !((this.drawChance ? this.drawChance(lane.id, loop, k) : this.random()) < cellData.chance)) continue;
             const beat = loopStart + k * rate;
             const trigger = beat + cellData.offset * rate;
             for (let repeat = 0; repeat < cellData.repeat; repeat++) {
@@ -465,7 +484,7 @@ export class StepSequencer {
         }
       }
       // The scheduler, not the transforms, validates, converts to seconds, clamps to `now`, triggers and owns every output.
-      for (const hit of applyEventTransforms(planned, this.tf.value, { now, timing, random: this.random })) {
+      for (const hit of applyEventTransforms(planned, this.tf.value, { now, timing, random: this.random, seed: this.seed, keyOf: stepKey })) {
         const event = this.trigger(hit);
         if (!event) continue;
         this.events.add(event);
