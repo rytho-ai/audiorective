@@ -9,6 +9,7 @@ import {
   type StepLaneInput,
   type StepParamSpec,
   type StepSequencerOptions,
+  type StepTransform,
   type StepWindow,
 } from "../src/StepSequencer";
 
@@ -472,11 +473,11 @@ describe("custom step params", () => {
 });
 
 describe("hit fields", () => {
-  test("count, beat, rateBeats, swing and loop across two loops", () => {
+  test("count, stepBeat, rateBeats, swing and loop across two loops", () => {
     const { run, hits } = rig(4, [{ id: "a", rate: "1/8", swing: 0.4, steps: 2, cells: cellsAt(4, { 0: 1, 1: 1 }) }]);
     run(0, 4);
     // The loop is 1 beat: two 1/8 steps per loop.
-    expect(hits.map((hit) => [hit.loop, hit.count, hit.step, hit.beat, hit.rateBeats, hit.swing])).toEqual([
+    expect(hits.map((hit) => [hit.loop, hit.count, hit.step, hit.stepBeat, hit.rateBeats, hit.swing])).toEqual([
       [0, 0, 0, 0, 0.5, 0.4],
       [0, 1, 1, 0.5, 0.5, 0.4],
       [1, 0, 0, 1, 0.5, 0.4],
@@ -491,9 +492,11 @@ describe("hit fields", () => {
 
 describe("transform sockets", () => {
   const four = cellsAt(4, { 0: 1, 1: 1, 2: 1, 3: 1 });
-  const named = (id: string, apply: (events: readonly StepHit[]) => readonly StepHit[]) => ({
+  // These generic tests drive the seconds unit; the beat unit has its own describe below.
+  const named = (id: string, apply: (events: readonly StepHit[]) => readonly StepHit[]): StepTransform => ({
     id,
-    apply: (events: readonly StepHit[]) => apply(events),
+    unit: "second",
+    apply: (events) => apply(events),
   });
 
   test("defaults are exposed and equal phase 1 swing timing; an empty list is straight", () => {
@@ -580,12 +583,10 @@ describe("transform sockets", () => {
 
   test("randomness comes from context.random, which is the injected source", () => {
     let seenRandom: (() => number) | undefined;
-    const t = {
+    const t: StepTransform = {
       id: "jitter",
-      apply: (events: readonly StepHit[], context: { random: () => number }) => (
-        (seenRandom = context.random),
-        events.map((hit) => ({ ...hit, when: hit.when + context.random() }))
-      ),
+      unit: "second",
+      apply: (events, context) => ((seenRandom = context.random), events.map((hit) => ({ ...hit, when: hit.when + context.random() }))),
     };
     let n = 0;
     const random = () => [0.25, 0.75][n++ % 2];
@@ -637,5 +638,93 @@ describe("transform sockets", () => {
       hits.map((hit) => (hit.when - 10) * 2),
       [0, 0.25 + 0.0625],
     );
+  });
+});
+
+describe("beat and seconds transforms", () => {
+  const four = cellsAt(4, { 0: 1, 1: 1, 2: 1, 3: 1 });
+  /** A tempo that speeds up: beat b sounds at 10 + 0.5 b + 0.1 b^2. */
+  const ramp: BeatTiming = {
+    beatToTime: (beat) => 10 + 0.5 * beat + 0.1 * beat * beat,
+    timeToBeat: (time) => (-0.5 + Math.sqrt(0.25 + 0.4 * (time - 10))) / 0.2,
+  };
+  const play = (clock: BeatTiming, lanes: StepLaneInput[], transforms: readonly StepTransform[], current?: number) => {
+    const hits: StepHit[] = [];
+    const sequencer = new StepSequencer({ size: 4, lanes }, (hit) => (hits.push(hit), null), { transforms });
+    sequencer.schedule({ beat: { start: 0, end: 1 }, time: { current: current ?? clock.beatToTime(0) }, own: () => {} }, clock);
+    return hits;
+  };
+
+  test("a beat transform and the equivalent seconds transform agree at constant tempo", () => {
+    const byBeats: StepTransform = {
+      id: "beats",
+      apply: (events) => events.map((hit) => ({ ...hit, beat: hit.beat + 0.1, durationBeats: hit.durationBeats * 2 })),
+    };
+    // At 120 bpm one beat is 0.5 s.
+    const bySeconds: StepTransform = {
+      id: "seconds",
+      unit: "second",
+      apply: (events) => events.map((hit) => ({ ...hit, when: hit.when + 0.05, duration: hit.duration * 2 })),
+    };
+    const lanes = [{ id: "a", swing: 0.5, cells: four }];
+    const a = play(timing, lanes, [stepSwing(), byBeats]);
+    const b = play(timing, lanes, [stepSwing(), bySeconds]);
+    expect(a).toHaveLength(4);
+    a.forEach((hit, i) => {
+      expect(hit.when).toBeCloseTo(b[i].when, 9);
+      expect(hit.duration).toBeCloseTo(b[i].duration, 9);
+    });
+  });
+
+  test("swing stays a fixed beat offset when the tempo changes", () => {
+    const hits = play(ramp, [{ id: "a", swing: 0.5, cells: four }], defaultStepTransforms);
+    const beats = hits.map((hit) => ramp.timeToBeat(hit.when));
+    close(beats, [0, 0.25 + 0.0625, 0.5, 0.75 + 0.0625]);
+    // The same offset in seconds differs between the first and the last step, so a seconds-only swing could not hold it.
+    expect(hits[3].when - ramp.beatToTime(0.75)).not.toBeCloseTo(hits[1].when - ramp.beatToTime(0.25), 3);
+  });
+
+  test("a seconds transform's output lands in beats for the next beat transform", () => {
+    let seen: Array<{ beat: number; durationBeats: number }> = [];
+    let nowBeat = NaN;
+    const jitter: StepTransform = { id: "late", unit: "second", apply: (events) => events.map((hit) => ({ ...hit, when: hit.when + 0.2 })) };
+    const peek: StepTransform = {
+      id: "peek",
+      apply: (events, context) => ((seen = events.map(({ beat, durationBeats }) => ({ beat, durationBeats }))), (nowBeat = context.now), events),
+    };
+    const hits = play(ramp, [{ id: "a", cells: four }], [jitter, peek]);
+    seen.forEach((event, i) => {
+      const start = ramp.beatToTime(i * 0.25) + 0.2;
+      expect(event.beat).toBeCloseTo(ramp.timeToBeat(start), 9);
+      expect(event.durationBeats).toBeCloseTo(ramp.timeToBeat(start + hits[i].duration) - event.beat, 9);
+      expect(hits[i].when).toBeCloseTo(start, 9);
+    });
+    // Beat transforms get `now` in beats.
+    expect(nowBeat).toBeCloseTo(0, 9);
+    // A unit that is not changed by the transform survives the two conversions.
+    const identity: StepTransform = { id: "same", unit: "second", apply: (events) => events };
+    const through = play(ramp, [{ id: "a", cells: four }], [identity]);
+    through.forEach((hit, i) => expect(hit.when).toBeCloseTo(ramp.beatToTime(i * 0.25), 9));
+  });
+
+  test("the trigger never sees a time before now", () => {
+    const current = ramp.beatToTime(0.3);
+    const lanes = [{ id: "a", cells: four }];
+    const early: StepTransform = { id: "early", apply: (events) => events.map((hit) => ({ ...hit, beat: hit.beat - 2 })) };
+    const earlySeconds: StepTransform = { id: "early-s", unit: "second", apply: (events) => events.map((hit) => ({ ...hit, when: 0 })) };
+    for (const transforms of [[], [early], [earlySeconds], [stepSwing(), early, earlySeconds]]) {
+      const hits = play(ramp, lanes, transforms, current);
+      expect(hits.length).toBeGreaterThan(0);
+      for (const hit of hits) expect(hit.when).toBeGreaterThanOrEqual(current);
+    }
+    expect(play(ramp, lanes, [early], current).every((hit) => hit.when === current)).toBe(true);
+  });
+
+  test("invalid beat outputs name the transform", () => {
+    const bad = (patch: object) => () =>
+      play(timing, [{ id: "a", cells: four }], [{ id: "culprit", apply: (events) => events.map((hit) => ({ ...hit, ...patch })) }]);
+    expect(bad({ beat: NaN })).toThrow('Event transform "culprit" returned an event without a finite "beat".');
+    expect(bad({ durationBeats: 0 })).toThrow('Event transform "culprit" returned an event whose "durationBeats" is not a finite number above 0.');
+    expect(bad({ velocity: 2 })).toThrow(/"culprit".*"velocity"/);
   });
 });

@@ -10,7 +10,8 @@ import {
   type EventTransform,
   type ParamSpec,
   type ReadonlyCell,
-  type TimedEvent,
+  type SecondsOf,
+  type TimedBeatEvent,
 } from "@audiorective/core";
 
 export type StepRate = "1/2" | "1/4" | "1/8" | "1/16" | "1/32" | "1/64" | "1/2T" | "1/4T" | "1/8T" | "1/16T" | "1/32T" | "1/64T";
@@ -59,16 +60,19 @@ export type StepCellInput = Readonly<Partial<Omit<StepCell, "custom">> & { custo
 export type StepLaneInput = Readonly<Partial<Omit<StepLane, "cells">> & { id: string; cells?: readonly StepCellInput[] }>;
 export type StepPatternInput = Readonly<{ size: number; lanes: readonly StepLaneInput[] }>;
 
-/** One hit before the transforms run. `when` and `duration` are absolute audio-context seconds and seconds. */
-export type StepHit = TimedEvent &
+/**
+ * One hit inside the transform pipeline. `beat` is where it sounds and `durationBeats` how long it lasts, in beats,
+ * with offset and repeat already applied; transforms move and resize it in beats. The trigger receives its `StepHit`.
+ */
+export type StepEvent = TimedBeatEvent &
   Readonly<{
     laneId: string;
     /** Index of the cell that produced this hit. */
     step: number;
     /** The lane's step counter within the loop (before direction is applied). */
     count: number;
-    /** Beat of the lane step boundary, before offset, repeat and any transform. */
-    beat: number;
+    /** Beat of the lane step boundary, before offset and repeat. */
+    stepBeat: number;
     /** The lane's step length in beats. */
     rateBeats: number;
     /** The lane's swing value (0..1). */
@@ -77,11 +81,17 @@ export type StepHit = TimedEvent &
     pitch: number;
     /** The cell's custom values. */
     custom: Readonly<Record<string, number>>;
-    /** Loops since timing beat 0: `floor(beat / loopBeats)`. */
+    /** Loops since timing beat 0: `floor(stepBeat / loopBeats)`. */
     loop: number;
     repeatIndex: number;
     repeatCount: number;
   }>;
+
+/** One hit as the trigger receives it, after the transforms and the clamp to now: `when` and `duration` are final audio-context seconds. */
+export type StepHit = SecondsOf<StepEvent>;
+
+/** A transform over a sequencer's hits. Beat-based unless it sets `unit: "second"`. */
+export type StepTransform = EventTransform<StepEvent>;
 
 export type StepWindow = Readonly<{
   beat: { start: number; end: number };
@@ -95,19 +105,15 @@ export type StepSequencerOptions = Readonly<{
   /** Custom per-step parameters, fixed at construction. */
   params?: readonly StepParamSpec[];
   /** Transforms run in order over each window's hits. Default `defaultStepTransforms`. */
-  transforms?: readonly EventTransform<StepHit>[];
+  transforms?: readonly StepTransform[];
 }>;
 
 /** Delays every hit whose lane step count is odd by `swing * 0.5` lane steps. Without it, lane `swing` has no effect. */
-export function stepSwing(): EventTransform<StepHit> {
+export function stepSwing(): StepTransform {
   return {
     id: "step-swing",
-    apply: (events, { timing }) =>
-      events.map((hit) =>
-        hit.count % 2 === 1 && hit.swing > 0
-          ? { ...hit, when: hit.when + timing.beatToTime(hit.beat + hit.swing * 0.5 * hit.rateBeats) - timing.beatToTime(hit.beat) }
-          : hit,
-      ),
+    apply: (events) =>
+      events.map((hit) => (hit.count % 2 === 1 && hit.swing > 0 ? { ...hit, beat: hit.beat + hit.swing * 0.5 * hit.rateBeats } : hit)),
   };
 }
 
@@ -131,7 +137,7 @@ export function refreshOnEdit(sequencer: Pick<StepSequencer, "pattern" | "transf
   );
 }
 
-export const defaultStepTransforms: readonly EventTransform<StepHit>[] = Object.freeze([stepSwing()]);
+export const defaultStepTransforms: readonly StepTransform[] = Object.freeze([stepSwing()]);
 
 const MAX_SIZE = 128;
 const EPS = 1e-9;
@@ -299,7 +305,7 @@ export class StepSequencer {
   /** Custom per-step parameters declared at construction. */
   readonly params: readonly StepParamSpec[];
   /** Transforms run, in order, over each window's hits. Replace with `setTransforms`. */
-  readonly transforms: ReadonlyCell<readonly EventTransform<StepHit>[]>;
+  readonly transforms: ReadonlyCell<readonly StepTransform[]>;
   readonly pattern: ReadonlyCell<StepPattern>;
   /** Current cell index per lane, or `null` when stopped. */
   readonly playheads: ReadonlyCell<Readonly<Record<string, number | null>>>;
@@ -318,7 +324,7 @@ export class StepSequencer {
     });
     const built = buildPattern(pattern, this.params, this.blank);
     this.random = options.random ?? Math.random;
-    this.tf = cell<readonly EventTransform<StepHit>[]>(this.checkTransforms(options.transforms ?? defaultStepTransforms));
+    this.tf = cell<readonly StepTransform[]>(this.checkTransforms(options.transforms ?? defaultStepTransforms));
     this.transforms = readonlyCell(this.tf);
     this.data = cell<StepPattern>(built);
     this.heads = cell<Readonly<Record<string, number | null>>>(this.stopped(built));
@@ -328,14 +334,14 @@ export class StepSequencer {
     this.loopProgress = readonlyCell(this.progress);
   }
 
-  private checkTransforms(list: readonly EventTransform<StepHit>[]): readonly EventTransform<StepHit>[] {
+  private checkTransforms(list: readonly StepTransform[]): readonly StepTransform[] {
     if (!Array.isArray(list) || list.some((item) => !item || typeof item.id !== "string" || !item.id || typeof item.apply !== "function"))
       throw new Error(TRANSFORMS_ERROR);
     return Object.freeze([...list]);
   }
 
   /** Replace the transform list in one write. Compose with `[...defaultStepTransforms, mine]` to keep swing. */
-  setTransforms(list: readonly EventTransform<StepHit>[]): void {
+  setTransforms(list: readonly StepTransform[]): void {
     untracked(() => {
       this.tf.value = this.checkTransforms(list);
     });
@@ -420,7 +426,7 @@ export class StepSequencer {
       const soloed = pattern.lanes.some((lane) => lane.solo);
       const firstLoop = Math.floor(Math.max(0, window.beat.start) / loopBeats + EPS);
       const endLoop = Math.ceil(window.beat.end / loopBeats - EPS);
-      const planned: StepHit[] = [];
+      const planned: StepEvent[] = [];
       for (let loop = firstLoop; loop < endLoop; loop++) {
         const loopStart = loop * loopBeats;
         for (const lane of pattern.lanes) {
@@ -441,15 +447,15 @@ export class StepSequencer {
                 laneId: lane.id,
                 step,
                 count: k,
-                beat,
+                stepBeat: beat,
                 rateBeats: rate,
                 swing: lane.swing,
                 velocity: cellData.velocity,
                 pitch: cellData.pitch,
                 custom: cellData.custom,
                 loop,
-                when: timing.beatToTime(start),
-                duration: timing.beatToTime(start + (cellData.length * rate) / cellData.repeat) - timing.beatToTime(start),
+                beat: start,
+                durationBeats: (cellData.length * rate) / cellData.repeat,
                 repeatIndex: repeat,
                 repeatCount: cellData.repeat,
               });
@@ -457,7 +463,7 @@ export class StepSequencer {
           }
         }
       }
-      // The scheduler, not the transforms, validates, clamps to `now`, triggers and owns every output.
+      // The scheduler, not the transforms, validates, converts to seconds, clamps to `now`, triggers and owns every output.
       for (const hit of applyEventTransforms(planned, this.tf.value, { now, timing, random: this.random })) {
         const event = this.trigger(hit);
         if (!event) continue;
