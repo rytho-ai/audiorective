@@ -54,16 +54,17 @@ export function mountParameter(root: HTMLElement, options: ParameterOptions): Pa
     refresh(param.value, true);
   };
 
-  const element = document.createElement("label");
+  const doc = root.ownerDocument;
+  const element = doc.createElement("label");
   element.className = "ar-parameter";
   element.dataset.orientation = orientation;
   element.style.cssText = "display:inline-grid;gap:4px;justify-items:start;min-width:0";
-  const caption = document.createElement("span");
+  const caption = doc.createElement("span");
   caption.textContent = label;
-  const readout = document.createElement("span");
+  const readout = doc.createElement("span");
   readout.className = "ar-parameter-value";
-  const range = orientation === "rotary" ? null : document.createElement("input");
-  const control = range ?? document.createElement("span");
+  const range = orientation === "rotary" ? null : doc.createElement("input");
+  const control = range ?? doc.createElement("span");
   control.setAttribute("aria-label", label);
   control.className = "ar-parameter-input";
   const abort = new AbortController();
@@ -87,7 +88,7 @@ export function mountParameter(root: HTMLElement, options: ParameterOptions): Pa
     control.setAttribute("aria-orientation", "vertical");
     control.style.cssText =
       "display:block;position:relative;width:38px;height:38px;border:1px solid currentColor;border-radius:50%;touch-action:none;cursor:ns-resize";
-    mark = document.createElement("span");
+    mark = doc.createElement("span");
     mark.style.cssText =
       "position:absolute;left:calc(50% - 1px);top:4px;width:2px;height:calc(50% - 4px);background:currentColor;transform-origin:bottom";
     control.append(mark);

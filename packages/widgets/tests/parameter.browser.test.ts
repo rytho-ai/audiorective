@@ -1,5 +1,5 @@
 import { Param } from "@audiorective/core";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { userEvent } from "vitest/browser";
 import { mountLevelMeter, mountParameter } from "../src";
 import { cleanup, host, own, pointer } from "./helpers";
@@ -49,4 +49,26 @@ test("the mono meter reports float overs and stops reading when detached", async
   await new Promise(requestAnimationFrame);
   expect(reads).toBe(before);
   expect(meter.element.isConnected).toBe(false);
+});
+
+test("widgets create their elements in the mount root's own document", () => {
+  const frame = document.createElement("iframe");
+  document.body.append(frame);
+  own(() => frame.remove());
+  const doc = frame.contentDocument!;
+  const root = doc.createElement("div");
+  doc.body.append(root);
+  const param = new Param({ default: 0.5, min: 0, max: 1 });
+  own(() => param.destroy());
+  vi.spyOn(document, "createElement").mockImplementation(() => {
+    throw new Error("created an element in the global document");
+  });
+  const slider = mountParameter(root, { param });
+  const knob = mountParameter(root, { param, orientation: "rotary" });
+  const meter = mountLevelMeter(root, { sampleCount: 4, read: () => undefined });
+  vi.restoreAllMocks();
+  for (const handle of [slider, knob, meter]) own(() => handle.destroy());
+  for (const element of [slider.element, knob.element, ...root.querySelectorAll("meter, span, input")]) {
+    expect(element.ownerDocument).toBe(doc);
+  }
 });

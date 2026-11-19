@@ -5,7 +5,7 @@ import { createSelectionPlugin, type SnapMode } from "./selection";
 import { styles } from "./style";
 const format = (time: number) => `${Math.floor(time / 60)}:${(time % 60).toFixed(2).padStart(5, "0")}`;
 export const mountWaveformSelector: MountWaveformSelector = (root, options) => {
-  const container = document.createElement("section");
+  const container = root.ownerDocument.createElement("section");
   container.className = "ar-widget ar-selector";
   container.setAttribute("aria-label", "Waveform selector");
   container.innerHTML = `<style>${styles}</style>

@@ -10,12 +10,13 @@ export function mountLevelMeter(root: HTMLElement, options: LevelMeterOptions) {
   const count = options.sampleCount ?? 2048;
   if (!Number.isInteger(count) || count <= 0) throw new RangeError("Level meter sample count must be a positive integer.");
   const samples = new Float32Array(count);
-  const element = document.createElement("div");
+  const doc = root.ownerDocument;
+  const element = doc.createElement("div");
   element.className = "ar-level-meter";
-  const meter = document.createElement("meter");
+  const meter = doc.createElement("meter");
   meter.max = 1;
   meter.setAttribute("aria-label", options.label ?? "Sample peak");
-  const text = document.createElement("span");
+  const text = doc.createElement("span");
   element.append(meter, text);
   let level: LevelSnapshot | undefined;
   let frame = 0;

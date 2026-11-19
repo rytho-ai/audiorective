@@ -112,7 +112,7 @@ export function createNoteEditor(options: {
       ctx.listen(ctx.surface, "lostpointercapture", (raw) => {
         if ((raw as PointerEvent).pointerId === gesture?.id) cancel();
       });
-      ctx.listen(document, "keydown", (raw) => {
+      ctx.listen(ctx.surface.ownerDocument, "keydown", (raw) => {
         if ((raw as KeyboardEvent).key === "Escape" && gesture) {
           raw.preventDefault();
           cancel();

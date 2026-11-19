@@ -66,7 +66,7 @@ export function createSelectionPlugin(options: SelectionPluginOptions = {}): Sel
       if (surface[ownerKey]) throw new Error("Waveform already has a Selection owner.");
       surface[ownerKey] = plugin;
       context = ctx;
-      const layer = document.createElement("div");
+      const layer = ctx.surface.ownerDocument.createElement("div");
       layer.innerHTML =
         '<div data-testid="selection" class="ar-selection" hidden></div><button data-testid="selection-start" class="ar-grip" type="button" role="slider" aria-label="Selection start" hidden></button><button data-testid="selection-end" class="ar-grip" type="button" role="slider" aria-label="Selection end" hidden></button>';
       const overlay = layer.querySelector<HTMLElement>("[data-testid=selection]")!;
