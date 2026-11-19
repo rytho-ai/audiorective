@@ -24,7 +24,7 @@ export type { BufferPlayerOptions } from "./BufferPlayer";
 export { FilePlayer } from "./FilePlayer";
 export type { FilePlayerOptions } from "./FilePlayer";
 export type { CancellableEvent, BeatTiming, ScheduledEvent, TimedEvent, EventTransformContext, EventTransform } from "./contracts";
-export { applyEventTransforms } from "./contracts";
+export { applyEventTransforms, withCancel } from "./contracts";
 export { renderOffline } from "./renderOffline";
 export type { RenderOfflineOptions } from "./renderOffline";
 export { defineGraph } from "./graph";

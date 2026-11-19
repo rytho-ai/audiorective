@@ -4,6 +4,38 @@ export interface CancellableEvent {
   onEnded(listener: () => void): void;
 }
 
+/**
+ * Pair a scheduled event with the extra scheduling it needed, so a cancel retracts both.
+ * The returned event's `cancel()` cancels `event`, then runs `undo` once; later calls do nothing. `onEnded` passes through to `event`.
+ * Cancelling does not run `undo` for an event that already ended on its own.
+ * With `event` null (an instrument that made no sound) there is nothing to cancel: it ends when cancelled, and `undo` still runs.
+ */
+export function withCancel(event: CancellableEvent | null, undo: () => void): CancellableEvent {
+  let cancelled = false;
+  let ended = false;
+  const listeners: Array<() => void> = [];
+  event?.onEnded(() => {
+    ended = true;
+  });
+  return {
+    cancel() {
+      if (cancelled || ended) return;
+      cancelled = true;
+      event?.cancel();
+      try {
+        undo();
+      } finally {
+        if (!event) for (const listener of listeners.splice(0)) listener();
+      }
+    },
+    onEnded(listener) {
+      if (event) event.onEnded(listener);
+      else if (cancelled) listener();
+      else listeners.push(listener);
+    },
+  };
+}
+
 /** Converts between beats and absolute audio-context time. */
 export type BeatTiming = Readonly<{
   beatToTime(beat: number): number;
