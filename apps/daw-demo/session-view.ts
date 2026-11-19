@@ -16,7 +16,7 @@ export function mountStudioSession(
   const grid = mountClipGrid(root, {
     state: workspace.session,
     launch(changes) {
-      const generation = ++request;
+      const generation = request; // only cancel and destroy invalidate an in-flight launch; independent clicks coexist
       const beats = options.quantum();
       const mode = options.mode();
       const launch = async () => {
