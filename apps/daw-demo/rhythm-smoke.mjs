@@ -90,8 +90,9 @@ try {
       );
       const detach = workspace.attachStepSequencer(sequencer);
       await workspace.play();
-      const planned = context.suspend(0.14).then(() => {
+      const planned = context.suspend(0.14).then(async () => {
         workspace.refresh();
+        await Promise.resolve(); // the refill tick runs in a microtask
         return resume();
       });
       const changed = context.suspend(0.18).then(() => {

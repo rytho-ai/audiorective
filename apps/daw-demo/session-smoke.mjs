@@ -88,7 +88,9 @@ try {
     async function step(time, act) {
       await context.suspend(time);
       // Explicitly pump the existing Workspace clock during accelerated offline rendering.
+      // Clock.refresh() cancels at once but refills in a microtask, so wait for that tick before act().
       workspace.refresh();
+      await Promise.resolve();
       act();
       await offlineResume();
     }
@@ -180,6 +182,7 @@ try {
     const step = async (time, fn) => {
       await context.suspend(time);
       workspace.refresh();
+      await Promise.resolve(); // the refill tick runs in a microtask
       const value = fn();
       await resume();
       return value;
@@ -234,6 +237,7 @@ try {
     const step = async (time, fn) => {
       await context.suspend(time);
       workspace.refresh();
+      await Promise.resolve(); // the refill tick runs in a microtask
       const value = fn();
       await resume();
       return value;

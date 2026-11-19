@@ -356,7 +356,10 @@ try {
       const pump = async (at, stop = false) => {
         await context.suspend(at);
         if (stop) workspace.stopRangeAudition();
-        else clock.refresh();
+        else {
+          clock.refresh();
+          await Promise.resolve(); // the refill tick runs in a microtask
+        }
         await resume();
       };
       const steps = [pump(0.1), pump(0.24), pump(0.36), pump(0.5), pump(0.6), pump(0.71), pump(0.85, true)];
