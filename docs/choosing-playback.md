@@ -69,7 +69,7 @@ In words:
 | `load(url)` / `loaded`          | `AudioBufferCache.load(url)` then `sampler.buffer = …`                |
 | `new Tone.Player({ context })`  | `new Sampler(ctx)` — live or `OfflineAudioContext`                    |
 
-For several pads that cut each other off (closed hat chokes open hat) and hits that a sequencer may still cancel, use `PadBank` from [`@audiorective/blocks/pads`](./blocks.md#pad-bank): one `Sampler` plays one buffer polyphonically; one `PadBank` plays many pads with choke groups and returns a cancellable `PadHit` per trigger.
+For several pads that cut each other off (closed hat chokes open hat) and hits that a sequencer may still cancel, use `PadBank` from [`@audiorective/blocks/pads`](./pads.md#pad-bank): one `Sampler` plays one buffer polyphonically; one `PadBank` plays many pads with choke groups and returns a cancellable `PadHit` per trigger.
 
 ### `BufferPlayer` — the deck
 

@@ -55,7 +55,7 @@ Both mount functions accept a `renderer` factory to replace waveform drawing wit
 
 See the [widget reference](../../docs/widgets.md) for public types, loading and cleanup behavior, plugin examples, and styling.
 
-For offline edits, pass a `WavePlayer` configured with a borrowed stretch processor and call `await player.setStretch(ratio)`. See the [complete composition example](../../docs/blocks.md#compose-offline-stretch-and-a-selector) for caller-hosted WASM, routing, URL/File errors and cleanup.
+For offline edits, pass a `WavePlayer` configured with a borrowed stretch processor and call `await player.setStretch(ratio)`. See the [complete composition example](../../docs/player.md#compose-offline-stretch-and-a-selector) for caller-hosted WASM, routing, URL/File errors and cleanup.
 
 ## Piano roll
 

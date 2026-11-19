@@ -929,7 +929,7 @@
       "expected_output": "A standalone ClipLauncher design (blocks/launcher on a Clock) with step-pattern clips driven by StepSequencer, not the DAW Workspace Session.",
       "files": [],
       "expectations": [
-        "Chooses `@audiorective/blocks/launcher` `ClipLauncher` on a `clock` Clock as the launch state machine, and reads `references/blocks.md#clip-launcher`",
+        "Chooses `@audiorective/blocks/launcher` `ClipLauncher` on a `clock` Clock as the launch state machine, and reads `references/launcher.md#clip-launcher`",
         "Does not build on `@audiorective/daw` `Workspace`/`workspace.launchClips`, or says its Session launches only in-memory PCM clips on Project tracks so step-pattern clips need the standalone route",
         "Runs each step-pattern clip as a StepSequencer scheduled on the launch beat (clipped window, shifted timing), cancelling its hits when the clip stops",
         "Builds its own grid from `launcher.state` if it needs progress, colours or per-track stop, instead of relying on `mountClipGrid` for those",

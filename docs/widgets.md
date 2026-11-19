@@ -198,7 +198,7 @@ const attachment = grid.attach(euclid); // attachment.destroy() removes the butt
 
 ## Sample browser
 
-`mountSampleBrowser(root, { library, choose, onError, labels? })` renders a borrowed [Sample Library](./blocks.md#sample-library), or any `library` with a `state` readable of rows, `preview`, `stopPreview` and `remove`. The caller supplies file input and placement. On `choose(id)`, acquire the buffer, copy or retain it in the destination and release the lease when finished. `destroy()` removes the view, leaving audition and imports available to the caller.
+`mountSampleBrowser(root, { library, choose, onError, labels? })` renders a borrowed [Sample Library](./samples.md#sample-library), or any `library` with a `state` readable of rows, `preview`, `stopPreview` and `remove`. The caller supplies file input and placement. On `choose(id)`, acquire the buffer, copy or retain it in the destination and release the lease when finished. `destroy()` removes the view, leaving audition and imports available to the caller.
 
 ## Mixer controls
 
@@ -360,7 +360,7 @@ The caller owns the context and routing. The selector resumes the player's conte
 
 ### Interaction
 
-To share audio and selection across views, call `mountWaveformSelector(root, { player })` with a `WavePlayer` from `@audiorective/blocks/player`. Supply either `createPlayer` or `player`. `SelectorPlayer` is a structural contract (`getState`, `version`, `isPlaying`, `isLooping`, `load`, `cancelLoad`, `play`, `audition`, `pause`, `stop`, `seek`, `setLooping`, `sourceToOutput`, `output`, `destroy`, plus the selection model's `getSelection`, `setSelection` and `subscribe`); `WavePlayer` satisfies it and so can your own model. The view does not destroy a supplied player or cancel its loads when detached. Route the shared output once. Loading or changing selection through any view updates the player and all its views; renderer, zoom and snap remain local. See [Blocks](./blocks.md#share-a-block-between-widgets).
+To share audio and selection across views, call `mountWaveformSelector(root, { player })` with a `WavePlayer` from `@audiorective/blocks/player`. Supply either `createPlayer` or `player`. `SelectorPlayer` is a structural contract (`getState`, `version`, `isPlaying`, `isLooping`, `load`, `cancelLoad`, `play`, `audition`, `pause`, `stop`, `seek`, `setLooping`, `sourceToOutput`, `output`, `destroy`, plus the selection model's `getSelection`, `setSelection` and `subscribe`); `WavePlayer` satisfies it and so can your own model. The view does not destroy a supplied player or cancel its loads when detached. Route the shared output once. Loading or changing selection through any view updates the player and all its views; renderer, zoom and snap remain local. See [Blocks](./player.md#share-a-block-between-widgets).
 
 - Load an audio URL or local file using the built-in controls. Loading does not start playback.
 - Drag in either direction to create a range and start looping its audition. The endpoints are normalized to increasing seconds.
@@ -400,13 +400,13 @@ type WaveformSelectorOptions = {
 
 ### Loading feedback
 
-The complete selector renders the block's download/read byte counts, indeterminate decode/peaks phases, and Cancel loading action. A progress fraction appears only with a known positive byte total; no decode/stretch percentage is fabricated. `getState().loadProgress` uses [the block contract](./blocks.md#loading-state-progress-and-cancellation). Successful completion, errors and cancellation remove loading feedback. A new `load` can retry; a cancelled promise settling does not imply a committed source. Multiple selectors sharing one player show the same progress and cancellation state.
+The complete selector renders the block's download/read byte counts, indeterminate decode/peaks phases, and Cancel loading action. A progress fraction appears only with a known positive byte total; no decode/stretch percentage is fabricated. `getState().loadProgress` uses [the block contract](./player.md#loading-state-progress-and-cancellation). Successful completion, errors and cancellation remove loading feedback. A new `load` can retry; a cancelled promise settling does not imply a committed source. Multiple selectors sharing one player show the same progress and cancellation state.
 
 ### Displaying committed edits
 
 A selector reads `player.version.peaks` when the committed revision changes. The player summarizes PCM once per version; multiple selectors share that result without rescanning PCM for each view. The view copies the peak arrays for drawing. While `setStretch()` is pending, the old waveform stays visible and the processing indicator is active. A successful commit updates audio, peaks, duration and selection together; a failed render leaves the committed waveform in place.
 
-Same-source edits preserve each view's zoom factor and map its scroll position to the new duration. A new source resets the viewport. Selector `grid` values remain in **original source seconds** and are remapped through `player.sourceToOutput()` for snapping; selection callbacks, playhead, viewport coordinates, and renderer times use **current output seconds**. To initiate stretch, retain the supplied `WavePlayer` and call `await player.setStretch(ratio)`; the selector handle does not add a second editing API. See the [complete composition example](./blocks.md#compose-offline-stretch-and-a-selector).
+Same-source edits preserve each view's zoom factor and map its scroll position to the new duration. A new source resets the viewport. Selector `grid` values remain in **original source seconds** and are remapped through `player.sourceToOutput()` for snapping; selection callbacks, playhead, viewport coordinates, and renderer times use **current output seconds**. To initiate stretch, retain the supplied `WavePlayer` and call `await player.setStretch(ratio)`; the selector handle does not add a second editing API. See the [complete composition example](./player.md#compose-offline-stretch-and-a-selector).
 
 ## Use the waveform without audio
 
@@ -607,7 +607,7 @@ DOM classes use the `ar-` prefix to scope widget presentation. Internal class na
 | `Warp markers need a seconds time view.`                                                  | Mount on a seconds-based waveform.                                             |
 | `Level meter sample count must be a positive integer.`                                    | Supply the length of the float buffer your reader needs.                       |
 
-Messages thrown by the plain player adapters, waveform view, its plugins and the complete selector. Waveform loading and playback messages come from the borrowed player: see [Blocks](./blocks.md#common-errors).
+Messages thrown by the plain player adapters, waveform view, its plugins and the complete selector. Waveform loading and playback messages come from the borrowed player: see [WavePlayer](./player.md#common-errors).
 
 | Message                                                        | Cause                                                                                   | Fix                                                                                            |
 | -------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |

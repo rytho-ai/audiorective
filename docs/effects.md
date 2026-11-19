@@ -146,7 +146,7 @@ Each call owns a Worker, so concurrent calls remain independent. An already-abor
 | `TimeStretch allocation failed.` / `TimeStretch could not create a Rubber Band state.`              | The supplied module could not allocate its processing resources.                                             |
 | `TimeStretch worker failed.` / `Rubber Band exited: <code>`                                         | Worker execution or the supplied module failed; inspect the browser's worker error and module compatibility. |
 
-See [WavePlayer composition](./blocks.md#compose-offline-stretch-and-a-selector) for module loading, audio routing, selection mapping, and cleanup with a waveform selector.
+See [WavePlayer composition](./player.md#compose-offline-stretch-and-a-selector) for module loading, audio routing, selection mapping, and cleanup with a waveform selector.
 
 ## Compressor and Limiter
 

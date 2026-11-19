@@ -127,7 +127,7 @@ PCM, file-backed playback, clip and range audition, and newly launched Session P
 
 Call `await workspace.auditionAudioClip(clipId)` to play the current clip window from its start, including trims, stretch and its gain envelope. It works with in-memory and file-backed clips. The audition goes through master volume, bypasses track devices and mixer settings, and leaves the Arrangement playhead and transport alone. Observe `workspace.cells.auditioningClip` (also `workspace.auditioningClip`) for the active or loading clip ID. A new request replaces the old one. Use `stopClipAudition()` to cancel, or let the clip finish. Committing an edit that replaces the clip stops its audition.
 
-For a standalone player over one source, use [WavePlayer](./blocks.md#waveplayer) and its source-local selection. Workspace resolves a project clip's current media window and streams file-backed audio in bounded reads.
+For a standalone player over one source, use [WavePlayer](./player.md#waveplayer) and its source-local selection. Workspace resolves a project clip's current media window and streams file-backed audio in bounded reads.
 
 ### Audition a range across audio tracks
 
