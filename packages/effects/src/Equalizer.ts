@@ -1,4 +1,4 @@
-import { batch } from "@audiorective/core";
+import { batch, type SchedulableParam } from "@audiorective/core";
 import { Effect, type EffectOptions } from "./Effect";
 import { Filter } from "./Filter";
 import { mixFrequencyResponse } from "./internal/frequency-response";
@@ -9,8 +9,8 @@ export interface EqualizerOptions extends EffectOptions {
   bands: readonly EqualizerBand[];
 }
 
-/** A serial peaking-filter bank with independent band Params and one global wet/dry mix. */
-export class Equalizer extends Effect {
+/** A serial peaking-filter bank with independent band Params and one global wet/dry mix. Each band's Params are also registered in `params` as `band<i>Frequency`, `band<i>Gain` and `band<i>Q`. */
+export class Equalizer extends Effect<Record<string, SchedulableParam>> {
   private readonly filters: readonly Filter[];
   private magnitudes = new Float32Array(0);
   private phases = new Float32Array(0);
@@ -24,7 +24,22 @@ export class Equalizer extends Effect {
     const filters = normalizeEqualizerBands(options.bands).map(
       ({ frequency, gain, q }) => new Filter(context, { type: "peaking", frequency, gain, Q: q }),
     );
-    super(context, { input: filters[0], output: filters.at(-1)! }, () => ({ params: {}, cells: {}, latency: 0 }), options);
+    super(
+      context,
+      { input: filters[0], output: filters.at(-1)! },
+      () => ({
+        params: Object.fromEntries(
+          filters.flatMap((filter, i) => [
+            [`band${i}Frequency`, filter.params.frequency],
+            [`band${i}Gain`, filter.params.gain],
+            [`band${i}Q`, filter.params.Q],
+          ]),
+        ),
+        cells: {},
+        latency: 0,
+      }),
+      options,
+    );
     this.filters = filters;
     this.bands = Object.freeze(filters.map(({ params }) => Object.freeze({ frequency: params.frequency, gain: params.gain, q: params.Q })));
     this.defineGraph(() => filters.slice(1).map((filter, index) => [filters[index], filter] as const));

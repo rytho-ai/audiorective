@@ -43,3 +43,17 @@ test("prevalidates full band edits and keeps their schedulable Params stable", (
   expect(initial.value).toBe(500);
   eq.destroy();
 });
+
+test("band Params are also registered in params", () => {
+  const context = new OfflineAudioContext(1, 1024, 48_000);
+  const eq = new Equalizer(context, { bands: settings });
+  settings.forEach((_, i) => {
+    expect(eq.params[`band${i}Frequency`]).toBe(eq.bands[i].frequency);
+    expect(eq.params[`band${i}Gain`]).toBe(eq.bands[i].gain);
+    expect(eq.params[`band${i}Q`]).toBe(eq.bands[i].q);
+  });
+  eq.setBands(settings.map((band) => ({ ...band, gain: 1 })));
+  expect(eq.params.band1Gain.value).toBe(1);
+  expect(eq.params.wet.value).toBe(1);
+  eq.destroy();
+});

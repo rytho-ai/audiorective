@@ -53,7 +53,7 @@ drive.params.wet.linearRampToValueAtTime(0, ctx.currentTime + 1); // fade to byp
 
 ### Parametric equalizer
 
-`Equalizer(context, { bands, wet? })` chains peaking Filter bands. Give each band a center `frequency` in 20–20,000 Hz, `gain` from −24 to +24 dB and `q` from 0.1 to 20. The band controls on `equalizer.bands` are schedulable Params. Call `setBands()` with the same number of bands to update an existing bank. `params.wet` controls one wet/dry mix around the entire chain.
+`Equalizer(context, { bands, wet? })` chains peaking Filter bands. Give each band a center `frequency` in 20–20,000 Hz, `gain` from −24 to +24 dB and `q` from 0.1 to 20. The band controls on `equalizer.bands` are schedulable Params; the same Params are registered in `equalizer.params` as `band<i>Frequency`, `band<i>Gain` and `band<i>Q` (zero-based `i`). Call `setBands()` with the same number of bands to update an existing bank. `params.wet` controls one wet/dry mix around the entire chain.
 
 ```ts
 import { Equalizer } from "@audiorective/effects";
@@ -328,7 +328,7 @@ const wav = await renderOffline({ seconds: 8, channels: 2, sampleRate: 44100 }, 
 
 ## Advanced: pre-warming worklets
 
-`registerWorklet(ctx, name, source)` is exported for apps that want to load a worklet module ahead of first use (e.g. during a loading screen) rather than on first construction of `Compressor`, `Limiter`, or a stretch-engine `PitchShift`. `Compressor` and `Limiter` call it with the same `(ctx, name)` pair internally, so a pre-warm call and the effect's own call share one `addModule` load.
+`registerWorklet(ctx, name, source)` lives in `@audiorective/core` (so blocks can use it) and `@audiorective/effects` re-exports it. It is exported for apps that want to load a worklet module ahead of first use (e.g. during a loading screen) rather than on first construction of `Compressor`, `Limiter`, or a stretch-engine `PitchShift`. `Compressor` and `Limiter` call it with the same `(ctx, name)` pair internally, so a pre-warm call and the effect's own call share one `addModule` load.
 
 ## Common errors
 
