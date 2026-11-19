@@ -20,18 +20,33 @@ predates that API. See the "Version mismatches" note in the skill.
 - **daw:** `workspace.checkpoint()` waits for pending edits, folds live plug-in state into `Project` and returns it. `WorkspaceOptions.warnings` seeds `workspace.warnings`; `openWorkspace` passes file-open warnings through it.
 - **blocks:** the root entry `@audiorective/blocks` is removed. Migration: `WavePlayer` → `@audiorective/blocks/player`; `AudioRecorder` and its recording types → `@audiorective/blocks/recorder`; `SampleLibrary` → `@audiorective/blocks/samples`; `PadBank` → `@audiorective/blocks/pads`; `StepSequencer` → `@audiorective/blocks/sequencer`; `ClipLauncher` → `@audiorective/blocks/launcher`. Each subpath imports only `@audiorective/core`.
 - **blocks:** `InstrumentEvents` is renamed `PadBank`, its hit type `InstrumentEvent` is `PadHit`, and `EventPad` is `PadSpec`, imported from `@audiorective/blocks/pads`. Its error messages start with `Pad Bank`, `Pad hit` or `Unknown pad.`
-- **blocks → effects:** `EffectRack` and `LiveRackMacro` move from `@audiorective/blocks/effect-rack` to `@audiorective/effects/rack`. The pure settings and validation (`normalizeRackEffects`, `normalizeRackPreset`, `retainRackMacroTargets`, `rackMacroRange`, the `Rack*` types) are also available without an `AudioContext` from `@audiorective/effects/rack-preset`.
+- **blocks → effects:** `EffectRack` moves from `@audiorective/blocks/effect-rack` to `@audiorective/effects/rack`; `LiveRackMacro` is no longer exported. The pure settings and validation (`normalizeRackEffects`, `normalizeRackPreset`, `retainRackMacroTargets`, `rackMacroRange`, the `Rack*` types) are also available without an `AudioContext` from `@audiorective/effects/rack-preset`.
 - **blocks → daw:** `ClipEnvelope`, `normalizeClipEnvelope`, `unityClipEnvelope`, `clipGainAt` move from `@audiorective/blocks` to `@audiorective/daw/project`; `scheduleClipEnvelope` moves to `@audiorective/daw/runtime`. `WaveStretchAnchor` stays in `blocks/player`; `ClipStretchAnchor` in `daw/project` has the same shape.
 - **core / clock / blocks:** `CancellableEvent` and the new `BeatTiming` (`beatToTime`, `timeToBeat`) are core contracts. `@audiorective/clock` still re-exports `CancellableEvent`. `PadHit` extends it. `StepTiming` is removed: use `BeatTiming`. `StepSequencer` triggers return any `CancellableEvent`, and `ClipLaunchTransport` extends `BeatTiming`.
 - **blocks:** `SampleLibrary.preview()` plays through core `BufferPlayer` instead of `WavePlayer`, so `blocks/samples` imports only core.
 - **widgets:** `mountStepGrid`, `mountSampleBrowser`, `mountClipGrid`, `createWarpMarkers` and `mountClipEnvelopeEditor` accept local structural contracts instead of block or project classes. `mountWaveformSelector`'s `{ context }` option is replaced by `{ createPlayer: () => WavePlayer }`: `{ context }` → `{ createPlayer: () => new WavePlayer(context) }`. Passing `{ player }` is unchanged.
 - **daw:** `Workspace.commit()` does not exist; direct `Project` edits apply automatically (see below). Call `await workspace.flush()` to wait.
+- **clock:** `Clock.state` is a `ReadonlyCell<TransportState>` (was `Param<TransportState>`), the same store as `timeline.state`, written only by `start`, `pause`, `resume` and `stop`. Reads through `.value` and `$()` are unchanged; writes no longer exist.
+- **clock:** `Timeline.state` is a `ReadonlyCell<TransportState>` (was a plain getter). Migration: `timeline.state` → `timeline.state.value`.
+- **clock:** `timeline.rulers.<key>.current` is a `ReadonlyCell<TPoint>` (was `Param<TPoint>`).
+- **effects:** `cells.reduction` and `cells.isReady` on `DynamicsCore`, `Compressor` and `Limiter`, and `cells.isReady` on `PitchShift` and `Convolver`, are `ReadonlyCell` (were `Cell`). Only the owner writes them.
+- **effects:** `PitchShift.params.pitch` is a JS-rate `Param<number>`, not a `SchedulableParam`; set `pitch.value` from the main thread.
+- **host:** `WebClapEvent` is `CancellableEvent` from `@audiorective/core` (same shape).
+- **daw:** `workspace.portabilityReport()` → `portabilityReport(project, workspace.warnings)` from `@audiorective/daw/dawproject`; the `PortabilityReport` type is exported there.
+- **daw:** `workspace.exportAudioFallbackTo(destination, options)` → `exportAudioFallbackTo(workspace, destination, options)` from `@audiorective/daw/runtime`; `AudioFallbackOptions` is exported there.
+- **daw:** `createOpfsAudioMediaWriter` moves from `@audiorective/daw/project` to `@audiorective/daw/runtime`.
 
 ### Fixed
 
 - **blocks:** `WavePlayer.buffer`, `.duration` and `.sourceBuffer` track the committed playback version. `EffectRack.effects` and its read-only `cells.effects` update alongside the live chain. A destroyed WavePlayer now reports `WavePlayer is destroyed.`.
+- **clock:** `timeline.bpm.$(x)` writes a tempo-curve step like `bpm.value = x`; before, it changed only the displayed value.
+- **effects:** `Convolver.buffer` is a tracked read. `Compressor` and `Limiter` without AudioWorklet no longer cause an unhandled rejection; `ready` still rejects.
+- **host:** `destroy()` and a plug-in "error" message reject pending `saveState()`, `loadState()` and `mountEditor()` calls and clear their timers.
+- **daw:** `Project.clipTimeSeconds` tracks tempo changes. `duplicateClip`, `snapshot`, `trimClip`, `splitClip`, `MidiClip.playbackEvents` and the Workspace commands `setTrack*`, `setMasterVolume`, `seek`, `play`, `takeAnchor`, `launchClips` and `refreshArrangement` no longer subscribe a calling effect. A multi-field Project edit is one change, and a `snapshot()` copy starts at revision 1.
 
 ### Added
+
+- **daw:** `workspace.cells.session`, `cells.auditioningClip` and `cells.auditioningRange` are read-only cells; `workspace.session` is a `ReadonlyCell`. `Workspace.deviceOptions` returns the `workletUrl` and `resolveBundle` options used to create a matching Workspace.
 
 - **workspace / widgets:** Project clips retain warp anchors alongside the rendered playback and original source. The DAW waveform marker editor uses the same mapping for drag edits, trimming, source-relative gain and saved projects.
 
