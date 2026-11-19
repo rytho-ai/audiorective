@@ -24,7 +24,15 @@ const BLOCKS_HELPERS = ["source.ts", "recording/*"];
 const DAW_PROJECT = ["project.ts", "model.ts", "media.ts", "clip-time-map.ts", "tempo-map.ts", "clip-envelope.ts"];
 const DAW_CODEC = ["dawproject.ts"];
 const DAW_INTERNAL = ["internal/*"];
-const DAW_RUNTIME = ["runtime.ts", "audio-track-session.ts", "mixer-routing.ts", "schedule-clip-envelope.ts"];
+const DAW_RUNTIME = [
+  "runtime.ts",
+  "runtime-entry.ts",
+  "audio-fallback.ts",
+  "opfs-media.ts",
+  "audio-track-session.ts",
+  "mixer-routing.ts",
+  "schedule-clip-envelope.ts",
+];
 const DAW_ROOT = ["index.ts", "compose.ts"];
 
 const PROJECT_EXTERNAL = ["@audiorective/core", "@audiorective/midi", "@audiorective/effects/rack-preset"];

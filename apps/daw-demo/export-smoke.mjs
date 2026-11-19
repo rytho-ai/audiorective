@@ -34,9 +34,9 @@ try {
       { time: 0, value: 0.25, shape: "hold" },
       { time: 0.05, value: 1, shape: "hold" },
     ]);
-    const report = workspace.portabilityReport();
+    const report = window.__daw.api.portabilityReport(workspace.project, workspace.warnings);
     const parts = [];
-    await workspace.exportAudioFallbackTo(new WritableStream({ write: (chunk) => parts.push(chunk) }), { tailSeconds: 0.1 });
+    await window.__daw.api.exportAudioFallbackTo(workspace, new WritableStream({ write: (chunk) => parts.push(chunk) }), { tailSeconds: 0.1 });
     const bytes = new Uint8Array(await new Blob(parts).arrayBuffer());
     const view = new DataView(bytes.buffer);
     const entries = [];
@@ -62,7 +62,7 @@ try {
     aborted.abort();
     let cancellation;
     try {
-      await workspace.exportAudioFallbackTo(new WritableStream(), { signal: aborted.signal });
+      await window.__daw.api.exportAudioFallbackTo(workspace, new WritableStream(), { signal: aborted.signal });
     } catch (error) {
       cancellation = error.name;
     }
@@ -76,7 +76,7 @@ try {
     let effectOutput;
     try {
       const parts = [];
-      await restored.exportAudioFallbackTo(new WritableStream({ write: (chunk) => parts.push(chunk) }), { tailSeconds: 0.45 });
+      await window.__daw.api.exportAudioFallbackTo(restored, new WritableStream({ write: (chunk) => parts.push(chunk) }), { tailSeconds: 0.45 });
       const bytes = new Uint8Array(await new Blob(parts).arrayBuffer());
       const view = new DataView(bytes.buffer);
       const pcm = 30 + view.getUint16(26, true) + view.getUint16(28, true) + 44;
@@ -146,7 +146,7 @@ try {
     const context = new AudioContext({ sampleRate: 48000 });
     const workspace = await original.constructor.create(context, project, { workletUrl: original.options.workletUrl });
     const parts = [];
-    await workspace.exportAudioFallbackTo(new WritableStream({ write: (chunk) => parts.push(chunk) }), { tailSeconds: 0.2 });
+    await window.__daw.api.exportAudioFallbackTo(workspace, new WritableStream({ write: (chunk) => parts.push(chunk) }), { tailSeconds: 0.2 });
     const bytes = new Uint8Array(await new Blob(parts).arrayBuffer());
     const view = new DataView(bytes.buffer);
     const nameSize = view.getUint16(26, true);
@@ -168,7 +168,7 @@ try {
     const context = new AudioContext({ sampleRate: 48000 });
     const workspace = await original.constructor.create(context, project);
     const parts = [];
-    await workspace.exportAudioFallbackTo(new WritableStream({ write: (chunk) => parts.push(chunk) }), { tailSeconds: 0 });
+    await window.__daw.api.exportAudioFallbackTo(workspace, new WritableStream({ write: (chunk) => parts.push(chunk) }), { tailSeconds: 0 });
     const bytes = new Uint8Array(await new Blob(parts).arrayBuffer());
     const view = new DataView(bytes.buffer);
     const names = [];

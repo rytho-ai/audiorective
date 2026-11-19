@@ -497,7 +497,7 @@
       "expected_output": "Uses AudioRecorder streaming, caller-owned disk storage, media clips and streaming DAWproject save/open while preserving explicit media lifetime.",
       "files": [],
       "expectations": [
-        "Creates AudioMediaWriter or createOpfsAudioMediaWriter and passes writeChunk to AudioRecorder.startStream",
+        "Creates AudioMediaWriter or createOpfsAudioMediaWriter (imported from daw/runtime) and passes writeChunk to AudioRecorder.startStream",
         "Finishes with stopStream and writer.finish, then calls Project.addAudioMediaClip at a Workspace.takePosition-derived project second",
         "Splits or trims the media clip with Project methods without converting all media into Float32Array channels",
         "Saves to a WritableStream with saveWorkspaceTo and reopens a Blob/File with openWorkspaceBlob",
@@ -511,8 +511,8 @@
       "expected_output": "Shares a DAWproject for supported editable content plus a separate real-time audio fallback, without claiming universal plug-in or DAW import compatibility.",
       "files": [],
       "expectations": [
-        "Uses Workspace.portabilityReport to list standard content, matching CLAP plug-in dependencies and fidelity limits",
-        "Uses saveWorkspaceTo for a file-backed DAWproject archive and Workspace.exportAudioFallbackTo for a separate mix/stems WAV ZIP",
+        "Uses portabilityReport(project) from daw/dawproject to list standard content, matching CLAP plug-in dependencies and fidelity limits",
+        "Uses saveWorkspaceTo for a file-backed DAWproject archive and exportAudioFallbackTo(workspace, destination) from daw/runtime for a separate mix/stems WAV ZIP",
         "Explains that the receiving DAW needs its own CLAP binary to recreate a hosted plug-in, while the WAV mix remains audible without it",
         "Explains the audio fallback is captured in real time in a browser with OPFS, and has mix only above 15 tracks",
         "Does not claim arbitrary DAWproject import or cross-DAW editability without testing named DAWs and versions"

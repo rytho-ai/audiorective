@@ -73,15 +73,15 @@ Side     (core only)   react, threejs, playcanvas, devtools
 
 `widgets` and `daw` are parallel and never import each other. The app is the one place that knows both, and the wiring is app code. A box in the diagram is a responsibility, not an npm package: all `blocks` subpaths ship in one package.
 
-| Module              | May import                                                       | Must not import                                 |
-| ------------------- | ---------------------------------------------------------------- | ----------------------------------------------- |
-| App                 | any layer                                                        | n/a                                             |
-| `widgets`           | core; types of capability modules, or local structural contracts | `daw`; capability runtime classes               |
-| `daw/runtime`       | `daw/project`, core, the capability modules it needs             | `widgets`, `daw/dawproject`                     |
-| `daw/dawproject`    | `daw/project`, core                                              | the runtime, anything needing an `AudioContext` |
-| `daw/project`       | core (including `PCMData`), `midi` root, `effects/rack-preset`   | the runtime, the codec, `AudioContext`, the DOM |
-| A capability module | core                                                             | other capability modules, layer 3               |
-| `core`              | nothing                                                          | everything                                      |
+| Module              | May import                                                                                             | Must not import                                            |
+| ------------------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
+| App                 | any layer                                                                                              | n/a                                                        |
+| `widgets`           | core; the pure `midi` root (values and types); types of `blocks/player`; or local structural contracts | `daw`; capability runtime classes, other `blocks` subpaths |
+| `daw/runtime`       | `daw/project`, core, the capability modules it needs                                                   | `widgets`, `daw/dawproject`                                |
+| `daw/dawproject`    | `daw/project`, core                                                                                    | the runtime, anything needing an `AudioContext`            |
+| `daw/project`       | core (including `PCMData`), `midi` root, `effects/rack-preset`                                         | the runtime, the codec, `AudioContext`, the DOM            |
+| A capability module | core                                                                                                   | other capability modules, layer 3                          |
+| `core`              | nothing                                                                                                | everything                                                 |
 
 `pnpm check:layers` enforces these edges over the real import graph. A new edge between capability modules needs a written reason.
 
@@ -101,14 +101,16 @@ A borrowing module names what it needs as a structural type in [core](./core.md#
 
 A feature the user sees usually spans three layers. To place a decision, ask whether it survives closing the view and whether it survives saving the file.
 
-| Part of the Mixer                                | Owner         | Code                                                                 |
-| ------------------------------------------------ | ------------- | -------------------------------------------------------------------- |
-| Faders, pan, mute and solo buttons, level meters | `widgets`     | `mountMixer`, which takes only `state`, `editTrack` and `editMaster` |
-| Per-track volume, pan, mute, solo and routing    | `daw/project` | `ProjectTrack`                                                       |
-| Which tracks and paths stay audible under solo   | `daw/runtime` | `soloRouting` over `ProjectTrack`                                    |
-| Gain, pan and mute nodes, sends                  | `effects`     | `Channel`, `SendBus`                                                 |
+| Part of the Mixer                                | Owner         | Code                                                                                                 |
+| ------------------------------------------------ | ------------- | ---------------------------------------------------------------------------------------------------- |
+| Faders, pan, mute and solo buttons, level meters | `widgets`     | `mountMixer`, which takes only `state`, `editTrack` and `editMaster`                                 |
+| Per-track volume, pan, mute, solo and routing    | `daw/project` | `ProjectTrack`                                                                                       |
+| Which tracks and paths stay audible under solo   | `daw/runtime` | `soloRouting` over `ProjectTrack`                                                                    |
+| Gain, pan and mute nodes, sends                  | `daw/runtime` | `Workspace` builds each strip itself: gain, `StereoPannerNode` and gates, driven from `ProjectTrack` |
 
 The piano roll, arrangement, automation lanes, clip grid and step grid split the same way: gestures and drawing in `widgets`, saved content in `daw/project`, sound in a capability module or the runtime. A widget that takes a local structural contract (`step-grid`, `sample-browser`, `clip-grid`, `warp-markers`, `clip-envelope-editor`, `mountMixer`) works over a DAW project or over your own model.
+
+`effects` `Channel` and `SendBus` are the standalone strip and send bus for apps that wire their own mixer. The Workspace does not use them because its strips must behave differently: `Channel` forces a two-channel input, so a mono track would be upmixed before the panner and lose the mono equal-power pan law the runtime currently applies; its sends tap one post-mute node and cannot be gated per edge, but solo gating needs a gate on each output and send edge; and its `gain`, `pan` and `mute` are separate state that would duplicate `ProjectTrack`. The runtime reads that state from `Project` and writes it to plain nodes.
 
 ### Two reference compositions
 

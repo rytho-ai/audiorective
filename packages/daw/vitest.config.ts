@@ -12,7 +12,7 @@ export default defineConfig({
           alias: {
             "@audiorective/daw/project": entry("project"),
             "@audiorective/daw/dawproject": entry("dawproject"),
-            "@audiorective/daw/runtime": entry("runtime"),
+            "@audiorective/daw/runtime": entry("runtime-entry"),
           },
         },
         test: { name: "node", environment: "node", include: ["tests/**/*.test.ts"], exclude: ["tests/**/*.browser.test.ts"] },

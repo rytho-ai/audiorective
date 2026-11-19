@@ -28,6 +28,11 @@ type HostManifest = { version: 1; devices: Record<string, { kind: "webclap"; bun
 type ControlPoint = { time: number; channel: number; controller: number; value: number };
 type MediaEntry = { blob: Blob; header: Uint8Array };
 type ArchiveEntries = Record<string, Uint8Array | MediaEntry>;
+export type PortabilityReport = Readonly<{
+  standardContent: readonly string[];
+  pluginDependencies: readonly string[];
+  limitations: readonly string[];
+}>;
 export type OpenDawProjectResult = Readonly<{ project: Project; warnings: readonly string[] }>;
 
 const encoder = new TextEncoder();
@@ -894,4 +899,42 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
     project.destroy();
     throw error;
   }
+}
+
+/**
+ * Describe what another DAW receives when `project` is saved with this codec.
+ * `warnings` (for example `workspace.warnings`) are appended to the limitations. An audio fallback is a separate export.
+ */
+export function portabilityReport(project: Project, warnings: readonly string[] = []): PortabilityReport {
+  const tracks = project.tracks;
+  const devices = tracks.flatMap((track) => track.devices);
+  const clips = tracks.flatMap((track) => track.clips);
+  return {
+    standardContent: [
+      project.tempoMap.changes.length ? "DAWproject track layout and step tempo automation" : "DAWproject track layout and fixed tempo",
+      ...(clips.some((clip) => clip.kind === "audio") ? ["audio clips"] : []),
+      ...(clips.some((clip) => clip.kind === "audio" && (clip.envelope?.fadeIn || clip.envelope?.fadeOut)) ? ["audio clip fades"] : []),
+      ...(clips.some((clip) => clip.kind === "midi") ? ["MIDI notes and supported controllers"] : []),
+      ...(project.markers.length ? ["markers"] : []),
+      ...(tracks.some((track) => track.volumeAutomation.length) ? ["track volume automation"] : []),
+    ],
+    pluginDependencies: devices.map((device) => `${device.name} (${device.pluginId}) needs a matching CLAP plug-in in the receiving DAW`),
+    limitations: [
+      "Other DAWs may not preserve Audiorective-specific MIDI details or WebCLAP bundle locations.",
+      ...(clips.some((clip) => clip.kind === "audio" && clip.envelope && clip.envelope.gain !== 1)
+        ? ["Audio clip gain is stored in Audiorective metadata. Use the rendered fallback to preserve it in other DAWs."]
+        : []),
+      ...(clips.some((clip) => clip.kind === "audio" && clip.gainAutomation)
+        ? ["Audio clip gain automation is stored in Audiorective metadata. Use the rendered fallback to preserve it in other DAWs."]
+        : []),
+      ...(tracks.some((track) => track.effects.length) ? ["Audiorective built-in inserts require Audiorective or the rendered audio fallback."] : []),
+      ...(clips.some((clip) => clip.kind === "audio" && clip.stretch)
+        ? ["Time-stretched clips contain rendered audio for playback. Audiorective stores the original sources separately for re-editing."]
+        : []),
+      "Editable import in a specific DAW needs an actual open-and-save test.",
+      "A separate audio fallback is needed to hear hosted plug-ins without matching CLAP binaries.",
+      ...(tracks.length > 15 ? ["Audio fallback includes a mix only when a project has more than 15 tracks."] : []),
+      ...warnings,
+    ],
+  };
 }

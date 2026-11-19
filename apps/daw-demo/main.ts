@@ -2,6 +2,8 @@ import {
   Project,
   Workspace,
   createOpfsAudioMediaWriter,
+  exportAudioFallbackTo,
+  portabilityReport,
   openWorkspaceBlob,
   openWorkspace,
   saveWorkspace,
@@ -414,7 +416,7 @@ async function exportAudioFallback(): Promise<void> {
             parts.push(chunk);
           },
         });
-    await workspace.exportAudioFallbackTo(destination, {
+    await exportAudioFallbackTo(workspace, destination, {
       signal: controller.signal,
       onProgress: (fraction) => status(`正在即時匯出音訊 ${Math.round(fraction * 100)}%`),
     });
@@ -725,7 +727,7 @@ $("export-audio").addEventListener("click", () =>
   }),
 );
 $("portability").addEventListener("click", () => {
-  const report = workspace.portabilityReport();
+  const report = portabilityReport(workspace.project, workspace.warnings);
   $("portability-details").textContent =
     `標準資料：${report.standardContent.join("、")}。${report.pluginDependencies.length ? `插件依賴：${report.pluginDependencies.join("；")}。` : ""}${report.limitations.join(" ")}`;
   $<HTMLDialogElement>("portability-dialog").showModal();
@@ -926,6 +928,6 @@ Object.assign(window, {
     get samples() {
       return samples;
     },
-    api: { openWorkspace, openWorkspaceBlob, saveWorkspace, saveWorkspaceTo },
+    api: { openWorkspace, openWorkspaceBlob, saveWorkspace, saveWorkspaceTo, exportAudioFallbackTo, portabilityReport },
   },
 });

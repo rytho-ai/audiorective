@@ -37,5 +37,5 @@ export type {
 } from "@audiorective/effects/rack-preset";
 export { TempoMap } from "./tempo-map";
 export type { TempoChange } from "./tempo-map";
-export { AudioMedia, AudioMediaWriter, createOpfsAudioMediaWriter } from "./media";
+export { AudioMedia, AudioMediaWriter } from "./media";
 export type { AudioMediaStorage, AudioMediaChunk, AudioMediaSpan } from "./media";

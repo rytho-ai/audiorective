@@ -1,4 +1,4 @@
 export * from "./project";
 export * from "./dawproject";
-export * from "./runtime";
+export * from "./runtime-entry";
 export { openWorkspace, openWorkspaceBlob, saveWorkspace, saveWorkspaceTo } from "./compose";

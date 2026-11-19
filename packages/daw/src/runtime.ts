@@ -1,10 +1,9 @@
 import { Clock, RangeLoop, Timeline } from "@audiorective/clock";
 import type { LoopRange, TickWindow } from "@audiorective/clock";
-import { batch, cell, effect, readonlyCell, untracked, type Cell, type Readable } from "@audiorective/core";
+import { batch, cell, effect, readonlyCell, untracked, type Cell, type Readable, type ReadonlyCell } from "@audiorective/core";
 import { AutomationBinding, AutomationCurve, audioParamTarget } from "@audiorective/core/automation";
 import type { AutomationPoint } from "@audiorective/core/automation";
 import { WebClapHost } from "@audiorective/host/webclap";
-import { AudioRecorder } from "@audiorective/blocks/recorder";
 import { ClipLauncher, type ClipLaunch, type ClipLauncherState, type QueuedClipLaunch } from "@audiorective/blocks/launcher";
 import type { StepSequencer } from "@audiorective/blocks/sequencer";
 import type { WaveStretchAnchor, WaveStretchProcessor } from "@audiorective/blocks/player";
@@ -13,13 +12,9 @@ import { AudioTrackSession } from "./audio-track-session";
 import { clipGainAt } from "./clip-envelope";
 import { scheduleClipEnvelope } from "./schedule-clip-envelope";
 import { soloRouting } from "./mixer-routing";
-import { createOpfsAudioMediaWriter } from "./media";
 import { MidiClip, Project, audioClipTimeMap, audioFrameCount } from "./model";
 import { normalizeClipAnchors } from "./clip-time-map";
 import type { TempoMap } from "./tempo-map";
-import { writeStoredZip } from "./internal/stored-zip";
-import type { StoredZipEntry } from "./internal/stored-zip";
-import { wavMediaStereoPairEntry } from "./internal/wav";
 import type { AudioMedia } from "./media";
 import type { AudioClip, AudioClipGainAutomation, PcmAudioClip, ProjectTrack, TrackRouting, WebClapDevice } from "./model";
 
@@ -116,18 +111,6 @@ export type WorkspacePlayer = Readonly<{
   }>;
 }>;
 export type TakeAnchor = Readonly<{ audioTime: number; projectTime: number; advancing: boolean }>;
-export type AudioFallbackOptions = Readonly<{
-  /** Captures effects after the final clip; default one second. */
-  tailSeconds?: number;
-  signal?: AbortSignal;
-  onProgress?: (fraction: number) => void;
-}>;
-export type PortabilityReport = Readonly<{
-  standardContent: readonly string[];
-  pluginDependencies: readonly string[];
-  limitations: readonly string[];
-}>;
-
 /** One live DAW workspace over one Project. Project remains the sole persistent-data owner. */
 export class Workspace {
   readonly context: AudioContext;
@@ -135,29 +118,33 @@ export class Workspace {
   readonly timeline: Timeline;
   readonly clock: Clock;
   readonly player: WorkspacePlayer;
-  readonly session: Readable<ClipLauncherState>;
+  /** Mirrors `cells.session`. */
+  readonly session: ReadonlyCell<ClipLauncherState>;
+  /** Mirrors `cells.auditioningClip`. */
+  readonly auditioningClip: ReadonlyCell<string | null>;
+  /** Mirrors `cells.auditioningRange`. */
+  readonly auditioningRange: ReadonlyCell<RangeAuditionState | null>;
   private readonly topologyPending = cell(false);
   private readonly applicationError = cell<string | null>(null);
   private readonly warningMessages = cell<readonly string[]>(Object.freeze([]));
-  readonly cells = Object.freeze({
-    needsSync: readonlyCell(this.topologyPending),
-    error: readonlyCell(this.applicationError),
-    warnings: readonlyCell(this.warningMessages),
-  });
   private readonly auditionSource = cell<ClipAudition | RangeAudition | null>(null);
-  readonly auditioningClip = readonlyCell(() => {
-    const current = this.auditionSource.value;
-    return current && "clip" in current ? current.clip.id : null;
-  });
-  readonly auditioningRange = readonlyCell(() => {
-    const current = this.auditionSource.value;
-    return current && "range" in current ? current.range : null;
-  });
+  readonly cells: Readonly<{
+    needsSync: ReadonlyCell<boolean>;
+    error: ReadonlyCell<string | null>;
+    warnings: ReadonlyCell<readonly string[]>;
+    session: ReadonlyCell<ClipLauncherState>;
+    auditioningClip: ReadonlyCell<string | null>;
+    auditioningRange: ReadonlyCell<RangeAuditionState | null>;
+  }>;
   private readonly clipStretchJobs = new Map<string, AbortController>();
   private readonly launcher: ClipLauncher;
 
   private readonly projectSource: Cell<Project>;
   private readonly options: WorkspaceOptions;
+  /** What a separate render workspace needs to load the same devices. */
+  get deviceOptions(): Pick<WorkspaceOptions, "workletUrl" | "resolveBundle"> {
+    return { workletUrl: this.options.workletUrl, resolveBundle: this.options.resolveBundle };
+  }
   private readonly tracks = new Map<string, TrackRuntime>();
   private readonly stepSequencers = new Map<StepSequencer, () => void>();
   private readonly scheduledAudio = new Map<string, AudioHandle>();
@@ -208,7 +195,24 @@ export class Workspace {
         for (const track of this.tracks.values()) track.session?.reset();
       },
     });
+    const audition = this.auditionSource;
     this.session = this.launcher.state;
+    this.auditioningClip = readonlyCell(() => {
+      const current = audition.value;
+      return current && "clip" in current ? current.clip.id : null;
+    });
+    this.auditioningRange = readonlyCell(() => {
+      const current = audition.value;
+      return current && "range" in current ? current.range : null;
+    });
+    this.cells = Object.freeze({
+      needsSync: readonlyCell(this.topologyPending),
+      error: readonlyCell(this.applicationError),
+      warnings: readonlyCell(this.warningMessages),
+      session: this.session,
+      auditioningClip: this.auditioningClip,
+      auditioningRange: this.auditioningRange,
+    });
     this.player = Object.freeze({
       isPlaying: readonlyCell(() => this.clock.state.value === "playing"),
       play: () => this.play(),
@@ -290,7 +294,7 @@ export class Workspace {
   takeAnchor(audioTime = this.context.currentTime): TakeAnchor {
     if (this.destroyed) throw new Error("Workspace is destroyed.");
     if (!Number.isFinite(audioTime) || audioTime < 0) throw new RangeError("Workspace take anchor needs a finite non-negative audio time.");
-    return { audioTime, projectTime: this.position, advancing: this.clock.state.value === "playing" };
+    return untracked(() => ({ audioTime, projectTime: this.position, advancing: this.clock.state.value === "playing" }));
   }
 
   /** Positive input latency moves a take earlier. Use preroll when this would cross project zero. */
@@ -319,12 +323,14 @@ export class Workspace {
   }
 
   private isCurrentProject(): boolean {
-    return this.appliedProject === this.project && this.appliedRevision === untracked(() => this.project.cells.revision.value);
+    return untracked(() => this.appliedProject === this.project && this.appliedRevision === this.project.cells.revision.value);
   }
 
   private recordCurrentProject(): void {
-    this.appliedProject = this.project;
-    this.appliedRevision = untracked(() => this.project.cells.revision.value);
+    untracked(() => {
+      this.appliedProject = this.project;
+      this.appliedRevision = this.project.cells.revision.value;
+    });
   }
 
   private reflectProjectEdit(edit: () => void): void {
@@ -332,10 +338,10 @@ export class Workspace {
     const revision = this.appliedRevision;
     this.applyingOwnEdit = true;
     try {
-      edit();
+      untracked(edit);
     } finally {
       this.applyingOwnEdit = false;
-      if (current && this.project === this.appliedProject && untracked(() => this.project.cells.revision.value) === revision + 1) {
+      if (current && untracked(() => this.project === this.appliedProject && this.project.cells.revision.value === revision + 1)) {
         this.recordCurrentProject();
       } else if (!this.isCurrentProject()) {
         this.scheduleProjectEdit();
@@ -649,12 +655,14 @@ export class Workspace {
 
   /** Queue clips or return tracks to Arrangement at the next launch grid boundary. */
   launchClips(changes: readonly ClipLaunch[], quantumBeats = 1): QueuedClipLaunch {
-    if (this.destroyed || this.clock.state.value !== "playing") throw new Error("Start Workspace playback before launching clips.");
-    for (const { trackId, clipId } of changes) {
-      if (!this.tracks.get(trackId)?.session) throw new Error("Clip Launcher requires an audio track.");
-      if (clipId !== null) this.sessionBufferFor(this.launchableClip(trackId, clipId));
-    }
-    return this.launcher.queue(changes, quantumBeats);
+    return untracked(() => {
+      if (this.destroyed || this.clock.state.value !== "playing") throw new Error("Start Workspace playback before launching clips.");
+      for (const { trackId, clipId } of changes) {
+        if (!this.tracks.get(trackId)?.session) throw new Error("Clip Launcher requires an audio track.");
+        if (clipId !== null) this.sessionBufferFor(this.launchableClip(trackId, clipId));
+      }
+      return this.launcher.queue(changes, quantumBeats);
+    });
   }
 
   cancelClipLaunch(): boolean {
@@ -669,7 +677,7 @@ export class Workspace {
 
   async play(): Promise<void> {
     if (this.destroyed) throw new Error("Workspace is destroyed.");
-    if (this.clock.state.value === "playing") return;
+    if (untracked(() => this.clock.state.value === "playing")) return;
     const request = ++this.playRequest;
     await this.flush();
     if (request !== this.playRequest) return;
@@ -677,7 +685,7 @@ export class Workspace {
     const position = this.position;
     await this.prefetchMediaAt(position);
     if (request !== this.playRequest) return;
-    this.activeTempoMap = this.project.tempoMap;
+    this.activeTempoMap = untracked(() => this.project.tempoMap);
     const beat = this.activeTempoMap.secondsToBeat(position);
     this.rebaseTempo(beat);
     // Clock's resume assumes its look-ahead tail survived pause. Workspace owns
@@ -688,7 +696,7 @@ export class Workspace {
   }
   pause(): void {
     this.playRequest++;
-    this.positionAutomation(this.position, false);
+    untracked(() => this.positionAutomation(this.position, false));
     this.clock.pause();
     this.launcher.reset();
     for (const sequence of this.stepSequencers.keys()) sequence.reset();
@@ -708,6 +716,9 @@ export class Workspace {
     this.panic();
   }
   seek(seconds: number): void {
+    untracked(() => this.seekUntracked(seconds));
+  }
+  private seekUntracked(seconds: number): void {
     if (!Number.isFinite(seconds) || seconds < 0) throw new RangeError("Workspace seek needs non-negative seconds.");
     this.playRequest++;
     this.launcher.reset();
@@ -730,6 +741,9 @@ export class Workspace {
 
   /** Apply clip arrangement edits without reloading track devices. */
   refreshArrangement(): void {
+    untracked(() => this.refreshArrangementUntracked());
+  }
+  private refreshArrangementUntracked(): void {
     if (this.destroyed) throw new Error("Workspace is destroyed.");
     this.stopStaleAudition();
     for (const track of this.project.tracks) {
@@ -798,7 +812,7 @@ export class Workspace {
   /** Apply a rack edit now without rebuilding WebCLAP devices or stopping transport. */
   setTrackEffects(trackId: string, effects: readonly RackEffect[]): void {
     const runtime = this.tracks.get(trackId);
-    const track = this.project.tracks.find((item) => item.id === trackId);
+    const track = untracked(() => this.project.tracks.find((item) => item.id === trackId));
     if (!runtime || !track) throw new Error("Workspace effects need a live track.");
     runtime.rack.setEffects(effects);
     this.reflectProjectEdit(() => {
@@ -816,7 +830,7 @@ export class Workspace {
   /** Apply one macro directly to the audio graph and retain its position in Project. */
   setTrackMacroValue(trackId: string, macroId: string, value: number): void {
     const runtime = this.tracks.get(trackId);
-    const track = this.project.tracks.find((item) => item.id === trackId);
+    const track = untracked(() => this.project.tracks.find((item) => item.id === trackId));
     if (!runtime || !track?.effectMacros.some(({ id }) => id === macroId) || track.effectMacros !== runtime.macroSettings)
       throw new Error("Flush the project before setting a live track macro.");
     const macro = runtime.rack.macro(macroId)!;
@@ -846,7 +860,7 @@ export class Workspace {
 
   /** Rewire a live track without replacing its devices or invalidating transport events. */
   setTrackRouting(trackId: string, routing: TrackRouting): void {
-    const tracks = this.project.tracks;
+    const tracks = untracked(() => this.project.tracks);
     if (!this.tracks.has(trackId) || tracks.length !== this.tracks.size || tracks.some((track) => !this.tracks.has(track.id)))
       throw new Error("Sync new or removed tracks before changing live routing.");
     this.reflectProjectEdit(() => {
@@ -1156,160 +1170,6 @@ export class Workspace {
     await this.flush();
     await this.serialize(() => this.captureStates());
     return this.project;
-  }
-
-  /** Describe what another DAW receives; an audio fallback is a separate export. */
-  portabilityReport(): PortabilityReport {
-    if (this.destroyed) throw new Error("Workspace is destroyed.");
-    const devices = this.project.tracks.flatMap((track) => track.devices);
-    const clips = this.project.tracks.flatMap((track) => track.clips);
-    return {
-      standardContent: [
-        this.project.tempoMap.changes.length ? "DAWproject track layout and step tempo automation" : "DAWproject track layout and fixed tempo",
-        ...(clips.some((clip) => clip.kind === "audio") ? ["audio clips"] : []),
-        ...(clips.some((clip) => clip.kind === "audio" && (clip.envelope?.fadeIn || clip.envelope?.fadeOut)) ? ["audio clip fades"] : []),
-        ...(clips.some((clip) => clip.kind === "midi") ? ["MIDI notes and supported controllers"] : []),
-        ...(this.project.markers.length ? ["markers"] : []),
-        ...(this.project.tracks.some((track) => track.volumeAutomation.length) ? ["track volume automation"] : []),
-      ],
-      pluginDependencies: devices.map((device) => `${device.name} (${device.pluginId}) needs a matching CLAP plug-in in the receiving DAW`),
-      limitations: [
-        "Other DAWs may not preserve Audiorective-specific MIDI details or WebCLAP bundle locations.",
-        ...(clips.some((clip) => clip.kind === "audio" && clip.envelope && clip.envelope.gain !== 1)
-          ? ["Audio clip gain is stored in Audiorective metadata. Use the rendered fallback to preserve it in other DAWs."]
-          : []),
-        ...(clips.some((clip) => clip.kind === "audio" && clip.gainAutomation)
-          ? ["Audio clip gain automation is stored in Audiorective metadata. Use the rendered fallback to preserve it in other DAWs."]
-          : []),
-        ...(this.project.tracks.some((track) => track.effects.length)
-          ? ["Audiorective built-in inserts require Audiorective or the rendered audio fallback."]
-          : []),
-        ...(clips.some((clip) => clip.kind === "audio" && clip.stretch)
-          ? ["Time-stretched clips contain rendered audio for playback. Audiorective stores the original sources separately for re-editing."]
-          : []),
-        "Editable import in a specific DAW needs an actual open-and-save test.",
-        "A separate audio fallback is needed to hear hosted plug-ins without matching CLAP binaries.",
-        ...(this.project.tracks.length > 15 ? ["Audio fallback includes a mix only when a project has more than 15 tracks."] : []),
-        ...this.warnings,
-      ],
-    };
-  }
-
-  /** Render mix and post-mixer track stems in real time to a companion ZIP of float32 WAVs. */
-  async exportAudioFallbackTo(destination: WritableStream<Uint8Array>, options: AudioFallbackOptions = {}): Promise<void> {
-    if (this.destroyed) throw new Error("Workspace is destroyed.");
-    const tail = options.tailSeconds ?? 1;
-    if (!Number.isFinite(tail) || tail < 0 || tail > 60) throw new RangeError("Workspace audio fallback tail must be from 0 to 60 seconds.");
-    const signal = options.signal;
-    const checkAbort = () => {
-      if (signal?.aborted) throw new DOMException("Workspace audio fallback was cancelled.", "AbortError");
-    };
-    let project: Project | undefined;
-    let context: AudioContext | undefined;
-    let recorder: AudioRecorder | undefined;
-    let mediaWriter: Awaited<ReturnType<typeof createOpfsAudioMediaWriter>> | undefined;
-    let media: AudioMedia | undefined;
-    let render: Workspace | undefined;
-    let archiveStarted = false;
-    let progressTimer: ReturnType<typeof setInterval> | undefined;
-    const cancel = () => recorder?.cancel();
-    signal?.addEventListener("abort", cancel, { once: true });
-    try {
-      checkAbort();
-      await this.flush();
-      await this.serialize(() => this.captureStates());
-      const renderProject = this.project.snapshot();
-      project = renderProject;
-      context = new AudioContext({ sampleRate: this.context.sampleRate });
-      const renderContext = context;
-      await context.resume();
-      render = await Workspace.create(context, renderProject, { workletUrl: this.options.workletUrl, resolveBundle: this.options.resolveBundle });
-      if (render.warnings.length) throw new Error(`Workspace audio fallback has unresolved devices: ${render.warnings.join(" ")}`);
-      const stemTracks = renderProject.tracks.length <= 15 ? renderProject.tracks : [];
-      const buses = [
-        { path: "mix.wav", node: render.output },
-        ...stemTracks.map((track) => ({
-          path: `tracks/${track.id}.wav`,
-          node: render!.tracks.get(track.id)!.panner as AudioNode,
-        })),
-      ];
-      const channels = buses.length * 2;
-      const merger = context.createChannelMerger(channels);
-      for (let index = 0; index < buses.length; index++) {
-        const splitter = context.createChannelSplitter(2);
-        buses[index].node.connect(splitter);
-        splitter.connect(merger, 0, index * 2);
-        splitter.connect(merger, 1, index * 2 + 1);
-      }
-      recorder = new AudioRecorder(context, { channels });
-      merger.connect(recorder.input);
-      mediaWriter = await createOpfsAudioMediaWriter(context.sampleRate, channels);
-      await recorder.ready;
-      checkAbort();
-      await recorder.startStream((chunk) => mediaWriter!.writeChunk(chunk));
-      checkAbort();
-      // Let recorder worklet startup settle before project time zero.
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      checkAbort();
-      await render.play();
-      checkAbort();
-      const origin = render.timeline.beatToTime(0);
-      const duration = Math.max(this.duration, 0.1) + tail;
-      const originFrame = Math.ceil(origin * context.sampleRate);
-      const endFrame = Math.ceil((origin + duration) * context.sampleRate);
-      progressTimer = setInterval(() => options.onProgress?.(Math.min(1, Math.max(0, (renderContext.currentTime - origin) / duration))), 250);
-      const span = await recorder.stopStream({ when: origin + duration });
-      clearInterval(progressTimer);
-      progressTimer = undefined;
-      checkAbort();
-      if (span.dropouts?.some((gap) => gap.startFrame < endFrame && gap.endFrame > originFrame))
-        throw new Error("Workspace audio fallback lost audio frames during the project; retry the export.");
-      media = await mediaWriter.finish(span);
-      const startFrame = originFrame - span.startFrame;
-      const frameCount = endFrame - originFrame;
-      if (startFrame < 0 || startFrame + frameCount > media.frameCount) throw new Error("Workspace audio fallback missed the project start or end.");
-      const files: StoredZipEntry[] = buses.map((bus, index) => wavMediaStereoPairEntry(bus.path, media!, startFrame, frameCount, index));
-      const manifest = new TextEncoder().encode(
-        JSON.stringify(
-          {
-            format: "audiorective-audio-fallback",
-            version: 1,
-            title: renderProject.title,
-            sampleRate: context.sampleRate,
-            durationSeconds: (endFrame - originFrame) / context.sampleRate,
-            mix: "mix.wav",
-            tracks: stemTracks.map((track) => ({ id: track.id, name: track.name, path: `tracks/${track.id}.wav` })),
-            stemsOmitted: renderProject.tracks.length > 15,
-          },
-          null,
-          2,
-        ),
-      );
-      files.push({
-        path: "manifest.json",
-        size: manifest.length,
-        async *chunks() {
-          yield manifest;
-        },
-      });
-      checkAbort();
-      archiveStarted = true;
-      await writeStoredZip(files, destination, signal);
-      options.onProgress?.(1);
-    } catch (error) {
-      if (!archiveStarted) await destination.abort(error).catch(() => undefined);
-      throw error;
-    } finally {
-      if (progressTimer) clearInterval(progressTimer);
-      signal?.removeEventListener("abort", cancel);
-      cancel();
-      recorder?.destroy();
-      await mediaWriter?.abort();
-      await media?.dispose();
-      render?.destroy();
-      project?.destroy();
-      await context?.close();
-    }
   }
 
   private async prefetchMediaAt(position: number): Promise<void> {

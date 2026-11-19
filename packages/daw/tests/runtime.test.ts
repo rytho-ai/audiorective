@@ -73,6 +73,9 @@ vi.mock("@audiorective/clock", async () => {
 
 import { effect } from "@audiorective/core";
 import { Project, Workspace, openWorkspace, saveWorkspace, saveWorkspaceTo } from "../src";
+import * as projectEntry from "../src/project";
+import * as runtimeEntry from "../src/runtime-entry";
+import * as dawprojectEntry from "../src/dawproject";
 import { saveDawProject } from "../src/dawproject";
 
 const node = () => {
@@ -427,6 +430,98 @@ describe("workspace readers are tracked", () => {
     expect(workspace.warnings).not.toBe(before);
     expect(workspace.warnings).toEqual(["Device NoBundle has no WebCLAP bundle."]);
     expect(before).toEqual([]);
+    workspace.destroy();
+    project.destroy();
+  });
+});
+
+describe("workspace commands do not subscribe a calling effect", () => {
+  const commands: Array<{ name: string; run: (ctx: Awaited<ReturnType<typeof setup>>) => unknown }> = [
+    { name: "setTrackVolume", run: (c) => c.workspace.setTrackVolume(c.track.id, 0.4) },
+    { name: "setMasterVolume", run: (c) => c.workspace.setMasterVolume(0.4) },
+    { name: "setTrackMuted", run: (c) => c.workspace.setTrackMuted(c.track.id, true) },
+    { name: "setTrackSolo", run: (c) => c.workspace.setTrackSolo(c.track.id, true) },
+    { name: "setTrackPan", run: (c) => c.workspace.setTrackPan(c.track.id, 0.3) },
+    { name: "seek", run: (c) => c.workspace.seek(1) },
+    { name: "takeAnchor", run: (c) => c.workspace.takeAnchor(1) },
+    { name: "play", run: (c) => void c.workspace.play().catch(() => undefined) },
+    {
+      name: "launchClips",
+      run: (c) => {
+        try {
+          c.workspace.launchClips([{ trackId: c.track.id, clipId: null }]);
+        } catch {
+          // Only the reads matter: a MIDI track cannot launch.
+        }
+      },
+    },
+    { name: "refreshArrangement", run: (c) => c.workspace.refreshArrangement() },
+  ];
+  test.each(commands)("$name", async ({ run }) => {
+    const ctx = await setup();
+    let runs = 0;
+    const stop = effect(() => {
+      runs++;
+      run(ctx);
+    });
+    expect(runs).toBe(1);
+    await ctx.workspace.flush();
+    ctx.clock.state.value = "playing";
+    ctx.project.setTitle("Elsewhere");
+    ctx.project.setMasterVolume(0.9);
+    ctx.project.setTrackName(ctx.track.id, "Renamed");
+    ctx.project.setTempoChanges([{ beat: 4, bpm: 90 }]);
+    ctx.clock.state.value = "stopped";
+    stop();
+    expect(runs).toBe(1);
+    ctx.workspace.destroy();
+    ctx.project.destroy();
+  });
+});
+
+describe("workspace.position is a tracked reader", () => {
+  test("a widget effect re-runs when the playhead is seeked", async () => {
+    const { workspace, project } = await setup();
+    const seen: number[] = [];
+    const stop = effect(() => void seen.push(workspace.position));
+    workspace.seek(2);
+    stop();
+    expect(seen).toEqual([0, 2]);
+    workspace.destroy();
+    project.destroy();
+  });
+});
+
+describe("workspace observable state lives in cells", () => {
+  test("session and auditions are the same read-only cells as their getters", async () => {
+    const { workspace, project } = await setup();
+    expect(workspace.cells.session).toBe(workspace.session);
+    expect(workspace.cells.auditioningClip).toBe(workspace.auditioningClip);
+    expect(workspace.cells.auditioningRange).toBe(workspace.auditioningRange);
+    expect(workspace.cells.auditioningClip.value).toBeNull();
+    expect(workspace.cells.auditioningRange.value).toBeNull();
+    workspace.destroy();
+    project.destroy();
+  });
+});
+
+describe("layer placement of exports", () => {
+  test("the pure project entry has no browser-storage writer", () => {
+    expect("createOpfsAudioMediaWriter" in projectEntry).toBe(false);
+    expect("exportAudioFallbackTo" in projectEntry).toBe(false);
+    expect(typeof runtimeEntry.createOpfsAudioMediaWriter).toBe("function");
+    expect(typeof runtimeEntry.exportAudioFallbackTo).toBe("function");
+  });
+
+  test("portabilityReport is a pure function of Project in the codec; Workspace has no such method", async () => {
+    const { workspace, project } = await setup({ withDevice: true });
+    expect("portabilityReport" in workspace).toBe(false);
+    expect("exportAudioFallbackTo" in workspace).toBe(false);
+    expect("portabilityReport" in runtimeEntry).toBe(false);
+    const report = dawprojectEntry.portabilityReport(project, ["note"]);
+    expect(report.standardContent).toContain("DAWproject track layout and fixed tempo");
+    expect(report.pluginDependencies[0]).toMatch(/fake\.synth/);
+    expect(report.limitations).toContain("note");
     workspace.destroy();
     project.destroy();
   });
