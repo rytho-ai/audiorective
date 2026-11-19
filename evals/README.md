@@ -42,6 +42,23 @@ Options: `--skill-dir`, `--ids <a,b,c>`, `--limit <n>`, `--runs` (1), `--concurr
 
 Before changing a skill, run the set against the current skill and keep the JSON as the baseline, then run it again after the change with the same `--model`. Answers vary between runs, so treat a single-run drop on one eval as a reason to rerun that eval on both versions (`--ids`, `--runs 3`), not as a regression. Compare against the same prompt without the skill to see what the skill itself contributes (skill-creator's `agents/grader.md` describes that grading pass).
 
+## Running API affordance evals
+
+`run_guess_evals.mjs` measures how well coding agents guess an API's shape. It runs a task suite (`evals/affordance/<area>.json`, with variant-agnostic expectations) in one of two modes. Every call is `claude -p` from an empty throwaway directory with no tools, no skills and a minimal system prompt.
+
+```sh
+# what API would an agent reach for with no documentation? Writes a markdown cluster report too.
+node evals/run_guess_evals.mjs evals/affordance/step-sequencer.json --mode desire --runs 3 --json /tmp/desire.json --md /tmp/desire.md
+
+# can an agent use a candidate API from its type declarations alone?
+node evals/run_guess_evals.mjs evals/affordance/step-sequencer.json --mode guess --variant /path/to/variant.d.ts --runs 3
+```
+
+- **desire** asks the solver to invent the API it would expect. There is no compile and no per-run grading; after all runs, one clustering call per task groups the samples by API shape and lists recurring names, signatures, time units, pattern and velocity encodings, and cleanup styles.
+- **guess** gives the solver only the variant's `.d.ts` (`declare module "@audiorective/…"` blocks). The solver's `ts` block is compiled with the repo's TypeScript (`--strict`, `es2022`, bundler resolution, `dom` lib) next to the declarations, then a separate grader, never told which variant it is looking at, scores the code against the expectations and classifies errors as `wrong-name`, `wrong-signature`, `wrong-concept`, `invented-api`, `platform-misuse` or `other`. An `html` block is counted in lines of code and ignored by the compiler.
+
+Options: `--ids T1,T2`, `--runs` (3), `--concurrency` (4), `--timeout` seconds (300), `--model`, `--grader-model`, `--json <file>`, `--md <file>` (desire). The report gives, per task and overall, the compile pass rate, expectations met, mean lines of code (non-blank, non-comment) and error-kind counts; the JSON also keeps every raw reply. A run that does not complete (timeout, login, rate limit, no code block, unparseable grader reply after one retry) is reported as an error, excluded from the totals, and makes the exit code non-zero.
+
 ## Maintaining the sets
 
 - When a public API is added or changed, add or update the eval that exercises it in the same change as the docs and `CHANGELOG.md` entry.
