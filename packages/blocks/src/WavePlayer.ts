@@ -198,11 +198,15 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
   /** Borrowed decoded source. Treat its PCM as immutable while in use. */
   get buffer(): AudioBuffer | null {
     void this.cells.version.value;
-    return this.player.buffer;
+    return this.loadedBuffer;
+  }
+  /** Internal untracked read of the committed buffer: `BufferPlayer.buffer` is a tracked Param read. */
+  private get loadedBuffer(): AudioBuffer | null {
+    return untracked(() => this.player.buffer);
   }
   /** Internal untracked read of the committed duration. */
   private get length(): number {
-    return this.player.buffer?.duration ?? 0;
+    return this.loadedBuffer?.duration ?? 0;
   }
   /** Tracked. */
   get duration(): number {
@@ -394,10 +398,10 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
     this.assertAlive();
     const when = options.when ?? 0;
     if (!Number.isFinite(when) || when < 0) throw new RangeError("Start time must be finite, non-negative seconds.");
-    if (!this.player.buffer || this.running) return null;
+    if (!this.loadedBuffer || this.running) return null;
     const command = ++this.command;
     await this.audioContext.resume();
-    if (this.disposed || command !== this.command || !this.player.buffer) return null;
+    if (this.disposed || command !== this.command || !this.loadedBuffer) return null;
     // Fix this start's identity inside the change: observers notified by it may pause, seek or play again.
     let started = 0,
       time: number | null = null;
