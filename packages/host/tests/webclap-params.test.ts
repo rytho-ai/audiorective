@@ -154,4 +154,21 @@ describe("WebClapHost params", () => {
       vi.useRealTimers();
     }
   });
+
+  it("a timed-out saveState() leaves no stale waiter: the next saveState() resolves with the next reply", async () => {
+    vi.useFakeTimers();
+    try {
+      const { host } = await load();
+      const port = host.node.port as unknown as FakePort;
+      const first = host.saveState();
+      const firstResult = expect(first).rejects.toThrow("timed out");
+      await vi.advanceTimersByTimeAsync(10_000);
+      await firstResult;
+      const second = host.saveState();
+      port.onmessage?.({ data: { type: "state", bytes: new Uint8Array([7]).buffer } });
+      await expect(second).resolves.toEqual(new Uint8Array([7]));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

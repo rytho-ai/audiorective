@@ -227,9 +227,23 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
   private wait<T>(register: (waiter: Waiter<T>) => void): Promise<T> {
     if (this.disposed) return Promise.reject(new Error("WebCLAP host is destroyed."));
     return new Promise<T>((resolve, reject) => {
-      const waiter: Waiter<T> = { resolve, reject, timer: setTimeout(() => reject(new Error("WebCLAP host response timed out.")), 10_000) };
+      const waiter: Waiter<T> = {
+        resolve,
+        reject,
+        timer: setTimeout(() => {
+          // Drop the dead waiter, or the next reply would settle it instead of the next real caller.
+          this.dropWaiter(waiter);
+          reject(new Error("WebCLAP host response timed out."));
+        }, 10_000),
+      };
       register(waiter);
     });
+  }
+
+  private dropWaiter(waiter: Waiter<never> | Waiter<unknown>): void {
+    this.stateWaiters = this.stateWaiters.filter((w) => w !== waiter);
+    this.loadStateWaiters = this.loadStateWaiters.filter((w) => w !== waiter);
+    if (this.guiWaiter === waiter) this.guiWaiter = undefined;
   }
 
   /** Clears every pending response timer and rejects the callers still waiting on `saveState()`, `loadState()` or `mountEditor()`. */
