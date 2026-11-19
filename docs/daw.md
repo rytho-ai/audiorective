@@ -270,6 +270,21 @@ workspace.project.destroy();
 
 The same view works with `Workspace.create()` and `openWorkspace()`. Pass a `destination` in all three paths for audible output, or connect `workspace.output` to your own graph. The widget borrows the transport. Your app still decides when to stop playback at the end or loop a region.
 
+## Runtime internals
+
+`Workspace` is a facade over small internal modules; none is part of the `daw/runtime` surface except what `Workspace` re-exports. A collaborator receives a narrow handle (a function returning the current `Project`, the shared track-runtime map, an `isDestroyed` check) and never imports `Workspace`. Project stays the only owner of persistent data. The only collaborator write is a prepared stretch the caller applies in its own undo transaction, and observable state stays in `Workspace.cells`.
+
+| Module                                  | Owns                                                                                                                                                                             | Reads                                                     |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| `runtime.ts` (`Workspace`)              | The public API, the `cells`, the track-runtime map, the graph build, transport (`play`, `pause`, `stop`, `seek`), and Project-edit reconciliation (`flush`, `sync`, light edits) | Everything below, through narrow handles                  |
+| `mixer.ts` (`Mixer`)                    | The `Channel` and `SendBus` strips, send routing, and writing Project mixer values into them                                                                                     | The track map, the current Project, the master `GainNode` |
+| `clip-scheduler.ts` (`ClipScheduler`)   | Scheduled audio handles, media chunk loading, decoded-buffer caches, one tick window of MIDI and audio clips                                                                     | Track runtimes and timing passed per call                 |
+| `audition.ts` (`Audition`)              | The current clip or range audition cell and the clock or handle that plays it                                                                                                    | The current Project, the scheduler, the master output     |
+| `clip-stretch.ts` (`ClipStretch`)       | One cancellable stretch job per clip and the prepared edit it returns                                                                                                            | The current Project                                       |
+| `take-placement.ts`                     | Pure take-anchor validation and take-position maths                                                                                                                              | Nothing                                                   |
+| `track-reconcile.ts`                    | Pure diffs between a live track and its Project track (rack settings, gain-automation-only edits, device keys)                                                                   | Nothing                                                   |
+| `track-runtime.ts`, `project-lookup.ts` | The shared `TrackRuntime` type and a clip lookup by id                                                                                                                           | Nothing                                                   |
+
 ## Step Sequencer
 
 Attach a caller-owned `StepSequencer` with `workspace.attachStepSequencer(sequence)`. Connect the instrument's output to a caller-selected mix path. The attached pattern uses Workspace's Clock windows and tempo mapping. Velocity edits refresh pending steps, and transport pause, stop and seek reset the sequence's scheduled events. Call the returned detach function to remove only this sequence. An attached live pattern belongs to the current app session. Saveable Arrangement clips belong to Project.
