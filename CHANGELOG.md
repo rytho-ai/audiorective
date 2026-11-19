@@ -35,6 +35,10 @@ predates that API. See the "Version mismatches" note in the skill.
 - **daw:** `workspace.portabilityReport()` → `portabilityReport(project, workspace.warnings)` from `@audiorective/daw/dawproject`; the `PortabilityReport` type is exported there.
 - **daw:** `workspace.exportAudioFallbackTo(destination, options)` → `exportAudioFallbackTo(workspace, destination, options)` from `@audiorective/daw/runtime`; `AudioFallbackOptions` is exported there.
 - **daw:** `createOpfsAudioMediaWriter` moves from `@audiorective/daw/project` to `@audiorective/daw/runtime`.
+- **core / effects:** `BufferPlayer.cells.isPlaying`, `FilePlayer.cells.isPlaying`, `FilePlayer.cells.currentTime`, `FilePlayer.cells.duration` and `Sampler.cells.activeVoices` are `ReadonlyCell` (were `Cell`). Drive them through `play`, `seek`, `stop`, the `audio` element and the other player methods; direct writes no longer exist.
+- **core:** `AudioEngine.state` is a read-only callable (`engine.state()`, `.value`, `$()`) with no setter, and `AudioEngine.latency` is `ReadonlyCell<number>` (was `Param<number>`). Only the engine writes them.
+- **core:** `AudioEngine` does not close an `AudioContext` passed to it; only a context it created is closed on `destroy()`. It listens with `addEventListener("statechange")` instead of overwriting `onstatechange`, so a borrowed context keeps its own handler. `destroy()` rejects pending `untilReady()` calls, and `untilReady()` after `destroy()` rejects.
+- **blocks / widgets:** `mountMixer` option `output(id)` is replaced by `meter(id)`, which returns a caller-owned reader `{ sampleCount?, read, destroy? }` (or `undefined` for no meter). Migration: `output: (id) => node` becomes `meter: (id) => { const a = node.context.createAnalyser(); node.connect(a); return { sampleCount: a.fftSize, read: (d) => a.getFloatTimeDomainData(d), destroy: () => node.disconnect(a) }; }`.
 
 ### Fixed
 
@@ -43,6 +47,9 @@ predates that API. See the "Version mismatches" note in the skill.
 - **effects:** `Convolver.buffer` is a tracked read. `Compressor` and `Limiter` without AudioWorklet no longer cause an unhandled rejection; `ready` still rejects.
 - **host:** `destroy()` and a plug-in "error" message reject pending `saveState()`, `loadState()` and `mountEditor()` calls and clear their timers.
 - **daw:** `Project.clipTimeSeconds` tracks tempo changes. `duplicateClip`, `snapshot`, `trimClip`, `splitClip`, `MidiClip.playbackEvents` and the Workspace commands `setTrack*`, `setMasterVolume`, `seek`, `play`, `takeAnchor`, `launchClips` and `refreshArrangement` no longer subscribe a calling effect. A multi-field Project edit is one change, and a `snapshot()` copy starts at revision 1.
+- **core:** `SchedulableParam` raw writes `$(x)` update the AudioParam like `.value`; before, they changed only the signal. `AudioEngine.start`, `suspend`, `resume` and `untilReady` no longer subscribe a calling effect. `AudioProcessor.destroy()` stops its constant sources and disconnects the internal silencer. `AutomationBinding.start` no longer tracks the curve, and `AutomationCurve.$(points)` validates, sorts and freezes like `.value`.
+- **widgets:** Mixer strips keep reactive widgets mounted through `appendControls` when the track list changes. `attachClipGesture` restores the element's original `left` after a drag. The selection plugin's edge-scroll `requestAnimationFrame` loop runs only during a drag.
+- **blocks:** `SampleLibrary.preview()` can be called from an effect and releases its lease when starting the preview fails. `StepSequencer` and `ClipLauncher` commands do not subscribe a calling effect.
 
 ### Added
 
@@ -97,6 +104,10 @@ predates that API. See the "Version mismatches" note in the skill.
 
 - **workspace:** `TempoMap`, `Project.tempoMap` and `setTempoChanges()` provide step-tempo beat/project-second conversion. DAWproject reads and writes beat-based hold `TempoAutomation`; Workspace rebases Clock on play and seek. `Project.addMidiClip(..., { timeUnit: "beats" })` and `addMidiTake(..., { timeUnit: "beats" })` create beat-locked MIDI notes and ordered control events; existing clips default to seconds. `Project.clipTimeSeconds()` converts a clip boundary for project-second views. The codec writes beat clip lanes and unit-bound private event fingerprints.
 - **widgets:** `@audiorective/widgets/arrangement` provides `attachClipGesture()` for snapped clip moves and beat-based keyboard nudges, plus `attachTimelineZoom()` for anchored continuous slider and Ctrl/⌘+wheel zoom over caller-owned views. `ClipGestureOptions.timeUnit` lets gesture input and commits use the clip's native seconds or beats. `PianoRollOptions.timeUnit` labels borrowed model times; `PianoRollViewport` exposes `timeUnit` and `pixelsPerUnit`.
+- **core:** `registerWorklet` and `WorkletUnavailableError` are exported from `@audiorective/core`; `@audiorective/effects` still re-exports them. `BufferPlayer.params.loop`, `loopStart` and `loopEnd`, `FilePlayer.params.loop` and `playbackRate`, and `Sampler.params.buffer` and `reverse` are `Param`s; the matching properties (`player.loop`, `sampler.buffer`, ...) read and write them. `FilePlayer.onEnded(cb)` returns a function that removes the callback.
+- **effects:** `Equalizer.params.band<i>Frequency`, `band<i>Gain` and `band<i>Q` (zero-based `i`) register each band's Params in `equalizer.params`.
+- **blocks:** `PadBank.cells.pads` is a read-only cell of the pad specs.
+- **widgets:** `SelectorPlayer` is the structural contract for `mountWaveformSelector`'s `player` and `createPlayer`; `WavePlayer` satisfies it.
 
 ### Changed
 
@@ -112,6 +123,10 @@ predates that API. See the "Version mismatches" note in the skill.
 - **widgets:** Piano-roll layout frames expose the current `snap` mode. Calling `setSnap` refreshes custom controls synchronously, so externally changed snapping stays visible without duplicating widget state.
 
 - **blocks / widgets:** Rename the unreleased `RangePlayer` to `WavePlayer`, including `WavePlayerOptions`, `WavePlayerSource`, `WavePlayerState`, `WaveStretchProcessor`, `WaveLoadProgress`, and `WaveSourceLoader`, and the destroyed-player messages (`WavePlayer is destroyed.`, `WavePlayer listener failed.`). Consumers use the new names; loading, range playback, stretch and ownership behavior are unchanged.
+- **core:** A `bind.get` on a `param()` seeds the initial value (`default` applies when it returns `undefined`).
+- **blocks:** `SampleLibrary.state` is the only store of rows, decoded bytes and preview state. `WavePlayer.subscribe` wraps the cells, and `WavePlayer.isPlaying` equals `cells.isPlaying`.
+- **widgets:** `attachTimelineZoom` takes `labels.scale(pixelsPerSecond)` for the slider's `aria-valuetext`; the default is English (`<n> px/s`, was Chinese).
+- **daw:** The runtime builds track and bus strips from effects `Channel` and `SendBus`. The audible result is unchanged (an offline PCM test compares it with the earlier hand-built strips).
 
 ### Added
 
