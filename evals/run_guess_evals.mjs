@@ -15,6 +15,8 @@
 // Options: --mode desire|guess   --variant <file.d.ts> (guess)   --ids T1,T2   --runs <n> (3)
 //          --concurrency <n> (4)   --model <id>   --grader-model <id>   --timeout <seconds> (300)
 //          --json <out-file>   --md <out-file> (desire: markdown cluster report)
+//          --regrade <results.json> (guess: re-grade the stored samples of an earlier run with the
+//          current grader and compile check; no solver calls)
 
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -26,12 +28,12 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..");
 
 const args = process.argv.slice(2);
-const flagsWithValue = new Set(["mode", "variant", "ids", "runs", "concurrency", "model", "grader-model", "timeout", "json", "md"]);
+const flagsWithValue = new Set(["mode", "variant", "ids", "runs", "concurrency", "model", "grader-model", "timeout", "json", "md", "regrade"]);
 const suitePath = args.find((a, i) => !a.startsWith("--") && !(args[i - 1]?.startsWith("--") && flagsWithValue.has(args[i - 1].slice(2))));
 const usage = (msg) => {
   if (msg) console.error(`error: ${msg}`);
   console.error(
-    "usage: node evals/run_guess_evals.mjs <suite.json> --mode desire|guess [--variant f.d.ts] [--ids T1,T2] [--runs n] [--concurrency n] [--model m] [--grader-model m] [--timeout s] [--json f] [--md f]",
+    "usage: node evals/run_guess_evals.mjs <suite.json> --mode desire|guess [--variant f.d.ts] [--ids T1,T2] [--runs n] [--concurrency n] [--model m] [--grader-model m] [--timeout s] [--json f] [--md f] [--regrade results.json]",
   );
   process.exit(2);
 };
@@ -55,6 +57,10 @@ const model = opt("model", null);
 const graderModel = opt("grader-model", model);
 const jsonOut = opt("json", null);
 const mdOut = opt("md", null);
+const regradePath = opt("regrade", null);
+if (regradePath && mode !== "guess") usage("--regrade needs --mode guess");
+if (regradePath && !existsSync(regradePath)) usage(`--regrade file not found: ${regradePath}`);
+const stored = regradePath ? JSON.parse(readFileSync(regradePath, "utf8")) : null;
 const ids = opt("ids", null)
   ?.split(",")
   .map((s) => s.trim());
@@ -243,7 +249,7 @@ function compile(variant, tsCode) {
 
 const ERROR_KINDS = ["wrong-name", "wrong-signature", "wrong-concept", "invented-api", "platform-misuse", "other"];
 
-function gradePrompt(task, code, tscResult) {
+function gradePrompt(task, code, html, tscResult) {
   return [
     "You are grading code that an agent wrote for a task, against fixed expectations. Judge only what the code actually does.",
     "An expectation is met only if the code clearly satisfies it; if the code is silent on something the expectation requires, it is not met. Where an expectation says 'or an equivalent', accept any approach that achieves the same thing.",
@@ -267,6 +273,7 @@ function gradePrompt(task, code, tscResult) {
     "```ts",
     code,
     "```",
+    ...(html.trim() ? ["", "## Page markup (html block of the same answer)", "```html", html, "```"] : []),
     "",
     "## TypeScript diagnostics",
     tscResult.passed ? "(none: compiled cleanly)" : tscResult.all.slice(0, 40).join("\n"),
@@ -296,11 +303,11 @@ function parseGrade(text, count) {
   };
 }
 
-async function gradeWithRetry(task, code, tscResult) {
+async function gradeWithRetry(task, code, html, tscResult) {
   let cost = 0;
   let lastError = "";
   for (let attempt = 0; attempt < 2; attempt++) {
-    const g = await claude(gradePrompt(task, code, tscResult), graderModel);
+    const g = await claude(gradePrompt(task, code, html, tscResult), graderModel);
     if (g.error) return { error: `grader: ${g.error}`, cost };
     cost += g.costUsd;
     const grade = parseGrade(g.text, task.expectations.length);
@@ -312,10 +319,16 @@ async function gradeWithRetry(task, code, tscResult) {
 
 // ---- one solver run --------------------------------------------------------
 
-async function runOne(task) {
-  const solved = await claude(solverPrompt(task), model);
-  if (solved.error) return { error: `solver: ${solved.error}` };
-  const { ts, html } = extractBlocks(solved.text);
+async function runOne(task, replay) {
+  let solved;
+  if (replay) {
+    if (replay.error && !replay.ts && !replay.html) return { error: replay.error };
+    solved = { text: replay.raw ?? "", costUsd: 0 };
+  } else {
+    solved = await claude(solverPrompt(task), model);
+    if (solved.error) return { error: `solver: ${solved.error}` };
+  }
+  const { ts, html } = replay ? { ts: replay.ts ?? "", html: replay.html ?? "" } : extractBlocks(solved.text);
   if (!ts.trim() && !html.trim()) return { error: "solver: reply contained no code block", raw: solved.text };
   const base = {
     raw: solved.text,
@@ -328,7 +341,7 @@ async function runOne(task) {
   if (mode === "desire") return base;
   const tscResult = compile(variantDts, ts);
   if (tscResult.error) return { ...base, error: tscResult.error };
-  const graded = await gradeWithRetry(task, ts, tscResult);
+  const graded = await gradeWithRetry(task, ts, html, tscResult);
   base.costUsd += graded.cost;
   if (graded.error) return { ...base, tsc: tscResult, error: graded.error };
   return { ...base, tsc: tscResult, grade: graded.grade };
@@ -384,7 +397,12 @@ console.error(`suite: ${suite.area ?? suitePath}  mode: ${mode}${variantPath ? `
 console.error(`${tasks.length} tasks × ${runs} runs, concurrency ${concurrency}${model ? `, model ${model}` : ""}…`);
 
 const jobs = [];
-for (const [ti, task] of tasks.entries()) for (let r = 0; r < runs; r++) jobs.push(async () => ({ ti, ...(await runOne(task)) }));
+for (const [ti, task] of tasks.entries()) {
+  if (stored) {
+    const old = stored.results.find((x) => x.id === task.id);
+    for (const sample of old?.samples ?? []) jobs.push(async () => ({ ti, ...(await runOne(task, sample)) }));
+  } else for (let r = 0; r < runs; r++) jobs.push(async () => ({ ti, ...(await runOne(task)) }));
+}
 const flat = await pool(jobs, concurrency);
 
 const sum = (xs, f) => xs.reduce((n, x) => n + f(x), 0);
