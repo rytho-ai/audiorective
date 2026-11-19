@@ -7,6 +7,7 @@ import { WebClapHost } from "@audiorective/host/webclap";
 import { ClipLauncher, type ClipLaunch, type ClipLauncherState, type QueuedClipLaunch } from "@audiorective/blocks/launcher";
 import type { StepSequencer } from "@audiorective/blocks/sequencer";
 import type { WaveStretchAnchor, WaveStretchProcessor } from "@audiorective/blocks/player";
+import { Channel, SendBus, type Send } from "@audiorective/effects";
 import { EffectRack, retainRackMacroTargets, type RackEffect, type RackMacroSettings } from "@audiorective/effects/rack";
 import { AudioTrackSession } from "./audio-track-session";
 import { clipGainAt } from "./clip-envelope";
@@ -42,7 +43,7 @@ type TrackRuntime = {
   clips: ProjectTrack["clips"];
   deviceKeys: readonly string[];
   deviceStates: Map<string, Uint8Array>;
-  gain: GainNode;
+  channel: Channel;
   automationGain: GainNode;
   rack: EffectRack;
   effectSettings: readonly RackEffect[];
@@ -50,10 +51,10 @@ type TrackRuntime = {
   automationPoints?: readonly AutomationPoint[];
   automationCurve?: AutomationCurve;
   automationBinding?: AutomationBinding;
-  panner: StereoPannerNode;
-  outputGate: GainNode;
   outputDestination?: AudioNode;
-  sends: Map<string, { input: AudioNode; gate: GainNode }>;
+  /** Name of this track's receive point on the workspace SendBus. */
+  sendName: string;
+  sends: Map<string, { target: TrackRuntime; send: Send }>;
   input: AudioNode;
   session?: AudioTrackSession;
   hosts: Map<string, WebClapHost>;
@@ -163,6 +164,8 @@ export class Workspace {
   private failedApplication?: { cause: unknown };
   private playRequest = 0;
   private destroyed = false;
+  private readonly sendBus: SendBus;
+  private sendSerial = 0;
 
   private constructor(context: AudioContext, project: Project, options: WorkspaceOptions) {
     this.context = context;
@@ -170,6 +173,7 @@ export class Workspace {
     this.activeTempoMap = project.tempoMap;
     this.options = options;
     this.output = context.createGain();
+    this.sendBus = new SendBus(context);
     if (options.destination) this.output.connect(options.destination);
     this.timeline = new Timeline({ audioContext: context, bpm: project.bpm });
     this.clock = new Clock({ timeline: this.timeline, lookAhead: 0.15, tickInterval: 0.025, onTick: (window) => this.schedule(window) });
@@ -424,23 +428,24 @@ export class Workspace {
   }
 
   private async createTrack(track: ProjectTrack): Promise<TrackRuntime> {
-    const gain = this.context.createGain();
     const automationGain = this.context.createGain();
-    const panner = this.context.createStereoPanner();
-    const outputGate = this.context.createGain();
-    automationGain.connect(gain).connect(panner).connect(outputGate);
+    // "max" keeps a mono source mono into the panner, so it gets the mono equal-power law.
+    // Project owns gain, pan, mute and solo; applyMixer writes them into the Channel params and nothing reads them back.
+    const channel = new Channel(this.context, { channelCountMode: "max" });
+    automationGain.connect(channel.input);
+    const sendName = `${track.id}#${this.sendSerial++}`;
+    this.sendBus.define(sendName);
     const runtime: TrackRuntime = {
       kind: track.kind,
       clips: track.clips,
       deviceKeys: deviceKeys(track),
       deviceStates: new Map(track.devices.map((device) => [device.id, device.state])),
-      gain,
+      channel,
       automationGain,
       rack: new EffectRack(this.context, track.effects, track.effectMacros),
       effectSettings: track.effects,
       macroSettings: track.effectMacros,
-      panner,
-      outputGate,
+      sendName,
       sends: new Map(),
       input: automationGain,
       hosts: new Map(),
@@ -477,6 +482,7 @@ export class Workspace {
         previous.output.connect(runtime.rack.input);
         runtime.input = [...runtime.hosts.values()][0].input;
       }
+      this.sendBus.receive(sendName).connect(runtime.input);
       if (track.kind === "audio") runtime.session = new AudioTrackSession(this.context, runtime.input);
       this.updateAutomation(runtime, track);
       return runtime;
@@ -872,7 +878,7 @@ export class Workspace {
 
   /** Borrow a post-fader track output for the mixer's meter, or use output for the master meter. */
   trackMixerOutput(trackId: string): AudioNode | undefined {
-    return this.tracks.get(trackId)?.panner;
+    return this.tracks.get(trackId)?.channel.tap;
   }
 
   private applyRouting(tracks: readonly ProjectTrack[]): void {
@@ -881,13 +887,12 @@ export class Workspace {
     for (const track of tracks) {
       const runtime = this.tracks.get(track.id)!;
       if (runtime.outputDestination !== inputFor(track.routing.outputBusId)) {
-        runtime.outputGate.disconnect();
+        runtime.channel.output.disconnect();
         runtime.outputDestination = undefined;
       }
-      for (const [id, send] of runtime.sends) {
-        if (track.routing.sends.some(({ busId }) => busId === id) && send.input === inputFor(id)) continue;
-        runtime.panner.disconnect(send.gate);
-        send.gate.disconnect();
+      for (const [id, entry] of runtime.sends) {
+        if (track.routing.sends.some(({ busId }) => busId === id) && entry.target === this.tracks.get(id)) continue;
+        entry.send.dispose();
         runtime.sends.delete(id);
       }
     }
@@ -895,28 +900,24 @@ export class Workspace {
       const runtime = this.tracks.get(track.id)!;
       if (!runtime.outputDestination) {
         runtime.outputDestination = inputFor(track.routing.outputBusId);
-        runtime.outputGate.connect(runtime.outputDestination);
+        runtime.channel.output.connect(runtime.outputDestination);
       }
       for (const { busId } of track.routing.sends) {
         if (runtime.sends.has(busId)) continue;
-        const input = inputFor(busId);
-        const gate = this.context.createGain();
-        runtime.panner.connect(gate).connect(input);
-        runtime.sends.set(busId, { input, gate });
+        const target = this.tracks.get(busId)!;
+        runtime.sends.set(busId, { target, send: runtime.channel.send(this.sendBus, target.sendName) });
       }
     }
   }
 
   private disposeRouting(runtime: TrackRuntime): void {
-    runtime.panner.disconnect(runtime.outputGate);
-    runtime.outputGate.disconnect();
-    for (const { gate } of runtime.sends.values()) {
-      runtime.panner.disconnect(gate);
-      gate.disconnect();
-    }
+    runtime.channel.output.disconnect();
+    runtime.outputDestination = undefined;
+    for (const { send } of runtime.sends.values()) send.dispose();
     runtime.sends.clear();
   }
 
+  /** Project is the only owner of mixer state: write it into each Channel's params. */
   private applyMixer(): void {
     const now = this.context.currentTime;
     this.output.gain.setValueAtTime(this.project.masterVolume, now);
@@ -925,12 +926,19 @@ export class Workspace {
     for (const track of tracks) {
       const runtime = this.tracks.get(track.id);
       if (!runtime) continue;
-      runtime.gain.gain.setValueAtTime(track.muted || !solo.strip(track) ? 0 : track.volume, now);
-      runtime.panner.pan.setValueAtTime(track.pan, now);
-      runtime.outputGate.gain.setValueAtTime(solo.edge(track, track.routing.outputBusId) ? 1 : 0, now);
-      for (const { busId, gain } of track.routing.sends) {
-        runtime.sends.get(busId)?.gate.gain.setValueAtTime(solo.edge(track, busId) ? gain : 0, now);
-      }
+      const { params } = runtime.channel;
+      batch(() => {
+        params.gain.value = track.volume;
+        params.pan.value = track.pan;
+        params.mute.value = track.muted || !solo.strip(track);
+        params.outputEnabled.value = solo.edge(track, track.routing.outputBusId);
+        for (const { busId, gain } of track.routing.sends) {
+          const send = runtime.sends.get(busId)?.send;
+          if (!send) continue;
+          send.gain.value = gain;
+          send.enabled.value = solo.edge(track, busId);
+        }
+      });
     }
   }
 
@@ -1496,8 +1504,9 @@ export class Workspace {
     for (const host of runtime.hosts.values()) host.destroy();
     runtime.automationBinding?.destroy();
     runtime.automationGain.disconnect();
-    runtime.gain.disconnect();
     this.disposeRouting(runtime);
+    runtime.channel.destroy();
+    this.sendBus.undefine(runtime.sendName);
   }
 
   private disposeTracks(): void {

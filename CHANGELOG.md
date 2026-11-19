@@ -46,6 +46,8 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Added
 
+- **effects:** `Channel` option `channelCountMode: "max"` keeps a mono input mono into the panner (equal-power mono pan law); the default `"explicit"` is unchanged.
+- **effects:** `Channel.params.outputEnabled` gates the main output, `Channel.tap` is the post-mute node sends read from, and `Send.enabled` gates one send; `SendBus.undefine(name)` removes a receive point.
 - **daw:** `workspace.cells.session`, `cells.auditioningClip` and `cells.auditioningRange` are read-only cells; `workspace.session` is a `ReadonlyCell`. `Workspace.deviceOptions` returns the `workletUrl` and `resolveBundle` options used to create a matching Workspace.
 
 - **workspace / widgets:** Project clips retain warp anchors alongside the rendered playback and original source. The DAW waveform marker editor uses the same mapping for drag edits, trimming, source-relative gain and saved projects.

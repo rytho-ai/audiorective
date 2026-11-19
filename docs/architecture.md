@@ -101,16 +101,16 @@ A borrowing module names what it needs as a structural type in [core](./core.md#
 
 A feature the user sees usually spans three layers. To place a decision, ask whether it survives closing the view and whether it survives saving the file.
 
-| Part of the Mixer                                | Owner         | Code                                                                                                 |
-| ------------------------------------------------ | ------------- | ---------------------------------------------------------------------------------------------------- |
-| Faders, pan, mute and solo buttons, level meters | `widgets`     | `mountMixer`, which takes only `state`, `editTrack` and `editMaster`                                 |
-| Per-track volume, pan, mute, solo and routing    | `daw/project` | `ProjectTrack`                                                                                       |
-| Which tracks and paths stay audible under solo   | `daw/runtime` | `soloRouting` over `ProjectTrack`                                                                    |
-| Gain, pan and mute nodes, sends                  | `daw/runtime` | `Workspace` builds each strip itself: gain, `StereoPannerNode` and gates, driven from `ProjectTrack` |
+| Part of the Mixer                                | Owner         | Code                                                                                                                  |
+| ------------------------------------------------ | ------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Faders, pan, mute and solo buttons, level meters | `widgets`     | `mountMixer`, which takes only `state`, `editTrack` and `editMaster`                                                  |
+| Per-track volume, pan, mute, solo and routing    | `daw/project` | `ProjectTrack`                                                                                                        |
+| Which tracks and paths stay audible under solo   | `daw/runtime` | `soloRouting` over `ProjectTrack`                                                                                     |
+| Gain, pan and mute nodes, sends                  | `daw/runtime` | `Workspace` builds each strip from `effects` `Channel` and `SendBus`; `ProjectTrack` values are written to its params |
 
 The piano roll, arrangement, automation lanes, clip grid and step grid split the same way: gestures and drawing in `widgets`, saved content in `daw/project`, sound in a capability module or the runtime. A widget that takes a local structural contract (`step-grid`, `sample-browser`, `clip-grid`, `warp-markers`, `clip-envelope-editor`, `mountMixer`) works over a DAW project or over your own model.
 
-`effects` `Channel` and `SendBus` are the standalone strip and send bus for apps that wire their own mixer. The Workspace does not use them because its strips must behave differently: `Channel` forces a two-channel input, so a mono track would be upmixed before the panner and lose the mono equal-power pan law the runtime currently applies; its sends tap one post-mute node and cannot be gated per edge, but solo gating needs a gate on each output and send edge; and its `gain`, `pan` and `mute` are separate state that would duplicate `ProjectTrack`. The runtime reads that state from `Project` and writes it to plain nodes.
+`effects` `Channel` and `SendBus` are the strip and send bus for any app, and the Workspace builds its strips from them. The strip is `Channel` with `channelCountMode: "max"`, so a mono track reaches the panner as mono and keeps the equal-power pan law. `soloRouting`'s per-edge decisions land on `channel.params.outputEnabled` (main output) and `send.enabled` (one send), and its strip decision folds into `mute`. `Project` stays the only owner of gain, pan, mute and solo: `applyMixer` projects `ProjectTrack` values into the `Channel` params, the same way it once wrote plain nodes, and nothing reads them back. `trackMixerOutput` borrows `channel.tap`, the post-mute node ahead of the output gate.
 
 ### Two reference compositions
 

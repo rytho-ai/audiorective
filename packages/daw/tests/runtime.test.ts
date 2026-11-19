@@ -30,6 +30,22 @@ vi.mock("@audiorective/effects/rack", async (importOriginal) => ({
     }
   },
 }));
+vi.mock("@audiorective/effects", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@audiorective/effects")>()),
+  Channel: class {
+    input = { connect: vi.fn() };
+    output = { connect: vi.fn(), disconnect: vi.fn() };
+    tap = {};
+    params = { gain: { value: 1 }, pan: { value: 0 }, mute: { value: false }, outputEnabled: { value: true } };
+    send = vi.fn(() => ({ gain: { value: 1 }, enabled: { value: true }, dispose: vi.fn() }));
+    destroy = vi.fn();
+  },
+  SendBus: class {
+    define = vi.fn();
+    receive = vi.fn(() => ({ connect: vi.fn() }));
+    undefine = vi.fn();
+  },
+}));
 vi.mock("@audiorective/host/webclap", () => ({
   WebClapHost: {
     load: vi.fn(async () => {
