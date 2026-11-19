@@ -937,6 +937,29 @@
         "Writes the audio driver so the outgoing stop is reversible (a per-launch GainNode gate with `setValueAtTime(0, when)` and `cancelScheduledValues(when)` in `cancel`), not `AudioBufferSourceNode.stop(when)`",
         "Uses `clipId: null` for a per-track stop and quantum `0` (not a tiny positive quantum) for an unquantized launch"
       ]
+    },
+    {
+      "id": 71,
+      "prompt": "In my audiorective app a drum machine runs on a clock and I want a one-click accelerando: speed up from the current tempo by 40 BPM over the next 8 bars of 4/4, then if the user drags the tempo slider mid-ramp their value must win. don't run anything.",
+      "expected_output": "A TempoParam linear ramp scheduled on timeline.bpm, with cancelAndHoldAtTime before a user edit, instead of a setValueAtTime staircase.",
+      "files": [],
+      "expectations": [
+        "Schedules the accelerando with timeline.bpm.linearRampToValueAtTime(target, endTime) on the Timeline's bpm, not a staircase of setValueAtTime calls or a timer rewriting bpm.value",
+        "Computes endTime in audio-clock seconds (32 beats at the mean tempo, or via beatToTime), and starts the ramp from a held present value (cancelAndHoldAtTime(now) or setValueAtTime(current, now))",
+        "Calls timeline.bpm.cancelAndHoldAtTime(ctx.currentTime) before writing the slider's bpm.value, so the still-queued ramp end does not overwrite the user's tempo",
+        "Does not claim tempo ramps are unsupported"
+      ]
+    },
+    {
+      "id": 72,
+      "prompt": "In my audiorective drum machine, editing the pattern calls clock.refresh() and I want the queued hits rebuilt. I fill 16 cells in a loop when the user picks a preset, and one of my clip-launch handlers also calls clock.refresh() from inside a method that onTick can call back into. Is that safe, and do I need to batch the edits? don't run anything.",
+      "expected_output": "Explains that Clock.refresh() cancels owned events synchronously but refills in a shared microtask, so it does not re-enter onTick and repeated calls in a task refill once.",
+      "files": [],
+      "expectations": [
+        "States that clock.refresh() cancels owned events immediately but defers the refill to a microtask, so onTick is not called inside refresh() and a re-entrancy guard around it is not needed",
+        "States that several refresh() calls in the same task (or via refreshOnEdit) produce one refill, so batch() is not needed for the re-queue count, only to give observers one coherent pattern change",
+        "Does not tell the user that onTick runs synchronously inside refresh(), and does not wrap refresh() in a setTimeout or manual debounce"
+      ]
     }
   ]
 }

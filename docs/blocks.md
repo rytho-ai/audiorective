@@ -424,7 +424,7 @@ type StepWindow = Readonly<{
 }>;
 ```
 
-**Edits and the look-ahead.** The clock has already scheduled the next window when you edit, so an edit applies to later windows unless the look-ahead is rebuilt. `refreshOnEdit(sequencer, transport)` does that: it calls `transport.refresh()` once per committed change of `pattern` or `transforms` (a `batch` counts once) and returns a disposer.
+**Edits and the look-ahead.** The clock has already scheduled the next window when you edit, so an edit applies to later windows unless the look-ahead is rebuilt. `refreshOnEdit(sequencer, transport)` does that: it calls `transport.refresh()` once per committed change of `pattern` or `transforms` (a `batch` counts once) and returns a disposer. `Clock.refresh()` cancels owned hits at once but refills in a microtask, and repeated calls in one task share that refill, so any number of edits in the same task rebuild the look-ahead once.
 
 ```ts
 import { refreshOnEdit } from "@audiorective/blocks/sequencer";
@@ -434,7 +434,7 @@ sequencer.setCell("closed", 4, { velocity: 0 }); // the queued look-ahead is reb
 stopRefresh(); // before the clock is destroyed
 ```
 
-Each `setCell`, `toggle`, `setLane` or `setTransforms` call outside a `batch` is its own commit and re-queues once per call. To change many cells at once, such as filling a Euclidean pattern, wrap them in core's `batch` so the look-ahead is rebuilt once:
+Each `setCell`, `toggle`, `setLane` or `setTransforms` call outside a `batch` is its own commit, so effects watching the pattern run once per call. The look-ahead refill is coalesced either way. To change many cells at once, such as filling a Euclidean pattern, wrap them in core's `batch` so observers (a grid, a counter) see one coherent change:
 
 ```ts
 import { batch } from "@audiorective/core";

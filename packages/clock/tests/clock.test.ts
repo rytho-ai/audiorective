@@ -3,6 +3,7 @@ import { Clock } from "../src/Clock";
 import type { TickWindow, MissedGap } from "../src/Clock";
 import { Timeline } from "../src/Timeline";
 import { ManualTickSource } from "../src/TickSource";
+import { LinearBarRuler } from "../src/rulers/LinearBarRuler";
 
 function makeContext(startAt = 0) {
   return { currentTime: startAt };
@@ -264,5 +265,56 @@ describe("Clock — transport state is a single read-only store", () => {
     clock.start();
     stop();
     expect(runs).toBe(1);
+  });
+});
+
+describe("Clock — over a tempo ramp", () => {
+  test("windows stay contiguous with no gaps or overlaps and cover the ramp's integral", () => {
+    const { ctx, timeline, tickSource, clock, windows, misses } = makeHarness(120, 0.1);
+    timeline.bpm.setValueAtTime(120, 0);
+    timeline.bpm.linearRampToValueAtTime(240, 4); // an accelerando that doubles the tempo
+    clock.start();
+    for (let i = 0; i <= 200; i++) {
+      ctx.currentTime = i * 0.025;
+      tickSource.tick();
+    }
+    expect(misses).toHaveLength(0);
+    for (let i = 1; i < windows.length; i++) {
+      expect(windows[i]!.beat.start).toBe(windows[i - 1]!.beat.end);
+    }
+    // last window ends at the look-ahead end of the final tick: the integral of the curve there
+    const last = windows[windows.length - 1]!;
+    expect(last.beat.end).toBeCloseTo(timeline.timeToBeat(5.1), 9);
+    expect(last.beat.end).toBeCloseTo(((120 + 240) / 2) * (4 / 60) + (240 * 1.1) / 60, 9);
+  });
+
+  test("a ruler step grid stays exactly on beat across the ramp: every 16th once, in order", () => {
+    const ctx = makeContext(0);
+    const timeline = new Timeline({ audioContext: ctx, bpm: 120 }).addRuler("bar", new LinearBarRuler({ numerator: 4, denominator: 4 }));
+    timeline.bpm.setValueAtTime(120, 0);
+    timeline.bpm.linearRampToValueAtTime(200, 6);
+    const tickSource = new ManualTickSource();
+    const grid: Array<{ beat: number; time: number; index: number }> = [];
+    const clock = new Clock({
+      timeline,
+      lookAhead: 0.1,
+      tickSource,
+      onTick: (window) => {
+        for (const point of window.rulers.bar.grid(16)) grid.push(point);
+      },
+    });
+    clock.start();
+    for (let i = 0; i <= 280; i++) {
+      ctx.currentTime = i * 0.025;
+      tickSource.tick();
+    }
+    expect(grid.length).toBeGreaterThan(40);
+    grid.forEach((point, i) => {
+      expect(point.index).toBe(i);
+      expect(point.beat).toBe(i * 0.25);
+      expect(timeline.timeToBeat(point.time)).toBeCloseTo(point.beat, 9);
+      if (i > 0) expect(point.time).toBeGreaterThan(grid[i - 1]!.time);
+    });
+    clock.destroy();
   });
 });

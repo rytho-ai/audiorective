@@ -144,3 +144,116 @@ describe("TempoCurve — cancellation", () => {
     expect(curve.valueAt(100)).toBe(120); // held, not 180
   });
 });
+
+describe("TempoCurve — ramps", () => {
+  const rampCurve = () => {
+    const curve = new TempoCurve(120);
+    curve.rampToValueAtTime("linear", 160, 8);
+    return curve;
+  };
+
+  test("valueAt interpolates linearly and holds after the ramp", () => {
+    const curve = rampCurve();
+    expect(curve.valueAt(0)).toBe(120);
+    expect(curve.valueAt(2)).toBeCloseTo(130);
+    expect(curve.valueAt(8)).toBe(160);
+    expect(curve.valueAt(100)).toBe(160);
+  });
+
+  test("120 -> 160 over 8 s is 8 * 140 / 60 beats (the integral)", () => {
+    const curve = rampCurve();
+    expect(curve.beatsBetween(0, 8)).toBeCloseTo((8 * 140) / 60, 12);
+    // quadratic in time: b(t) = (120 t + 2.5 t^2) / 60
+    expect(curve.beatsBetween(0, 4)).toBeCloseTo((120 * 4 + 2.5 * 16) / 60, 12);
+    expect(curve.beatsBetween(0, 12)).toBeCloseTo((8 * 140) / 60 + (4 * 160) / 60, 12);
+  });
+
+  test("timeToAdvance inverts beatsBetween across steps and ramps", () => {
+    const curve = new TempoCurve(90);
+    curve.setValueAtTime(120, 2);
+    curve.rampToValueAtTime("linear", 180, 6);
+    curve.setValueAtTime(60, 8); // a step down after the ramp's hold
+    curve.rampToValueAtTime("exponential", 240, 12);
+    curve.rampToValueAtTime("linear", 120, 14); // descending ramp
+    for (const [from, to] of [
+      [0, 1],
+      [0, 7],
+      [1, 13],
+      [3.3, 5.1],
+      [5, 20],
+      [6, 7],
+      [9, 14],
+    ] as const) {
+      const beats = curve.beatsBetween(from, to);
+      expect(curve.timeToAdvance(from, beats)).toBeCloseTo(to - from, 9);
+    }
+    // forward: advancing n beats then integrating returns n
+    for (const beats of [0.01, 1, 5, 17.5, 40]) {
+      const dt = curve.timeToAdvance(1.5, beats);
+      expect(curve.beatsBetween(1.5, 1.5 + dt)).toBeCloseTo(beats, 9);
+    }
+  });
+
+  test("a flat ramp (equal values) behaves like a hold, and tiny slopes stay stable", () => {
+    const flat = new TempoCurve(120);
+    flat.rampToValueAtTime("linear", 120, 4);
+    flat.rampToValueAtTime("exponential", 120, 8);
+    expect(flat.beatsBetween(0, 8)).toBeCloseTo(16, 12);
+    expect(flat.timeToAdvance(0, 16)).toBeCloseTo(8, 12);
+    const nearly = new TempoCurve(120);
+    nearly.rampToValueAtTime("exponential", 120 + 1e-9, 4);
+    expect(nearly.timeToAdvance(0, 4)).toBeCloseTo(2, 8);
+    const slight = new TempoCurve(120);
+    slight.rampToValueAtTime("linear", 120 + 1e-12, 4);
+    expect(slight.timeToAdvance(0, 4)).toBeCloseTo(2, 9);
+  });
+
+  test("exponential ramp: closed-form integral and inverse", () => {
+    const curve = new TempoCurve(60);
+    curve.rampToValueAtTime("exponential", 240, 4);
+    expect(curve.valueAt(2)).toBeCloseTo(120);
+    // integral of 60 * 4^(t/4) dt over [0, 4], in beats: (240 - 60) / (ln 4 / 4) / 60
+    expect(curve.beatsBetween(0, 4)).toBeCloseTo(180 / (Math.log(4) / 4) / 60, 10);
+    expect(curve.timeToAdvance(0, curve.beatsBetween(0, 3))).toBeCloseTo(3, 10);
+  });
+
+  test("a setValueAtTime inside a ramp splits it: the ramp then starts from that event", () => {
+    const curve = rampCurve();
+    curve.setValueAtTime(100, 4);
+    expect(curve.valueAt(3.9)).toBeCloseTo(120);
+    expect(curve.valueAt(4)).toBe(100);
+    expect(curve.valueAt(6)).toBeCloseTo(130);
+  });
+
+  test("cancelScheduledValues drops a ramp that ends at or after the time", () => {
+    const curve = rampCurve();
+    curve.cancelScheduledValues(8);
+    expect(curve.valueAt(4)).toBe(120);
+    expect(curve.valueAt(100)).toBe(120);
+  });
+
+  test("cancelAndHoldAtTime mid-ramp keeps the slope up to the cut, then holds the interpolated value", () => {
+    const curve = rampCurve();
+    curve.cancelAndHoldAtTime(4);
+    expect(curve.valueAt(2)).toBeCloseTo(130);
+    expect(curve.valueAt(4)).toBeCloseTo(140);
+    expect(curve.valueAt(50)).toBeCloseTo(140);
+    expect(curve.beatsBetween(0, 10)).toBeCloseTo((4 * 130) / 60 + (6 * 140) / 60, 12);
+  });
+
+  test("cancelAndHoldAtTime mid exponential ramp holds the exponential value", () => {
+    const curve = new TempoCurve(100);
+    curve.rampToValueAtTime("exponential", 400, 8);
+    curve.cancelAndHoldAtTime(4);
+    expect(curve.valueAt(4)).toBeCloseTo(200);
+    expect(curve.valueAt(2)).toBeCloseTo(100 * Math.pow(4, 0.25));
+    expect(curve.valueAt(9)).toBeCloseTo(200);
+  });
+
+  test("cancelAndHoldAtTime outside a ramp behaves as before", () => {
+    const curve = rampCurve();
+    curve.cancelAndHoldAtTime(10);
+    expect(curve.valueAt(8)).toBe(160);
+    expect(curve.valueAt(20)).toBe(160);
+  });
+});

@@ -56,7 +56,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
   private _destroyed = false;
   private readonly _owned = new Map<CancellableEvent, number>();
   private _ticking = false;
-  private _refreshPending = false;
+  private _refillPending = false;
   private _cancelling = 0;
 
   constructor(options: ClockOptions<TRulers>) {
@@ -75,6 +75,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
    * scheduled tempo event — see the clock design spec's ST-6.
    */
   start(options?: { atBeat?: number }): void {
+    this._refillPending = false;
     this._cancelOwned();
     const atBeat = options?.atBeat ?? 0;
     // one change: effects watching `state` never see the new state with stale bookkeeping
@@ -100,6 +101,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
    */
   pause(): void {
     if (this._timeline._transportState !== "playing") return;
+    this._refillPending = false;
     this._cancelOwned();
     this._timeline._pause();
   }
@@ -116,6 +118,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
 
   /** Stops and resets position to beat 0. */
   stop(): void {
+    this._refillPending = false;
     this._cancelOwned();
     this._timeline._stop();
     this._previousWindowEndBeat = 0;
@@ -123,26 +126,39 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
 
   /** Jumps to `beat`. Bumps `generation`; the next window starts exactly at `beat` (beats may re-appear). */
   seek(beat: number): void {
+    this._refillPending = false;
     this._cancelOwned();
     this._timeline._seek(beat);
     this._previousWindowEndBeat = beat;
     // see start(): _previousWindowEndGeneration deliberately stays stale here too
   }
 
-  /** Revoke owned events starting at or after now, then refill from that same audio-clock boundary. */
+  /**
+   * Revoke owned events starting at or after now, then refill from that same audio-clock boundary.
+   *
+   * The retraction and the boundary capture are synchronous. The refill is not: it runs as one
+   * microtask after the current synchronous work, so `onTick` is never re-entered from inside the caller
+   * (a callback, an effect or a launcher method that edits and refreshes). Further calls before that
+   * microtask are no-ops: nothing has been refilled yet, so there is nothing new to retract, and the
+   * first boundary stays the refill's start so no beat is skipped. Any transport call (`start`, `pause`,
+   * `stop`, `seek`, `destroy`) cancels the pending refill; a tick that runs first performs it.
+   */
   refresh(): void {
-    if (this._destroyed || this._timeline._transportState !== "playing") return;
+    if (this._destroyed || this._timeline._transportState !== "playing" || this._refillPending) return;
     const now = this._timeline.now;
     this._cancelOwned(true, now);
     this._previousWindowEndBeat = this._timeline._invalidate(now);
-    if (this._ticking) this._refreshPending = true;
-    else this._tick();
+    this._refillPending = true;
+    queueMicrotask(() => {
+      if (this._refillPending) this._tick();
+    });
   }
 
   /** Stops the tick loop for good (terminates the underlying worker/timer). */
   destroy(): void {
     if (this._destroyed) return;
     this._destroyed = true;
+    this._refillPending = false;
     this._tickSource.stop();
     this._cancelOwned();
   }
@@ -189,6 +205,8 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     if (this._destroyed) return;
     if (this._ticking) return;
     this._ticking = true;
+    // this tick is the refill a pending refresh() asked for
+    this._refillPending = false;
     try {
       const now = this._timeline.now;
 
@@ -234,10 +252,6 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
       }
     } finally {
       this._ticking = false;
-      if (this._refreshPending) {
-        this._refreshPending = false;
-        this._tick();
-      }
     }
   }
 }

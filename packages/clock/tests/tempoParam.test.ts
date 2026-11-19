@@ -64,10 +64,37 @@ describe("TempoParam — scheduling API", () => {
     expect(param.valueAtTime(100)).toBe(140);
   });
 
-  test("linearRampToValueAtTime and exponentialRampToValueAtTime throw (V2)", () => {
+  test("linear and exponential ramps interpolate from the previous event", () => {
     const param = new TempoParam({ default: 120, now: () => 0 });
-    expect(() => param.linearRampToValueAtTime(140, 10)).toThrow(/V2/);
-    expect(() => param.exponentialRampToValueAtTime(140, 10)).toThrow(/V2/);
+    param.linearRampToValueAtTime(160, 8);
+    expect(param.valueAtTime(4)).toBeCloseTo(140);
+    expect(param.valueAtTime(8)).toBe(160);
+    expect(param.valueAtTime(20)).toBe(160);
+    const expo = new TempoParam({ default: 100, now: () => 0 });
+    expo.exponentialRampToValueAtTime(400, 8);
+    expect(expo.valueAtTime(4)).toBeCloseTo(200);
+  });
+
+  test("a first ramp starts at the current audio time, not at time 0", () => {
+    const param = new TempoParam({ default: 120, now: () => 10 });
+    param.linearRampToValueAtTime(160, 18);
+    expect(param.valueAtTime(10)).toBe(120);
+    expect(param.valueAtTime(14)).toBeCloseTo(140);
+    expect(param.valueAtTime(5)).toBe(120);
+  });
+
+  test("a ramp whose end is not after the previous event is a step", () => {
+    const param = new TempoParam({ default: 120, now: () => 0 });
+    param.setValueAtTime(100, 5);
+    param.linearRampToValueAtTime(140, 5);
+    expect(param.valueAtTime(5)).toBe(140);
+    expect(param.valueAtTime(4)).toBe(120);
+  });
+
+  test("ramps reject a non-finite end time and a non-positive bpm", () => {
+    const param = new TempoParam({ default: 120, now: () => 0 });
+    expect(() => param.linearRampToValueAtTime(140, NaN)).toThrow(RangeError);
+    expect(() => param.exponentialRampToValueAtTime(0, 4)).toThrow(RangeError);
   });
 
   test("has no setTargetAtTime member", () => {
@@ -120,9 +147,10 @@ describe("TempoParam — raw signal writes", () => {
     expect(param.valueAtTime(0)).toBe(120);
   });
 
-  test("ramps throw", () => {
+  test("_refresh follows a ramp, so `.value` tracks the interpolated tempo", () => {
     const param = new TempoParam({ default: 120, now: () => 0 });
-    expect(() => param.linearRampToValueAtTime(140, 1)).toThrow(/V2/);
-    expect(() => param.exponentialRampToValueAtTime(140, 1)).toThrow(/V2/);
+    param.linearRampToValueAtTime(160, 8);
+    param._refresh(4);
+    expect(param.value).toBeCloseTo(140);
   });
 });

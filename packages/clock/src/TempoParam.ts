@@ -7,13 +7,11 @@ export interface TempoParamOptions extends ParamOptions<number> {
   now: () => number;
 }
 
-const V2_MESSAGE = (method: string) => `TempoParam.${method} is V2 (tempo ramps) — see docs/superpowers/specs/2026-07-04-clock-design.md`;
-
 /**
  * Standalone event-list-backed tempo curve. Mirrors SchedulableParam's
  * scheduling API surface but is not a reuse of it: it needs to evaluate and
  * integrate the curve analytically (beatToTime), which an AudioParam backing
- * can never support. See the clock design spec, "TempoParam" section.
+ * can never support. Steps and linear/exponential ramps follow Web Audio semantics.
  */
 export class TempoParam extends Param<number> {
   private readonly _curve: TempoCurve;
@@ -58,12 +56,29 @@ export class TempoParam extends Param<number> {
     return this._curve.valueAt(time);
   }
 
-  linearRampToValueAtTime(_value: number, _endTime: number): this {
-    throw new Error(V2_MESSAGE("linearRampToValueAtTime"));
+  /**
+   * Ramp linearly in time from the previous event's value to `value` at `endTime`.
+   * With no scheduled event yet, the ramp starts from the current value at the current audio time.
+   */
+  linearRampToValueAtTime(value: number, endTime: number): this {
+    this._ramp("linear", value, endTime);
+    return this;
   }
 
-  exponentialRampToValueAtTime(_value: number, _endTime: number): this {
-    throw new Error(V2_MESSAGE("exponentialRampToValueAtTime"));
+  /** Ramp exponentially in time (constant ratio per second) from the previous event's value to `value` at `endTime`. */
+  exponentialRampToValueAtTime(value: number, endTime: number): this {
+    this._ramp("exponential", value, endTime);
+    return this;
+  }
+
+  private _ramp(kind: "linear" | "exponential", value: number, endTime: number): void {
+    if (!Number.isFinite(endTime)) throw new RangeError(`TempoParam ramp end time must be finite, got ${endTime}`);
+    if (this._curve.hasImplicitStart && this._curve.eventCount === 1) {
+      // nothing scheduled to ramp from: start at the present, like an AudioParam
+      const now = this._now();
+      if (now < endTime) this._curve.setValueAtTime(this._curve.valueAt(now), now);
+    }
+    this._curve.rampToValueAtTime(kind, value, endTime);
   }
 
   /** @internal Pushed by the Clock tick to keep `.value` reflecting the curve at `now`. */

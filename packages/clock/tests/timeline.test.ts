@@ -229,3 +229,31 @@ describe("Timeline — ruler current is read-only and tracked", () => {
     stop();
   });
 });
+
+describe("Timeline — tempo ramps", () => {
+  test("beatToTime and timeToBeat are exact inverses across a ramp, and match the analytic integral", () => {
+    const ctx = { currentTime: 0 };
+    const timeline = new Timeline({ audioContext: ctx, bpm: 120 });
+    timeline._start(0);
+    timeline.bpm.setValueAtTime(120, 0);
+    timeline.bpm.linearRampToValueAtTime(160, 8);
+    // 120 -> 160 over 8 s: 8 * 140 / 60 beats
+    expect(timeline.timeToBeat(8)).toBeCloseTo(18.666666666666668, 10);
+    expect(timeline.beatToTime(18.666666666666668)).toBeCloseTo(8, 9);
+    for (const beat of [0.5, 3, 12, 18.6, 25, 100]) {
+      expect(timeline.timeToBeat(timeline.beatToTime(beat))).toBeCloseTo(beat, 9);
+    }
+  });
+
+  test("documented accelerando: +40 BPM over 32 beats ends at start + 32 * 60 / (from + 20)", () => {
+    const ctx = { currentTime: 3 };
+    const timeline = new Timeline({ audioContext: ctx, bpm: 100 });
+    timeline._start(0);
+    const start = ctx.currentTime;
+    const from = timeline.bpm.valueAtTime(start);
+    timeline.bpm.cancelAndHoldAtTime(start);
+    const endTime = start + (32 * 60) / (from + 20);
+    timeline.bpm.linearRampToValueAtTime(from + 40, endTime);
+    expect(timeline.beatToTime(timeline.timeToBeat(start) + 32)).toBeCloseTo(endTime, 9);
+  });
+});

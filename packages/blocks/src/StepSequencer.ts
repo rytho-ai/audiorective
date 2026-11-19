@@ -120,7 +120,8 @@ export function stepSwing(): StepTransform {
 /**
  * Re-queue the transport's look-ahead once per committed change of `sequencer.pattern` or `sequencer.transforms`.
  * Does not run on attach, and never subscribes a calling effect. Returns a disposer; call it before the transport goes away.
- * `transport` is structural: a Clock, a Workspace clock or anything with `refresh()`.
+ * `transport` is structural: a Clock, a Workspace clock or anything with `refresh()`. A Clock refills in a microtask shared by
+ * every `refresh()` of the same task, so several edits do not re-queue several times.
  */
 export function refreshOnEdit(sequencer: Pick<StepSequencer, "pattern" | "transforms">, transport: { refresh(): void }): () => void {
   let armed = false;
