@@ -13,6 +13,16 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ## [Unreleased]
 
+### Added
+
+- **core:** `ScheduledEvent` (`{ when }`), `TimedEvent` (adds `duration`, `velocity`), `EventTransform<E>`, `EventTransformContext` and `applyEventTransforms`, the shared contract and enforcement for scheduler transform sockets. See Core "Shared contracts".
+- **blocks:** `StepSequencer` option `transforms` (default `defaultStepTransforms`), the read-only `transforms` cell and `setTransforms(list)`; exported `stepSwing()` and `defaultStepTransforms` from `@audiorective/blocks/sequencer`. Violations throw `Event transform "<id>" …`.
+- **blocks:** `StepSequencer` option `params` (`StepParamSpec[]`) declares custom per-step numbers, exposed as `sequencer.params`; cells carry `custom`, and `setCell(lane, step, { custom })` merges partially and validates. New errors start `Step Sequencer params need`, `Step Sequencer custom values need` and `Step Sequencer transforms need`.
+
+### Changed
+
+- **blocks:** `StepHit` extends `TimedEvent` and gains `count`, `beat`, `rateBeats`, `swing`, `custom` and `loop`; `StepCell` gains `custom` (`{}` without `params`). Lane `swing` is applied by the `stepSwing` transform, so a custom `transforms` list without it makes `swing` inert; compose `[...defaultStepTransforms, mine]` to keep it.
+
 ### Changed (breaking)
 
 - **effects:** `signalsmith-stretch` moves from a dependency to an optional peer dependency of `@audiorective/effects`, loaded lazily when `PitchShift` creates the `"stretch"` engine. Migration: install `signalsmith-stretch` when you use the stretch pitch engine; without it `ready` rejects with `PitchShift stretch engine needs the optional peer dependency "signalsmith-stretch"…`. Filter, Delay and the granular engine are unaffected.

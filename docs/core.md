@@ -1151,20 +1151,34 @@ engine.core.context; // AudioContext
 
 ## Shared contracts
 
-Two structural types let capability modules cooperate without importing each other. A module that needs one declares it as a parameter type; any object with the same members satisfies it.
+Structural types let capability modules cooperate without importing each other. A module that needs one declares it as a parameter type; any object with the same members satisfies it.
 
 ```typescript
-import type { BeatTiming, CancellableEvent } from "@audiorective/core";
+import type { BeatTiming, CancellableEvent, ScheduledEvent, TimedEvent, EventTransform, EventTransformContext } from "@audiorective/core";
+import { applyEventTransforms } from "@audiorective/core";
 
 interface CancellableEvent {
   cancel(): void;
   onEnded(listener: () => void): void;
 }
 type BeatTiming = Readonly<{ beatToTime(beat: number): number; timeToBeat(time: number): number }>;
+
+type ScheduledEvent = Readonly<{ when: number }>; // base of every scheduler's outgoing event
+type TimedEvent = ScheduledEvent & Readonly<{ duration: number; velocity: number }>;
+type EventTransformContext = Readonly<{ now: number; timing: BeatTiming; random: () => number }>;
+type EventTransform<E extends ScheduledEvent = ScheduledEvent> = Readonly<{
+  id: string;
+  params?: Readonly<Record<string, unknown>>; // serialisable settings
+  apply(events: readonly E[], context: EventTransformContext): readonly E[];
+}>;
+applyEventTransforms<E extends ScheduledEvent>(events: readonly E[], transforms: readonly EventTransform<E>[], context: EventTransformContext): E[];
 ```
 
 - `CancellableEvent` is a consumer-owned audio event that a scheduler may revoke after a transport or edit change. `Clock`'s `window.own(event, when)` accepts one (`@audiorective/clock` re-exports the type), and `PadHit` extends it.
 - `BeatTiming` converts between beats and absolute audio-context time. `Timeline` satisfies it, and `StepSequencer.schedule(window, timing)` and `ClipLauncher`'s transport take it.
+- `ScheduledEvent` is the minimum a scheduler's event needs: `when`, absolute audio-context seconds. `TimedEvent` adds `duration` (seconds) and `velocity` (0..1) for note-like events such as `StepHit`. A scheduler whose events have no duration or velocity (a clip launch) uses `ScheduledEvent` and the same transform contract.
+- `EventTransform<E>` is a pluggable step a scheduler runs between computing its events and triggering them. It is data-shaped (`id`, serialisable `params`, a pure `apply`) so it can be saved later. `context.now` is the earliest time an event may sound, `context.timing` maps beats to seconds, and `context.random` is the scheduler's injectable random source and the only randomness a transform may use. A transform keeps no state across windows and never triggers or cancels audio.
+- `applyEventTransforms` is the enforcement every scheduler shares: it runs the transforms in array order, throws `Event transform "<id>" ...` naming the transform for an output with a non-finite `when`, a `duration` that is not a finite number above 0, or a `velocity` outside 0..1 (`duration` and `velocity` are checked only on events that have them), drops events with `velocity` 0, and moves events earlier than `context.now` to `now`. The scheduler then triggers and owns every returned event. `StepSequencer` uses it ([Blocks](./blocks.md#transform-sockets)).
 
 ## registerWorklet
 
@@ -1187,7 +1201,7 @@ signals/src/
 ├── Spatial.ts           # AudioProcessor wrapping a PannerNode
 ├── Analyser.ts          # AudioProcessor wrapping an AnalyserNode (spectrum/waveform tap)
 ├── peaks.ts             # pure PCM summaries and frame/time bin ranges
-├── contracts.ts         # CancellableEvent and BeatTiming structural contracts
+├── contracts.ts         # CancellableEvent, BeatTiming and EventTransform contracts + applyEventTransforms
 ├── types.ts             # SignalAccessor, ComputedAccessor, Readable, ParamBind, etc.
 └── index.ts             # public exports
 ```

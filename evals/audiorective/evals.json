@@ -879,6 +879,17 @@
         "Uses @audiorective/widgets mountStepGrid for the grid or names it as an option; a hand-written grid is acceptable when it calls the sequencer's setCell or toggle",
         "Cleans up by destroying the clock and PadBank and leaving the caller's AudioContext open"
       ]
+    },
+    {
+      "id": 66,
+      "prompt": "my audiorective StepSequencer needs a humanize effect that nudges each hit's timing by a few milliseconds, and the lane swing must keep working. don't fork the block and don't run anything.",
+      "expected_output": "A page-local EventTransform plugged into the sequencer's transforms socket, composed with the default transforms.",
+      "files": [],
+      "expectations": [
+        "Writes an EventTransform<StepHit> object with an id and a pure apply that returns adjusted hits, imported types from @audiorective/core and @audiorective/blocks/sequencer",
+        "Plugs it in with sequencer.setTransforms([...defaultStepTransforms, humanize]) (or the transforms option) so stepSwing keeps lane swing working",
+        "Takes randomness from the transform context's random, and does not trigger or cancel audio or keep state across windows inside the transform"
+      ]
     }
   ]
 }
