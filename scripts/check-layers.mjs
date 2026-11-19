@@ -36,6 +36,7 @@ const DAW_RUNTIME = [
   "clip-scheduler.ts",
   "mixer.ts",
   "audition.ts",
+  "clip-stretch.ts",
   "project-lookup.ts",
 ];
 const DAW_ROOT = ["index.ts", "compose.ts"];

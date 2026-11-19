@@ -9,16 +9,15 @@ import type { WaveStretchAnchor, WaveStretchProcessor } from "@audiorective/bloc
 import { EffectRack, retainRackMacroTargets, type RackEffect } from "@audiorective/effects/rack";
 import { AudioTrackSession } from "./audio-track-session";
 import { Audition, type RangeAuditionState } from "./audition";
+import { ClipStretch, type PreparedClipStretch } from "./clip-stretch";
 import { ClipScheduler } from "./clip-scheduler";
-import { findAudioClip } from "./project-lookup";
 import { Mixer, type MixerStrip } from "./mixer";
-import { MidiClip, Project, audioFrameCount } from "./model";
-import { normalizeClipAnchors } from "./clip-time-map";
+import { MidiClip, Project } from "./model";
 import type { TempoMap } from "./tempo-map";
-import type { AudioClip, AudioClipGainAutomation, PcmAudioClip, ProjectTrack, TrackRouting, WebClapDevice } from "./model";
+import type { AudioClipGainAutomation, PcmAudioClip, ProjectTrack, TrackRouting, WebClapDevice } from "./model";
 
 export { scheduleClipEnvelope } from "./schedule-clip-envelope";
-export type PreparedClipStretch = Readonly<{ apply(): AudioClip }>;
+export type { PreparedClipStretch } from "./clip-stretch";
 
 export type { RangeAuditionState } from "./audition";
 import type { TrackRuntime } from "./track-runtime";
@@ -98,7 +97,7 @@ export class Workspace {
     auditioningClip: ReadonlyCell<string | null>;
     auditioningRange: ReadonlyCell<RangeAuditionState | null>;
   }>;
-  private readonly clipStretchJobs = new Map<string, AbortController>();
+  private readonly stretch: ClipStretch;
   private readonly launcher: ClipLauncher;
 
   private readonly projectSource: Cell<Project>;
@@ -132,6 +131,10 @@ export class Workspace {
     this.scheduler = new ClipScheduler(context, (message) => this.warn(message));
     this.output = context.createGain();
     this.mixer = new Mixer(context, this.output, this.tracks, () => this.project);
+    this.stretch = new ClipStretch(
+      () => this.project,
+      () => this.destroyed,
+    );
     this.audition = new Audition(
       context,
       this.output,
@@ -870,63 +873,13 @@ export class Workspace {
   }
 
   /** Render a clip from its retained source and defer the project mutation to the caller's undo transaction. */
-  async prepareAudioClipStretch(
+  prepareAudioClipStretch(
     clipId: string,
     ratio: number,
     processor?: WaveStretchProcessor,
     options: { signal?: AbortSignal; anchors?: readonly WaveStretchAnchor[] } = {},
   ): Promise<PreparedClipStretch> {
-    if (this.destroyed) throw new Error("Workspace is destroyed.");
-    options.signal?.throwIfAborted();
-    const clip = findAudioClip(this.project, clipId);
-    if (!clip) throw new Error("Workspace clip stretch needs an audio clip.");
-    const source = clip.stretch?.source ?? clip;
-    const frames = audioFrameCount(source);
-    const outputFrames = Math.round(frames * ratio);
-    if (!Number.isFinite(ratio) || ratio <= 0 || outputFrames < 1 || !Number.isSafeInteger(outputFrames))
-      throw new RangeError("Workspace clip stretch ratio must produce at least one sample.");
-    const anchors = normalizeClipAnchors(options.anchors ?? [], frames, outputFrames);
-    const usesRender = ratio !== 1 || anchors.length > 0;
-    if (usesRender && !processor) throw new Error("Workspace clip stretch needs a processor.");
-
-    this.clipStretchJobs.get(clipId)?.abort();
-    const job = new AbortController();
-    const signal = options.signal ? AbortSignal.any([options.signal, job.signal]) : job.signal;
-    this.clipStretchJobs.set(clipId, job);
-    const release = () => {
-      signal.removeEventListener("abort", release);
-      if (this.clipStretchJobs.get(clipId) === job) this.clipStretchJobs.delete(clipId);
-    };
-    const check = () => {
-      signal.throwIfAborted();
-      if (this.clipStretchJobs.get(clipId) !== job || this.destroyed) throw new DOMException("Audio clip stretch was cancelled.", "AbortError");
-    };
-    signal.addEventListener("abort", release, { once: true });
-    try {
-      check();
-      let rendered: Awaited<ReturnType<WaveStretchProcessor["process"]>> | undefined;
-      if (usesRender) {
-        const channels = source.media
-          ? await source.media.readFrames(source.startFrame, source.frameCount)
-          : source.channels.map((channel) => channel.slice());
-        check();
-        rendered = await processor!.process({ sampleRate: source.sampleRate, channels }, { ratio, signal, ...(anchors.length ? { anchors } : {}) });
-        check();
-      }
-      return Object.freeze({
-        apply: () => {
-          try {
-            check();
-            return this.project.applyAudioClipStretch(clip, ratio, rendered, anchors);
-          } finally {
-            release();
-          }
-        },
-      });
-    } catch (error) {
-      release();
-      throw error;
-    }
+    return this.stretch.prepare(clipId, ratio, processor, options);
   }
 
   /**
@@ -1000,7 +953,7 @@ export class Workspace {
     this.stop();
     this.destroyed = true;
     this.audition.stop();
-    for (const job of this.clipStretchJobs.values()) job.abort();
+    this.stretch.abortAll();
     this.clock.destroy();
     for (const detach of [...this.stepSequencers.values()]) detach();
     this.disposeTracks();
