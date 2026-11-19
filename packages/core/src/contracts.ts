@@ -48,8 +48,28 @@ export type ScheduledEvent = Readonly<{ when: number }>;
 /** A scheduled event that also has a length and a level, such as a note or a hit. */
 export type TimedEvent = ScheduledEvent & Readonly<{ duration: number; velocity: number }>;
 
+/** The one field every event has inside a transform pipeline: the beat it sounds at, before it is mapped to audio time. */
+export type BeatEvent = Readonly<{ beat: number }>;
+
+/** A beat event that also has a length in beats and a level. Its seconds form is a `TimedEvent`. */
+export type TimedBeatEvent = BeatEvent & Readonly<{ durationBeats: number; velocity: number }>;
+
+/**
+ * The seconds form of a beat event, which is what a scheduler triggers and what a `unit: "second"` transform sees:
+ * `beat` becomes `when` and `durationBeats`, when present, becomes `duration`. Every other field is unchanged.
+ */
+export type SecondsOf<E extends BeatEvent> = Readonly<
+  Omit<E, "beat" | "durationBeats"> & ScheduledEvent & (E extends { durationBeats: number } ? { duration: number } : unknown)
+>;
+
+/** The unit of the events a transform reads and returns: `"beat"` (the default) or `"second"`. */
+export type EventTransformUnit = "beat" | "second";
+
 export type EventTransformContext = Readonly<{
-  /** Earliest audio time an event may sound (the window's current time). */
+  /**
+   * Earliest position an event may sound, in the transform's own unit: beats for a beat transform,
+   * audio-context seconds for a seconds transform. `applyEventTransforms` takes it in seconds.
+   */
   now: number;
   /** Beat to seconds mapping for the scheduler's transport. */
   timing: BeatTiming;
@@ -59,40 +79,77 @@ export type EventTransformContext = Readonly<{
 
 /**
  * A pluggable, data-shaped step between a scheduler's computed events and the audio it triggers.
+ * By default (`unit` absent or `"beat"`) it reads and returns beat events, so moves such as swing are tempo-independent
+ * beat arithmetic. With `unit: "second"` it reads and returns the same events in seconds (`when`, `duration`), for
+ * adjustments that are really about time, such as millisecond jitter; the result is mapped back to beats for the next transform.
  * `apply` is pure: it keeps no state across windows and never triggers or cancels audio.
  */
-export type EventTransform<E extends ScheduledEvent = ScheduledEvent> = Readonly<{
-  id: string;
-  params?: Readonly<Record<string, unknown>>;
-  apply(events: readonly E[], context: EventTransformContext): readonly E[];
-}>;
+export type EventTransform<E extends BeatEvent = BeatEvent> = Readonly<{ id: string; params?: Readonly<Record<string, unknown>> }> &
+  (
+    | Readonly<{ unit?: "beat"; apply(events: readonly E[], context: EventTransformContext): readonly E[] }>
+    | Readonly<{ unit: "second"; apply(events: readonly SecondsOf<E>[], context: EventTransformContext): readonly SecondsOf<E>[] }>
+  );
 
-function checkEvent(id: string, event: unknown): void {
+type AnyEvent = Record<string, unknown>;
+
+function checkEvent(id: string, event: unknown, unit: EventTransformUnit): void {
   const e = event as Record<string, unknown> | null;
-  if (typeof e !== "object" || e === null || typeof e.when !== "number" || !Number.isFinite(e.when))
-    throw new Error(`Event transform "${id}" returned an event without a finite "when".`);
-  if ("duration" in e && !(typeof e.duration === "number" && Number.isFinite(e.duration) && e.duration > 0))
-    throw new Error(`Event transform "${id}" returned an event whose "duration" is not a finite number above 0.`);
-  if ("velocity" in e && !(typeof e.velocity === "number" && Number.isFinite(e.velocity) && e.velocity >= 0 && e.velocity <= 1))
+  const finite = (v: unknown) => typeof v === "number" && Number.isFinite(v);
+  if (unit === "beat") {
+    if (typeof e !== "object" || e === null || !finite(e.beat)) throw new Error(`Event transform "${id}" returned an event without a finite "beat".`);
+    if ("durationBeats" in e && !(finite(e.durationBeats) && (e.durationBeats as number) > 0))
+      throw new Error(`Event transform "${id}" returned an event whose "durationBeats" is not a finite number above 0.`);
+  } else {
+    if (typeof e !== "object" || e === null || !finite(e.when)) throw new Error(`Event transform "${id}" returned an event without a finite "when".`);
+    if ("duration" in e && !(finite(e.duration) && (e.duration as number) > 0))
+      throw new Error(`Event transform "${id}" returned an event whose "duration" is not a finite number above 0.`);
+  }
+  if ("velocity" in e && !(finite(e.velocity) && (e.velocity as number) >= 0 && (e.velocity as number) <= 1))
     throw new Error(`Event transform "${id}" returned an event whose "velocity" is not a finite number from 0 to 1.`);
 }
 
+function beatToSeconds(event: AnyEvent, timing: BeatTiming): AnyEvent {
+  const { beat, durationBeats, ...rest } = event as AnyEvent & { beat: number; durationBeats?: number };
+  const when = timing.beatToTime(beat);
+  return "durationBeats" in event ? { ...rest, when, duration: timing.beatToTime(beat + (durationBeats as number)) - when } : { ...rest, when };
+}
+
+function secondsToBeats(event: AnyEvent, timing: BeatTiming): AnyEvent {
+  const { when, duration, ...rest } = event as AnyEvent & { when: number; duration?: number };
+  const beat = timing.timeToBeat(when);
+  return "duration" in event ? { ...rest, beat, durationBeats: timing.timeToBeat(when + (duration as number)) - beat } : { ...rest, beat };
+}
+
 /**
- * Run `transforms` in order over `events` and enforce the socket rules: each output is validated and
- * attributed to its transform `id`, events with `velocity` 0 are dropped, and an event earlier than
- * `context.now` is moved to `now`. `duration` and `velocity` are checked only on events that have them.
+ * Run `transforms` in order over beat `events` and enforce the socket rules, returning seconds events.
+ * Each transform reads events in its `unit` (beats by default); events are converted through `context.timing` only where
+ * the unit changes. Each output is validated and attributed to its transform `id`, and events with `velocity` 0 are dropped.
+ * After the last transform the events are converted to seconds and one earlier than `context.now` (seconds) is moved to `now`.
+ * `durationBeats`/`duration` and `velocity` are checked only on events that have them.
  */
-export function applyEventTransforms<E extends ScheduledEvent>(
+export function applyEventTransforms<E extends BeatEvent>(
   events: readonly E[],
   transforms: readonly EventTransform<E>[],
   context: EventTransformContext,
-): E[] {
-  let current: readonly E[] = events;
+): SecondsOf<E>[] {
+  const { timing } = context;
+  let unit: EventTransformUnit = "beat";
+  let current: readonly AnyEvent[] = events as readonly unknown[] as readonly AnyEvent[];
   for (const transform of transforms) {
-    const output = transform.apply(current, context);
+    const wanted: unknown = transform.unit ?? "beat";
+    if (wanted !== "beat" && wanted !== "second") throw new Error(`Event transform "${transform.id}" has a unit other than "beat" or "second".`);
+    if (wanted !== unit) {
+      current = current.map((event) => (wanted === "second" ? beatToSeconds(event, timing) : secondsToBeats(event, timing)));
+      unit = wanted;
+    }
+    const output = (transform.apply as (events: readonly AnyEvent[], context: EventTransformContext) => readonly AnyEvent[])(current, {
+      ...context,
+      now: unit === "beat" ? timing.timeToBeat(context.now) : context.now,
+    });
     if (!Array.isArray(output)) throw new Error(`Event transform "${transform.id}" must return an array of events.`);
-    for (const event of output) checkEvent(transform.id, event);
+    for (const event of output) checkEvent(transform.id, event, unit);
     current = output.filter((event) => !("velocity" in event) || (event as unknown as TimedEvent).velocity > 0);
   }
-  return current.map((event) => (event.when < context.now ? { ...event, when: context.now } : event));
+  const seconds = unit === "beat" ? current.map((event) => beatToSeconds(event, timing)) : current;
+  return seconds.map((event) => ((event.when as number) < context.now ? { ...event, when: context.now } : event)) as unknown as SecondsOf<E>[];
 }
