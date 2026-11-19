@@ -61,7 +61,7 @@ clock.seek(64); // jumps to beat 64
 
 `pause()` only pauses a playing clock and `resume()` only resumes a paused one; each is otherwise a no-op, so `start()` is the sole entry into playback.
 
-`clock.state` is a reactive `Param<"stopped" | "playing" | "paused">`.
+`clock.state` is a `ReadonlyCell<"stopped" | "playing" | "paused">` — the same store as `timeline.state`. Read it with `.value` (tracked) or `$()`; only `start`, `pause`, `resume` and `stop` change it, so it cannot be written from outside.
 
 Every jump (`seek`, `start({ atBeat })`, stop→start) bumps `window.generation` and begins a new continuity segment — windows are non-overlapping only _within_ a segment, so beats may legitimately reappear across a backward seek. Consumers holding derived state (step counters, generator positions) should reset when `generation` changes.
 

@@ -98,3 +98,31 @@ describe("TempoParam — _refresh (internal, Clock-driven)", () => {
     stop();
   });
 });
+
+describe("TempoParam — raw signal writes", () => {
+  test("$(x) is a step at now() on the curve, like .value = x", () => {
+    const clock = makeClock(10);
+    const param = new TempoParam({ default: 120, now: clock.now });
+    param.setValueAtTime(180, 20);
+    param.$(90);
+    expect(param.value).toBe(90);
+    expect(param.valueAtTime(15)).toBe(90);
+    expect(param.valueAtTime(25)).toBe(180);
+    param._refresh(15);
+    expect(param.$()).toBe(90); // survives the next refresh
+  });
+
+  test("_refresh does not add steps to the curve", () => {
+    const param = new TempoParam({ default: 120, now: () => 0 });
+    param.setValueAtTime(150, 5);
+    param._refresh(6);
+    expect(param.value).toBe(150);
+    expect(param.valueAtTime(0)).toBe(120);
+  });
+
+  test("ramps throw", () => {
+    const param = new TempoParam({ default: 120, now: () => 0 });
+    expect(() => param.linearRampToValueAtTime(140, 1)).toThrow(/V2/);
+    expect(() => param.exponentialRampToValueAtTime(140, 1)).toThrow(/V2/);
+  });
+});

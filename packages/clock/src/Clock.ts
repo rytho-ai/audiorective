@@ -1,4 +1,4 @@
-import { Param, type CancellableEvent } from "@audiorective/core";
+import { batch, type CancellableEvent, type ReadonlyCell } from "@audiorective/core";
 import type { Timeline } from "./Timeline";
 import type { Ruler } from "./rulers/Ruler";
 import { WorkerTickSource } from "./TickSource";
@@ -35,7 +35,8 @@ export interface ClockOptions<TRulers extends Record<string, Ruler<unknown, unkn
  * while playing.
  */
 export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Record<never, never>> {
-  readonly state: Param<TransportState>;
+  /** Transport state. Read-only: only `start/pause/resume/stop` change it. Shared with `timeline.state`. */
+  readonly state: ReadonlyCell<TransportState>;
 
   private readonly _timeline: Timeline<TRulers>;
   private readonly _lookAhead: number;
@@ -64,7 +65,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     this._onTick = options.onTick;
     this._onMiss = options.onMiss;
     this._tickSource = options.tickSource ?? new WorkerTickSource((options.tickInterval ?? 0.025) * 1000);
-    this.state = new Param<TransportState>({ default: "stopped" });
+    this.state = options.timeline.state;
     this._tickSource.start(() => this._tick());
   }
 
@@ -76,14 +77,14 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
   start(options?: { atBeat?: number }): void {
     this._cancelOwned();
     const atBeat = options?.atBeat ?? 0;
-    this._timeline._start(atBeat);
+    // one change: effects watching `state` never see the new state with stale bookkeeping
+    batch(() => this._timeline._start(atBeat));
     this._previousWindowEndBeat = atBeat;
     // deliberately NOT updating _previousWindowEndGeneration here: it must
     // stay stale (mismatching the just-bumped generation) so the first tick
     // recognizes this as a fresh segment and skips the miss check; _tick()
     // catches it up to the current generation once that tick has run.
     this._startedAt = this._timeline.now;
-    this.state.value = "playing";
   }
 
   /**
@@ -98,10 +99,9 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
    * skips past beat 0 — dropping the events there.
    */
   pause(): void {
-    if (this.state.value !== "playing") return;
+    if (this._timeline._transportState !== "playing") return;
     this._cancelOwned();
     this._timeline._pause();
-    this.state.value = "paused";
   }
 
   /**
@@ -110,9 +110,8 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
    * rewind a running clock or start a stopped one (see `Timeline._resume`).
    */
   resume(): void {
-    if (this.state.value !== "paused") return;
+    if (this._timeline._transportState !== "paused") return;
     this._timeline._resume();
-    this.state.value = "playing";
   }
 
   /** Stops and resets position to beat 0. */
@@ -120,7 +119,6 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     this._cancelOwned();
     this._timeline._stop();
     this._previousWindowEndBeat = 0;
-    this.state.value = "stopped";
   }
 
   /** Jumps to `beat`. Bumps `generation`; the next window starts exactly at `beat` (beats may re-appear). */
@@ -133,7 +131,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
 
   /** Revoke owned events starting at or after now, then refill from that same audio-clock boundary. */
   refresh(): void {
-    if (this._destroyed || this.state.value !== "playing") return;
+    if (this._destroyed || this._timeline._transportState !== "playing") return;
     const now = this._timeline.now;
     this._cancelOwned(true, now);
     this._previousWindowEndBeat = this._timeline._invalidate(now);
@@ -171,7 +169,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
       event.cancel();
       throw new RangeError("Clock owned event time must be finite, non-negative seconds.");
     }
-    if (this._destroyed || this._cancelling || this.state.value !== "playing" || this._timeline.generation !== generation) {
+    if (this._destroyed || this._cancelling || this._timeline._transportState !== "playing" || this._timeline.generation !== generation) {
       event.cancel();
       return;
     }
@@ -198,7 +196,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
       this._timeline.bpm._refresh(now);
       this._timeline._refreshRulerCurrents(now);
 
-      if (this.state.value !== "playing") return;
+      if (this._timeline._transportState !== "playing") return;
 
       const generation = this._timeline.generation;
       const freshSegment = generation !== this._previousWindowEndGeneration;
@@ -221,7 +219,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
           time: { started: this._startedAt, current: now, lookAheadEnd: now + this._lookAhead },
           beat: { start: startBeat, end: endBeat },
           generation,
-          transport: { state: this.state.value, position: this._timeline.position },
+          transport: { state: this._timeline._transportState, position: this._timeline.position },
         };
         this._onTick({
           ...coreWindow,

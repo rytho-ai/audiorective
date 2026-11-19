@@ -1,15 +1,15 @@
-import { Param } from "@audiorective/core";
+import { Cell, ReadonlyCell, readonlyCell, untracked } from "@audiorective/core";
 import { TempoParam } from "./TempoParam";
 import type { Ruler } from "./rulers/Ruler";
 import type { CoreTickWindow, TimeSource, TransportState } from "./types";
 
 interface RulerSlot<TPoint> {
-  readonly current: Param<TPoint>;
+  readonly current: ReadonlyCell<TPoint>;
 }
 
 interface RulerEntry {
   ruler: Ruler<unknown, unknown>;
-  current: Param<unknown>;
+  store: Cell<unknown>;
 }
 
 /**
@@ -20,6 +20,8 @@ interface RulerEntry {
  */
 export class Timeline<TRulers extends Record<string, Ruler<unknown, unknown>> = Record<never, never>> {
   readonly bpm: TempoParam;
+  /** Transport state: the single store for the transport. Written only by the Clock via the `_start/_pause/_resume/_stop` anchor writes. */
+  readonly state: ReadonlyCell<TransportState>;
 
   private readonly _audioContext: TimeSource;
   private readonly _rulers = new Map<string, RulerEntry>();
@@ -28,12 +30,13 @@ export class Timeline<TRulers extends Record<string, Ruler<unknown, unknown>> = 
   private _beatAtAnchor = 0;
   private _timeAtAnchor: number;
   private _positionAtAnchor = 0;
-  private _state: TransportState = "stopped";
+  private readonly _stateCell = new Cell<TransportState>("stopped");
   private _generation = 0;
 
   constructor(options: { audioContext: TimeSource; bpm?: number }) {
     this._audioContext = options.audioContext;
     this._timeAtAnchor = this._audioContext.currentTime;
+    this.state = readonlyCell(this._stateCell);
     this.bpm = new TempoParam({ default: options.bpm ?? 120, now: () => this._audioContext.currentTime });
   }
 
@@ -46,8 +49,14 @@ export class Timeline<TRulers extends Record<string, Ruler<unknown, unknown>> = 
     return this._now();
   }
 
-  get state(): TransportState {
-    return this._state;
+  /** Untracked read of the transport state for internal derivations (position, beat/time conversion). */
+  private get _transport(): TransportState {
+    return untracked(() => this._stateCell.value);
+  }
+
+  /** @internal Untracked transport read for the Clock tick loop and scheduling guards. */
+  get _transportState(): TransportState {
+    return this._transport;
   }
 
   get generation(): number {
@@ -56,7 +65,7 @@ export class Timeline<TRulers extends Record<string, Ruler<unknown, unknown>> = 
 
   /** Pause-aware played seconds — a stopwatch, not tempo-scaled. */
   get position(): number {
-    return this._state === "playing" ? this._positionAtAnchor + (this._now() - this._timeAtAnchor) : this._positionAtAnchor;
+    return this._transport === "playing" ? this._positionAtAnchor + (this._now() - this._timeAtAnchor) : this._positionAtAnchor;
   }
 
   /**
@@ -65,7 +74,7 @@ export class Timeline<TRulers extends Record<string, Ruler<unknown, unknown>> = 
    * `now` for `timeAtAnchor`.
    */
   beatToTime(beat: number): number {
-    const origin = this._state === "playing" ? this._timeAtAnchor : this._now();
+    const origin = this._transport === "playing" ? this._timeAtAnchor : this._now();
     return origin + this.bpm._curveForTimeline.timeToAdvance(origin, beat - this._beatAtAnchor);
   }
 
@@ -74,7 +83,7 @@ export class Timeline<TRulers extends Record<string, Ruler<unknown, unknown>> = 
    * position is frozen — returns the anchored beat regardless of `time`.
    */
   timeToBeat(time: number): number {
-    if (this._state !== "playing") return this._beatAtAnchor;
+    if (this._transport !== "playing") return this._beatAtAnchor;
     return this._beatAtAnchor + this.bpm._curveForTimeline.beatsBetween(this._timeAtAnchor, time);
   }
 
@@ -85,10 +94,10 @@ export class Timeline<TRulers extends Record<string, Ruler<unknown, unknown>> = 
   // readings to `unknown`. Distinct names keep the emitted types correct.
   addRuler<TKey extends string, TWindow, TPoint>(key: TKey, ruler: Ruler<TWindow, TPoint>): Timeline<TRulers & Record<TKey, Ruler<TWindow, TPoint>>> {
     const now = this._now();
-    const current = new Param<TPoint>({ default: ruler.at(this.timeToBeat(now), this) });
-    this._rulers.set(key, { ruler: ruler as Ruler<unknown, unknown>, current: current as Param<unknown> });
-    // the slot wraps the Param -- consumers read `rulers.<key>.current`
-    this._rulersView[key] = { current: current as Param<unknown> };
+    const store = new Cell<TPoint>(ruler.at(this.timeToBeat(now), this));
+    this._rulers.set(key, { ruler: ruler as Ruler<unknown, unknown>, store: store as Cell<unknown> });
+    // the slot exposes a read-only view -- consumers read `rulers.<key>.current`
+    this._rulersView[key] = { current: readonlyCell(store) as ReadonlyCell<unknown> };
     return this as unknown as Timeline<TRulers & Record<TKey, Ruler<TWindow, TPoint>>>;
   }
 
@@ -99,8 +108,8 @@ export class Timeline<TRulers extends Record<string, Ruler<unknown, unknown>> = 
   /** @internal Called by the Clock tick to refresh every ruler's `current` reading. */
   _refreshRulerCurrents(now: number): void {
     const beat = this.timeToBeat(now);
-    for (const { ruler, current } of this._rulers.values()) {
-      current.value = ruler.at(beat, this);
+    for (const { ruler, store } of this._rulers.values()) {
+      store.value = ruler.at(beat, this);
     }
   }
 
@@ -119,7 +128,7 @@ export class Timeline<TRulers extends Record<string, Ruler<unknown, unknown>> = 
     this._beatAtAnchor = atBeat;
     this._timeAtAnchor = now;
     this._positionAtAnchor = (atBeat * 60) / this.bpm.valueAtTime(now);
-    this._state = "playing";
+    this._stateCell.value = "playing";
     this._generation++;
   }
 
@@ -132,12 +141,12 @@ export class Timeline<TRulers extends Record<string, Ruler<unknown, unknown>> = 
    * `_start()` having anchored it or bumped the generation.
    */
   _pause(): void {
-    if (this._state !== "playing") return;
+    if (this._transport !== "playing") return;
     const now = this._now();
     this._beatAtAnchor = this.timeToBeat(now);
     this._positionAtAnchor += now - this._timeAtAnchor;
     this._timeAtAnchor = now;
-    this._state = "paused";
+    this._stateCell.value = "paused";
   }
 
   /**
@@ -152,9 +161,9 @@ export class Timeline<TRulers extends Record<string, Ruler<unknown, unknown>> = 
    * and bumps the generation.
    */
   _resume(): void {
-    if (this._state !== "paused") return;
+    if (this._transport !== "paused") return;
     this._timeAtAnchor = this._now();
-    this._state = "playing";
+    this._stateCell.value = "playing";
   }
 
   /** @internal Anchor write for Clock.stop(). Resets position. */
@@ -162,7 +171,7 @@ export class Timeline<TRulers extends Record<string, Ruler<unknown, unknown>> = 
     this._beatAtAnchor = 0;
     this._timeAtAnchor = this._now();
     this._positionAtAnchor = 0;
-    this._state = "stopped";
+    this._stateCell.value = "stopped";
   }
 
   /** @internal Anchor write for Clock.seek(beat). Always a jump; state unchanged. */
@@ -177,7 +186,7 @@ export class Timeline<TRulers extends Record<string, Ruler<unknown, unknown>> = 
   /** @internal Reissue from Clock's captured audio boundary without moving the heard position. */
   _invalidate(now: number): number {
     const beat = this.timeToBeat(now);
-    const position = this._state === "playing" ? this._positionAtAnchor + (now - this._timeAtAnchor) : this._positionAtAnchor;
+    const position = this._transport === "playing" ? this._positionAtAnchor + (now - this._timeAtAnchor) : this._positionAtAnchor;
     this._beatAtAnchor = beat;
     this._timeAtAnchor = now;
     this._positionAtAnchor = position;

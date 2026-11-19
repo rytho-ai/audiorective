@@ -226,3 +226,43 @@ describe("Clock — destroy", () => {
     expect(stop).toHaveBeenCalledOnce();
   });
 });
+
+describe("Clock — transport state is a single read-only store", () => {
+  test("state has no write path and is the same store as timeline.state", () => {
+    const { clock, timeline } = makeHarness();
+    expect(clock.state).toBe(timeline.state);
+    // a ReadonlyCell has no setter: assigning throws in strict mode (modules are strict)
+    expect(() => {
+      (clock.state as unknown as { value: string }).value = "playing";
+    }).toThrow();
+    expect(clock.state.value).toBe("stopped");
+    expect(typeof Object.getOwnPropertyDescriptor(Object.getPrototypeOf(clock.state), "value")?.set).toBe("undefined");
+  });
+
+  test("an effect tracks start/pause/resume/stop, once per change", async () => {
+    const { effect } = await import("alien-signals");
+    const { clock } = makeHarness();
+    const seen: string[] = [];
+    const stop = effect(() => void seen.push(clock.state.value));
+    clock.start();
+    clock.pause();
+    clock.resume();
+    clock.stop();
+    stop();
+    expect(seen).toEqual(["stopped", "playing", "paused", "playing", "stopped"]);
+  });
+
+  test("calling transport methods inside an effect does not subscribe it", async () => {
+    const { effect } = await import("alien-signals");
+    const { clock } = makeHarness();
+    let runs = 0;
+    const stop = effect(() => {
+      runs++;
+      clock.refresh();
+      clock.pause();
+    });
+    clock.start();
+    stop();
+    expect(runs).toBe(1);
+  });
+});

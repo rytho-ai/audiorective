@@ -83,7 +83,7 @@ describe("Timeline — pause/resume semantics", () => {
     const ctx = makeContext(0);
     const timeline = new Timeline({ audioContext: ctx, bpm: 120 });
     timeline._resume();
-    expect(timeline.state).toBe("stopped");
+    expect(timeline.state.value).toBe("stopped");
   });
 
   test("pause while stopped stays stopped, so it cannot become resumable", () => {
@@ -97,10 +97,10 @@ describe("Timeline — pause/resume semantics", () => {
     timeline._stop();
 
     timeline._pause();
-    expect(timeline.state).toBe("stopped");
+    expect(timeline.state.value).toBe("stopped");
 
     timeline._resume();
-    expect(timeline.state).toBe("stopped");
+    expect(timeline.state.value).toBe("stopped");
   });
 
   test("pause/resume does not bump generation", () => {
@@ -207,5 +207,25 @@ describe("Timeline — registered ruler slots", () => {
     timeline._refreshRulerCurrents(ctx.currentTime);
     expect(timeline.rulers.fourFour.current.value).toMatchObject({ bar: 0, beatInBar: 3 });
     expect(timeline.rulers.threeFour.current.value).toMatchObject({ bar: 1, beatInBar: 0 });
+  });
+});
+
+describe("Timeline — ruler current is read-only and tracked", () => {
+  test("rulers.<key>.current is a ReadonlyCell refreshed per tick", async () => {
+    const { effect } = await import("alien-signals");
+    const ctx = makeContext(0);
+    const timeline = new Timeline({ audioContext: ctx, bpm: 120 }).addRuler("bar", new LinearBarRuler({ numerator: 4, denominator: 4 }));
+    const current = timeline.rulers.bar.current;
+    expect(Object.getOwnPropertyDescriptor(Object.getPrototypeOf(current), "value")?.set).toBeUndefined();
+    let runs = 0;
+    const stop = effect(() => {
+      void current.value;
+      runs++;
+    });
+    timeline._start();
+    ctx.currentTime = 2.5; // beat 5
+    timeline._refreshRulerCurrents(ctx.currentTime);
+    expect(runs).toBe(2);
+    stop();
   });
 });

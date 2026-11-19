@@ -83,7 +83,7 @@ timeline.beatToTime(64); // absolute AudioContext time for beat 64
 timeline.timeToBeat(ctx.currentTime); // current beat position
 ```
 
-`timeline.bpm` is a standalone, event-list-backed tempo curve (`TempoParam`) — not an `AudioParam`. It mirrors the Web Audio scheduling method names (`setValueAtTime`, `cancelScheduledValues`, `cancelAndHoldAtTime`) plus a `valueAtTime(t)` query the AudioParam-backed `SchedulableParam` in `@audiorective/core` can never support (Web Audio gives no way to ask an `AudioParam` "what will your value be at time T?"). V1 supports steps only; ramp methods throw (`linearRampToValueAtTime`/`exponentialRampToValueAtTime` are V2).
+`timeline.bpm` is a standalone, event-list-backed tempo curve (`TempoParam`) — not an `AudioParam`. It mirrors the Web Audio scheduling method names (`setValueAtTime`, `cancelScheduledValues`, `cancelAndHoldAtTime`) plus a `valueAtTime(t)` query the AudioParam-backed `SchedulableParam` in `@audiorective/core` can never support (Web Audio gives no way to ask an `AudioParam` "what will your value be at time T?"). Tempo changes are steps only: `linearRampToValueAtTime` and `exponentialRampToValueAtTime` throw, because the beat integral is defined over a stepwise curve. A direct write — `bpm.value = x` or `bpm.$(x)` — is a step at the current audio time that leaves later scheduled events intact, and the Clock refreshes the displayed value from the curve every tick.
 
 **What "beat" means:** the axis unit is defined by the tempo curve and nothing else — `bpm` is axis-units per minute, so the unit is literally the B in BPM. It carries no time signature, no bars, no downbeat; it's musically meaningless on its own (like MIDI's quarter-note-normalized ppq ticks) until a ruler interprets it. This is Ableton Link's convention: a float beat plus a bpm, "beat = quarter note" by shared convention.
 
@@ -125,7 +125,7 @@ they act on — only a playing clock pauses, only a paused clock resumes. So
 `start()` is the sole entry into playback, and a stray `pause()`/`resume()`
 pair on a stopped clock leaves it stopped rather than starting it mid-segment.
 
-`clock.state` is a reactive `Param<"stopped" | "playing" | "paused">`.
+`clock.state` is a `ReadonlyCell<"stopped" | "playing" | "paused">` — the same store as `timeline.state`. Read it with `.value` (tracked) or `$()`; only `start`, `pause`, `resume` and `stop` change it, so it cannot be written from outside.
 
 Every jump (`seek`, `start({ atBeat })`, stop→start) bumps `window.generation` and begins a new continuity segment — windows are non-overlapping only _within_ a segment, so beats may legitimately reappear across a backward seek. Consumers holding derived state (step counters, generator positions) should reset when `generation` changes.
 
@@ -137,7 +137,7 @@ The clock's only native coordinate is the beat axis — a monotonic float driven
 
 ```typescript
 timeline.addRuler("bar", new LinearBarRuler({ numerator: 4, denominator: 4 }));
-timeline.rulers.bar.current.value; // reactive point reading, refreshed every tick -- for UI/visuals
+timeline.rulers.bar.current.value; // tracked read-only point reading, refreshed every tick -- for UI/visuals
 ```
 
 `current` is the visual-sync surface: a step sequencer lights its current step, a DAW draws its playhead, from the `current` of the ruler that represents the timeline the app is showing.
@@ -296,6 +296,7 @@ Two things to remember when writing assertions:
 | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
 | `Clock owned event time must be finite, non-negative seconds.`                                                                      | `window.own(event, when)` received an invalid audio time; the event is cancelled before the error is thrown. | Pass the same absolute `AudioContext` time used to schedule that event. |
 | `RangeLoop needs increasing finite source seconds and a non-negative audio start.` / `RangeLoop window needs finite audio seconds.` | The time range or window contains an invalid bound.                                                          | Use finite seconds and place the source end after its start.            |
+| `TempoParam.linearRampToValueAtTime is V2 (tempo ramps) …` / `TempoParam.exponentialRampToValueAtTime is V2 (tempo ramps) …`        | A ramp was scheduled on `timeline.bpm`.                                                                      | Tempo supports steps only; use `setValueAtTime` or `bpm.value = x`.     |
 | `RangeLoop period is below audio time precision.`                                                                                   | Consecutive repeat boundaries collapse at the current audio time.                                            | Use a longer source range.                                              |
 
 ## Non-goals
