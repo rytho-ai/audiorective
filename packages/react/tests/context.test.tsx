@@ -8,20 +8,26 @@ class MockGainNode {
   disconnect() {}
 }
 
-class MockAudioContext {
+class MockAudioContext extends EventTarget {
   state = "suspended" as AudioContextState;
   onstatechange: ((this: BaseAudioContext, ev: Event) => any) | null = null;
 
   async resume() {
     this.state = "running";
-    this.onstatechange?.call(this as any, new Event("statechange"));
+    this.emitStateChange();
   }
   async suspend() {
     this.state = "suspended";
-    this.onstatechange?.call(this as any, new Event("statechange"));
+    this.emitStateChange();
   }
-  close() {
+  async close() {
     this.state = "closed" as AudioContextState;
+    this.emitStateChange();
+  }
+  private emitStateChange() {
+    const ev = new Event("statechange");
+    this.onstatechange?.call(this as any, ev);
+    this.dispatchEvent(ev);
   }
   createGain() {
     return new MockGainNode();
