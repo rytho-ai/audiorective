@@ -946,6 +946,17 @@
         "Calls timeline.bpm.cancelAndHoldAtTime(ctx.currentTime) before writing the slider's bpm.value, so the still-queued ramp end does not overwrite the user's tempo",
         "Does not claim tempo ramps are unsupported"
       ]
+    },
+    {
+      "id": 72,
+      "prompt": "In my audiorective drum machine, editing the pattern calls clock.refresh() and I want the queued hits rebuilt. I fill 16 cells in a loop when the user picks a preset, and one of my clip-launch handlers also calls clock.refresh() from inside a method that onTick can call back into. Is that safe, and do I need to batch the edits? don't run anything.",
+      "expected_output": "Explains that Clock.refresh() cancels owned events synchronously but refills in a shared microtask, so it does not re-enter onTick and repeated calls in a task refill once.",
+      "files": [],
+      "expectations": [
+        "States that clock.refresh() cancels owned events immediately but defers the refill to a microtask, so onTick is not called inside refresh() and a re-entrancy guard around it is not needed",
+        "States that several refresh() calls in the same task (or via refreshOnEdit) produce one refill, so batch() is not needed for the re-queue count, only to give observers one coherent pattern change",
+        "Does not tell the user that onTick runs synchronously inside refresh(), and does not wrap refresh() in a setTimeout or manual debounce"
+      ]
     }
   ]
 }
