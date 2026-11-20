@@ -33,8 +33,11 @@ clock.bpm.linearRampToValueAtTime(140, ctx.currentTime + 4); // clock.bpm is clo
 ## Quick start — a metronome
 
 ```typescript
+import { cell } from "@audiorective/core";
 import { Clock, Timeline, LinearBarRuler } from "@audiorective/clock";
 
+// The pattern the UI toggles is a cell, never a loose array: the clock reads it, the UI observes it.
+const pattern = cell<boolean[]>(Array(16).fill(false));
 const timeline = new Timeline({ audioContext: ctx, bpm: 120 }).addRuler("bar", new LinearBarRuler({ numerator: 4, denominator: 4 }));
 
 const clock = new Clock({
@@ -42,12 +45,16 @@ const clock = new Clock({
   onTick(window) {
     for (const { time, index } of window.rulers.bar.grid(16)) {
       // `time` is absolute AudioContext time -- exactly what Sampler's `when` wants
-      if (pattern[index % 16]) sampler.trigger({ when: time });
+      if (pattern.value[index % 16]) sampler.trigger({ when: time });
     }
   },
 });
 
 clock.start();
+
+pattern.update((d) => {
+  d[0] = true; // edit through update; the next tick reads the new value
+});
 ```
 
 ### `ClockOptions`
@@ -244,7 +251,7 @@ const clock = new Clock({
   timeline,
   onTick(window) {
     for (const { time, step } of window.rulers.pattern.grid(16)) {
-      if (!pattern[step]) continue;
+      if (!pattern.value[step]) continue;
       const hit = instruments.trigger("closed-hat", 1, time);
       if (hit) window.own(hit, time); // this sequencer owns this hit and its choke
     }
@@ -252,11 +259,15 @@ const clock = new Clock({
 });
 
 // An edit inside the queued horizon: cancel owned hits at/after now and refill it.
-pattern[3] = false;
+pattern.update((d) => {
+  d[3] = false;
+});
 clock.refresh();
 ```
 
-`pause()`, `stop()`, `seek()`, a fresh `start()`, and `destroy()` cancel all owned events, including those already sounding. `resume()` starts new windows without reviving cancelled events. `refresh()` acts only while playing. It captures one `AudioContext` time, then synchronously cancels owned events whose registered `when` is **at or after** that time, preserves events before it and the transport position, and increments the window generation. The refill happens after the current synchronous work, in one microtask, so `onTick` never runs inside the caller: a launcher method, an effect or an `onTick` itself can call `refresh()` without being re-entered. Calls made before that microtask share the one refill, which starts from the first captured boundary, so any number of edits in one task rebuild the look-ahead once and no beat is skipped; the retraction stays immediate. `pause()`, `stop()`, `seek()`, `start()` and `destroy()` cancel a pending refill (after a `seek` the regular tick starts at the seek target), and a tick that runs first performs it. A hit exactly at `now` belongs to the refill and is emitted once; an already-started hit with `when < now` stays active. It does not touch manual pad hits or other unregistered sound. If an edit must end an earlier hit, its audio owner cancels that handle explicitly. Do not register the same handle with multiple clocks; the caller chooses its owner.
+For a lane/step pattern use `StepSequencer` (its `onHit` does this registration for you); keep this loop for patterns that are not step lanes.
+
+`pause()`, `stop()`, `seek()`, a fresh `start()`, and `destroy()` cancel all owned events, including those already sounding. `resume()` starts new windows without reviving cancelled events. `refresh()` acts only while playing. It captures one `AudioContext` time, then synchronously cancels owned events whose registered `when` is **at or after** that time, preserves events before it and the transport position, and increments the window generation. The refill happens after the current synchronous work, in one microtask, so `onTick` never runs inside the caller: a launcher method, an effect or an `onTick` itself can call `refresh()` without being re-entered. Calls made before that microtask share the one refill, which starts from the first captured boundary, so any number of edits in one task rebuild the look-ahead once and no beat is skipped; the retraction stays immediate. `pause()`, `stop()`, `seek()`, `start()` and `destroy()` cancel a pending refill (after a `seek` the regular tick starts at the seek target), and a tick that runs first performs it. A hit exactly at `now` belongs to the refill and is emitted once; an already-started hit with `when < now` stays active. It does not touch manual pad hits or other unregistered sound. If an edit must end an earlier hit, its audio owner cancels that handle explicitly. Do not register the same handle with multiple clocks; the caller chooses its owner. Because the refill is coalesced, filling 16 cells and calling `refresh()` after each write (or letting an attached `StepSequencer` re-queue after each write) costs one refill, so `batch()` is not needed for the re-queue. Use core's `batch` only when observers (an effect, `useValue`) should see one pattern change instead of sixteen.
 
 `pause()` and `resume()` are each a no-op unless the transport is in the state
 they act on — only a playing clock pauses, only a paused clock resumes. So

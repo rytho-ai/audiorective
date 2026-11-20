@@ -41,7 +41,7 @@
         "Uses Sampler (or another audiorective playback primitive: PadBank, or a StepSequencer lane `sound`) for the one-shot drum hits",
         "Keeps the step pattern in reactive audio-layer state: a Cell (or a plain class holding a Cell), or a StepSequencer's own lane pattern/steps; not a Param<boolean[][]> and not in DOM state",
         "Schedules hits from the clock's tick windows / rulers with audio-time timestamps, either in its own onTick or through a StepSequencer attached with `clock.attach`; not on the main thread at playback time",
-        "Keeps scheduling logic in the audio class (or the attached StepSequencer); DOM handlers only edit the pattern (toggleStep, `lanes.<name>.steps[i]` writes) or call start / stop",
+        "Scheduling runs from the clock (its own `onTick` or an attached StepSequencer), not from DOM event handlers or timers; DOM handlers only toggle steps (a method call or a `lanes.<name>.steps[i]` write) or call start / stop / set bpm",
         "Resumes or starts the AudioContext from a user gesture"
       ]
     },
@@ -868,7 +868,7 @@
     },
     {
       "id": 65,
-      "prompt": "build me a 16-step drum machine in vanilla typescript with audiorective. I already decode my own 4 AudioBuffers (kick, snare, closed hat, open hat). a closed hat has to cut off a ringing open hat, but if I delete a closed-hat step that is already scheduled, the open hat must keep ringing. there is no project file or DAW here, just a grid, a bpm field and play/stop. Keep the dependencies as small as you can. don't run anything.",
+      "prompt": "build me a 16-step drum machine in vanilla typescript with audiorective. I already decode my own 4 AudioBuffers (kick, snare, closed hat, open hat). a closed hat has to cut off a ringing open hat, but if I delete a closed-hat step that is already scheduled, the open hat must keep ringing. there is no project file or DAW here, just a grid, a bpm field and play/stop. Keep the dependencies as small as you can. It must be able to tear down cleanly. don't run anything.",
       "expected_output": "A small drum machine over clock, the blocks sequencer and pads subpaths and an optional step-grid widget, with no daw package and no sample library.",
       "files": [],
       "expectations": [
@@ -877,7 +877,7 @@
         "Does not import @audiorective/daw, @audiorective/host, @audiorective/effects, @audiorective/midi, @audiorective/blocks/samples or @audiorective/blocks/player, and creates no Project or Workspace",
         "Drives the sequencer with `clock.attach(sequencer)`, which re-queues automatically after every pattern edit, instead of a private scheduling loop",
         "Uses @audiorective/widgets mountStepGrid for the grid or names it as an option; a hand-written grid is acceptable when it edits the sequencer through `lanes.<name>.steps[i]` writes",
-        "Cleans up by destroying the clock and PadBank and leaving the caller's AudioContext open"
+        "Provides a teardown that calls `clock.destroy()` and `bank.destroy()` (and `sequencer.dispose()` / `grid.destroy()` if used) and never calls `close()` on the AudioContext the caller supplied"
       ]
     },
     {
@@ -899,7 +899,7 @@
       "expectations": [
         "Declares the cutoff as a lane `params` entry with { min, max, default } and reads it from `hit.values` in `onHit`; mountStepGrid shows it as an extra tab with no widget change",
         "Writes the euclidean button as a plugin object with attach(context) passed to grid.attach, using context.addToolbarItem and writing `context.sequencer.lanes.kick.steps[i].velocity`, not by querying the widget's internal markup",
-        "Registers listeners through context.listen or context.onCleanup so attachment.destroy() or grid.destroy() releases them, and does not import @audiorective/daw"
+        "Registers the button and any other listener through `context.listen` or `context.onCleanup` rather than a bare `addEventListener` the plugin never removes, and does not import @audiorective/daw"
       ]
     },
     {
@@ -915,11 +915,11 @@
     {
       "id": 69,
       "prompt": "In my audiorective StepSequencer I want a transform that pushes every hit on an odd lane step a 32nd note (an eighth of a beat) late, and it has to stay musically the same when I automate the tempo. don't fork the block and don't run anything.",
-      "expected_output": "Lane `swing` or per-step `offset` (beat-based) instead of a seconds `transform`, with the reason.",
+      "expected_output": "A tempo-locked push: a `transform` that moves `hit.beat` by 0.125, or lane `swing` / per-step `offset`, never a fixed seconds shift of `when`.",
       "files": [],
       "expectations": [
-        "Does not write a seconds-domain `transform` that adds a fixed time to `when`, and explains that `transform` runs in seconds and would not follow tempo automation",
-        "Uses a beat-based per-lane or per-step field instead: lane `swing` of 1 (\"100%\") on a 16th-note lane delays odd steps by half a step, one eighth of a beat, or `steps[i].offset = 0.5` on the odd steps; both follow tempo",
+        "Does not write a transform that adds a fixed time to `when` (a seconds shift drifts off the grid under tempo automation)",
+        "Stays tempo-locked in one of these ways: a `transform` returning `beat: hit.beat + 0.125` on odd `hit.index`, or lane `swing` of 1 (\"100%\") on a 16th-note lane, or `steps[i].offset = 0.5` on the odd steps",
         "Does not fork the block and keeps no state in a transform; the nudge is a fixed beat offset that stays the same when the tempo is automated"
       ]
     },

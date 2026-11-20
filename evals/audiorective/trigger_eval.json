@@ -126,5 +126,37 @@
   {
     "query": "I want a session view like Ableton's, a clip grid where I click a scene to launch clips on the next bar, in a plain web page with no DAW project. We use audiorective.",
     "should_trigger": true
+  },
+  {
+    "query": "write a metronome with tap tempo and an accented first beat in plain TypeScript. don't run anything.",
+    "should_trigger": true
+  },
+  {
+    "query": "I need a looper in vue: record 4 bars from the mic and loop them in time with a click track. the repo is empty so far",
+    "should_trigger": true
+  },
+  {
+    "query": "make a web audio step sequencer, 8 tracks, with a 25ms setInterval lookahead scheduler and swing",
+    "should_trigger": true
+  },
+  {
+    "query": "react synth with a filter cutoff knob and an ADSR, oscillator based, no samples",
+    "should_trigger": true
+  },
+  {
+    "query": "add a click sound effect to my react button using an <audio> element and an mp3 in public/",
+    "should_trigger": false
+  },
+  {
+    "query": "write a python script that generates a 16-step drum pattern and saves it as a MIDI file with mido",
+    "should_trigger": false
+  },
+  {
+    "query": "our Howler.js sound sprite plays the wrong segment on Safari, can you fix the offsets",
+    "should_trigger": false
+  },
+  {
+    "query": "explain what 'sample rate' and 'bit depth' mean for a podcast intro; no code, no web app",
+    "should_trigger": false
   }
 ]

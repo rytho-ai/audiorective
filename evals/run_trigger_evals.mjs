@@ -13,6 +13,7 @@
 // Options: --skill-dir <dir>  (default skills/<name>)   --runs <n> (3)
 //          --concurrency <n> (8)   --timeout <seconds> (120)   --json <out-file>
 //          --limit <n>  (only the first n queries — for a smoke test)
+//          --user-settings  (load ~/.claude: user plugins, skills, CLAUDE.md, memory; off by default)
 
 import { spawn } from "node:child_process";
 import { mkdtempSync, mkdirSync, copyFileSync, readFileSync, writeFileSync, rmSync } from "node:fs";
@@ -36,7 +37,7 @@ const opt = (name, fallback) => {
 const usage = (msg) => {
   console.error(`error: ${msg}`);
   console.error(
-    "usage: node evals/run_trigger_evals.mjs <skill-name> [--skill-dir d] [--runs n] [--concurrency n] [--timeout s] [--json f] [--limit n]",
+    "usage: node evals/run_trigger_evals.mjs <skill-name> [--skill-dir d] [--runs n] [--concurrency n] [--timeout s] [--json f] [--limit n] [--user-settings]",
   );
   process.exit(2);
 };
@@ -53,6 +54,9 @@ const timeoutSeconds = Number(opt("timeout", 120));
 if (!(timeoutSeconds > 0) || !Number.isFinite(timeoutSeconds)) usage(`--timeout must be a positive number of seconds`);
 const timeoutMs = timeoutSeconds * 1000;
 const jsonOut = opt("json", null);
+// By default only the throwaway project's settings load, so competing user plugins and skills cannot
+// change whether the skill under test triggers. --user-settings opts back in.
+const settingSources = args.includes("--user-settings") ? "user,project,local" : "project";
 const limit = args.includes("--limit") ? positiveInt("limit") : Infinity;
 
 const evalSet = JSON.parse(readFileSync(join(here, skillName, "trigger_eval.json"), "utf8")).slice(0, limit);
@@ -75,11 +79,15 @@ delete env.CLAUDECODE; // allow nesting claude -p inside a Claude Code session
 // counted as non-triggers: a negative query must not pass because the CLI failed.
 function runOnce(query) {
   return new Promise((done) => {
-    const child = spawn("claude", ["-p", query, "--output-format", "stream-json", "--verbose", "--max-turns", "1"], {
-      cwd: project,
-      env,
-      stdio: ["ignore", "pipe", "ignore"],
-    });
+    const child = spawn(
+      "claude",
+      ["-p", query, "--output-format", "stream-json", "--verbose", "--max-turns", "1", "--setting-sources", settingSources],
+      {
+        cwd: project,
+        env,
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    );
     let out = "";
     let triggered = false;
     let result = null; // the final `result` event, if the run got that far
@@ -118,6 +126,8 @@ function runOnce(query) {
       if (triggered) return done({ hit: true });
       if (spawnError) return done({ error: `could not start claude: ${spawnError.message}` });
       if (timedOut) return done({ error: `timed out after ${timeoutSeconds}s` });
+      // Newer CLIs mark the one-turn cutoff as is_error with terminal_reason "max_turns"; it is the same non-trigger.
+      if (result && (result.subtype === "error_max_turns" || result.terminal_reason === "max_turns")) return done({ hit: false });
       if (result?.is_error || result?.terminal_reason === "api_error" || result?.api_error)
         return done({ error: `claude reported ${result.api_error ?? result.terminal_reason ?? "an error"}` });
       // A completed run ends in a `result` event. `error_max_turns` is still a completed

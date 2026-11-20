@@ -15,6 +15,10 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Fixed
 
+- **blocks:** `StepSequencer` `transform` is beat-aware. `Hit` (what `transform` receives and returns, and what `onHit`, the `hit` event and a sound get) gains `beat` (absolute beat after offset, swing and repeat) and `durationBeats`. After `transform`, a changed `beat` or `durationBeats` is mapped through the transport's timing, so the hit stays on the grid under tempo automation (`beat: hit.beat + 0.125` is always a 32nd late); a hit that changes neither keeps the returned `when` and `duration`, as before, for millisecond nudges. If both `beat` and `when` changed, the hit sounds at `beatToTime(beat)` plus the `when` delta, and `duration` gets its delta added to the beat-derived length. A non-finite `beat` or a `durationBeats` not above 0 throws `Event transform "transform" ...`. A transform that shifts only `when` by a fixed amount is not tempo-locked.
+- **widgets:** the step grid plugin context's lanes include the writable `pattern`, `rate`, `swing`, `direction`, `mute`, `solo` and `length` members of the real `Lane`.
+- **docs:** swing is described once everywhere (every odd step delayed by `swing` of half a step, a fixed beat offset), and the sequencer docs say to `clock.refresh()` after changing state a `transform` reads.
+
 - **blocks:** `StepSequencer` randomness is a pure function of a step's position. Before, `chance` and `context.random` drew from one stateful source, so any re-queue (an edit through `refreshOnEdit`, `clock.refresh()`, a seek) redrew every pending step: a chance step could flip between sounding and silent and humanize jitter jumped, and offline renders with different tick sizes differed. Now the chance draw is keyed by `seed`, lane, loop and step counter, and `context.randomFor` by the hit's lane, loop, step counter and repeat index, so the same step gets the same numbers in every window. Pass `options.random` to keep the old sequential source (the old instability comes with it).
 
 ### Changed
