@@ -65,7 +65,7 @@ The UI reads and writes params directly (`useValue(synth.params.volume)`, `synth
 | `@audiorective/effects`      | DSP effects, Channel strip + SendBus; `/rack` `EffectRack`, `/rack-preset` pure rack data, `/time-stretch`.                                     | `references/effects.md`    |
 | `@audiorective/widgets`      | Player, waveform, piano-roll and caller-owned arrangement clip gestures.                                                                        | `references/widgets.md`    |
 | `@audiorective/player`       | `WavePlayer`: range playback, selection, loading, offline stretch.                                                                              | `references/player.md`     |
-| `@audiorective/recorder`     | `AudioRecorder`: AudioWorklet PCM take capture.                                                                                                 | `references/recorder.md`   |
+| `@audiorective/recorder`     | `AudioRecorder`, `MicrophoneInput`: AudioWorklet PCM take capture.                                                                              | `references/recorder.md`   |
 | `@audiorective/samples`      | `SampleLibrary`: imported sample storage and previews.                                                                                          | `references/samples.md`    |
 | `@audiorective/pads`         | `PadBank`: sample hits with choke groups.                                                                                                       | `references/pads.md`       |
 | `@audiorective/sequencer`    | `StepSequencer`: lanes of steps from one-line patterns; borrows a clock or transport.                                                           | `references/sequencer.md`  |
@@ -87,7 +87,7 @@ When no capability package or widget matches, build on core with your own `Audio
 | --- | --- | --- |
 | One-shot hits, pads, SFX; overlapping voices | core `Sampler` / `Voice` | `WavePlayer` (one playhead) |
 | Step patterns, drum machine, humanize, ratchets, editable sequenced hits (with choke groups) | `clock` + `@audiorective/sequencer` `StepSequencer`; for choke groups `onHit` calls `bank.trigger(hit.lane, hit.velocity, hit.when, ...)` and returns `() => pad?.cancel()`, over a `@audiorective/pads` `PadBank` (choke `group`); runnable code in `references/sequencer.md#standalone-drum-machine` (no `daw`) | a hand-rolled `window.own` loop for a lane/step grid; a private scheduling loop, forking the sequencer; irreversible `Voice.stop(when)` |
-| Record a short audio take | `@audiorective/recorder` `AudioRecorder`, caller-connected input | `MediaRecorder` chunk intervals |
+| Record the microphone, a take starting on a bar for N bars | `@audiorective/recorder` `MicrophoneInput.open` → `mic.connect(recorder)` → `recorder.record({ quantize, length })`, `clock.attach(recorder)` for bars | hand-wired `getUserMedia` + `MediaStreamSource`, bar math, `MediaRecorder` chunk intervals |
 | Record MIDI notes from a keyboard | `midi/web` `MidiRecorder`, caller-owned input/context | `MidiSequence` as a live listener |
 | A tempo-locked loop or stem | core `BufferPlayer` + `clock` | `FilePlayer` (media clock) |
 | A long track, podcast or stream | core `FilePlayer`; `widgets/player` for a control bar | `WavePlayer` / waveform selector |
@@ -141,18 +141,19 @@ Detail for all of these: `references/rules-in-depth.md`.
 
 ## Common errors
 
-| Symptom                                                                 | Cause                                                                  | Fix                                                                                                           |
-| ----------------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `EngineEnvironmentError: createEngine() is client-only…` during a build | An engine module is evaluated on the server                            | Move the importer inside the client-only island — `references/client-boundary.md`                             |
-| `EngineEnvironmentError: … no AudioContext constructor` in a jsdom test | DOM without Web Audio                                                  | Pass a mock context: `createEngine(setup, { context })`, or run in a real browser                             |
-| No sound; `engine.core.state.value` stays `"suspended"`                 | `AudioContext` suspended by autoplay policy                            | Call `engine.core.resume()` from a user gesture, or use `autoStart` (on by default in React)                  |
-| `X is not a function` / `undefined` import on a documented API          | Installed package predates the docs                                    | Check `references/changelog.md`, upgrade all `@audiorective/*`                                                |
-| UI silently stops updating, no error                                    | Two copies of `alien-signals` in the bundle                            | Dedupe or alias the package — `references/installation.md`                                                    |
-| `LatencyUnknownError: X's path latency is unknown`                      | A latency query on a processor with no `defineGraph` or `connect` edge | Wire it with `defineGraph` (its own or the engine's) or `processor.connect(...)`, not a raw node `.connect()` |
-| `defineGraph: X is a bare AudioWorkletNode`                             | A worklet node used directly as an edge endpoint                       | Wrap it in an `AudioProcessor` that declares `latency` — `audio-processor-authoring` skill                    |
-| `defineGraph: X used as sink has no input`                              | Routing audio into an instrument or player                             | Only effects have `input`; instruments are sources. Check the edge direction                                  |
-| `WorkletUnavailableError` from `@audiorective/effects`                  | Context without `audioWorklet` (old browser, some test contexts)       | Use a browser with AudioWorklet, or the `granular` `PitchShift` engine which needs no worklet                 |
-| `AudioEngine is disposed.` (`InvalidStateError`)                        | `resume()` or `suspend()` after `dispose()`                            | Create a new engine; `dispose()` is final                                                                     |
+| Symptom                                                                 | Cause                                                                  | Fix                                                                                                                             |
+| ----------------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `EngineEnvironmentError: createEngine() is client-only…` during a build | An engine module is evaluated on the server                            | Move the importer inside the client-only island — `references/client-boundary.md`                                               |
+| `EngineEnvironmentError: … no AudioContext constructor` in a jsdom test | DOM without Web Audio                                                  | Pass a mock context: `createEngine(setup, { context })`, or run in a real browser                                               |
+| No sound; `engine.core.state.value` stays `"suspended"`                 | `AudioContext` suspended by autoplay policy                            | Call `engine.core.resume()` from a user gesture, or use `autoStart` (on by default in React)                                    |
+| `NotAllowedError` from `FilePlayer.play()` or `MicrophoneInput.open()`  | Autoplay blocked, or the user denied the microphone                    | Call from a click, catch it and tell the user (`error.name` is the platform's) — `references/core.md`, `references/recorder.md` |
+| `X is not a function` / `undefined` import on a documented API          | Installed package predates the docs                                    | Check `references/changelog.md`, upgrade all `@audiorective/*`                                                                  |
+| UI silently stops updating, no error                                    | Two copies of `alien-signals` in the bundle                            | Dedupe or alias the package — `references/installation.md`                                                                      |
+| `LatencyUnknownError: X's path latency is unknown`                      | A latency query on a processor with no `defineGraph` or `connect` edge | Wire it with `defineGraph` (its own or the engine's) or `processor.connect(...)`, not a raw node `.connect()`                   |
+| `defineGraph: X is a bare AudioWorkletNode`                             | A worklet node used directly as an edge endpoint                       | Wrap it in an `AudioProcessor` that declares `latency` — `audio-processor-authoring` skill                                      |
+| `defineGraph: X used as sink has no input`                              | Routing audio into an instrument or player                             | Only effects have `input`; instruments are sources. Check the edge direction                                                    |
+| `WorkletUnavailableError` from `@audiorective/effects`                  | Context without `audioWorklet` (old browser, some test contexts)       | Use a browser with AudioWorklet, or the `granular` `PitchShift` engine which needs no worklet                                   |
+| `AudioEngine is disposed.` (`InvalidStateError`)                        | `resume()` or `suspend()` after `dispose()`                            | Create a new engine; `dispose()` is final                                                                                       |
 
 ### Errors by area
 
@@ -160,9 +161,9 @@ Every other thrown message is listed, with cause and fix, in its area's referenc
 
 | Message starts with…                                                                                                                       | Read                                       |
 | ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------ |
-| `Waveform…`, `Step grid…`, `Playhead…`, `Spectrum…`, `Automation overlay…`, `No track is loaded.`                                          | `widgets.md`                               |
+| `Waveform…`, `Step grid…`, `Playhead…`, `Spectrum…`, `Automation overlay…`, `FilePlayer has no src to play.`                               | `widgets.md`                               |
 | `WavePlayer…`, `Audio request…`, `Audio file…`, `Selection must satisfy…`, `Stretch…`                                                      | `player.md`                                |
-| `AudioRecorder…`                                                                                                                           | `recorder.md`                              |
+| `AudioRecorder…`, `MicrophoneInput…`                                                                                                       | `recorder.md`                              |
 | `Pad Bank…`, `Pad hit…`                                                                                                                    | `pads.md`                                  |
 | `Step Sequencer…`                                                                                                                          | `sequencer.md`                             |
 | `Sample Library…`, `Sample lease…`                                                                                                         | `samples.md`                               |

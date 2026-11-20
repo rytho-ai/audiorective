@@ -143,10 +143,10 @@
     {
       "id": 10,
       "prompt": "Build a vanilla TypeScript waveform selector for a caller-owned AudioContext. Show download bytes and a progress bar only when the total is known, indeterminate feedback for decode/peaks, a cancel button, and retry after cancellation or failure. Two views must observe the same state. We already have a URL-to-AudioBuffer cache: integrate it without a second loading store or a second decode; cancelling this observer must not cancel other cache readers. Use Audiorective public APIs, provide cleanup and do not fake percentages.",
-      "expected_output": "A shared WavePlayer with loadSource URL cache adapter, state snapshots/subscriptions and cancelLoad, plus selectors or custom feedback observing the same player. The adapter detaches on abort/settle while the shared job can continue.",
+      "expected_output": "A shared WavePlayer with loadSource URL cache adapter, observation through player.cells and cancelLoad, plus selectors or custom feedback observing the same player. The adapter detaches on abort/settle while the shared job can continue.",
       "files": [],
       "expectations": [
-        "Uses WavePlayer loading and loadProgress through getState()/subscribe(), rendering an initial snapshot because subscribe is not immediate.",
+        "Observes WavePlayer loading and loadProgress through player.cells (an effect, or cells.loadProgress.subscribe with { immediate: true } for the initial snapshot); the player has no getState() or subscribe().",
         "Uses download/read loadedBytes and totalBytes; null or nonpositive totals and decode/peaks are indeterminate, with no fake percentage.",
         "Both views share one player and see the same progress/cancellation; UI does not independently track audio loading.",
         "Calls cancelLoad() and retries with load(); treats current errors separately from superseded/cancelled loads.",
@@ -230,7 +230,7 @@
       "expected_output": "React components that read player.cells.* and sequence.cells.* with useValue, and call owner methods for writes",
       "files": [],
       "expectations": [
-        "Reads WavePlayer state through player.cells (selection, loading, loadProgress, processing, error) with useValue, not by copying getState() into useState or a store, and not by polling",
+        "Reads WavePlayer state through player.cells (selection, loading, loadProgress, processing, error) with useValue, not by copying cell values into useState or a store, and not by polling",
         "Reads the MIDI note count through sequence.cells.notes (or cells.state) with useValue",
         "Clears the selection by calling player.setSelection(null); does not assign to player.cells.selection.value or call its $ with a value",
         "Reads position per animation frame from the player.position getter rather than trying to observe it as a reactive value",
@@ -369,11 +369,11 @@
       "files": [],
       "expectations": [
         "Imports AudioRecorder from @audiorective/recorder and constructs it with the existing AudioContext",
-        "Obtains microphone permission in the app, connects its MediaStreamAudioSourceNode to recorder.input, and does not expect an audible recorder output",
-        "Awaits recorder.ready before a precise scheduled start, then awaits recorder.start({ when }) with absolute AudioContext seconds",
-        "Uses recorder.stop() to obtain channels, sampleRate, startFrame/endFrame or startTime/endTime; the stop button handles rejection",
+        "Obtains microphone permission in the app (a MicrophoneInput.open(context) connected with mic.connect(recorder), or its own MediaStreamAudioSourceNode connected to recorder.input), and does not expect an audible recorder output",
+        "Awaits recorder.ready before a precise scheduled start, then calls recorder.record({ when }) with absolute AudioContext seconds (there is no recorder.start)",
+        "Ends the take with recorder.stop() or a length and obtains channels, sampleRate, startFrame/endFrame or startTime/endTime from the resolved take; the stop button handles rejection",
         "Treats returned frame positions as actual raw capture times and leaves latency calibration and take placement to the future clip/track owner",
-        "Uses recorder.cancel() for discard and disposes the recorder separately from the borrowed stream and AudioContext",
+        "Uses recorder.cancel() (or an AbortSignal) for discard and disposes the recorder, and releases the microphone (mic.dispose() or stopping the stream tracks) separately from the AudioContext",
         "Does not use MediaRecorder timeslice count as a sample-accurate timeline or invent a project-wide recording/track model"
       ]
     },
@@ -971,6 +971,30 @@
         "Does not set `playbackRate` by hand or write its own tempo-following code: buffer clips follow tempo by default because `warp` defaults to `\"repitch\"` (`warp: false` is only for a clip that must keep its speed)",
         "Launches a loop with `clip.launch({ quantize: \"4n\" })` or sets `launcher.quantize.value = \"4n\"` for the next beat, and does not compute boundary times itself",
         "Gives each clip's `bpm` as the recorded tempo (100), not the project tempo"
+      ]
+    },
+    {
+      "id": 74,
+      "prompt": "In my audiorective song editor a Clock is already playing at 120 BPM in 4/4. When the user clicks Record, capture exactly 4 bars from their microphone starting on the next bar line, and give me the audio data and the beat it started on so I can place it on a track. Tell the user if they deny the microphone, and release the microphone afterwards. Do not run anything.",
+      "expected_output": "MicrophoneInput.open from the click, mic.connect(recorder), clock.attach(recorder), and recorder.record({ quantize: \"1m\", length: \"4m\" }) resolving with a take that has startBeat, with permission errors branched on error.name and the microphone disposed.",
+      "files": [],
+      "expectations": [
+        "Opens the microphone from the click handler with MicrophoneInput.open(context) from @audiorective/recorder and connects it with mic.connect(recorder), instead of hand-wiring getUserMedia and a MediaStreamAudioSourceNode",
+        "Attaches the recorder to the existing Clock with clock.attach(recorder) and uses record({ quantize: \"1m\", length: \"4m\" }); does not compute the next bar line or the 8 seconds by hand and does not use setTimeout",
+        "Takes the audio from the resolved take (channels, sampleRate, startTime) and its placement from take.startBeat; may use toAudioBuffer(take, context) for an AudioBuffer",
+        "Catches the rejection of MicrophoneInput.open and branches on error.name (for example NotAllowedError) to tell the user",
+        "Releases the microphone with mic.dispose() (or using) in a finally, and disposes the recorder"
+      ]
+    },
+    {
+      "id": 75,
+      "prompt": "A podcast page streams an episode with an audiorective FilePlayer. Make the Play button start it, and if the browser blocks playback because of the autoplay policy show the user a message asking them to press Play again; do not show a message when playback is merely interrupted by changing the episode. Do not run anything.",
+      "expected_output": "player.play() in a click handler with a catch that shows a notice for NotAllowedError and ignores AbortError, because FilePlayer.play() rejects like HTMLMediaElement.play().",
+      "files": [],
+      "expectations": [
+        "Calls player.play() from the click handler and handles its rejection with .catch or try/catch, since FilePlayer.play() rejects like HTMLMediaElement.play()",
+        "Shows the press-Play message for error.name === \"NotAllowedError\" and does not show it for AbortError",
+        "Does not reach for player.audio.play() as a workaround to see the failure, and does not poll isPlaying to guess that a play was blocked"
       ]
     }
   ]
