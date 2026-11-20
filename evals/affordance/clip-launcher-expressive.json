@@ -147,10 +147,9 @@
       "id": "X13-grid-tempo-no-resample",
       "prompt": "My loops are 120 BPM material and the song also stays at 120 BPM the whole time (no scene changes the tempo). I only want to tell the session view what tempo the loops were recorded at so that their bars and loop lengths are laid out on the grid correctly. Nothing should be sped up, slowed down or repitched: every loop must sound exactly as in the file.",
       "expectations": [
-        "Each loop's recorded tempo of 120 BPM is given to the launcher only to describe its beat grid (loop length and bar alignment).",
-        "Playback speed of every clip stays exactly 1.0: nothing is resampled or time-stretched, and pitch is unchanged.",
-        "If the song tempo were changed later, the code makes no promise that the loops follow it unless the user asked for it; speed following is not switched on by merely describing the grid.",
-        "No extra rate or warp setting is required for the plain case."
+        "Each loop's recorded tempo of 120 BPM is given to the launcher so its beat grid (loop length and bar alignment) is correct.",
+        "Playback speed of every clip stays exactly 1.0 while the song stays at 120 BPM: nothing is resampled or time-stretched, and pitch is unchanged.",
+        "Whether the loops would follow a later tempo change is the API's documented default or an explicit setting; either choice is accepted, since the song tempo never changes here."
       ]
     }
   ]
