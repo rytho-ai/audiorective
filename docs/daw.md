@@ -292,37 +292,44 @@ Attach a caller-owned `StepSequencer` with `workspace.transport.attach(seq)`. Ro
 
 ## Clip Launcher
 
-Start playback and call `workspace.launchClips([{ trackId, clipId }], quantumBeats)` to launch an in-memory PCM clip on its existing audio track. The default is looping. Set `mode: "one-shot"` to play the current clip once and return that track to Arrangement at its exact audio end. Multiple targets in the same call form one scene and switch at the same audio time. Pending launches are per track: a new launch replaces only that track's pending launch, so clicks on different tracks coexist, each on its own boundary. Quantum defaults to one beat; `0` launches at the current audio time. `launchClips` returns the queued launches, each with its `beat` and `when` deadline; `workspace.session` holds `{ active, queued }`, one entry per track in each. `workspace.cancelClipLaunch(trackId)` withdraws that track's pending launch and `workspace.cancelClipLaunch()` withdraws all of them before their audio deadline.
+`workspace.session` is a [`ClipLauncher`](./launcher.md) over the Project's audio tracks, as a cell (`workspace.cells.session`): `session.value.tracks[trackId].clips[i]` is the Session clip of the i-th clip of that track, `null` when it is not an in-memory PCM clip. `workspace.sessionClip(trackId, clipId)` finds it by Project clip ID (a tracked reader). Launch with the launcher's own commands: `workspace.sessionClip(t, c).launch({ quantize: "4n" })`, `session.value.launchScene([clipA, clipB])` (one boundary for every listed track), `session.value.tracks[t].stop()` (back to Arrangement), `session.value.cancelQueued()`, and read `session.value.playing`, `queued` and each clip's cells. The launcher's [`quantize` cell](./launcher.md#layer-1-tracks-of-buffers) defaults to a bar of the Project's time signature; set it to `"4n"` for a beat or `"none"` for now.
 
-The affected tracks switch between Arrangement and Session before their shared devices, inserts and mixer. Tracks omitted from the group keep playing as before. Each session clip loops at its original sample rate and length. Use `{ trackId, clipId: null }` to return the track to its current Arrangement position at the next launch boundary.
+A launched clip plays through the track's devices, inserts and mixer (it is the launcher track's output connected to the track input) and takes that track away from Arrangement until it is stopped or a one-shot ends. Tracks that are not launched keep playing as before. Session clips loop at their original sample rate and length and keep their recorded speed (`warp: false`); `clip.configure({ loop: false })` makes one a one-shot that returns the track to Arrangement at its exact audio end.
 
-Pause, Stop, Seek, tempo changes, and full routing rebuilds clear the live overrides. Removing a clip referenced by a live or queued override also clears Session. The launch reads a snapshot of the clip audio. DAWproject stores Arrangement and media; the launcher state and scene layout live in the session. The launcher currently accepts in-memory PCM clips. MIDI and file-backed media remain playable in Arrangement.
+The launcher follows `workspace.transport`: a launch made while stopped waits for `play()`, Pause freezes it and Play starts fresh (clips are silent, waiting launches keep their place), Stop and Seek clear it, a tempo change moves waiting boundaries with the beat and keeps playing clips going. Clip edits that reach `refreshArrangement()` replace the Session clips to match, and a Session clip whose Project clip is removed is stopped at once. `sync()` (a structural rebuild) replaces the launcher, so read `workspace.session.value` inside the effect that uses it. The audio of a clip is read when the launcher is built or the clip is replaced. DAWproject stores Arrangement and media; the launcher state and scene layout live in the session. MIDI and file-backed media remain playable in Arrangement.
 
 ```ts
 import { mountClipGrid } from "@audiorective/widgets";
 
-const clips = [
-  { trackId: drums.id, clipId: verseDrums.id, label: "Drum loop" },
-  { trackId: bass.id, clipId: verseBass.id, label: "Bass loop" },
-];
+const session = workspace.session.value;
+const verseDrums = workspace.sessionClip(drums.id, drumsClip.id)!;
+const verseBass = workspace.sessionClip(bass.id, bassClip.id)!;
+session.quantize.value = "4n";
 const grid = mountClipGrid(root, {
-  state: workspace.session,
-  launch: async (changes) => {
+  launcher: session,
+  launch: async (command) => {
     try {
-      await workspace.play();
-      if (workspace.player.isPlaying.value) workspace.launchClips(changes, 4);
+      await workspace.play(); // a launch made while stopped would wait for play
+      command();
     } catch (error) {
       showError(error);
     }
   },
-  cancel: () => workspace.cancelClipLaunch(),
 });
 grid.setLayout({
   tracks: [
-    { id: drums.id, label: "Drums" },
-    { id: bass.id, label: "Bass" },
+    { track: session.tracks[drums.id]!, label: "Drums" },
+    { track: session.tracks[bass.id]!, label: "Bass" },
   ],
-  scenes: [{ label: "Verse", clips }],
+  scenes: [
+    {
+      label: "Verse",
+      clips: [
+        { track: session.tracks[drums.id]!, clip: verseDrums, label: "Drum loop" },
+        { track: session.tracks[bass.id]!, clip: verseBass, label: "Bass loop" },
+      ],
+    },
+  ],
 });
 // Tear down the DOM view while leaving the borrowed Workspace available.
 grid.destroy();
@@ -379,12 +386,6 @@ A small [Cubase 14 export shared on the Steinberg forum](https://forums.steinber
 | `Project track routing cannot form a cycle.`                                                                  | Remove the feedback edge between buses.                               |
 | `Project has duplicate channel IDs.` / `Project bus tracks cannot contain clips.`                             | Use unique channel IDs and put clips on source tracks.                |
 | `Project has unsupported send settings.`                                                                      | Use post-fader sends with linear gain.                                |
-
-| Clip Launcher message                                                 | Fix                                                                                         |
-| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `Start Workspace playback before launching clips.`                    | Await `workspace.play()` after a user gesture and launch while the transport is playing.    |
-| `Clip Launcher requires an audio track.`                              | Pass the ID of a committed audio track.                                                     |
-| `Clip Launcher requires an in-memory audio clip on the target track.` | Use a PCM clip on that audio track, or play MIDI and file-backed clips through Arrangement. |
 
 | Effect rack message                                                                                     | Fix                                                                                                                  |
 | ------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |

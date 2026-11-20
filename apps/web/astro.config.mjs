@@ -50,6 +50,7 @@ export default defineConfig({
                 { label: "Sequencer: advanced", slug: "docs/sequencer-advanced" },
                 { label: "Samples", slug: "docs/samples" },
                 { label: "Launcher", slug: "docs/launcher" },
+                { label: "Launcher: advanced", slug: "docs/launcher-advanced" },
               ],
             },
             { label: "Widgets", slug: "docs/widgets" },

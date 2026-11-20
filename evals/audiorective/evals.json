@@ -929,13 +929,12 @@
       "expected_output": "A standalone ClipLauncher design (launcher on a Clock) with step-pattern clips driven by StepSequencer, not the DAW Workspace Session.",
       "files": [],
       "expectations": [
-        "Chooses `@audiorective/launcher` `ClipLauncher` on a `clock` Clock as the launch state machine, and reads `references/launcher.md#clip-launcher`",
-        "Does not build on `@audiorective/daw` `Workspace`/`workspace.launchClips`, or says its Session launches only in-memory PCM clips on Project tracks so step-pattern clips need the standalone route",
-        "Runs each step-pattern clip as a StepSequencer scheduled on the launch beat (clipped window, shifted timing), cancelling its hits when the clip stops",
-        "Builds its own grid from `launcher.state` if it needs progress, colours or per-track stop, instead of relying on `mountClipGrid` for those",
-        "Queues each independent click with its own `launcher.queue` call (pending launches are per track) and a scene as one call, without merging or re-queueing pending launches in app code",
-        "Writes the audio driver so the outgoing stop is reversible (a per-launch GainNode gate with `setValueAtTime(0, when)` and `cancelScheduledValues(when)` in `cancel`), not `AudioBufferSourceNode.stop(when)`",
-        "Uses `clipId: null` for a per-track stop and quantum `0` (not a tiny positive quantum) for an unquantized launch"
+        "Chooses `@audiorective/launcher` `ClipLauncher` attached to a `clock` Clock (`clock.attach(launcher)`) as the launch engine, and reads `references/launcher.md`",
+        "Does not build on `@audiorective/daw` `Workspace.session`, or says it launches only in-memory PCM clips on Project tracks so step-pattern clips need the standalone route",
+        "Makes each step-pattern clip a `scheduler` clip holding a `StepSequencer` (for example `{ scheduler: seq, loop: true, length: \"1m\" }`), and does not call `clock.attach(seq)` for it or connect its lanes to the track by hand: the launcher routes and switches it on the boundary",
+        "Launches with `clip.launch()` (each independent click on its own track), a scene with `launcher.launchScene(i)` and a per-track stop with `track.stop()`, without queueing or merging pending launches in app code, and sets the bar boundary with `quantize: \"1m\"` (the default) rather than computing beats",
+        "Reads clip and track state from the launcher's cells (`clip.playing`, `clip.queued`, `launcher.queued`) or `clip.position`, and `addEventListener(\"started\" | \"ended\")` for exact times, instead of keeping a second copy of launch state or polling timers",
+        "Does not write its own launch scheduler, audio driver or transport adapter, and does not call a removed `queue`, `advance` or `reset`"
       ]
     },
     {
@@ -959,6 +958,19 @@
         "States that clock.refresh() cancels owned events immediately but defers the refill to a microtask, so onTick is not called inside refresh() and a re-entrancy guard around it is not needed",
         "States that several refresh() calls in the same task (or the automatic re-queue of a sequencer attached with `clock.attach`) produce one refill, so batch() is not needed for the re-queue count, only to give observers one coherent pattern change",
         "Does not tell the user that onTick runs synchronously inside refresh(), and does not wrap refresh() in a setTimeout or manual debounce"
+      ]
+    },
+    {
+      "id": 73,
+      "prompt": "I have two drum and bass loop buffers recorded at 100 BPM in a browser app that already has an audiorective Clock. I want a launcher where tapping a loop switches it in on the next beat, and a \"Drop\" scene that launches both and moves the song to 140 BPM, with the loops following the new tempo. Don't run anything.",
+      "expected_output": "A ClipLauncher with buffer clips with bpm 100 and scenes[].tempo, relying on warp defaulting to repitch, attached to the existing Clock.",
+      "files": [],
+      "expectations": [
+        "Uses `@audiorective/launcher` `ClipLauncher` with the buffers as clips (`{ buffer, loop: true, bpm: 100 }`), attached with `clock.attach(launcher)` to the existing Clock",
+        "Moves the tempo with a scene's `tempo` (`scenes: [{}, { name: \"Drop\", tempo: 140 }]` and `launcher.launchScene(1)`), not a hand-written `clock.bpm` write or timer at the boundary",
+        "Does not set `playbackRate` by hand or write its own tempo-following code: buffer clips follow tempo by default because `warp` defaults to `\"repitch\"` (`warp: false` is only for a clip that must keep its speed)",
+        "Launches a loop with `clip.launch({ quantize: \"4n\" })` or sets `launcher.quantize.value = \"4n\"` for the next beat, and does not compute boundary times itself",
+        "Gives each clip's `bpm` as the recorded tempo (100), not the project tempo"
       ]
     }
   ]

@@ -411,7 +411,7 @@ Two rules carry over from live playback. Keep `tickInterval` below the clock's `
 To launch a clip, edit a pattern or change tempo at a named audio time, wrap the injected tick source and run the actions from inside the tick, on the clock's own schedule:
 
 ```typescript
-const actions = [{ at: 2, run: () => launcher.queue([{ trackId: "drums", clipId: "b" }], 4) }];
+const actions = [{ at: 2, run: () => launcher.tracks.drums.clips[1].launch({ quantize: "1m" }) }];
 
 const wav = await renderTimeline({ seconds: 8, channels: 2, sampleRate: 44100 }, (ctx, source) => {
   const tickSource: TickSource = {
