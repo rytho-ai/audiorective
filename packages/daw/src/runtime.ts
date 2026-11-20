@@ -4,7 +4,6 @@ import { batch, cell, effect, readonlyCell, untracked, type Cell, type Readable,
 import { AutomationBinding, AutomationCurve, audioParamTarget } from "@audiorective/core/automation";
 import { WebClapHost } from "@audiorective/host/webclap";
 import { ClipLauncher, type ClipLaunch, type ClipLauncherState, type QueuedClipLaunch } from "@audiorective/blocks/launcher";
-import { refreshOnEdit, type StepSequencer } from "@audiorective/blocks/sequencer";
 import type { WaveStretchAnchor, WaveStretchProcessor } from "@audiorective/blocks/player";
 import { EffectRack, type RackEffect } from "@audiorective/effects/rack";
 import { AudioTrackSession } from "./audio-track-session";
@@ -91,7 +90,6 @@ export class Workspace {
     return { workletUrl: this.options.workletUrl, resolveBundle: this.options.resolveBundle };
   }
   private readonly tracks = new Map<string, TrackRuntime>();
-  private readonly stepSequencers = new Map<StepSequencer, () => void>();
   private readonly scheduler: ClipScheduler;
   private readonly sequenceOff: Array<() => void> = [];
   private readonly seekPoint = cell({ seconds: 0 });
@@ -545,22 +543,6 @@ export class Workspace {
     }
   }
 
-  /** Attach a caller-owned pattern to the Workspace clock. The caller routes the instrument audio. */
-  attachStepSequencer(sequence: StepSequencer): () => void {
-    if (this.destroyed || this.stepSequencers.has(sequence)) throw new Error("Workspace needs a new step sequencer on a live transport.");
-    let stop: (() => void) | undefined;
-    const detach = () => {
-      stop?.();
-      if (this.stepSequencers.get(sequence) !== detach) return;
-      this.stepSequencers.delete(sequence);
-      sequence.reset();
-    };
-    this.stepSequencers.set(sequence, detach);
-    stop = refreshOnEdit(sequence, this.clock);
-    untracked(() => this.clock.refresh()); // a live attach is also an edit of the look-ahead
-    return detach;
-  }
-
   /**
    * Queue clips or return tracks to Arrangement at the next launch grid boundary, or now when `quantumBeats` is 0.
    * A track's launch replaces only that track's pending launch.
@@ -611,7 +593,6 @@ export class Workspace {
     untracked(() => this.positionAutomation(this.position, false));
     this.clock.pause();
     this.launcher.reset();
-    for (const sequence of this.stepSequencers.keys()) sequence.reset();
     this.cancelAudio();
     this.panic();
   }
@@ -620,7 +601,6 @@ export class Workspace {
     batch(() => {
       this.clock.stop();
       this.launcher.reset();
-      for (const sequence of this.stepSequencers.keys()) sequence.reset();
       this.seekPoint.value = { seconds: 0 };
     });
     untracked(() => this.positionAutomation(0, false));
@@ -640,7 +620,6 @@ export class Workspace {
     const beat = this.activeTempoMap.secondsToBeat(seconds);
     this.rebaseTempo(beat);
     this.clock.seek(beat);
-    for (const sequence of this.stepSequencers.keys()) sequence.reset();
     // A seek to the same target still moves a paused or advancing playhead.
     this.seekPoint.value = { seconds };
     this.positionAutomation(seconds, this.clock.state.value === "playing");
@@ -860,7 +839,6 @@ export class Workspace {
 
   private schedule(window: TickWindow<Record<never, never>>): void {
     this.launcher.advance();
-    for (const sequence of this.stepSequencers.keys()) sequence.schedule(window, this.timeline);
     this.scheduler.scheduleArrangement(this.tracks.values(), window, this.activeTempoMap, this.timeline);
   }
 
@@ -896,7 +874,6 @@ export class Workspace {
     this.audition.stop();
     this.stretch.abortAll();
     this.clock.destroy();
-    for (const detach of [...this.stepSequencers.values()]) detach();
     this.disposeTracks();
     this.output.disconnect();
     this.ownedProject?.destroy();
