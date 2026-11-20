@@ -1,4 +1,5 @@
 import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
+import { view, onChange } from "./view";
 import { effect, type Readable } from "@audiorective/core";
 import type { PCMData } from "@audiorective/core/peaks";
 import { WavePlayer } from "../src/WavePlayer";
@@ -107,7 +108,7 @@ test("every WavePlayer cell re-runs an effect through the owner's methods, witho
   const failing = player.setStretch(3);
   jobs[1].reject(new Error("stretch failed"));
   await expect(failing).rejects.toThrow("stretch failed");
-  expect(error.at(-1)).toBe("stretch failed");
+  expect(error.at(-1)).toBeNull(); // a stretch failure rejects its promise; `cells.error` is for load failures
   expect(processing.at(-1)).toBe(false);
 
   await expect(player.load("bad")).rejects.toThrow("nope");
@@ -171,11 +172,11 @@ test("load and stretch commit coherent states: an effect never sees an intermedi
   expect(snapshots[1]).toMatchObject({ processing: false, selection: { start: 0.5, end: 1 } });
   expect(snapshots[1].version?.ratio).toBe(2);
 
-  // Failure: processing and error arrive together.
+  // Failure: processing clears and the promise rejects.
   const failing = player.setStretch(4);
   jobs[1].reject(new Error("boom"));
   await expect(failing).rejects.toThrow("boom");
-  expect(snapshots.at(-1)).toMatchObject({ processing: false, error: "boom" });
+  expect(snapshots.at(-1)).toMatchObject({ processing: false, error: null });
 
   // Superseding a stretch never exposes processing=false in between.
   snapshots.length = 0;
@@ -217,18 +218,18 @@ test("owner methods called inside an effect do not subscribe it", async () => {
 test("public readers are tracked: an effect over getState/getSelection/isLooping re-runs for every state change", async () => {
   const gate = deferred<AudioBuffer>();
   const { context, player } = fixture({ loadSource: (url) => (url === "bad" ? Promise.reject(new Error("nope")) : gate.promise) });
-  const states: ReturnType<WavePlayer["getState"]>[] = [];
+  const states: ReturnType<typeof view>[] = [];
   const selections: unknown[] = [];
   const loops: boolean[] = [];
   disposers.push(
     effect(() => {
-      states.push(player.getState());
+      states.push(view(player));
     }),
     effect(() => {
-      selections.push(player.getSelection());
+      selections.push(player.cells.selection.value);
     }),
     effect(() => {
-      loops.push(player.isLooping);
+      loops.push(player.cells.isLooping.value);
     }),
   );
   const load = player.load("ok");
@@ -250,10 +251,10 @@ test("a listener that reads state is notified exactly once per operation", async
   const { context, player } = fixture();
   await player.load(audio(context));
   const listener = vi.fn(() => {
-    player.getState();
-    player.getSelection();
+    view(player);
+    player.cells.selection.value;
   });
-  disposers.push(player.subscribe(listener));
+  disposers.push(onChange(player, listener));
   // Transport changes notify from the player's own effect; listeners must not subscribe it to the state they read.
   await player.play();
   player.pause();
@@ -268,13 +269,14 @@ test("a listener that reads state is notified exactly once per operation", async
   expect(listener).toHaveBeenCalledTimes(4);
 });
 
-test("read-only cells are Readable, cannot be written, and getState/subscribe still follow them", async () => {
-  const { context, player } = fixture();
+test("read-only cells are Readable and cannot be written", async () => {
+  const { player } = fixture();
   const r = player.cells;
   expectTypeOf(r.selection).toExtend<Readable<{ start: number; end: number } | null>>();
   expectTypeOf(r.isLooping).toExtend<Readable<boolean>>();
   expectTypeOf(r.version).toExtend<Readable<PlaybackVersion | null>>();
   expectTypeOf(r.isPlaying).toExtend<Readable<boolean>>();
+  expectTypeOf(r.playhead).toExtend<Readable<{ position: number; startedAt: number | null }>>();
   // @ts-expect-error read-only: no setter on `.value`
   expect(() => (r.isLooping.value = true)).toThrow(TypeError);
   // @ts-expect-error read-only: `$` takes no argument
@@ -283,19 +285,27 @@ test("read-only cells are Readable, cannot be written, and getState/subscribe st
   expect(r.isLooping.value).toBe(false);
   expect(r.selection.value).toBeNull();
   expect(Object.isFrozen(r)).toBe(true);
+});
 
-  const listener = vi.fn();
-  disposers.push(player.subscribe(listener));
-  expect(listener).not.toHaveBeenCalled();
+test("cells.playhead changes on every play, pause, seek, stop and load, and carries the position and start time", async () => {
+  const { context, player } = fixture();
+  const seen: Array<{ position: number; startedAt: number | null }> = [];
+  disposers.push(effect(() => void seen.push(player.cells.playhead.value)));
+  expect(seen[0]).toEqual({ position: 0, startedAt: null });
   await player.load(audio(context));
-  expect(listener).toHaveBeenCalled();
-  listener.mockClear();
-  player.setLooping(true);
-  expect(listener).toHaveBeenCalledTimes(1);
-  expect(player.getState().isLooping).toBe(r.isLooping.value);
-  player.setSelection({ start: 0, end: 1 });
-  expect(player.getState().selection).toEqual(r.selection.value);
-  expect(player.getSelection()).not.toBe(r.selection.value);
+  player.seek(0.25);
+  expect(player.cells.playhead.value).toEqual({ position: 0.25, startedAt: null });
+  await player.play();
+  const playing = player.cells.playhead.value;
+  expect(playing.position).toBe(0.25);
+  expect(playing.startedAt).toBeGreaterThanOrEqual(0);
+  const before = seen.length;
+  player.pause();
+  expect(seen.length).toBeGreaterThan(before);
+  expect(player.cells.playhead.value.startedAt).toBeNull();
+  expect(player.cells.playhead.value.position).toBeGreaterThanOrEqual(0.25);
+  player.stop();
+  expect(player.cells.playhead.value).toEqual({ position: 0, startedAt: null });
 });
 
 test.each(["effect", "subscribe"] as const)(
@@ -312,7 +322,7 @@ test.each(["effect", "subscribe"] as const)(
       newer = player.setStretch(3);
     };
     if (kind === "effect") disposers.push(effect(react));
-    else disposers.push(player.subscribe(react));
+    else disposers.push(onChange(player, react));
 
     const older = player.setStretch(2);
     expect(newer).toBeDefined();
@@ -320,12 +330,12 @@ test.each(["effect", "subscribe"] as const)(
     const latest = jobs.findLast((job) => job.ratio === 3)!;
     latest.resolve(rendered(latest));
     await newer;
-    expect(player.version?.ratio).toBe(3);
+    expect(player.cells.version.value?.ratio).toBe(3);
     for (const job of jobs) if (job !== latest) job.resolve(rendered(job));
     await older;
     await new Promise((done) => setTimeout(done, 20));
-    expect(player.version?.ratio).toBe(3);
-    expect(player.getState()).toMatchObject({ stretchRatio: 3, processing: false, error: null });
+    expect(player.cells.version.value?.ratio).toBe(3);
+    expect(view(player)).toMatchObject({ stretchRatio: 3, processing: false, error: null });
     expect(player.duration).toBeCloseTo(6, 5);
   },
 );
@@ -357,7 +367,7 @@ test("a load started re-entrantly from an observer is not overwritten by the old
   await older;
   await new Promise((done) => setTimeout(done, 20));
   expect(player.duration).toBeCloseTo(1, 5);
-  expect(player.getState()).toMatchObject({ loading: false, error: null });
+  expect(view(player)).toMatchObject({ loading: false, error: null });
 });
 
 test.each(["effect", "subscribe"] as const)(
@@ -376,13 +386,13 @@ test.each(["effect", "subscribe"] as const)(
       }
     };
     if (kind === "effect") disposers.push(effect(react));
-    else disposers.push(player.subscribe(react));
+    else disposers.push(onChange(player, react));
 
     // The older request started nothing that survives, so it must not report a start time.
     expect(await player.play({ when: first })).toBeNull();
     expect(newer).toBeDefined();
     expect(await newer).toBe(second);
-    expect(player.getState()).toMatchObject({ isPlaying: true, position: 0 });
+    expect(view(player)).toMatchObject({ isPlaying: true, position: 0 });
     await new Promise((done) => setTimeout(done, 700));
     // Past the superseded `first`: still queued for `second`, so the playhead has not moved.
     expect(context.currentTime).toBeGreaterThan(first);
@@ -399,39 +409,10 @@ test.each(["effect", "subscribe"] as const)(
       }
     };
     if (kind === "effect") disposers.push(effect(cancel));
-    else disposers.push(player.subscribe(cancel));
+    else disposers.push(onChange(player, cancel));
     newer = Promise.resolve(null); // disarm the first observer
     expect(await player.play({ when: context.currentTime + 0.2 })).toBeNull();
     expect(paused).toBe(true);
-    expect(player.getState().isPlaying).toBe(false);
+    expect(view(player).isPlaying).toBe(false);
   },
 );
-
-test("the isPlaying getter and cell agree, through a queued start, playback and its natural end", async () => {
-  const { context, player } = fixture();
-  await player.load(audio(context, 4000));
-  const seen: Array<[boolean, boolean]> = [];
-  const check = () => seen.push([player.isPlaying, player.cells.isPlaying.value]);
-  disposers.push(effect(check), player.subscribe(check));
-  await player.play({ when: context.currentTime + 0.05 });
-  check();
-  await expect.poll(() => player.cells.isPlaying.value, { timeout: 3000 }).toBe(false);
-  check();
-  expect(seen.length).toBeGreaterThan(2);
-  for (const [getter, cell] of seen) expect(getter).toBe(cell);
-});
-
-test("an unsubscribed listener is not called, and dispose releases subscribers", async () => {
-  const { context, player } = fixture();
-  await player.load(audio(context));
-  const kept = vi.fn(),
-    dropped = vi.fn();
-  player.subscribe(kept);
-  player.subscribe(dropped)();
-  player.setLooping(true);
-  expect(dropped).not.toHaveBeenCalled();
-  expect(kept).toHaveBeenCalledTimes(1);
-  player.dispose();
-  kept.mockClear();
-  expect(kept).not.toHaveBeenCalled();
-});

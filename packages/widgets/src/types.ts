@@ -1,4 +1,5 @@
-import type { WavePlayerState } from "@audiorective/player";
+import type { Readable } from "@audiorective/core";
+import type { WaveLoadProgress } from "@audiorective/player";
 
 /** The playback version a selector currently displays. */
 export type SelectorVersion = Readonly<{ revision: number; sourceRevision: number; buffer: { readonly duration: number }; peaks: WaveformPeaks }>;
@@ -6,20 +7,39 @@ export type SelectorVersion = Readonly<{ revision: number; sourceRevision: numbe
 /** Selection boundaries in the currently committed buffer's output seconds. */
 export type Selection = { start: number; end: number };
 
-export type WaveformSelectorState = WavePlayerState & {
+/** A snapshot of the selector and its player. Seconds are the committed output buffer's; `error` is the load or playback failure on display. */
+export type WaveformSelectorState = {
+  duration: number;
+  selection: Selection | null;
+  position: number;
+  isPlaying: boolean;
+  isLooping: boolean;
+  loading: boolean;
+  loadProgress: WaveLoadProgress | null;
+  error: string | null;
+  processing: boolean;
+  stretchRatio: number;
+  sourceDuration: number;
+  revision: number;
   pixelsPerSecond: number;
 };
 
-/**
- * What the selector reads and drives. `WavePlayer` satisfies it; so can any model that exposes these members.
- * `version`, `isPlaying` and `isLooping` are read inside `subscribe` notifications.
- */
+/** What the selector reads and drives. `WavePlayer` satisfies it; so can any model that exposes these members. The selector follows the cells. */
 export interface SelectorPlayer extends SelectionModel {
   readonly output: AudioNode;
-  readonly version: SelectorVersion | null;
-  readonly isPlaying: boolean;
-  readonly isLooping: boolean;
-  getState(): WavePlayerState;
+  readonly position: number;
+  readonly duration: number;
+  readonly sourceBuffer: { readonly duration: number } | null;
+  readonly cells: SelectionModel["cells"] & {
+    readonly isLooping: Readable<boolean>;
+    readonly isPlaying: Readable<boolean>;
+    readonly loading: Readable<boolean>;
+    readonly loadProgress: Readable<WaveLoadProgress | null>;
+    readonly error: Readable<string | null>;
+    readonly processing: Readable<boolean>;
+    readonly version: Readable<(SelectorVersion & { readonly ratio: number }) | null>;
+    readonly playhead: Readable<unknown>;
+  };
   load(source: string | File): Promise<void>;
   cancelLoad(): void;
   play(): Promise<unknown>;
@@ -174,9 +194,9 @@ export type SelectionPluginOptions = {
   onCommit?: (event: SelectionCommit) => void;
 };
 export interface SelectionModel {
-  getSelection(): Selection | null;
+  /** The committed selection as a cell (`WavePlayer.cells.selection`); the plugin follows it and never mutates what it reads. */
+  readonly cells: { readonly selection: Readable<Readonly<Selection> | null> };
   setSelection(selection: Selection | null): void;
-  subscribe(listener: () => void): Unsubscribe;
 }
 export interface SelectionPlugin extends WaveformPlugin {
   getSelection(): Selection | null;

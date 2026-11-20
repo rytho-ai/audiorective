@@ -1,4 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
+import { view, onChange } from "./view";
 import { AutomationBinding, AutomationCurve, audioParamTarget } from "@audiorective/core/automation";
 import { WavePlayer } from "../src/WavePlayer";
 
@@ -149,7 +150,7 @@ test("source automation maps a stretched output selection and follows a queued s
   expect(hold).toHaveBeenCalledTimes(previousHolds + 1);
   expect(hold.mock.calls.at(-1)![0]).toBeGreaterThanOrEqual(beforeDetach);
   expect(hold.mock.calls.at(-1)![0]).toBeLessThanOrEqual(context.currentTime);
-  expect(player.isPlaying).toBe(true); // detaching automation leaves borrowed playback alive
+  expect(player.cells.isPlaying.value).toBe(true); // detaching automation leaves borrowed playback alive
 });
 
 test("a selection edit invalidates a play still awaiting resume when source automation is attached", async () => {
@@ -171,7 +172,7 @@ test("a selection edit invalidates a play still awaiting resume when source auto
   player.setSelection({ start: 1, end: 2 });
   release();
   expect(await pendingSelection).toBeNull();
-  expect(player.isPlaying).toBe(false);
+  expect(player.cells.isPlaying.value).toBe(false);
   expect(program).not.toHaveBeenCalled();
 });
 
@@ -201,7 +202,7 @@ test("starting an unfinished stretch invalidates pending and queued source autom
   vi.spyOn(context, "resume").mockReturnValue(new Promise<void>((done) => (release = done)));
   const pendingStretch = player.play({ when: context.currentTime + 0.2 });
   const stretching = player.setStretch(1.5);
-  expect(player.getState().processing).toBe(true);
+  expect(view(player).processing).toBe(true);
   release();
   expect(await pendingStretch).toBeNull();
   expect(program).not.toHaveBeenCalled();
@@ -213,7 +214,7 @@ test("starting an unfinished stretch invalidates pending and queued source autom
   expect(await player.play({ when })).toBe(when);
   expect(program).toHaveBeenCalledTimes(1);
   const secondStretch = player.setStretch(1.5);
-  expect(player.isPlaying).toBe(false); // queued start is withdrawn before the render commits
+  expect(player.cells.isPlaying.value).toBe(false); // queued start is withdrawn before the render commits
   expect(hold).toHaveBeenCalled();
   resolveRender({ sampleRate: context.sampleRate, channels: [new Float32Array(Math.round(context.sampleRate * 1.5))] });
   await secondStretch;
@@ -240,7 +241,7 @@ test("source automation rejects another audio clock and looping, and manual deta
   detach();
   gain.gain.value = 0.4;
   expect(gain.gain.value).toBeCloseTo(0.4, 2);
-  expect(player.isPlaying).toBe(true);
+  expect(player.cells.isPlaying.value).toBe(true);
   player.dispose();
   expect(() => binding.start()).not.toThrow(); // player borrowed the binding; it did not dispose it
 });
@@ -260,7 +261,7 @@ test("a reentrant automation target can pause without the old play starting soun
     () => detach(),
   );
   expect(await player.play({ when: context.currentTime + 0.2 })).toBeNull();
-  expect(player.isPlaying).toBe(false);
+  expect(player.cells.isPlaying.value).toBe(false);
   expect(program).toHaveBeenCalledTimes(1);
   await delay(280);
   expect(peak(analyser)).toBeLessThan(0.001);
@@ -283,7 +284,7 @@ test("a failing automation hold does not prevent player cleanup", async () => {
   );
   expect(await player.play({ when: context.currentTime + 0.2 })).not.toBeNull();
   expect(() => player.dispose()).not.toThrow();
-  expect(player.isPlaying).toBe(false);
+  expect(player.cells.isPlaying.value).toBe(false);
   expect(errorLog).toHaveBeenCalledWith("WavePlayer source automation stop failed:", expect.any(Error));
 });
 
@@ -295,8 +296,8 @@ test("a queued start counts as playing, holds position until `when`, then follow
   const when = context.currentTime + 0.4;
   expect(await player.play({ when })).toBe(when);
   expect(player.cells.isPlaying.value).toBe(true);
-  expect(player.isPlaying).toBe(true);
-  expect(player.getState()).toMatchObject({ isPlaying: true, position: 1 });
+  expect(player.cells.isPlaying.value).toBe(true);
+  expect(view(player)).toMatchObject({ isPlaying: true, position: 1 });
   // A second request while queued starts nothing.
   expect(await player.play({ when: when + 1 })).toBeNull();
   await until(context, when - 0.15);
@@ -326,7 +327,7 @@ for (const command of ["pause", "stop", "load", "setStretch", "dispose"] as cons
     else if (command === "setStretch") await player.setStretch(1);
     else player[command]();
     expect(context.currentTime).toBeLessThan(when);
-    if (command !== "dispose") expect(player.getState().isPlaying).toBe(false);
+    if (command !== "dispose") expect(view(player).isPlaying).toBe(false);
     for (let i = 0; i < 6; i++) {
       await delay(60);
       expect(peak(analyser)).toBeLessThan(0.001);
@@ -342,7 +343,7 @@ test("seek before `when` re-issues the queued start at the same time from the ne
   const when = context.currentTime + 0.4;
   await player.play({ when });
   player.seek(4.5);
-  expect(player.isPlaying).toBe(true);
+  expect(player.cells.isPlaying.value).toBe(true);
   expect(player.position).toBe(4.5);
   await until(context, when - 0.15);
   expect(context.currentTime).toBeLessThan(when);
@@ -369,11 +370,11 @@ test("selection and looping changes before `when` keep the start time, bounds an
   expect(peak(analyser)).toBeLessThan(0.001);
   expect(player.position).toBe(3.3);
   await until(context, when + 0.15);
-  expect(player.isPlaying).toBe(true);
+  expect(player.cells.isPlaying.value).toBe(true);
   expect(frequency(analyser, context)).toBeGreaterThan(420);
   expect(frequency(analyser, context)).toBeLessThan(460);
   expect(player.position).toBeCloseTo(3.3 + context.currentTime - when, 1);
-  await expect.poll(() => player.isPlaying).toBe(false);
+  await expect.poll(() => player.cells.isPlaying.value).toBe(false);
   expect(context.currentTime).toBeGreaterThan(when + 0.29);
   expect(player.position).toBeCloseTo(3.6, 2);
 
@@ -387,7 +388,7 @@ test("selection and looping changes before `when` keep the start time, bounds an
   expect(context.currentTime).toBeLessThan(when);
   expect(peak(analyser)).toBeLessThan(0.001);
   await until(context, when + 0.45);
-  expect(player.isPlaying).toBe(true);
+  expect(player.cells.isPlaying.value).toBe(true);
   expect(peak(analyser)).toBeGreaterThan(0.1);
   const elapsed = context.currentTime - when;
   expect(player.position).toBeCloseTo(3.3 + (elapsed % 0.3), 1);
@@ -416,7 +417,7 @@ test("a past or missing `when` clamps to now and the effective time is returned;
   await player.load(bands(context));
   for (const invalid of [NaN, Infinity, -1])
     await expect(player.play({ when: invalid })).rejects.toThrow("Start time must be finite, non-negative seconds.");
-  expect(player.isPlaying).toBe(false);
+  expect(player.cells.isPlaying.value).toBe(false);
 
   // `when` passes while the context resume is pending.
   let release!: () => void;
@@ -424,7 +425,7 @@ test("a past or missing `when` clamps to now and the effective time is returned;
   const when = context.currentTime + 0.05;
   const pending = player.play({ when });
   await until(context, when + 0.1);
-  expect(player.isPlaying).toBe(false);
+  expect(player.cells.isPlaying.value).toBe(false);
   const before = context.currentTime;
   release();
   const started = await pending;

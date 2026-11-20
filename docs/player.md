@@ -19,7 +19,7 @@ try {
   await player.load("/audio/loop.wav");
   if (player.duration >= 2) player.setSelection({ start: 1, end: 2 });
 } catch (error) {
-  console.error(player.getState().error, error);
+  console.error(player.cells.error.value, error);
 }
 
 // From a user gesture:
@@ -28,25 +28,22 @@ try {
 // player.dispose(); // leaves context open
 ```
 
-| Member                                                       | Behavior                                                                                                                                                                                                                                                                                                                                                                                                       |
-| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `load(source: string \| File \| AudioBuffer): Promise<void>` | Stops playback, clears range/loop/position and replaces the source. URL and File are decoded with the supplied context. An AudioBuffer is borrowed without decoding or copying. Loading cancels any pending stretch and restores ratio 1. Only the latest load may update state; superseded loads settle without updating it. A current failure rejects and sets `error`.                                      |
-| `buffer: AudioBuffer \| null`, `duration: number`            | Current committed playback buffer and output duration in seconds. Read them together through `version` when audio and peaks must agree.                                                                                                                                                                                                                                                                        |
-| `setSelection(range: AudioRange \| null)`                    | Sets a defensive copy. Finite endpoints must satisfy `0 <= start < end <= duration`. Invalid edits leave state unchanged. Clearing disables looping. A stopped player stays stopped; a playing session follows the new bounds.                                                                                                                                                                                 |
-| `getSelection(): AudioRange \| null`                         | Returns a copy of the authoritative selection.                                                                                                                                                                                                                                                                                                                                                                 |
-| `play(options?: { when?: number }): Promise<number \| null>` | Resumes the supplied context, then starts or resumes within the current range (whole source without a range). At the end, the next play starts at the range start. `when` schedules the first sound; see [Scheduled start](#scheduled-start). Resolves with the effective start time, or `null` when the call started nothing. Context resume errors reject.                                                   |
-| `attachSourceAutomation(binding): () => void`                | Borrows a core `AutomationBinding` in source seconds for non-looping playback. Starts, re-anchors and stops it with the player; the returned function detaches and stops it without disposing the binding or player. See [Source-time automation](#source-time-automation-on-a-selection).                                                                                                                     |
-| `audition(): Promise<void>`                                  | Enables looping, seeks to the selected start and plays. No selection means no action.                                                                                                                                                                                                                                                                                                                          |
-| `pause()` / `stop()`                                         | Pause holds position; stop resets to the selection start, or zero. Both cancel pending play requests.                                                                                                                                                                                                                                                                                                          |
-| `seek(seconds)`                                              | Clamps finite seconds to the committed output duration. A playing session restarts within its bounds; a stopped session remains stopped.                                                                                                                                                                                                                                                                       |
-| `setLooping(boolean)`                                        | Loops the selection, or the whole source. Changing this during playback cancels an obsolete scheduled stop.                                                                                                                                                                                                                                                                                                    |
-| `position`, `isPlaying`, `isLooping`                         | Current output seconds and playback flags. `isPlaying` is the transport flag and always equals `cells.isPlaying`. Position follows the audio clock at the committed buffer's native playback speed.                                                                                                                                                                                                            |
-| `cancelLoad(): void`                                         | Cancels the active load, clears progress without an error, and ignores late results. Idle calls preserve the committed version.                                                                                                                                                                                                                                                                                |
-| `getState()`                                                 | Snapshot containing `duration`, copied `selection`, `position`, `isPlaying`, `isLooping`, `loading`, `loadProgress`, `error: string \| null`, `processing`, `stretchRatio`, `sourceDuration`, and `revision`.                                                                                                                                                                                                  |
-| `subscribe(listener: () => void): () => void`                | Change notifications for source, selection, loading and playback, one per committed change; an effect over the cells, so it is also a thin wrapper over them. Returns unsubscribe. Does not call immediately or tick for clock-only position movement. Render once, subscribe for changes, and read `position` per animation frame when needed. A failing listener is logged without preventing other updates. |
-| `dispose()`                                                  | Idempotently cancels loads, edits and play requests, stops/disconnects owned audio and releases buffers/listeners. It never disposes the borrowed stretch processor. Leaves the caller context open. Mutating a disposed player throws `WavePlayer is disposed.`                                                                                                                                               |
+| Member                                                       | Behavior                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `load(source: string \| File \| AudioBuffer): Promise<void>` | Stops playback, clears range/loop/position and replaces the source. URL and File are decoded with the supplied context. An AudioBuffer is borrowed without decoding or copying. Loading cancels any pending stretch and restores ratio 1. Only the latest load may update state; superseded loads settle without updating it. A current failure rejects and sets `cells.error`. |
+| `buffer: AudioBuffer \| null`, `duration: number`            | Current committed playback buffer and output duration in seconds. Read them together through `version` when audio and peaks must agree.                                                                                                                                                                                                                                         |
+| `setSelection(range: AudioRange \| null)`                    | Sets a defensive copy. Finite endpoints must satisfy `0 <= start < end <= duration`. Invalid edits leave state unchanged. Clearing disables looping. A stopped player stays stopped; a playing session follows the new bounds.                                                                                                                                                  |
+| `play(options?: { when?: number }): Promise<number \| null>` | Resumes the supplied context, then starts or resumes within the current range (whole source without a range). At the end, the next play starts at the range start. `when` schedules the first sound; see [Scheduled start](#scheduled-start). Resolves with the effective start time, or `null` when the call started nothing. Context resume errors reject.                    |
+| `attachSourceAutomation(binding): () => void`                | Borrows a core `AutomationBinding` in source seconds for non-looping playback. Starts, re-anchors and stops it with the player; the returned function detaches and stops it without disposing the binding or player. See [Source-time automation](#source-time-automation-on-a-selection).                                                                                      |
+| `audition(): Promise<void>`                                  | Enables looping, seeks to the selected start and plays. No selection means no action.                                                                                                                                                                                                                                                                                           |
+| `pause()` / `stop()`                                         | Pause holds position; stop resets to the selection start, or zero. Both cancel pending play requests.                                                                                                                                                                                                                                                                           |
+| `seek(seconds)`                                              | Clamps finite seconds to the committed output duration. A playing session restarts within its bounds; a stopped session remains stopped.                                                                                                                                                                                                                                        |
+| `setLooping(boolean)`                                        | Loops the selection, or the whole source. Changing this during playback cancels an obsolete scheduled stop.                                                                                                                                                                                                                                                                     |
+| `position`                                                   | Current output seconds, a plain getter read per animation frame. It follows the audio clock at the committed buffer's native playback speed. Playback flags, selection and everything else observable are in `cells`.                                                                                                                                                           |
+| `cancelLoad(): void`                                         | Cancels the active load, clears progress without an error, and ignores late results. Idle calls preserve the committed version.                                                                                                                                                                                                                                                 |
+| `dispose()`                                                  | Idempotently cancels loads, edits and play requests, stops/disconnects owned audio and releases buffers/listeners. It never disposes the borrowed stretch processor. Leaves the caller context open. Mutating a disposed player throws `WavePlayer is disposed.` `options.signal` calls it on abort; `[Symbol.dispose]()` is the same call.                                     |
 
-`AudioRange` is `{ start: number; end: number }`. `WavePlayerSource`, `WavePlayerState`, `WavePlayerOptions`, `WavePlayOptions`, `WaveStretchProcessor`, and `PlaybackVersion` are exported. Playback, selection, seek, and position use **committed output seconds**. Original source seconds remain available through `sourceDuration` and the mapping helpers below. With ratio 1 the timelines coincide.
+`AudioRange` is `{ start: number; end: number }`. `WavePlayerSource`, `WavePlayerCells`, `WavePlayerOptions`, `WavePlayOptions`, `WaveStretchProcessor`, and `PlaybackVersion` are exported. Playback, selection, seek, and position use **committed output seconds**. Original source seconds remain available through `sourceDuration` and the mapping helpers below. With ratio 1 the timelines coincide.
 
 ### Scheduled start
 
@@ -64,7 +61,7 @@ const started = await player.play({ when });
 | `when` omitted or already past when the start is issued   | Clamps to the current audio time, the same rule as `AutomationBinding`. `play()` awaits `context.resume()` first, so a near `when` can pass while it waits.                                                                                   |
 | Resolved value                                            | The effective start time: `when` itself, or the clamped time. Anchor other schedules to this value, never to the requested one. A start at the requested future `when` is sample-accurate; a clamped start begins on the next render quantum. |
 | Resolved `null`                                           | This call started nothing: no source, already playing or queued, or superseded before it resolved by any call that cancels or re-issues the start. Schedule nothing against it.                                                               |
-| Before `when`                                             | The start is queued. `isPlaying`, `cells.isPlaying` and `getState().isPlaying` are already true, the output is silent, and `position` holds the start offset. It advances from `when`.                                                        |
+| Before `when`                                             | The start is queued. `cells.isPlaying` is already true, the output is silent, and `position` holds the start offset. It advances from `when`.                                                                                                 |
 | `play()` while queued                                     | No-op that resolves `null`. Pause or stop first to schedule a different time.                                                                                                                                                                 |
 | `pause`, `stop`, `load`, a `setStretch` commit, `dispose` | Cancel the queued start; nothing sounds. Pause holds the start offset.                                                                                                                                                                        |
 | `seek`, `setSelection`, `setLooping` while queued         | Keep the session and the same `when`. The start is re-issued from the new position and bounds, and a one-shot's end is measured from `when`. Only the re-issued start sounds.                                                                 |
@@ -101,7 +98,7 @@ If selection changes while `play()` is still awaiting `context.resume()`, that p
 
 ## Observing state reactively
 
-`player.cells` holds the observable state, like every core processor: `selection`, `isLooping`, `isPlaying`, `loading`, `loadProgress`, `error`, `processing` and `version`. Each is a `ReadonlyCell<T>`. They are the only store; `getState()` and `subscribe()` are thin wrappers over them. Read `.value` (or call `$()`) inside an `effect`, a `computed`, or `useValue` from `@audiorective/react`, and the reader re-runs when the value changes. No subscription or manual teardown is involved beyond the effect's own.
+`player.cells` is the only way to observe a WavePlayer, like every core processor: `selection`, `isLooping`, `isPlaying`, `loading`, `loadProgress`, `error`, `processing`, `version` and `playhead`. Each is a `ReadonlyCell<T>`. Read `.value` (or call `$()`) inside an `effect`, a `computed`, or `useValue` from `@audiorective/react`, and the reader re-runs when the value changes; `cells.x.subscribe(listener, { immediate })` is the callback form. No manual teardown is involved beyond the effect's own.
 
 ```typescript
 import { effect } from "@audiorective/core";
@@ -115,31 +112,33 @@ const stop = effect(() => {
 
 The cells are read-only from outside: assigning `.value` is a type error and throws, and `$` takes no argument. Change state through the owner's methods (`setSelection`, `setLooping`, `load`, `cancelLoad`, `setStretch`, `play`, `pause`). An operation that changes several fields commits them as one batch, so an effect sees one coherent state, never a half-applied one: a finished load updates `version`, `selection`, `looping`, `loading`, `loadProgress` and `error` together, and a finished stretch updates `version`, the scaled `selection` and `processing` together. Calling owner methods inside an effect does not subscribe that effect to the state those methods read.
 
-The reading methods are tracked too: `getState()`, `getSelection()`, `isLooping`, `isPlaying` and `version` re-run an effect that calls them. `buffer`, `duration` and `sourceBuffer` are tracked too and change together with `version`. The time-mapping helpers `sourceToOutput` and `outputToSource` are plain calculations that never subscribe an effect; an effect that only uses them reads `cells.version.value` first so it follows source replacement and stretch.
+`buffer`, `duration` and `sourceBuffer` are tracked reads that change together with `cells.version`. The time-mapping helpers `sourceToOutput` and `outputToSource` are plain calculations that never subscribe an effect; an effect that only uses them reads `cells.version.value` first so it follows source replacement and stretch.
+
+`cells.playhead` is `{ position, startedAt }`: it changes whenever the playhead is moved or restarted (play, pause, stop, seek, a loop or selection change, load, a stretch commit), so a paused seek is observable. `startedAt` is the audio-context time the playhead began advancing and `null` while it holds still. Read `player.position` per frame while it advances.
 
 `cells.isPlaying` follows the transport: it turns true when a start is issued, including one queued for a future `when`, and false when playback stops. `position` is derived from the audio clock and stays a plain getter; read it per animation frame instead of observing it. `volume` is `params.volume`, a standard `SchedulableParam`.
 
 ## Loading state, progress and cancellation
 
-`getState().loading` covers the whole source load. `loadProgress` is an immutable snapshot:
+`cells.loading` covers the whole source load. `loadProgress` is an immutable snapshot:
 
 ```typescript
 type WaveLoadProgress = { phase: "download" | "read"; loadedBytes: number; totalBytes: number | null } | { phase: "decode" } | { phase: "peaks" };
 ```
 
-URL streams report `download`; File streams report `read`. `totalBytes: null` means the size is unknown, including encoded HTTP bodies whose Content-Length describes compressed bytes. Show the bytes received and an indeterminate indicator. A trustworthy positive total supports a download fraction; decode and peaks have no percentage. Peaks reduction is synchronous: subscribers observe its phase, but the browser need not paint it before completion. An AudioBuffer skips I/O and decode.
+URL streams report `download`; File streams report `read`. `totalBytes: null` means the size is unknown, including encoded HTTP bodies whose Content-Length describes compressed bytes. Show the bytes received and an indeterminate indicator. A trustworthy positive total supports a download fraction; decode and peaks have no percentage. Peaks reduction is synchronous: observers see its phase, but the browser need not paint it before completion. An AudioBuffer skips I/O and decode.
 
-Progress is `null` when idle and briefly before a custom adapter reports its first phase. Successful load, failure, `cancelLoad()` and destruction clear it. `processing` remains the separate stretch-render state. `subscribe` includes phase and byte changes; it does not emit an initial snapshot:
+Progress is `null` when idle and briefly before a custom adapter reports its first phase. Successful load, failure, `cancelLoad()` and disposal clear it. `processing` remains the separate stretch-render state. `cells.loadProgress` changes with every phase and byte report:
 
 ```typescript
-const render = () => {
-  const { loading, loadProgress, error } = player.getState();
-  console.log({ loading, loadProgress, error });
-};
-render();
-const unsubscribe = player.subscribe(render);
+import { effect } from "@audiorective/core";
+
+const stop = effect(() => {
+  const { loading, loadProgress, error } = player.cells;
+  console.log({ loading: loading.value, loadProgress: loadProgress.value, error: error.value });
+});
 // In the cancel button handler: player.cancelLoad();
-// On observer cleanup: unsubscribe();
+// On observer cleanup: stop();
 ```
 
 Cancellation or replacement prevents stale progress/results from updating the player. A superseded/cancelled `load` settles without publishing an error; inspect the current state rather than treating every resolution as a successful commit. Web Audio decoding already in progress cannot be interrupted; its result is ignored. Cancellation cannot interrupt synchronous peaks work once it has started. Current failures reject and populate `error`; retry with `load`.
@@ -156,7 +155,7 @@ Built-in HTTP loading rejects unsuccessful responses, text/SPA fallback content,
 
 Construct `new WavePlayer(context, { stretch })` with any structural `WaveStretchProcessor` exposing `process(input: PCMData, options: { ratio: number; signal?: AbortSignal }): Promise<PCMData>`. The player borrows that processor; the application owns its lifetime. A custom processor must leave the borrowed source PCM unchanged. [`TimeStretch`](./effects.md#timestretch) implements this interface and takes private copies before processing.
 
-`sourceBuffer: AudioBuffer | null` keeps the original loaded buffer. Treat its channel data as immutable while loaded. `version: PlaybackVersion | null` publishes one committed revision:
+`sourceBuffer: AudioBuffer | null` keeps the original loaded buffer. Treat its channel data as immutable while loaded. `cells.version: ReadonlyCell<PlaybackVersion | null>` publishes one committed revision:
 
 ```typescript
 interface PlaybackVersion {
@@ -170,7 +169,7 @@ interface PlaybackVersion {
 
 The metadata object is frozen. Its borrowed buffer and peak arrays are read-only by contract, rather than deeply frozen. `revision` increases on every committed load or edit; `sourceRevision` identifies the source across its edits. `ratio` is the requested duration ratio; actual output duration uses a whole-frame `Math.round(sourceBuffer.length * ratio)` target. Read `version.buffer` and `version.peaks` together for matching audio and display data.
 
-`await player.setStretch(ratio)` always processes the original source, so successive ratios do not compound. While it runs, `processing` is true and the old version remains playable and visible. A current failure rejects, sets `error`, and preserves the version, selection, position and playback. A newer edit cancels the older signal; stale results or failures settle without publication. Loading another source or disposing the player also cancels pending edits.
+`await player.setStretch(ratio)` always processes the original source, so successive ratios do not compound. While it runs, `processing` is true and the old version remains playable and visible. A current failure is one rejected promise: `setStretch` rejects with the cause, `cells.error` stays for load failures, and the version, selection, position and playback are preserved. Catch it at the call site and clear any busy indicator in `finally`; `cells.processing` reports the render meanwhile. Invalid arguments and a missing source or processor reject the same way. A newer edit cancels the older signal; stale results or failures settle without publication. Loading another source or disposing the player also cancels pending edits.
 
 A successful edit commits audio and peaks together, stops playback, and scales selection and held position by the new duration divided by the previous duration. Loop mode is retained. Call `play()` or `audition()` from a user gesture to start the committed version. `setStretch(1)` restores the original buffer without invoking a processor. Ratios must be finite and positive; edits require a loaded source, and ratios other than 1 require a processor.
 
@@ -218,7 +217,7 @@ async function createEditor(context: AudioContext, root: HTMLElement, wasmURL: s
       try {
         await player.load(source);
       } catch (error) {
-        console.error(player.getState().error, error);
+        console.error(player.cells.error.value, error);
         throw error;
       }
     },
@@ -272,7 +271,7 @@ first.dispose(); // player and second view remain usable
 
 Loading through either view replaces the shared source. Each view keeps its own zoom, scroll, renderer, snap policy and plugin resources; audio and selection have one owner. Shared outputs are identical: route `player.output` once to avoid doubling the signal.
 
-The [pure waveform selection plugin](./widgets.md#selection-plugin-api) can use `model: player` without importing audio into the pure view entry. An application can supply any structural model implementing `getSelection()`, `setSelection()` and `subscribe()`. Detaching a view does not clear an external model.
+The [pure waveform selection plugin](./widgets.md#selection-plugin-api) can use `model: player` without importing audio into the pure view entry. An application can supply any structural model with a `cells.selection` cell and a `setSelection()` method. Detaching a view does not clear an external model.
 
 See [Core](./core.md#pcm-peak-summaries) for pure PCM summaries, [TimeStretch](./effects.md#timestretch) for offline DSP, and [Widgets](./widgets.md) for visual plugins, custom drawing and snapping.
 
@@ -282,7 +281,7 @@ Loading, selection and playback messages from `WavePlayer`. Stretch and time-map
 
 | Message                                                                                                       | Cause                                            | Fix                                                                             |
 | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------- |
-| `WavePlayer is disposed.`                                                                                     | Mutating or subscribing after player cleanup     | Create a new WavePlayer; shared views must not dispose their caller's player.   |
+| `WavePlayer is disposed.`                                                                                     | Mutating after player cleanup                    | Create a new WavePlayer; shared views must not dispose their caller's player.   |
 | `Position must be finite seconds.` / `Start time must be finite, non-negative seconds.`                       | Invalid `seek` position or `play({ when })` time | Pass finite seconds; `when` is an absolute `AudioContext` time, clamped to now. |
 | `Enter an audio URL.`                                                                                         | Empty URL passed to `load`                       | Supply a URL or File.                                                           |
 | `Audio request failed: HTTP 404.` (status varies)                                                             | URL response is unsuccessful                     | Check the URL, access, and server response; call `load` again to recover.       |

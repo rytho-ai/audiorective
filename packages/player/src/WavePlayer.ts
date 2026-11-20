@@ -3,7 +3,6 @@ import {
   BufferPlayer,
   batch,
   cell,
-  effect,
   readonlyCell,
   untracked,
   type Cell,
@@ -24,6 +23,8 @@ export interface WavePlayerOptions {
   stretch?: WaveStretchProcessor;
   /** Optional URL/cache adapter. Files use native loading; the player owns lifecycle and summary. */
   loadSource?: WaveSourceLoader;
+  /** Aborting the signal calls `dispose()`. */
+  signal?: AbortSignal;
 }
 export interface WavePlayOptions {
   /** Absolute audio-context seconds at which sound starts. A past time clamps to now. Default: now. */
@@ -41,22 +42,6 @@ export interface PlaybackVersion {
 /** Seconds in the currently committed playback buffer, independent of any view. */
 export type AudioRange = { start: number; end: number };
 export type WavePlayerSource = string | File | AudioBuffer;
-export type WavePlayerState = {
-  duration: number;
-  selection: AudioRange | null;
-  position: number;
-  isPlaying: boolean;
-  isLooping: boolean;
-  loading: boolean;
-  /** Null when idle or before a custom loader reports its first phase. */
-  loadProgress: WaveLoadProgress | null;
-  error: string | null;
-  processing: boolean;
-  stretchRatio: number;
-  sourceDuration: number;
-  revision: number;
-};
-
 /** Observable state. Effects and `useValue` track these; they are read-only, and change through the player's methods. */
 export type WavePlayerCells = {
   /** Committed selection in output seconds; the object is frozen. */
@@ -70,6 +55,11 @@ export type WavePlayerCells = {
   processing: ReadonlyCell<boolean>;
   /** The committed audio/peaks revision; null while empty or loading. */
   version: ReadonlyCell<PlaybackVersion | null>;
+  /**
+   * Changes whenever the playhead is moved or restarted (play, pause, stop, seek, loop or selection change, load, stretch): `position` is the playhead at that moment
+   * and `startedAt` the audio-context time it began advancing, null while it holds still. While advancing, read `player.position` per frame.
+   */
+  playhead: ReadonlyCell<Readonly<{ position: number; startedAt: number | null }>>;
 };
 type Store = {
   selection: Cell<Readonly<AudioRange> | null>;
@@ -97,7 +87,8 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
   private command = 0;
   private abort: AbortController | null = null;
   private disposed = false;
-  private readonly subscribers = new Set<() => void>();
+  private readonly abortSignal?: AbortSignal;
+  private readonly onAbort = () => this.dispose();
   private readonly sourceAutomations = new Set<AutomationBinding>();
   private original: AudioBuffer | null = null;
   private sourceRevision = 0;
@@ -132,6 +123,10 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
         error: readonlyCell(store.error),
         processing: readonlyCell(store.processing),
         version: readonlyCell(store.version),
+        playhead: readonlyCell(() => {
+          const anchor = store.anchor.value;
+          return Object.freeze({ position: anchor ? anchor.offset : store.held.value, startedAt: anchor ? anchor.time : null });
+        }),
       },
     }));
     this.gain = gain;
@@ -139,6 +134,9 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
     this.player = player;
     this.store = store;
     this.defineGraph(() => [[this.player, gain]]);
+    this.abortSignal = options.signal;
+    if (this.abortSignal?.aborted) this.dispose();
+    else this.abortSignal?.addEventListener("abort", this.onAbort, { once: true });
   }
 
   private get held(): number {
@@ -212,10 +210,6 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
   get duration(): number {
     return this.buffer?.duration ?? 0;
   }
-  /** One coherent audio/peaks revision. Treat its borrowed data as read-only. */
-  get version(): PlaybackVersion | null {
-    return this.cells.version.value;
-  }
   get sourceBuffer(): AudioBuffer | null {
     void this.cells.version.value;
     return this.original;
@@ -247,74 +241,9 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
     const time = a.offset + Math.max(0, this.context.currentTime - a.time);
     return this.looping ? a.start + ((((time - a.start) % (a.end - a.start)) + a.end - a.start) % (a.end - a.start)) : Math.min(a.end, time);
   }
-  /** Tracked. The transport flag, identical to `cells.isPlaying`. */
-  get isPlaying(): boolean {
-    return this.cells.isPlaying.value;
-  }
   /** Internal untracked check for commands: the transport flag, or false once a non-looping run has reached its end. */
   private get running(): boolean {
     return untracked(() => this.cells.isPlaying.value && (this.looping || this.position < (this.anchor?.end ?? this.length)));
-  }
-  get isLooping(): boolean {
-    return this.cells.isLooping.value;
-  }
-  getSelection(): AudioRange | null {
-    const range = this.cells.selection.value;
-    return range ? { ...range } : null;
-  }
-  getState(): WavePlayerState {
-    return {
-      duration: this.duration,
-      selection: this.getSelection(),
-      position: this.position,
-      isPlaying: this.isPlaying,
-      isLooping: this.isLooping,
-      loading: this.cells.loading.value,
-      loadProgress: this.cells.loadProgress.value,
-      error: this.cells.error.value,
-      processing: this.cells.processing.value,
-      stretchRatio: this.version?.ratio ?? 1,
-      sourceDuration: this.original?.duration ?? 0,
-      revision: this.version?.revision ?? 0,
-    };
-  }
-  /** Change notifications exclude clock-only playhead movement. Read position per frame. */
-  subscribe(listener: () => void): () => void {
-    this.assertAlive();
-    let first = true;
-    const stop = untracked(() =>
-      effect(() => {
-        const { store, cells } = this;
-        for (const source of [
-          cells.selection,
-          cells.isLooping,
-          cells.isPlaying,
-          cells.loading,
-          cells.loadProgress,
-          cells.error,
-          cells.processing,
-          cells.version,
-          store.held,
-          store.anchor,
-        ])
-          void source.value;
-        if (first) {
-          first = false;
-          return;
-        }
-        try {
-          untracked(listener);
-        } catch (error) {
-          console.error("WavePlayer listener failed.", error);
-        }
-      }),
-    );
-    const unsubscribe = () => {
-      stop();
-      this.subscribers.delete(unsubscribe);
-    };
-    this.subscribers.add(unsubscribe);
-    return unsubscribe;
   }
   /** Borrow a source-time binding and follow this player's non-looping playback. Detach before manual target writes. */
   attachSourceAutomation(binding: AutomationBinding): () => void {
@@ -519,7 +448,6 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
       sourceRevision = this.sourceRevision;
       this.editAbort = controller;
       this.processing = true;
-      this.error = null;
     });
     if (this.disposed || id !== this.editRequest || sourceRevision !== this.sourceRevision) return;
     try {
@@ -539,7 +467,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
       this.change(() => {
         const scale = buffer.duration / this.length,
           position = this.position;
-        const selection = this.getSelection();
+        const selection = this.range;
         this.halt();
         this.player.buffer = buffer;
         this.held = Math.min(buffer.duration, position * scale);
@@ -551,7 +479,6 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
       if (this.disposed || id !== this.editRequest || sourceRevision !== this.sourceRevision) return;
       this.change(() => {
         this.processing = false;
-        this.error = reason instanceof Error ? reason.message : String(reason);
       });
       throw reason;
     } finally {
@@ -650,8 +577,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
   }
   override dispose(): void {
     if (this.disposed) return;
-    // Stop subscribers first: resetting state inside the batch would otherwise notify them after `disposed`.
-    for (const unsubscribe of [...this.subscribers]) unsubscribe();
+    this.abortSignal?.removeEventListener("abort", this.onAbort);
     this.change(() => {
       this.disposed = true;
       ++this.request;

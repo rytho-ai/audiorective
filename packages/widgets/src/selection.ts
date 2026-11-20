@@ -1,4 +1,5 @@
 /** Selection metadata and interaction only. No audio transport or context dependency. */
+import { effect, untracked } from "@audiorective/core";
 import { prepareGrid, snapTime } from "./snap-time";
 import type { Selection, WaveformPluginContext, Unsubscribe, SnapMode, SelectionCommit, SelectionPluginOptions, SelectionPlugin } from "./types";
 export type { SnapMode, SelectionCommit, SelectionPluginOptions, SelectionPlugin } from "./types";
@@ -24,7 +25,7 @@ export function createSelectionPlugin(options: SelectionPluginOptions = {}): Sel
   let redraw = () => {};
   const grid = prepareGrid(options.grid);
   const copy = (): Selection | null => {
-    const value = options.model ? options.model.getSelection() : range;
+    const value = options.model ? options.model.cells.selection.value : range;
     return value ? { ...value } : null;
   };
   function change(next: Selection | null): void {
@@ -214,7 +215,17 @@ export function createSelectionPlugin(options: SelectionPluginOptions = {}): Sel
         if (options.model) redraw();
         else change(null);
       });
-      if (options.model) ctx.onCleanup(options.model.subscribe(() => redraw()));
+      if (options.model) {
+        const { model } = options;
+        ctx.onCleanup(
+          untracked(() =>
+            effect(() => {
+              void model.cells.selection.value;
+              untracked(redraw);
+            }),
+          ),
+        );
+      }
       // The edge-scroll loop runs only while a drag is in progress.
       function schedule(): void {
         if (!frame && !disposed && gesture?.moved) frame = requestAnimationFrame(tick);
