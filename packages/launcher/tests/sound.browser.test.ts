@@ -83,10 +83,20 @@ describe("sound clips", () => {
     launcher.dispose();
   });
 
-  test("a clip needs an AudioBuffer or a sound factory", () => {
+  test("a note name plays the built-in tone for the clip's length", async () => {
+    const { ctx, ticks, clock } = rig(5);
+    const launcher = new ClipLauncher({ t: [{ sound: "A4", length: "1m", quantize: "4n" }] }, { context: ctx });
+    clock.attach(launcher);
+    const out = await driveOffline(ctx, ticks, [{ at: 0.7, run: () => launcher.tracks.t!.clips[0]!.launch() }], start(clock));
+    expect(peakIn(out, 1.3, 2.9)).toBeGreaterThan(0.2);
+    expect(peakIn(out, 3.3, 5)).toBe(0);
+    launcher.dispose();
+  });
+
+  test("a clip needs a note name, an AudioBuffer or a sound factory", () => {
     const { ctx } = rig(1);
-    expect(() => new ClipLauncher({ t: [{ sound: "C4" as never }] }, { context: ctx })).toThrow(
-      "Sound needs an AudioBuffer or a sound factory function.",
+    expect(() => new ClipLauncher({ t: [{ sound: "H9" as never }] }, { context: ctx })).toThrow(
+      'Sound needs a note name like "C4", an AudioBuffer or a sound factory function.',
     );
   });
 });

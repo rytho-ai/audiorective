@@ -261,8 +261,8 @@ describe("notation and lane setters", () => {
     lane.mute = true;
     expect(lane.mute).toBe(true);
     expect(lane.sound).toBeUndefined();
-    lane.sound = tone;
-    expect(lane.sound).toBe(tone);
+    lane.sound = "C4";
+    expect(lane.sound).toBe("C4");
     expect(lane.output).toBeInstanceOf(GainNode);
     lane.sound = undefined;
     expect(lane.sound).toBeUndefined();
@@ -393,9 +393,9 @@ describe("hits, cleanup and disposal", () => {
     expect(() => new StepSequencer({ a: { pattern: "X", rate: "fast" as never } })).toThrow("Step Sequencer needs a Time");
     expect(() => new StepSequencer({ a: { pattern: "X", rate: "1000n" } })).toThrow("Step Sequencer needs a rate");
     expect(() => new StepSequencer({ a: { pattern: "X", swing: "x%" as never } })).toThrow("Step Sequencer swing needs");
-    expect(() => new StepSequencer({ a: { pattern: "X", sound: tone } })).toThrow("Step Sequencer needs options.context for a lane with a sound.");
-    expect(() => new StepSequencer({ a: { pattern: "X", sound: "kick" as never } }, { context: ctx })).toThrow(
-      "Sound needs an AudioBuffer or a sound factory function.",
+    expect(() => new StepSequencer({ a: { pattern: "X", sound: "C4" } })).toThrow("Step Sequencer needs options.context for a lane with a sound.");
+    expect(() => new StepSequencer({ a: { pattern: "X", sound: "H9" as never } }, { context: ctx })).toThrow(
+      'Sound needs a note name like "C4", an AudioBuffer or a sound factory function.',
     );
     expect(() => new StepSequencer({ a: { pattern: "X", params: { v: { min: 1, max: 0, default: 0 } } } })).toThrow(
       "Step Sequencer lane params need",
@@ -449,7 +449,7 @@ describe("sound", () => {
   test("output defaults to the destination and connect reroutes it", async () => {
     const out = await renderTimeline({ seconds: 0.2, channels: 1, sampleRate: 8000 }, (ctx, ticks) => {
       const clock = new Clock({ timeline: new Timeline({ audioContext: ctx }), tickSource: ticks, lookAhead: 0.2 });
-      const seq = new StepSequencer({ k: { pattern: "X", sound: tone } }, { context: ctx });
+      const seq = new StepSequencer({ k: { pattern: "X", sound: "A4" } }, { context: ctx });
       const half = new GainNode(ctx, { gain: 0.5 });
       half.connect(ctx.destination);
       expect(seq.lanes.k!.connect(half)).toBe(half);
@@ -458,7 +458,7 @@ describe("sound", () => {
     });
     const direct = await renderTimeline({ seconds: 0.2, channels: 1, sampleRate: 8000 }, (ctx, ticks) => {
       const clock = new Clock({ timeline: new Timeline({ audioContext: ctx }), tickSource: ticks, lookAhead: 0.2 });
-      const seq = new StepSequencer({ k: { pattern: "X", sound: tone } }, { context: ctx });
+      const seq = new StepSequencer({ k: { pattern: "X", sound: "A4" } }, { context: ctx });
       expect(seq.lanes.k!.output.context).toBe(ctx);
       clock.attach(seq);
       clock.start(0);

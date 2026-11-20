@@ -31,8 +31,8 @@ export type SoundVoice = Readonly<{
  */
 export type SoundFactory = (context: BaseAudioContext, hit: SoundHit) => AudioScheduledSourceNode | SoundVoice;
 
-/** What a player plays per hit: a decoded sample or a sound factory. `Sampler`, `PadBank` pads, sequencer lanes and launcher clips all take it. */
-export type Sound = AudioBuffer | SoundFactory;
+/** What a player plays per hit: a note name (the built-in triangle tone), a decoded sample or a sound factory. `Sampler`, `PadBank` pads, sequencer lanes and launcher clips all take it. */
+export type Sound = NoteName | AudioBuffer | SoundFactory;
 
 /** Per-hit options shared by `Sampler.trigger`, `Sampler.noteOn` and `PadBank.trigger`. */
 export type PlayOptions = Readonly<{
@@ -42,6 +42,10 @@ export type PlayOptions = Readonly<{
   when?: number;
   /** Semitones added to the hit's transposition. Default 0. */
   pitch?: number;
+  /** Seconds into a buffer where playback starts, like `AudioBufferSourceNode.start`'s offset. Default 0; ignored by factories and tones. */
+  offset?: number;
+  /** Seconds to play: a buffer's portion length (default to its end), or `hit.duration` for a factory or tone (default held until stop). */
+  duration?: number;
 }>;
 
 /** One sounding hit, returned by `trigger` and `noteOn`. Freed by the player when it ends. */
@@ -56,11 +60,24 @@ export interface Voice {
   stop(when?: number): void;
 }
 
-/** Throws unless `sound` is an AudioBuffer or a function. */
+const SOUND_ERROR = 'Sound needs a note name like "C4", an AudioBuffer or a sound factory function.';
+const TONE_NOTE = /^([A-G])([#b]?)(-?\d+)$/;
+const SEMITONES: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+
+/** Frequency in Hz of a note name (A4 = 440), or undefined when `text` is not a note name. */
+function noteHz(text: string): number | undefined {
+  const match = TONE_NOTE.exec(text);
+  if (!match) return undefined;
+  const midi = 12 * (Number(match[3]) + 1) + SEMITONES[match[1]!]! + (match[2] === "#" ? 1 : match[2] === "b" ? -1 : 0);
+  return 440 * Math.pow(2, (midi - 69) / 12);
+}
+
+/** Throws unless `sound` is a note name, an AudioBuffer or a function. */
 export function assertSound(sound: unknown): asserts sound is Sound {
   if (typeof sound === "function") return;
+  if (typeof sound === "string" && noteHz(sound) !== undefined) return;
   if (typeof AudioBuffer !== "undefined" && sound instanceof AudioBuffer) return;
-  throw new Error("Sound needs an AudioBuffer or a sound factory function.");
+  throw new Error(SOUND_ERROR);
 }
 
 const NOTE = /^([A-Ga-g])([#b]?)(-?\d+)$/;
@@ -88,6 +105,10 @@ export type PlaySoundOptions = Readonly<{
   note?: number | null;
   /** Hold an open-ended voice for `hit.duration` before fading it. Default true; false leaves `hit.duration` informational and only `stop` ends the voice. */
   hold?: boolean;
+  /** Seconds into a buffer where playback starts. Default 0. */
+  offset?: number;
+  /** Seconds of a buffer to play. Default to its end. */
+  span?: number;
   /** Called once when every node of the voice is disconnected, after a release has rung out. */
   onFree?: () => void;
 }>;
@@ -98,15 +119,37 @@ const isSourceNode = (value: unknown): value is AudioScheduledSourceNode =>
   typeof (value as AudioScheduledSourceNode).start === "function" &&
   typeof (value as AudioScheduledSourceNode).stop === "function";
 
+/** Peak gain of a full-velocity tone before the player's velocity: leaves headroom for several voices summing. */
+const TONE_PEAK = 0.5;
+const TONE_ATTACK = 0.004;
+const TONE_MIN_BODY = 0.05;
+const TONE_RELEASE = 0.02;
+
 function resolveVoice(
   context: BaseAudioContext,
   sound: Sound,
   hit: SoundHit,
-): { output: AudioNode; sources: readonly AudioScheduledSourceNode[]; own: number | undefined } {
+  region: { offset: number; span: number | undefined },
+): { output: AudioNode; sources: readonly AudioScheduledSourceNode[]; own: number | undefined; start?: [number, number | undefined] } {
+  if (typeof sound === "string") {
+    const osc = new OscillatorNode(context, { type: "triangle", frequency: noteHz(sound)! * 2 ** (hit.pitch / 12) });
+    const env = new GainNode(context);
+    osc.connect(env);
+    const { when } = hit;
+    env.gain.setValueAtTime(0, when);
+    env.gain.linearRampToValueAtTime(TONE_PEAK, when + TONE_ATTACK);
+    if (!Number.isFinite(hit.duration)) return { output: env, sources: [osc], own: undefined };
+    const body = Math.max(hit.duration, TONE_MIN_BODY);
+    env.gain.exponentialRampToValueAtTime(Math.max(TONE_PEAK * 0.001, 1e-5), when + body);
+    env.gain.setValueAtTime(0, when + body + 1e-4);
+    return { output: env, sources: [osc], own: body + TONE_RELEASE };
+  }
   if (typeof sound !== "function") {
     const rate = 2 ** (hit.pitch / 12);
     const source = new AudioBufferSourceNode(context, { buffer: sound, playbackRate: rate });
-    return { output: source, sources: [source], own: sound.duration / rate };
+    const left = Math.max(0, sound.duration - region.offset);
+    const played = region.span === undefined ? left : Math.min(region.span, left);
+    return { output: source, sources: [source], own: played / rate, start: [region.offset, region.span] };
   }
   const made = sound(context, hit) as unknown;
   if (isSourceNode(made)) return { output: made, sources: [made], own: undefined };
@@ -146,23 +189,15 @@ class PlayedVoice implements Voice {
   private open = 0;
   private done = false;
 
-  constructor(
-    context: BaseAudioContext,
-    sound: Sound,
-    destination: AudioNode,
-    hit: SoundHit,
-    release: number,
-    note: number | null,
-    onFree?: () => void,
-    hold = true,
-  ) {
-    this.onFree = onFree;
+  constructor(context: BaseAudioContext, sound: Sound, destination: AudioNode, hit: SoundHit, release: number, options: PlaySoundOptions) {
+    const hold = options.hold ?? true;
+    this.onFree = options.onFree;
     this.context = context;
-    this.note = note;
+    this.note = options.note ?? null;
     this.when = hit.when;
     this.release = release;
     this.velocity = hit.velocity;
-    const { output, sources, own } = resolveVoice(context, sound, hit);
+    const { output, sources, own, start } = resolveVoice(context, sound, hit, { offset: options.offset ?? 0, span: options.span });
     this.output = output;
     this.sources = sources;
     this.limit = own === undefined ? Infinity : hit.when + own;
@@ -172,7 +207,8 @@ class PlayedVoice implements Voice {
     this.open = sources.length;
     for (const source of sources) {
       source.addEventListener("ended", () => this.ended(), { once: true });
-      source.start(hit.when);
+      if (start && source instanceof AudioBufferSourceNode) source.start(hit.when, start[0], start[1]);
+      else source.start(hit.when);
     }
     if (own !== undefined) for (const source of sources) source.stop(hit.when + own);
     else if (hold && Number.isFinite(hit.duration)) {
@@ -253,15 +289,10 @@ export function playSound(context: BaseAudioContext, sound: Sound, destination: 
   if (!Number.isFinite(hit.when)) throw new Error("Sound hit needs a finite time in seconds.");
   if (!Number.isFinite(hit.velocity)) throw new Error("Sound hit needs a velocity from 0 to 1.");
   if (!Number.isFinite(hit.pitch)) throw new Error("Sound hit needs finite semitones for pitch.");
+  for (const seconds of [options.offset, options.span])
+    if (seconds !== undefined && (!Number.isFinite(seconds) || seconds < 0))
+      throw new Error("Sound hit needs finite seconds from 0 for offset and duration.");
   const release = Math.max(0, options.release ?? 0.005);
   const at = Math.max(hit.when, context.currentTime);
-  return new PlayedVoice(
-    context,
-    sound,
-    destination,
-    { ...hit, when: at, velocity: Math.min(1, Math.max(0, hit.velocity)) },
-    release,
-    options.note ?? null,
-    options.onFree,
-  );
+  return new PlayedVoice(context, sound, destination, { ...hit, when: at, velocity: Math.min(1, Math.max(0, hit.velocity)) }, release, options);
 }

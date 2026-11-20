@@ -122,7 +122,9 @@ describe("sound factories are played by the player", () => {
     expect(() => sampler.trigger()).toThrow(
       "Sound factory needs to return an AudioScheduledSourceNode or { output, sources } with at least one source.",
     );
-    expect(() => new Sampler(context, { sound: "kick" as never })).toThrow("Sound needs an AudioBuffer or a sound factory function.");
+    expect(() => new Sampler(context, { sound: "H9" as never })).toThrow(
+      'Sound needs a note name like "C4", an AudioBuffer or a sound factory function.',
+    );
   });
 });
 
@@ -284,4 +286,76 @@ test("a later stop(when) replaces an earlier pending one, like AudioScheduledSou
   });
   expect(at(data, 0.2)).toBeCloseTo(1, 5);
   expect(at(data, 0.5)).toBe(0);
+});
+
+describe("note-name sounds and buffer regions", () => {
+  test("a note name plays the built-in triangle tone at its pitch, held until stopped, scaled by velocity once", async () => {
+    const data = await render(0.3, (context) => {
+      const sampler = new Sampler(context, { sound: "A4" });
+      sampler.connect(context.destination);
+      sampler.trigger({ when: 0, velocity: 0.5 });
+    });
+    let peak = 0;
+    for (let i = Math.round(0.1 * RATE); i < Math.round(0.25 * RATE); i++) peak = Math.max(peak, Math.abs(data[i]!));
+    expect(peak).toBeGreaterThan(0.2);
+    expect(peak).toBeLessThanOrEqual(0.25 + 1e-3); // tone peak 0.5 x velocity 0.5
+    let crossings = 0;
+    for (let i = Math.round(0.1 * RATE); i < Math.round(0.2 * RATE); i++) if (data[i - 1]! < 0 && data[i]! >= 0) crossings++;
+    expect(crossings).toBeGreaterThan(40);
+    expect(crossings).toBeLessThan(48); // 440 Hz over 0.1 s
+  });
+
+  test("a note tone follows hit.pitch and decays over a finite hit duration", async () => {
+    const data = await render(0.5, (context) => {
+      const bus = new GainNode(context);
+      bus.connect(context.destination);
+      playSound(context, "A4", bus, { when: 0, velocity: 1, pitch: 12, duration: 0.1 });
+    });
+    let crossings = 0;
+    for (let i = Math.round(0.02 * RATE); i < Math.round(0.07 * RATE); i++) if (data[i - 1]! < 0 && data[i]! >= 0) crossings++;
+    expect(crossings).toBeGreaterThanOrEqual(42); // ~880 Hz over 0.05 s
+    expect(at(data, 0.3)).toBe(0);
+  });
+
+  test("a buffer plays from offset for duration, like AudioBufferSourceNode.start", async () => {
+    const data = await render(0.5, (context) => {
+      const buffer = context.createBuffer(1, Math.round(0.4 * RATE), RATE);
+      const channel = buffer.getChannelData(0);
+      for (let i = 0; i < channel.length; i++) channel[i] = i < 0.1 * RATE ? 0.2 : 0.8;
+      const sampler = new Sampler(context, { sound: buffer });
+      sampler.connect(context.destination);
+      sampler.trigger({ when: 0, offset: 0.15, duration: 0.1 });
+    });
+    expect(at(data, 0.05)).toBeCloseTo(0.8, 5);
+    expect(at(data, 0.2)).toBe(0);
+  });
+
+  test("without duration a buffer plays from offset to its end", async () => {
+    const data = await render(0.5, (context) => {
+      const sampler = new Sampler(context, { sound: dc(context, 0.2) });
+      sampler.connect(context.destination);
+      sampler.trigger({ when: 0, offset: 0.1 });
+    });
+    expect(at(data, 0.05)).toBeCloseTo(1, 5);
+    expect(at(data, 0.15)).toBe(0);
+  });
+
+  test("duration becomes hit.duration for a factory, which is held that long then released", async () => {
+    const seen: number[] = [];
+    const data = await render(0.5, (context) => {
+      const sampler = new Sampler(context, { sound: (ctx, hit) => (seen.push(hit.duration), new ConstantSourceNode(ctx)), release: 0.01 });
+      sampler.connect(context.destination);
+      sampler.trigger({ when: 0, duration: 0.1 });
+    });
+    expect(seen).toEqual([0.1]);
+    expect(at(data, 0.05)).toBeCloseTo(1, 5);
+    expect(at(data, 0.2)).toBe(0);
+  });
+
+  test("offset and duration must be finite seconds from 0", () => {
+    const context = new OfflineAudioContext(1, 128, RATE);
+    const sampler = new Sampler(context, { sound: dc(context, 0.1) });
+    expect(() => sampler.trigger({ offset: -1 })).toThrow("Sound hit needs finite seconds from 0 for offset and duration.");
+    expect(() => sampler.trigger({ duration: NaN })).toThrow("Sound hit needs finite seconds from 0 for offset and duration.");
+  });
 });

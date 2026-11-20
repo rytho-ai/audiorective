@@ -126,8 +126,8 @@ export class Sampler extends AudioProcessor<{ volume: SchedulableParam }, { acti
       this.context,
       sound,
       this._output,
-      { when: options.when ?? this.context.currentTime, velocity: options.velocity ?? 1, pitch, duration: Infinity },
-      { release: this._release, note },
+      { when: options.when ?? this.context.currentTime, velocity: options.velocity ?? 1, pitch, duration: options.duration ?? Infinity },
+      { release: this._release, note, offset: options.offset, span: options.duration },
     );
     // The new voice joins before the victim leaves and the count is published once afterwards, so a steal never shows a count above the cap.
     batch(() => {

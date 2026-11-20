@@ -172,3 +172,19 @@ test("a pad factory sees the hit's velocity and pitch, and velocity scales the v
   expect(level(out, 2, 0.05, 0.15)).toBeCloseTo(0.5, 3);
   bank.dispose();
 });
+
+test("a note-name pad plays the tone and is choked like any pad; offset and duration reach a buffer pad", async () => {
+  const { context, sample, merger } = rig();
+  const bank = new PadBank(context, [
+    { id: "tone", sound: "A4", group: "g" },
+    { id: "short", sound: sample(1, 0.4), group: "g" },
+  ]);
+  bank.output.connect(merger, 0, 2);
+  bank.trigger("tone", { when: 0 });
+  bank.trigger("short", { when: 0.2, duration: 0.1, offset: 0.5 });
+  const out = await context.startRendering();
+  expect(level(out, 2, 0.05, 0.19)).toBeGreaterThan(0.05);
+  expect(level(out, 2, 0.21, 0.29)).toBeCloseTo(0.4, 3);
+  expect(level(out, 2, 0.32, 0.5)).toBeLessThan(1e-4);
+  bank.dispose();
+});

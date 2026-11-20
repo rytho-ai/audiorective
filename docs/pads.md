@@ -6,7 +6,7 @@ Sound hits with choke groups from `@audiorective/pads`.
 
 ## Pad Bank
 
-`PadBank` plays named pads that each play their own `Sound` (a buffer or a sound factory) and owns reversible same-group choke policy. Use it when a sequencer can edit or cancel a hit after the Clock has scheduled it, or when a future closed-hat hit must choke an open-hat hit only if that closed hit still exists. Independent one-shot pads without choke can keep using core `Sampler`; both take the same `Sound` and the same `PlayOptions`.
+`PadBank` plays named pads that each play their own `Sound` (a note name, a buffer or a sound factory) and owns reversible same-group choke policy. Use it when a sequencer can edit or cancel a hit after the Clock has scheduled it, or when a future closed-hat hit must choke an open-hat hit only if that closed hit still exists. Independent one-shot pads without choke can keep using core `Sampler`; both take the same `Sound` and the same `PlayOptions`.
 
 ```typescript
 import { PadBank } from "@audiorective/pads";

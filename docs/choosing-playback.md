@@ -52,7 +52,7 @@ In words:
 
 ### `Sampler` — the drum pad
 
-**Use when** you trigger a sound that may overlap: SFX, percussion, one-shots, stingers, a keyboard of one sample or one synth voice. The sound is a decoded `AudioBuffer` or a `SoundFactory`. `trigger()` and `noteOn()` spawn a `Voice` each call; `polyphony` (default 32) + `steal` cap the overlap.
+**Use when** you trigger a sound that may overlap: SFX, percussion, one-shots, stingers, a keyboard of one sample or one synth voice. The sound is a note name, a decoded `AudioBuffer` (`offset`/`duration` play a region) or a `SoundFactory`. `trigger()` and `noteOn()` spawn a `Voice` each call; `polyphony` (default 32) + `steal` cap the overlap.
 
 **Avoid when** you need a _stable_ transport you schedule against. A `Voice` has `stop` and nothing else: no seek, loop region or playback-rate param to ramp. For a schedulable rate, that's `BufferPlayer`.
 

@@ -301,7 +301,7 @@
       "expectations": [
         "Does not use WavePlayer (or mountWaveformSelector) to play grains: it has one playhead and one selection, so it cannot overlap dozens of grains",
         "Builds the grain engine as an AudioProcessor subclass (or an equivalent audio-layer class) that owns its nodes and exposes an output",
-        "Each grain is its own short-lived source (Sampler triggers of a short sound with a `pitch` and a `when`, or raw AudioBufferSourceNode + gain envelope + panner) started with audio-clock times, so grains overlap",
+        "Each grain is its own short-lived source (Sampler triggers with offset, pitch and duration, or raw AudioBufferSourceNode + gain envelope + panner) started with audio-clock times, so grains overlap",
         "Grain start times are scheduled ahead on the audio clock (a clock tick window or an equivalent look-ahead loop), not fired from the main thread at playback time",
         "Density and spread are reactive params/cells on the processor that the UI writes directly",
         "May use loadAudioBuffer, Param/Cell and effects from the library; reaching below the blocks to core is the expected choice here and is not treated as a failure to use the library"

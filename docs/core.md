@@ -724,6 +724,8 @@ type PlayOptions = Readonly<{
   velocity?: number; // 0..1, scales this voice's level (default 1)
   when?: number; // AudioContext seconds to start (default now; a past time plays now)
   pitch?: number; // semitones added to the hit's transposition (default 0)
+  offset?: number; // seconds into a buffer where playback starts (default 0)
+  duration?: number; // seconds to play: a buffer's portion (default to its end) or hit.duration for a factory or tone (default held until stop)
 }>;
 ```
 
@@ -733,7 +735,7 @@ type PlayOptions = Readonly<{
 
 ### Sound
 
-`Sound` is what every player plays per hit: an `AudioBuffer`, or a `SoundFactory`. `Sampler`, `PadBank` pads, `StepSequencer` lanes and `ClipLauncher` `{ sound }` clips all take it, so one object serves a button and a lane.
+`Sound` is what every player plays per hit: a note name (`"C4"`, the built-in triangle tone), an `AudioBuffer`, or a `SoundFactory`. `Sampler`, `PadBank` pads, `StepSequencer` lanes and `ClipLauncher` `{ sound }` clips all take it, so one object serves a button and a lane.
 
 ```typescript
 type SoundFactory = (context: BaseAudioContext, hit: SoundHit) => AudioScheduledSourceNode | SoundVoice;
@@ -763,7 +765,8 @@ The voice rules, the same for every player:
 - Velocity is applied once, by the player, after the factory's output. `hit.velocity` is for timbre only; scaling gain by it in the factory applies it twice.
 - A voice without its own `duration` is held for `hit.duration`, then faded out over `release`. `hit.duration` is the step length for a sequencer lane, the clip length for a launcher clip, and `Infinity` for `trigger` and `noteOn`, which are held until `voice.stop()` or `noteOff`.
 - A `SoundVoice` with `duration` is a one-shot: its sources stop that many seconds after `hit.when` however long the hit is held.
-- `hit.pitch` is semitones from the natural pitch. A factory applies it itself; a buffer follows it as `playbackRate = 2 ** (pitch / 12)`. A buffer plays through to its end (its length divided by the rate), ignoring `hit.duration`.
+- `hit.pitch` is semitones from the natural pitch. A factory applies it itself; a buffer follows it as `playbackRate = 2 ** (pitch / 12)`. A buffer plays from `offset` for `duration` seconds of buffer (default to its end, its length divided by the rate), mirroring `AudioBufferSourceNode.start(when, offset, duration)`; a sequencer step's or clip's length does not cut it. For a factory or tone the `duration` option becomes `hit.duration`.
+- A note name plays a triangle oscillator at that note's frequency times `2 ** (hit.pitch / 12)` through a 4 ms attack and, for a finite `hit.duration` (at least 50 ms), an exponential decay over it; with `Infinity` it sustains at the tone's peak (0.5, headroom for several voices) until stopped.
 - `hit.when` is never in the past.
 
 ### Voice
@@ -789,7 +792,7 @@ interface Voice {
 const voice = playSound(ctx, zap, bus, { when, velocity: 1, pitch: 0, duration: 0.25 }, { release: 0.01 });
 ```
 
-`options` (`PlaySoundOptions`): `release` (seconds, default `0.005`), `note` (the MIDI note the voice reports, default `null`), `hold` (default `true`; `false` leaves `hit.duration` informational so only `stop` ends an open-ended voice) and `onFree` (called once when every node is disconnected, after a release has rung out). `assertSound(value)` throws unless `value` is an `AudioBuffer` or a function, and `noteNumber(note)` returns the MIDI number of a number or note name (`"C4"` is 60) or throws. Use `Sampler` unless you need your own gating, as `PadBank` does for choke.
+`options` (`PlaySoundOptions`): `release` (seconds, default `0.005`), `note` (the MIDI note the voice reports, default `null`), `hold` (default `true`; `false` leaves `hit.duration` informational so only `stop` ends an open-ended voice) and `onFree` (called once when every node is disconnected, after a release has rung out). `assertSound(value)` throws unless `value` is a note name, an `AudioBuffer` or a function, and `noteNumber(note)` returns the MIDI number of a number or note name (`"C4"` is 60) or throws. Use `Sampler` unless you need your own gating, as `PadBank` does for choke.
 
 ### BufferPlayer
 
@@ -1453,7 +1456,8 @@ export type {
 
 | Message                                                                                                      | Cause                                                                                                                                            | Fix                                                                                                                 |
 | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
-| `Sound needs an AudioBuffer or a sound factory function.`                                                    | A `sound` (Sampler, pad, lane, clip) is not an `AudioBuffer` or a function, such as a note name string.                                          | Pass a decoded `AudioBuffer` or a `SoundFactory`.                                                                   |
+| `Sound needs a note name like "C4", an AudioBuffer or a sound factory function.`                             | A `sound` (Sampler, pad, lane, clip) is not a note name, an `AudioBuffer` or a function.                                                         | Pass `"C4"`, a decoded `AudioBuffer` or a `SoundFactory`.                                                           |
+| `Sound hit needs finite seconds from 0 for offset and duration.`                                             | A hit's `offset` or `duration` is negative or not finite.                                                                                        | Pass seconds from 0, or omit them.                                                                                  |
 | `Note needs a MIDI number from 0 to 127 or a note name like "C4".`                                           | `noteOn`, `noteOff` or `rootNote` got a value that is not a note.                                                                                | Pass a MIDI number from 0 to 127 or a name like `"C4"`, `"F#3"`.                                                    |
 | `Sound factory needs to return an AudioScheduledSourceNode or { output, sources } with at least one source.` | A sound factory returned something else, or a chain without sources.                                                                             | Return one source node, or `{ output, sources: [...] }` with the nodes unconnected and unstarted.                   |
 | `Sound factory duration needs finite seconds from 0.`                                                        | A `SoundVoice.duration` is negative or not finite.                                                                                               | Return finite seconds from 0, or omit it to hold for `hit.duration`.                                                |

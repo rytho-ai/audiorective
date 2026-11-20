@@ -200,8 +200,8 @@ export class PadBank extends AudioProcessor<
         this.context,
         pad.sound,
         gate,
-        { when: at, velocity: options.velocity ?? 1, pitch: options.pitch ?? 0, duration: Infinity },
-        { release: this.release, onFree: () => gate.disconnect() },
+        { when: at, velocity: options.velocity ?? 1, pitch: options.pitch ?? 0, duration: options.duration ?? Infinity },
+        { release: this.release, offset: options.offset, span: options.duration, onFree: () => gate.disconnect() },
       );
     } catch (error) {
       gate.disconnect();
