@@ -2,9 +2,9 @@
 // identical except for the DOM-only grid (`mountStepGrid`), buffers synthesized
 // in place of decoded files, and the test's own assertions.
 import { afterEach, expect, test, vi } from "vitest";
-import { Clock, Timeline } from "@audiorective/clock";
+import { Clock } from "@audiorective/clock";
 import { PadBank } from "../src/PadBank";
-import { refreshOnEdit, StepSequencer, type StepPatternInput } from "../src/StepSequencer";
+import { StepSequencer } from "../src/StepSequencer";
 
 const disposers: Array<() => void | Promise<unknown>> = [];
 afterEach(async () => {
@@ -29,34 +29,34 @@ async function drumMachine() {
   ]);
   bank.output.connect(context.destination);
 
-  const steps = (...on: number[]) => Array.from({ length: 16 }, (_, step) => ({ velocity: on.includes(step) ? 1 : 0 }));
-  const pattern: StepPatternInput = {
-    size: 16, // sixteenth notes; lanes default to 1/16 and 16 steps
-    lanes: [
-      { id: "kick", label: "Kick", cells: steps(0, 4, 8, 12) },
-      { id: "snare", label: "Snare", cells: steps(4, 12) },
-      { id: "closed", label: "Closed hat", cells: steps(0, 4, 8, 12) },
-      { id: "open", label: "Open hat", cells: steps(2, 10) },
-    ],
-  };
-  const sequencer = new StepSequencer(pattern, ({ laneId, velocity, when, pitch, duration }) =>
-    bank.trigger(laneId, velocity, when, { pitch, duration }),
+  const sequencer = new StepSequencer(
+    {
+      kick: "X...X...X...X...",
+      snare: "....X.......X...",
+      closed: "X...X...X...X...",
+      open: "..X.......X.....",
+    },
+    {
+      onHit: (hit) => {
+        const pad = bank.trigger(hit.lane, hit.velocity, hit.when, { pitch: hit.pitch, duration: hit.duration });
+        return () => pad?.cancel(); // runs if the hit is retracted before it sounds
+      },
+    },
   );
-  const timeline = new Timeline({ audioContext: context, bpm: 120 });
-  const clock = new Clock({ timeline, onTick: (window) => sequencer.schedule(window, timeline) });
-  const stopRefresh = refreshOnEdit(sequencer, clock); // every edit re-queues the look-ahead
+  const clock = new Clock({ context, bpm: 120 });
+  clock.attach(sequencer); // every edit re-queues the look-ahead
   // ---- end: same code as docs/sequencer-advanced.md ----
 
   disposers.push(() => {
-    stopRefresh();
+    sequencer.dispose();
     clock.destroy();
     bank.destroy();
   });
-  return { context, bank, sequencer, timeline, clock };
+  return { context, bank, sequencer, clock };
 }
 
 test("hits fire at step times with pattern velocities", async () => {
-  const { bank, timeline, clock, sequencer } = await drumMachine();
+  const { bank, clock, sequencer } = await drumMachine();
   const spy = vi.spyOn(bank, "trigger");
   clock.start();
   await until(() => spy.mock.calls.length >= 12);
@@ -69,9 +69,9 @@ test("hits fire at step times with pattern velocities", async () => {
   expect(at("kick", 8)).toBeDefined();
   expect(at("snare", 4)).toBeDefined();
   expect(at("snare", 2)).toBeUndefined();
-  expect(sequencer.playheads.value.kick).not.toBeNull();
-  timeline.bpm.value = 140;
-  expect(timeline.bpm.value).toBe(140);
+  expect(sequencer.lanes.kick.playhead).not.toBeNull();
+  clock.bpm.value = 140;
+  expect(clock.bpm.value).toBe(140);
   clock.stop();
 });
 
@@ -96,7 +96,7 @@ async function openHatEndedAfterStep4(deleteClosed: boolean) {
     // The edit is synchronous, so checking the audio clock right before it is race-free.
     if (context.currentTime > when - SAFE_MARGIN) return null;
     // ---- begin: same code as docs/sequencer-advanced.md ----
-    sequencer.setCell("closed", 4, { velocity: 0 });
+    sequencer.lanes.closed.steps[4].velocity = 0;
     // ---- end: same code as docs/sequencer-advanced.md ----
   } else {
     expect(when).toBeGreaterThan(context.currentTime);

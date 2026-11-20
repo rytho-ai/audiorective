@@ -1,7 +1,7 @@
 import { afterEach, expect, test, vi } from "vitest";
 import type { BeatTiming, CancellableEvent } from "@audiorective/core";
 import { PadBank } from "../src/PadBank";
-import { StepSequencer, type StepHit, type StepPatternInput, type StepWindow } from "../src/StepSequencer";
+import { StepSequencer, type Hit, type LaneOptions, type StepWindow } from "../src/StepSequencer";
 
 const disposers: Array<() => void | Promise<unknown>> = [];
 afterEach(async () => {
@@ -9,12 +9,9 @@ afterEach(async () => {
   for (const dispose of disposers.splice(0).reverse()) await dispose();
 });
 
-const pattern: StepPatternInput = {
-  size: 8,
-  lanes: [
-    { id: "kick", label: "Kick", steps: 4, rate: "1/8", cells: [1, 0, 0.5, 0].map((velocity) => ({ velocity })) },
-    { id: "snare", label: "Snare", steps: 4, rate: "1/8", cells: [0, 0.75, 0, 0.25].map((velocity) => ({ velocity })) },
-  ],
+const lanes: Record<string, LaneOptions> = {
+  kick: { pattern: [1, 0, 0.5, 0], rate: "1/8" },
+  snare: { pattern: [0, 0.75, 0, 0.25], rate: "1/8" },
 };
 /** 120 bpm, starting at audio time 10 so every hit lies in the future. */
 const timing: BeatTiming = { beatToTime: (beat) => 10 + beat * 0.5, timeToBeat: (time) => (time - 10) * 2 };
@@ -27,7 +24,7 @@ function windows(): { window: StepWindow; owned: Owned[] }[] {
   ].map(([start, end]) => {
     const owned: Owned[] = [];
     return {
-      window: { beat: { start, end }, time: { current: timing.beatToTime(start) }, own: (event, when) => owned.push({ event, when }) },
+      window: { beat: { start, end }, time: { current: timing.beatToTime(0) }, own: (event, when) => owned.push({ event, when }) },
       owned,
     };
   });
@@ -52,7 +49,10 @@ function instrumentSource(context: AudioContext) {
       return played;
     },
     live: () => bank.cells.activeEvents.value,
-    trigger: (hit: StepHit) => bank.trigger(hit.laneId, hit.velocity, hit.when),
+    onHit: (hit: Hit) => {
+      const played = bank.trigger(hit.lane, hit.velocity, hit.when);
+      return () => played?.cancel();
+    },
   };
 }
 
@@ -63,15 +63,14 @@ function synthSource(context: AudioContext) {
   return {
     played: () => played,
     live: () => live,
-    trigger(hit: StepHit): CancellableEvent {
-      const osc = new OscillatorNode(context, { frequency: hit.laneId === "kick" ? 60 : 200 });
+    onHit(hit: Hit): () => void {
+      const osc = new OscillatorNode(context, { frequency: hit.lane === "kick" ? 60 : 200 });
       const gain = new GainNode(context, { gain: hit.velocity });
       osc.connect(gain).connect(context.destination);
       osc.start(hit.when);
       osc.stop(hit.when + 0.1);
-      played.push({ lane: hit.laneId, velocity: gain.gain.value, when: hit.when });
+      played.push({ lane: hit.lane, velocity: gain.gain.value, when: hit.when });
       live++;
-      const listeners: Array<() => void> = [];
       let done = false;
       const finish = () => {
         if (done) return;
@@ -79,20 +78,16 @@ function synthSource(context: AudioContext) {
         live--;
         osc.disconnect();
         gain.disconnect();
-        for (const listener of listeners.splice(0)) listener();
       };
       osc.onended = finish;
-      return {
-        cancel() {
-          if (done) return;
-          try {
-            osc.stop();
-          } catch {
-            /* not started */
-          }
-          finish();
-        },
-        onEnded: (listener) => (done ? listener() : void listeners.push(listener)),
+      return () => {
+        if (done) return;
+        try {
+          osc.stop();
+        } catch {
+          /* not started */
+        }
+        finish();
       };
     },
   };
@@ -113,7 +108,7 @@ test("a pattern yields identical hit times and velocities from any event source,
   ]);
 
   const runs = [instrumentSource(context), synthSource(context)].map((source) => {
-    const sequencer = new StepSequencer(pattern, source.trigger);
+    const sequencer = new StepSequencer(lanes, { onHit: source.onHit });
     const wins = windows();
     for (const { window } of wins) sequencer.schedule(window, timing);
     return { sequencer, source, owned: wins.flatMap(({ owned }) => owned) };
@@ -136,8 +131,8 @@ test("a pattern yields identical hit times and velocities from any event source,
   });
   for (const { sequencer, source } of runs) {
     sequencer.reset();
-    expect(Object.values(sequencer.playheads.value)).toEqual([null, null]);
-    expect(sequencer.loopProgress.value).toBeNull();
+    expect(Object.values(sequencer.lanes).map((lane) => lane.playhead)).toEqual([null, null]);
+    expect(Object.values(sequencer.lanes).map((lane) => lane.progress)).toEqual([null, null]);
     expect(source.live()).toBe(0);
   }
   expect(ended.map(({ count }) => count)).toEqual([8, 8]);
