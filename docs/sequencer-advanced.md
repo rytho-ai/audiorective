@@ -2,7 +2,7 @@
 title: "Step Sequencer: advanced"
 ---
 
-Deep topics for the lane-record `StepSequencer` from `@audiorective/blocks/sequencer`: custom `transform`, per-step field semantics, stable randomness, sharing a transport, the step grid and a full drum machine. Start with [Step Sequencer](./sequencer.md) (layers 1-4 and the errors table).
+Deep topics for the lane-record `StepSequencer` from `@audiorective/blocks/sequencer`: custom `transform`, per-step field semantics, stable randomness, sharing a transport, the step grid. Start with [Step Sequencer](./sequencer.md) (layers 1-4 and the errors table).
 
 ## Custom transform
 
@@ -61,55 +61,4 @@ workspace.transport.attach(seq); // follows the project transport: play, pause, 
 
 ## Standalone drum machine
 
-A vanilla drum machine with no DAW: your decoded buffers, a `PadBank` for choke groups, a `Clock` and the step grid. Closed and open hat share a choke `group`, and each pad ID is its lane name. `onHit` triggers the pad and returns a cleanup that cancels it, so an edit that deletes a pending closed hat also retracts its choke and the open hat keeps sounding. To give the hats separate effects, call `bank.routePad("open", openFilter)` and `bank.routePad("closed", closedFilter)`: choke still crosses them.
-
-```ts
-import { Clock } from "@audiorective/clock";
-import { PadBank } from "@audiorective/blocks/pads";
-import { StepSequencer } from "@audiorective/blocks/sequencer";
-import { mountStepGrid } from "@audiorective/widgets";
-
-const context = new AudioContext(); // you own it; resume() it from a user gesture
-// kick, snare, closedHat, openHat: AudioBuffers you decoded yourself
-const bank = new PadBank(context, [
-  { id: "kick", buffer: kick },
-  { id: "snare", buffer: snare },
-  { id: "closed", buffer: closedHat, group: "hat" },
-  { id: "open", buffer: openHat, group: "hat" }, // a one-shot (no gate) is still choked by a later closed hit
-]);
-bank.output.connect(context.destination);
-
-const sequencer = new StepSequencer(
-  {
-    kick: "X...X...X...X...",
-    snare: "....X.......X...",
-    closed: "X...X...X...X...",
-    open: "..X.......X.....",
-  },
-  {
-    onHit: (hit) => {
-      const pad = bank.trigger(hit.lane, hit.velocity, hit.when, { pitch: hit.pitch, duration: hit.duration });
-      return () => pad?.cancel(); // runs if the hit is retracted before it sounds
-    },
-  },
-);
-const clock = new Clock({ context, bpm: 120 });
-clock.attach(sequencer); // every edit re-queues the look-ahead
-const grid = mountStepGrid(document.querySelector("#grid")!, { sequencer }); // click toggles; drag a step to edit the active field
-
-await context.resume();
-clock.start(); // clock.stop() ends playback and cancels queued hits
-clock.bpm.value = 140; // takes effect on the next look-ahead window
-
-// Edits in the grid or code re-queue the look-ahead at once.
-// A deleted closed-hat step that has not played yet no longer chokes the open hat.
-sequencer.lanes.closed.steps[4].velocity = 0;
-
-// Teardown: the caller keeps the AudioContext.
-grid.destroy();
-sequencer.dispose();
-clock.destroy();
-bank.destroy();
-```
-
-The same wiring runs in `packages/blocks/tests/drum-machine-doc.browser.test.ts`, which omits the DOM-only grid and decodes nothing (it synthesizes buffers).
+The runnable drum machine (`StepSequencer` + `PadBank` choke group + `Clock` + step grid) is on [Step Sequencer](./sequencer.md#standalone-drum-machine).

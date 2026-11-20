@@ -2,7 +2,7 @@
 title: Step Sequencer
 ---
 
-Step patterns and lanes from `@audiorective/blocks/sequencer`. Part of [Blocks](./blocks.md). Signatures, option lists, field ranges and units are in the package's type declarations (`sequencer.d.ts`, JSDoc on every member); this page holds what the types do not say. Deep topics (custom `transform`, per-step field semantics, shared transports, step grid wiring, a full drum machine) are on [Step Sequencer: advanced](./sequencer-advanced.md).
+Step patterns and lanes from `@audiorective/blocks/sequencer`. Part of [Blocks](./blocks.md). Signatures, option lists, field ranges and units are in the package's type declarations (`sequencer.d.ts`, JSDoc on every member); this page holds what the types do not say. Deep topics (custom `transform`, per-step field semantics, shared transports, step grid wiring) are on [Step Sequencer: advanced](./sequencer-advanced.md).
 
 `StepSequencer` owns looping lanes of steps and borrows its time from a clock or transport. There is one way to build it: a record of named lanes. It imports only `@audiorective/core`.
 
@@ -36,7 +36,7 @@ seq.lanes.hat.mute = true; // live setters: pattern, rate, swing, direction, mut
 
 - **Each lane loops on its own length and rate** (true polymeter), starting at beat 0 of the transport.
 - **`rate`** is a `Time` (`"16n"` a quarter of a beat, `"16n."` dotted, `"8t"` triplet, `"1m"` four beats) or a `StepRate` (`"1/16"`). Seconds (`"250ms"`, `"2s"`, a number) convert to beats at the tempo at beat 0, so a later tempo change does not rescale them; use note values to follow tempo.
-- **`swing`** (0..1 or `"30%"`) delays every odd step (counting from 0 at each loop start: steps 1, 3, 5 ...) by `swing` of half a step, a fixed beat offset that follows tempo; 0 is straight and 1 is half a step late.
+- **`swing`** (0..1 or `"30%"`) delays every odd step (counting from 0 at each loop start: steps 1, 3, 5 ...) by `swing` of half a step, a fixed beat offset that follows tempo; 0 is straight and 1 is half a step late. `swing: 1` delays the odd steps by half a step (an eighth of a beat on a `"16n"` lane); `steps[i].offset = 0.5` does the same for one step.
 - **`sound`** is a note name, an `AudioBuffer` or a function `(context, hit) => AudioScheduledSourceNode`, and needs `options.context`. Each hit gets its own voice into `lane.output` (a `GainNode` joined to the destination until `lane.connect(node)`). A note name or buffer follows a step's `pitch` automatically; a factory reads `hit.pitch` itself.
 - **`solo`**: while any lane is soloed, only soloed lanes play.
 - **Playhead:** `lane.playhead` is the 0-based step index the transport is on, and `lane.progress` is 0..1 through the lane's own loop; both are `null` while stopped and update once per scheduling window. They are tracked reads, so an effect or a framework hook re-runs on them.
@@ -69,10 +69,65 @@ const seq = new StepSequencer(lanes, {
 
 - **Hits are scheduled ahead and can be retracted.** `onHit(hit)`, the `hit` event (`seq.addEventListener("hit", e => e.hit)`, `seq.onhit = fn`) and a lane's own `onHit` run before the hit sounds, with `hit.when` in audio-context seconds. A pending hit is retracted when an edit re-queues it, when the transport stops, pauses or seeks, or on `dispose()`. After a retraction `onHit` can run again for the same hit, so keep it free of state a retraction cannot undo (do not count hits in it).
 - **Cleanup.** `onHit` may return a cleanup. It runs when that pending hit is retracted, before any re-run, like a React effect cleanup. `cancelScheduledValues(hit.when)` drops that value and every later one on the param. That is right when this sequencer is the only writer of the param; if another sequencer, an LFO or your own automation writes it too, give each writer its own node or param.
-- **`transform(hit, random)`** runs just before scheduling and may move, reshape or drop each hit. Move `beat` for musical shifts (tempo-locked), `when` for millisecond nudges; for a fixed per-step push prefer `steps[i].offset` or lane `swing`. `random(key?)` is stable for the same `seed`, lane, loop, index and `key`, so a re-queued hit gets the same number. If the transform reads state that can change (a humanize amount, a mode flag), call `clock.refresh()` (`workspace.transport.refresh()` for a Workspace) after changing it: a running sequencer re-queues pending hits only for its own edits. Details and validation in [advanced](./sequencer-advanced.md#custom-transform).
+- **`transform(hit, random)`** runs just before scheduling and may move, reshape or drop each hit. Move `hit.beat` for musical shifts (tempo-locked: `beat: hit.beat + 0.125` is always a 32nd late), `hit.when` for millisecond nudges (a fixed `when` push drifts when the tempo changes); for a fixed per-step push the simplest is `swing` or `steps[i].offset`, which need no code. `random(key?)` is stable for the same `seed`, lane, loop, index and `key`, so a re-queued hit gets the same number. If the transform reads state that can change (a humanize amount, a mode flag), call `clock.refresh()` (`workspace.transport.refresh()` for a Workspace) after changing it: a running sequencer re-queues pending hits only for its own edits. Details and validation in [advanced](./sequencer-advanced.md#custom-transform).
 - **Seeding.** `seed` (default 0) fixes `chance` draws and `random`. The `random` option replaces the `chance` draw with a sequential source that changes on re-queue; use it only to script exact draws in tests.
 - **Teardown.** `seq.dispose()` (also `using seq = ...`, or the `signal` option) detaches from every transport, retracts pending hits and runs their cleanups, releases lane outputs and removes listeners. The transport keeps running, so dispose the sequencer, not a clock others share. A disposed sequencer cannot be attached again.
 - **Shared transports.** One sequencer attached to two clocks queues on both. See [advanced](./sequencer-advanced.md#sharing-a-transport) and [Clock](./clock.md#attach-several-schedulers).
+
+## Standalone drum machine
+
+A vanilla drum machine with no DAW: your decoded buffers, a `PadBank` for choke groups, a `Clock` and the step grid. Closed and open hat share a choke `group`, and each pad ID is its lane name. `onHit` triggers the pad and returns a cleanup that cancels it, so an edit that deletes a pending closed hat also retracts its choke and the open hat keeps sounding. To give the hats separate effects, call `bank.routePad("open", openFilter)` and `bank.routePad("closed", closedFilter)`: choke still crosses them.
+
+```ts
+import { Clock } from "@audiorective/clock";
+import { PadBank } from "@audiorective/blocks/pads";
+import { StepSequencer } from "@audiorective/blocks/sequencer";
+import { mountStepGrid } from "@audiorective/widgets";
+
+const context = new AudioContext(); // you own it; resume() it from a user gesture
+// kick, snare, closedHat, openHat: AudioBuffers you decoded yourself
+const bank = new PadBank(context, [
+  { id: "kick", buffer: kick },
+  { id: "snare", buffer: snare },
+  { id: "closed", buffer: closedHat, group: "hat" },
+  { id: "open", buffer: openHat, group: "hat" }, // a one-shot (no gate) is still choked by a later closed hit
+]);
+bank.output.connect(context.destination);
+
+const sequencer = new StepSequencer(
+  {
+    kick: "X...X...X...X...",
+    snare: "....X.......X...",
+    closed: "X...X...X...X...",
+    open: "..X.......X.....",
+  },
+  {
+    onHit: (hit) => {
+      const pad = bank.trigger(hit.lane, hit.velocity, hit.when, { pitch: hit.pitch, duration: hit.duration });
+      return () => pad?.cancel(); // runs if the hit is retracted before it sounds
+    },
+  },
+);
+const clock = new Clock({ context, bpm: 120 });
+clock.attach(sequencer); // every edit re-queues the look-ahead
+const grid = mountStepGrid(document.querySelector("#grid")!, { sequencer }); // click toggles; drag a step to edit the active field
+
+await context.resume();
+clock.start(); // clock.stop() ends playback and cancels queued hits
+clock.bpm.value = 140; // takes effect on the next look-ahead window
+
+// Edits in the grid or code re-queue the look-ahead at once.
+// A deleted closed-hat step that has not played yet no longer chokes the open hat.
+sequencer.lanes.closed.steps[4].velocity = 0;
+
+// Teardown: the caller keeps the AudioContext.
+grid.destroy();
+sequencer.dispose();
+clock.destroy();
+bank.destroy();
+```
+
+The same wiring runs in `packages/blocks/tests/drum-machine-doc.browser.test.ts`, which omits the DOM-only grid and decodes nothing (it synthesizes buffers).
 
 ## When not to use it
 

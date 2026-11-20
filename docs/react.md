@@ -44,7 +44,10 @@ Re-renders when the value changes. Always returns a read-only snapshot — to mu
 const volume = useValue(synth.volume);
 
 // Cell
-const pattern = useValue(sequencer.pattern); // Cell<boolean[]>
+const pattern = useValue(machine.pattern); // Cell<boolean[]>
+
+// A tracked getter on a block (a StepSequencer step or playhead): pass a function
+const velocity = useValue(useCallback(() => seq.lanes.kick.steps[i].velocity, [seq, i]));
 
 // Computed
 const label = useValue(synth.displayLabel); // ComputedAccessor<string>
@@ -71,16 +74,32 @@ function VolumeSlider({ synth }) {
 
 ```typescript
 function StepGrid() {
-  const { sequencer } = useEngine();
-  const pattern = useValue(sequencer.pattern); // Cell<boolean[]>
+  const { machine } = useEngine();
+  const pattern = useValue(machine.pattern); // Cell<boolean[]>
 
   return (
     <div>
       {pattern.map((active, i) => (
-        <button key={i} data-active={active} onClick={() => sequencer.toggleStep(i)} />
+        <button key={i} data-active={active} onClick={() => machine.toggleStep(i)} />
       ))}
     </div>
   );
+}
+```
+
+#### Step sequencer lanes
+
+A `StepSequencer` lane's `steps[i].velocity` and `playhead` are tracked getters, not cells, so read them through a function source and keep the function's identity stable (`useCallback`, or one per child component); an inline arrow resubscribes on every render, and one that returns a new array or object each call re-renders in a loop. Read one primitive per call.
+
+```typescript
+function Step({ seq, lane, i }: { seq: StepSequencer; lane: string; i: number }) {
+  const velocity = useValue(useCallback(() => seq.lanes[lane].steps[i].velocity, [seq, lane, i]));
+  return <button data-active={velocity > 0} onClick={() => (seq.lanes[lane].steps[i].velocity = velocity > 0 ? 0 : 1)} />;
+}
+
+function Playhead({ seq }: { seq: StepSequencer }) {
+  const step = useValue(useCallback(() => seq.lanes.kick.playhead, [seq])); // number | null
+  return <span>{step ?? "-"}</span>;
 }
 ```
 
