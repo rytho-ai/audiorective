@@ -265,3 +265,143 @@ describe("work queued while stopped", () => {
     expect(queued).toEqual([]);
   });
 });
+
+describe("SchedulerHandle.cancelFrom", () => {
+  function ev() {
+    const listeners: Array<() => void> = [];
+    let cancelled = 0;
+    const value = {
+      cancel: () => {
+        cancelled++;
+        listeners.splice(0).forEach((l) => l());
+      },
+      onEnded: (l: () => void) => void listeners.push(l),
+    };
+    return { value, cancelled: () => cancelled };
+  }
+
+  function setup() {
+    const h = harness();
+    const events = {
+      a: [] as ReturnType<typeof ev>[],
+      b: [] as ReturnType<typeof ev>[],
+      tick: [] as ReturnType<typeof ev>[],
+    };
+    let handleA!: SchedulerHandle;
+    let handleB!: SchedulerHandle;
+    let lastWindowA: { own(e: ReturnType<typeof ev>["value"], when: number): void } | undefined;
+    const clock = new Clock({
+      timeline: h.timeline,
+      lookAhead: 0.1,
+      tickSource: h.tickSource,
+      onTick(w) {
+        const e = ev();
+        events.tick.push(e);
+        w.own(e.value, 0.5);
+      },
+    });
+    const emit = (list: ReturnType<typeof ev>[], w: { own(e: ReturnType<typeof ev>["value"], when: number): void }, when: number) => {
+      const e = ev();
+      list.push(e);
+      w.own(e.value, when);
+    };
+    const a = {
+      schedule(w: { own(e: ReturnType<typeof ev>["value"], when: number): void }) {
+        lastWindowA = w;
+        emit(events.a, w, 0.2);
+        emit(events.a, w, 0.5);
+        emit(events.a, w, 0.8);
+      },
+      attached: (hd: SchedulerHandle) => void (handleA = hd),
+    };
+    const b = {
+      schedule(w: { own(e: ReturnType<typeof ev>["value"], when: number): void }) {
+        emit(events.b, w, 0.5);
+      },
+      attached: (hd: SchedulerHandle) => void (handleB = hd),
+    };
+    const detachA = clock.attach(a);
+    clock.attach(b);
+    return { ...h, clock, events, a, emit, detachA, lastWindowA: () => lastWindowA!, handleA: () => handleA, handleB: () => handleB };
+  }
+
+  test("cancels only that scheduler's events at or after time", () => {
+    const s = setup();
+    s.clock.start();
+    s.tickSource.tick();
+    s.handleA().cancelFrom(0.5);
+    expect(s.events.a.map((e) => e.cancelled())).toEqual([0, 1, 1]);
+    expect(s.events.b[0]!.cancelled()).toBe(0);
+    expect(s.events.tick[0]!.cancelled()).toBe(0);
+    s.handleB().cancelFrom(0);
+    expect(s.events.b[0]!.cancelled()).toBe(1);
+    expect(s.events.tick[0]!.cancelled()).toBe(0);
+    expect(s.events.a[0]!.cancelled()).toBe(0);
+  });
+
+  test("a time before now also cuts events already sounding", () => {
+    const s = setup();
+    s.clock.start();
+    s.tickSource.tick();
+    s.ctx.currentTime = 0.4;
+    s.handleA().cancelFrom(0);
+    expect(s.events.a.map((e) => e.cancelled())).toEqual([1, 1, 1]);
+  });
+
+  test("the most recent window's own still registers after cancelFrom; a later cancelFrom retracts it", () => {
+    const s = setup();
+    s.clock.start();
+    s.tickSource.tick();
+    s.handleA().cancelFrom(0.5);
+    const before = s.events.a.length;
+    s.emit(s.events.a, s.lastWindowA(), 0.6);
+    expect(s.events.a[before]!.cancelled()).toBe(0);
+    s.handleA().cancelFrom(0.6);
+    expect(s.events.a[before]!.cancelled()).toBe(1);
+  });
+
+  test("own called during a cancel is itself cancelled", () => {
+    const s = setup();
+    s.clock.start();
+    s.tickSource.tick();
+    const replacement = ev();
+    const w = s.lastWindowA();
+    const original = s.events.a[1]!;
+    const cancel = original.value.cancel;
+    original.value.cancel = () => {
+      w.own(replacement.value, 0.9);
+      cancel();
+    };
+    s.handleA().cancelFrom(0.5);
+    expect(replacement.cancelled()).toBe(1);
+  });
+
+  test("does nothing after detach, and does not emit a window or move the refill point", () => {
+    const s = setup();
+    s.clock.start();
+    s.tickSource.tick();
+    const handle = s.handleA();
+    const windows = s.events.a.length;
+    handle.cancelFrom(0.5);
+    expect(s.events.a.length).toBe(windows);
+    s.tickSource.tick();
+    expect(s.events.a.length).toBe(windows); // no extra window without time advancing
+    s.detachA();
+    const b = s.events.b.length;
+    handle.cancelFrom(0);
+    expect(s.events.b.length).toBe(b);
+    expect(s.events.b[0]!.cancelled()).toBe(0);
+  });
+
+  test("cancelFrom then refresh: refresh re-emits the windows, once", async () => {
+    const s = setup();
+    s.clock.start();
+    s.tickSource.tick();
+    const n = s.events.a.length;
+    s.handleA().cancelFrom(0.5);
+    s.handleA().refresh();
+    await new Promise<void>((r) => queueMicrotask(r));
+    expect(s.events.a.length).toBe(n + 3);
+    expect(s.events.a.slice(n).every((e) => e.cancelled() === 0)).toBe(true);
+  });
+});

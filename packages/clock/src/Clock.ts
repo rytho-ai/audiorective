@@ -78,8 +78,16 @@ export interface SchedulerHandle {
   readonly state: ReadonlyCell<TransportState>;
   /** The clock's time signature, the same cell as `clock.meter`. */
   readonly meter: ReadonlyCell<TimeSignature>;
-  /** The transport's `refresh()`: re-queue the look-ahead from now. Coalesced within one task. */
+  /** The transport's `refresh()`: re-queue the look-ahead from now. Coalesced within one task. It retracts the events of every scheduler from now and re-emits their windows, so use it instead of `cancelFrom`, not after it. */
   refresh(): void;
+  /**
+   * Retract the events this scheduler registered with `window.own` whose start time is `time` (audio-context seconds) or later, and only those: other schedulers' events, `onTick` events and this
+   * scheduler's earlier events stay. Each is cancelled as on a transport change (`event.cancel()`, an error is logged), synchronously; an event already ended is gone already. It does not re-emit any window
+   * and does not move the clock's refill point: the span from `time` to the end of the last window this scheduler was given stays empty until the scheduler registers new events for it (through the
+   * `own` of the most recent window, valid until the transport jumps). `time` earlier than now also cuts events that are sounding. Does nothing after detach. It does not stop `refresh()`: a later or pending
+   * `refresh()` still retracts and re-emits everything from now, so a scheduler that called `cancelFrom` and then `refresh()` must not also re-register by hand.
+   */
+  cancelFrom(time: number): void;
   /** Detach this scheduler: the function `attach` returned. Idempotent. */
   detach(): void;
 }
@@ -134,6 +142,8 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
   private _startedAt = 0;
   private _destroyed = false;
   private readonly _owned = new Map<CancellableEvent, number>();
+  // which scheduler's window registered an owned event; onTick events have no entry
+  private readonly _owners = new Map<CancellableEvent, Scheduler>();
   private _ticking = false;
   private _refillPending = false;
   private _cancelling = 0;
@@ -180,8 +190,10 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     if (this._destroyed) throw new Error("Clock is destroyed.");
     if (this._schedulers.has(scheduler)) throw new Error("Clock already has this scheduler attached.");
     this._schedulers.add(scheduler);
+    let detached = false;
     const detach = () => {
       if (!this._schedulers.delete(scheduler)) return;
+      detached = true;
       this._resetScheduler(scheduler, "detach");
       this._cleanupScheduler(scheduler);
     };
@@ -192,6 +204,9 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
           state: this.state,
           meter: readonlyCell(this.meter),
           refresh: () => this.refresh(),
+          cancelFrom: (time: number) => {
+            if (!detached) this._cancelSchedulerFrom(scheduler, time);
+          },
           detach,
         });
         if (typeof cleanup === "function") this._attachCleanups.set(scheduler, cleanup);
@@ -371,6 +386,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
       for (const [event, when] of [...this._owned]) {
         if (fromNow && when < now) continue;
         this._owned.delete(event);
+        this._owners.delete(event);
         try {
           event.cancel();
         } catch (error) {
@@ -382,7 +398,26 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     }
   }
 
-  private _own(event: CancellableEvent, when: number, generation: number): void {
+  private _cancelSchedulerFrom(scheduler: Scheduler, time: number): void {
+    if (!this._schedulers.has(scheduler)) return;
+    this._cancelling++;
+    try {
+      for (const [event, when] of [...this._owned]) {
+        if (this._owners.get(event) !== scheduler || when < time) continue;
+        this._owned.delete(event);
+        this._owners.delete(event);
+        try {
+          event.cancel();
+        } catch (error) {
+          console.error("Clock event cancellation failed:", error);
+        }
+      }
+    } finally {
+      this._cancelling--;
+    }
+  }
+
+  private _own(event: CancellableEvent, when: number, generation: number, owner?: Scheduler): void {
     if (!Number.isFinite(when) || when < 0) {
       event.cancel();
       throw new RangeError("Clock owned event time must be finite, non-negative seconds.");
@@ -392,10 +427,16 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
       return;
     }
     this._owned.set(event, when);
-    try {
-      event.onEnded(() => this._owned.delete(event));
-    } catch (error) {
+    if (owner) this._owners.set(event, owner);
+    else this._owners.delete(event);
+    const forget = () => {
       this._owned.delete(event);
+      this._owners.delete(event);
+    };
+    try {
+      event.onEnded(forget);
+    } catch (error) {
+      forget();
       event.cancel();
       throw error;
     }
@@ -450,7 +491,8 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
         for (const scheduler of [...this._schedulers]) {
           if (this._timeline.generation !== generation) break; // a callback moved the transport: this window is stale
           try {
-            scheduler.schedule(window, this._timeline);
+            const own = (event: CancellableEvent, when: number) => this._own(event, when, generation, scheduler);
+            scheduler.schedule({ ...window, own }, this._timeline);
           } catch (error) {
             console.error("Clock scheduler failed:", error);
           }
