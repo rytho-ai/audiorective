@@ -105,6 +105,53 @@
         "Stopping the Drums track silences the pattern at the bar boundary; the pattern does not keep sounding.",
         "The separate hi-hat sequencer is attached to the same shared clock as the session view, plays independently of the launcher, and is not stopped by launcher stops."
       ]
+    },
+    {
+      "id": "X10-follow-nothing",
+      "prompt": "After the Chorus loop (Lead clip 2) has played 2 bars, 40% of the time nothing should change and it keeps looping; otherwise it moves on the next bar to Lead clip 3 (35% of all cases) or Lead clip 4 (25% of all cases). The choices must be repeatable for a given seed (use seed 11). The \"nothing happens\" case must not stop the clip or restart it.",
+      "expectations": [
+        "The follow rule is attached to the clip and fires after 2 bars of playing, aligned to a bar boundary.",
+        "The three outcomes carry the probabilities 0.4 (nothing), 0.35 (clip 3) and 0.25 (clip 4), drawn from a seeded generator (seed 11); Math.random is not used.",
+        "In the nothing case the clip is not stopped, not relaunched and keeps looping without a gap, and no queued launch is created.",
+        "The rule still applies on later loops, so a clip that stayed may follow on a later pass."
+      ],
+      "checks": [
+        {
+          "expectation": 1,
+          "label": "no Math.random for the seeded choice",
+          "none": ["Math\\.random\\("]
+        }
+      ]
+    },
+    {
+      "id": "X11-tempo-following-clip",
+      "prompt": "The Bass loop (Bass clip 1) is an audio file recorded at 100 BPM, 4 bars long, and loops on the session grid. Scene 3 switches the song to 128 BPM at its bar line. The bass loop must stay in time with the bars of the song both before and after the switch, and again if the user later drags the tempo; pitch changing with the speed is acceptable.",
+      "expectations": [
+        "The loop's playback speed is tied to the ratio between the song tempo and the 100 BPM it was recorded at (1.28 at 128 BPM), so its bars line up with the song's bars.",
+        "The speed follows tempo changes while the clip plays, including the scene's change at the bar line and a manual tempo change later, not just the tempo at launch time.",
+        "The loop's length in song time is derived from the recorded tempo, so the loop point stays on a bar boundary after the tempo change.",
+        "No hand-written timer or per-frame polling is used to adjust the speed."
+      ]
+    },
+    {
+      "id": "X12-live-option-edits",
+      "prompt": "In the clip panel of the session view the user can change a playing Lead clip's launch quantize, its follow rule (after N bars go to another clip) and its loop region (start and length in beats) while the clip is playing. The new settings must apply to what happens next as the user would expect: the next launch of that clip uses the new quantize, the follow rule is used for the following loop or bar count, and the loop region applies at the clip's next loop wrap, all without restarting or interrupting the playing clip.",
+      "expectations": [
+        "Each of the three settings can be changed on an existing clip after it was created, from a UI handler, without recreating or relaunching the clip.",
+        "The playing clip is not stopped, restarted or re-queued by the edit; audio continues without a gap.",
+        "A new quantize applies to the clip's next launch, not to retroactively moving an already queued or playing one.",
+        "A changed loop region takes effect for the clip's following loop (at the next wrap), and a changed follow rule is evaluated from then on."
+      ]
+    },
+    {
+      "id": "X13-grid-tempo-no-resample",
+      "prompt": "My loops are 120 BPM material and the song also stays at 120 BPM the whole time (no scene changes the tempo). I only want to tell the session view what tempo the loops were recorded at so that their bars and loop lengths are laid out on the grid correctly. Nothing should be sped up, slowed down or repitched: every loop must sound exactly as in the file.",
+      "expectations": [
+        "Each loop's recorded tempo of 120 BPM is given to the launcher only to describe its beat grid (loop length and bar alignment).",
+        "Playback speed of every clip stays exactly 1.0: nothing is resampled or time-stretched, and pitch is unchanged.",
+        "If the song tempo were changed later, the code makes no promise that the loops follow it unless the user asked for it; speed following is not switched on by merely describing the grid.",
+        "No extra rate or warp setting is required for the plain case."
+      ]
     }
   ]
 }
