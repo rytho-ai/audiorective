@@ -891,7 +891,7 @@ player.cells.duration: ReadonlyCell<number>      // NaN until loadedmetadata fir
 player.loop = true;
 player.playbackRate = 1.5;
 
-player.play(): Promise<void>   // swallows autoplay-gesture + AbortError
+player.play(): Promise<void>   // rejects like HTMLMediaElement.play(): NotAllowedError, AbortError, NotSupportedError
 player.pause(): void
 player.seek(t: number): void
 player.stop(): void            // pause + seek(0)
@@ -899,7 +899,7 @@ player.onEnded(cb: () => void): () => void   // returns an unsubscribe
 player.dispose(): void
 ```
 
-**`play()` swallows two error classes silently:** autoplay-gesture errors (browser blocked playback before a user gesture) and `AbortError` (the element was replaced or unloaded mid-play). Read `player.cells.isPlaying` for actual playback state; a false value after `play()` cannot distinguish a blocked request from an interrupted one. For a plain control bar that reports its own play failures, use [`mountPlayer` with `fromFilePlayer(player)`](./widgets.md#plain-player-controls); its adapter calls the documented `audio.play()` escape hatch and ignores `AbortError`.
+**`play()` rejects with the element's own `DOMException`, exactly as `HTMLMediaElement.play()` does:** `NotAllowedError` when the browser blocks autoplay before a user gesture, `AbortError` when a `src` change or `pause()` interrupts the request, `NotSupportedError` when there is no `src` or the media cannot be decoded. Nothing is swallowed, so catch it where the user can act: `player.play().catch((error) => { if (error.name === "NotAllowedError") showPressPlayNotice(); })`, ignoring `AbortError`. `player.cells.isPlaying` stays the state to render. A plain control bar that reports its own play failures is [`mountPlayer` with `fromFilePlayer(player)`](./widgets.md#plain-player-controls).
 
 ```typescript
 // React example — bind transport cells to UI

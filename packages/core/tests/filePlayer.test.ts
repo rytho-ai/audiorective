@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { FilePlayer, effect } from "../src";
 
 /** Build a valid silent WAV data URI so a real <audio> element can load + play it. */
@@ -148,10 +148,28 @@ describe("FilePlayer", () => {
     expect(() => p.dispose()).not.toThrow();
   });
 
-  test("play() with no src resolves without throwing and stays stopped", async () => {
+  test("play() with no src rejects with NotSupportedError and stays stopped", async () => {
     const p = makePlayer(ctx);
-    await expect(p.play()).resolves.toBeUndefined();
+    await expect(p.play()).rejects.toMatchObject({ name: "NotSupportedError" });
     expect(p.cells.isPlaying.value).toBe(false);
+    p.dispose();
+  });
+
+  test("play() rejects with the element's NotAllowedError instead of swallowing it", async () => {
+    const p = makePlayer(ctx, { src: wavDataUri(1) });
+    const blocked = new DOMException("blocked", "NotAllowedError");
+    const spy = vi.spyOn(p.audio, "play").mockRejectedValue(blocked);
+    await expect(p.play()).rejects.toBe(blocked);
+    expect(p.cells.isPlaying.value).toBe(false);
+    spy.mockRestore();
+    p.dispose();
+  });
+
+  test("play() rejects with AbortError when pause() interrupts it", async () => {
+    const p = makePlayer(ctx, { src: wavDataUri(1) });
+    const interrupted = new DOMException("interrupted", "AbortError");
+    vi.spyOn(p.audio, "play").mockRejectedValue(interrupted);
+    await expect(p.play()).rejects.toMatchObject({ name: "AbortError" });
     p.dispose();
   });
 

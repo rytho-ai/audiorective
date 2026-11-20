@@ -158,17 +158,14 @@ export class FilePlayer extends AudioProcessor<
     this.params.playbackRate.value = v;
   }
 
+  /**
+   * Starts playback like `HTMLMediaElement.play()` and rejects with the element's own `DOMException`: `NotAllowedError` when the browser blocks
+   * autoplay (play again from a user gesture), `AbortError` when a `src` change or `pause()` interrupts it, `NotSupportedError` with no `src` or an
+   * undecodable one. Nothing is swallowed.
+   */
   async play(): Promise<void> {
-    if (!this.audio.src) return;
-    try {
-      await this.audio.play();
-    } catch (e) {
-      // Benign: autoplay needs a user gesture (NotAllowedError), or play() was
-      // interrupted by a src change / pause (AbortError, e.g. during track switch).
-      // Surface anything else (bad codec, network, …).
-      if (e instanceof DOMException && (e.name === "NotAllowedError" || e.name === "AbortError")) return;
-      throw e;
-    }
+    if (!this.audio.src) throw new DOMException("FilePlayer has no src to play.", "NotSupportedError");
+    await this.audio.play();
   }
 
   pause(): void {
