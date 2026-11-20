@@ -147,3 +147,16 @@ test("a library preview started inside an effect keeps loop binding on the previ
   player.params.loop.value = true;
   expect((player as unknown as { _source: AudioBufferSourceNode })._source.loop).toBe(true);
 });
+
+test("aborting the options signal disposes the library; Symbol.dispose is dispose", async () => {
+  const context = new AudioContext();
+  disposers.push(() => context.close());
+  const controller = new AbortController();
+  const library = new SampleLibrary(context, { signal: controller.signal });
+  controller.abort();
+  expect(() => library.importFiles([wav(0.1)])).toThrow("Sample Library is disposed.");
+  expect(() => new SampleLibrary(context, { signal: AbortSignal.abort() }).importFiles([])).toThrow("Sample Library is disposed.");
+  const other = new SampleLibrary(context);
+  other[Symbol.dispose]();
+  expect(() => other.importFiles([])).toThrow("Sample Library is disposed.");
+});
