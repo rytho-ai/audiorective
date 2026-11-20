@@ -64,6 +64,7 @@ interface ClockOptions<TRulers> {
   timeline?: Timeline<TRulers>; // borrow this Timeline ...
   context?: TimeSource; // ... or create one from this AudioContext (alias: audioContext)
   bpm?: number; // starting tempo of the created Timeline. Default 120; only with `context`
+  meter?: TimeSignature; // starting `clock.meter`. Default [4, 4]
   onTick?: (window: TickWindow<TRulers>) => void; // called once per tick while playing
   lookAhead?: number; // seconds scheduled ahead of now. Default 0.1
   tickInterval?: number; // seconds between ticks for the default source. Default 0.025
@@ -204,7 +205,7 @@ clock.seek(64); // jumps to beat 64
 
 ### Attach several schedulers
 
-`onTick` is optional. `clock.attach(scheduler)` follows the clock with any `{ schedule(window, timing), reset?() }` and returns a detach function; several schedulers share one transport and stay beat-aligned because they all read the same windows and the clock's `timeline` (`clock.timeline`).
+`onTick` is optional. `clock.attach(scheduler)` follows the clock with any `{ schedule(window, timing), reset?(reason), transport?(change), attached?(handle) }` and returns a detach function; several schedulers share one transport and stay beat-aligned because they all read the same windows and the clock's `timeline` (`clock.timeline`).
 
 ```typescript
 const clock = new Clock({ timeline, lookAhead: 0.1 }); // no onTick
@@ -212,11 +213,26 @@ const detach = clock.attach({
   schedule(window, timing) {
     // window.beat, window.time.current, window.own(event, when); timing.beatToTime(beat)
   },
-  reset() {}, // after start, pause, stop, seek or destroy have cancelled the owned events
+  reset(reason) {}, // "start" | "stop" | "pause" | "seek" | "detach": owned events are already cancelled
+  transport(change) {}, // { type: "start" | "stop" | "pause" | "resume" | "seek" | "tempo", when, beat }
+  attached(handle) {
+    // handle.timeline, handle.state, handle.meter, handle.refresh(), handle.detach()
+    return () => {}; // cleanup on detach or destroy
+  },
 });
 ```
 
-`onTick` runs first, then each attached scheduler in attach order. Owned events registered by any scheduler are cancelled by `start`, `pause`, `stop`, `seek` and `destroy`, and `refresh()` re-queues every scheduler's pending events. Attaching while playing refreshes the look-ahead; `detach()` calls `reset()` once. An error thrown by one scheduler is logged and the others still run. A scheduler may also define `attached(handle)`: `attach` calls it once with `{ refresh(), detach() }` for that transport and runs the cleanup it returns on detach or `destroy`. `StepSequencer` (see [Step Sequencer](./sequencer.md)) uses it to re-queue after its own edits and to detach on `dispose()`. `Scheduler`, `SchedulerHandle` and `SchedulerWindow` are exported types; `Workspace.clock` (also `workspace.transport`) is a Clock, so the same `attach` serves a Workspace.
+`onTick` runs first, then each attached scheduler in attach order. Owned events registered by any scheduler are cancelled by `start`, `pause`, `stop`, `seek` and `destroy`, and `refresh()` re-queues every scheduler's pending events. Attaching while playing refreshes the look-ahead. An error thrown by one scheduler hook is logged and the others still run. `Scheduler`, `SchedulerHandle`, `SchedulerWindow`, `ResetReason`, `TransportChange` and `TransportChangeType` are exported types; `Workspace.clock` (also `workspace.transport`) is a Clock, so the same `attach` serves a Workspace.
+
+**`reset(reason)`** runs before the transport state changes, after owned events are cancelled. `start()` passes `"start"` (the first window begins at its `offsetBeats`), `stop()` `"stop"`, `pause()` `"pause"` and `seek()` `"seek"`; `detach()` and `destroy()` pass `"detach"`. `resume()` calls none. A scheduler that ignores the reason clears its state on every one, so it behaves as if `reset()` took no argument. A scheduler that keeps work queued while the transport is stopped keeps it on `"start"` and clears it on the others: the first window after `start(when, offsetBeats)` begins at beat `offsetBeats`, which `timeline.beatToTime` maps to exactly `when`.
+
+**`attached(handle)`** runs synchronously inside `attach`, before the first window. The handle carries `timeline` (beat and time mapping, `timeline.bpm`), `state` (the same cell as `clock.state`), `meter` (the same cell as `clock.meter`, read-only here), `refresh()` and `detach()`, so a scheduler can compute beats and know whether the transport plays before any window arrives. It may return a cleanup, which runs on detach or `destroy`, after `reset("detach")`.
+
+**`transport(change)`** reports every change once, in call order, after it is applied: the timeline and `state` already show it, and `reset` has run first for the changes it covers. `change.type` is `"start"`, `"stop"`, `"pause"`, `"resume"`, `"seek"` or `"tempo"`; `change.when` is the audio-context time it takes effect and `change.beat` the beat position then (the start offset, the frozen beat of a pause or resume, the seek target, `0` for a stop). A `"tempo"` change fires once for each edit of `clock.bpm` (a `.value` write, `setValueAtTime`, a ramp, `setTargetAtTime`, `setValueCurveAtTime`, `cancelScheduledValues`, `cancelAndHoldAtTime`), not for the tick that refreshes `bpm.value`; its `when` is the time from which the tempo curve may differ, never earlier than now, so a scheduler re-times anything waiting on a beat from there. A clock that shares a `Timeline` hears tempo edits made through any other clock on it. Calls that change nothing (`stop()` on a stopped clock, `pause()` unless playing, `resume()` unless paused) report nothing, though `stop()` still calls `reset("stop")`. `refresh()` is not a transport change.
+
+**`clock.meter`** is a writable `Cell<TimeSignature>` (`[numerator, denominator]`, default `[4, 4]`; `[6, 8]` is six eighths). It lives on the Clock, not the Timeline, because it is a property of what the schedulers play rather than of the beat/time mapping; rulers keep their own bar options. A scheduler reads it through `handle.meter`. A malformed `ClockOptions.meter` throws.
+
+`StepSequencer` (see [Step Sequencer](./sequencer.md)) uses `attached` to re-queue after its own edits and to detach on `dispose()`; it ignores the reason and has no `transport` hook, so it resets on every call.
 
 ### Start at an audio time
 
@@ -473,6 +489,7 @@ Two things to remember when writing assertions:
 | `TempoParam ramp end time must be finite, got …`                                                                                                                       | `linearRampToValueAtTime` or `exponentialRampToValueAtTime` received NaN or an infinite end time.                  | Pass the absolute `AudioContext` time at which the ramp reaches its value.                                                   |
 | `Clock takes either timeline or context, not both.` / `Clock needs a timeline or a context.` / `Clock bpm only applies with context; set it on the timeline you pass.` | The options named both a Timeline and a context, neither, or a `bpm` next to a `timeline`.                         | Pass `{ context, bpm? }` for a Clock-made Timeline, or `{ timeline }` and set the tempo on that Timeline.                    |
 | `Clock is destroyed.` / `Clock already has this scheduler attached.`                                                                                                   | `attach` was called on a destroyed clock, or with a scheduler that is already attached.                            | Create a new Clock, or detach the scheduler first.                                                                           |
+| `Clock meter must be [numerator, denominator] positive integers, got [n, d].`                                                                                          | `ClockOptions.meter` held a non-integer or a value below 1.                                                        | Pass whole numbers, for example `[4, 4]` or `[6, 8]`.                                                                        |
 | `Clock start time must be finite seconds, got …` / `Clock start offset must be finite beats, got …`                                                                    | `start(when, offsetBeats)` or `start({ atBeat })` received NaN or an infinite number.                              | Pass a finite audio time and a finite beat.                                                                                  |
 | `TempoParam start time must be finite, got …` / `TempoParam time constant must be finite and >= 0, got …`                                                              | `setTargetAtTime` or `setValueCurveAtTime` received a non-finite start, or a negative or non-finite time constant. | Pass an absolute `AudioContext` time and a time constant of 0 or more.                                                       |
 | `TempoParam value curve needs at least 2 values.` / `TempoParam value curve duration must be finite and > 0, got …`                                                    | `setValueCurveAtTime` got fewer than two values, or a zero, negative or non-finite duration.                       | Pass two or more bpm values and a duration above 0 seconds.                                                                  |
