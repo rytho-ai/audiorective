@@ -32,6 +32,7 @@
 // sees it). A variant without the declaration gets no checks.
 
 import { spawn, spawnSync } from "node:child_process";
+import { createUsageTracker, printUsageReport, usageJson } from "./usage.mjs";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -129,8 +130,11 @@ const emptyDir = scratch("guess-eval-");
 
 const SYSTEM_PROMPT = "You are a helpful assistant. Answer exactly in the format requested.";
 
+// Usage of every completed call, by role, for the token and cost breakdown.
+const usageByRole = { solver: [], grader: [], cluster: [] };
+
 // One tool-less `claude -p` call. Resolves to { text, costUsd } or { error }.
-function claude(prompt, useModel) {
+function claude(prompt, useModel, role = "solver") {
   return new Promise((done) => {
     const argv = [
       "-p",
@@ -157,6 +161,7 @@ function claude(prompt, useModel) {
     let result = null;
     let timedOut = false;
     let spawnError = null;
+    const tracker = createUsageTracker();
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill("SIGKILL");
@@ -172,6 +177,7 @@ function claude(prompt, useModel) {
         try {
           const event = JSON.parse(line);
           if (event.type === "result") result = event;
+          tracker.feed(event);
         } catch {}
       }
     });
@@ -183,7 +189,9 @@ function claude(prompt, useModel) {
       if (result.is_error || result.terminal_reason === "api_error" || result.api_error)
         return done({ error: `claude reported ${result.api_error ?? result.result ?? result.terminal_reason ?? "an error"}` });
       if (result.subtype !== "success") return done({ error: `claude reported ${result.subtype}` });
-      done({ text: String(result.result ?? ""), costUsd: result.total_cost_usd ?? 0 });
+      const usage = tracker.finish(result);
+      usageByRole[role].push(usage);
+      done({ text: String(result.result ?? ""), costUsd: result.total_cost_usd ?? 0, usage });
     });
   });
 }
@@ -338,7 +346,7 @@ async function gradeWithRetry(task, code, html, tscResult) {
   let cost = 0;
   let lastError = "";
   for (let attempt = 0; attempt < 2; attempt++) {
-    const g = await claude(gradePrompt(task, code, html, tscResult), graderModel);
+    const g = await claude(gradePrompt(task, code, html, tscResult), graderModel, "grader");
     if (g.error) return { error: `grader: ${g.error}`, cost };
     cost += g.costUsd;
     const grade = parseGrade(g.text, task.expectations.length);
@@ -464,7 +472,7 @@ async function clusterTask(task, samples) {
   if (samples.length === 0) return { error: "no completed samples" };
   let last = "";
   for (let attempt = 0; attempt < 2; attempt++) {
-    const r = await claude(clusterPrompt(task, samples), graderModel);
+    const r = await claude(clusterPrompt(task, samples), graderModel, "cluster");
     if (r.error) return { error: `cluster: ${r.error}` };
     const p = extractJson(r.text);
     if (p && Array.isArray(p.clusters)) return { clusters: p.clusters, recurring: p.recurring ?? {}, costUsd: r.costUsd };
@@ -656,10 +664,16 @@ if (mode === "guess") {
 const failed = results.filter((r) => r.errors.length);
 if (failed.length) console.log(`\n${sum(failed, (r) => r.errors.length)} error(s) occurred; erroring runs are excluded from the totals.`);
 console.log(`cost: $${costUsd.toFixed(2)}`);
+const usageRows = Object.entries(usageByRole).map(([label, runs]) => ({ label, runs }));
+printUsageReport(usageRows, { title: "Token and cost breakdown by call role (no tools, so no per-file attribution)" });
 
 if (jsonOut)
   writeFileSync(
     jsonOut,
-    JSON.stringify({ suite: suite.area, mode, variant: variantPath, model, graderModel, runs, costUsd, results }, null, 2) + "\n",
+    JSON.stringify(
+      { suite: suite.area, mode, variant: variantPath, model, graderModel, runs, costUsd, usage: usageJson(usageRows), results },
+      null,
+      2,
+    ) + "\n",
   );
 process.exit(failed.length ? 1 : 0);

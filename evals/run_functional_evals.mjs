@@ -23,6 +23,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertNoSymlinks, copyResolved } from "./stage_skill.mjs";
+import { createUsageTracker, printUsageReport, summarizeRuns, sumUsage, attributeReads, usageJson } from "./usage.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..");
@@ -86,7 +87,7 @@ delete env.CLAUDECODE; // allow nesting claude -p inside a Claude Code session
 const SOLVER_NOTE =
   "\n\n(You can read files but cannot write files or run commands here. Put the complete answer, including all code, in your reply.)";
 
-// One `claude -p` run. Resolves to { text, skills, references, turns, costUsd } when the
+// One `claude -p` run. Resolves to { text, skills, references, turns, costUsd, usage } when the
 // run completed, and { error } when it did not (timeout, CLI failure, no result event).
 function claude(prompt, { cwd, tools, maxTurns, useModel }) {
   return new Promise((done) => {
@@ -108,6 +109,7 @@ function claude(prompt, { cwd, tools, maxTurns, useModel }) {
     let result = null;
     let timedOut = false;
     let spawnError = null;
+    const tracker = createUsageTracker();
     const skills = new Set();
     const references = new Set();
     const timer = setTimeout(() => {
@@ -128,6 +130,7 @@ function claude(prompt, { cwd, tools, maxTurns, useModel }) {
           continue;
         }
         if (event.type === "result") result = event;
+        tracker.feed(event);
         const blocks = event?.message?.content;
         if (event.type !== "assistant" || !Array.isArray(blocks)) continue;
         for (const b of blocks) {
@@ -153,6 +156,7 @@ function claude(prompt, { cwd, tools, maxTurns, useModel }) {
         references: [...references].sort(),
         turns: result.num_turns,
         costUsd: result.total_cost_usd,
+        usage: tracker.finish(result),
       });
     });
   });
@@ -192,17 +196,20 @@ function parseGrades(text, count) {
 async function runOne(item) {
   const solved = await claude(item.prompt + SOLVER_NOTE, { cwd: project, tools: "Skill,Read,Glob,Grep", maxTurns: 40, useModel: model });
   if (solved.error) return { error: `solver: ${solved.error}` };
-  if (!solved.text.trim()) return { error: "solver: empty answer" };
+  const solverUsage = solved.usage;
+  if (!solved.text.trim()) return { error: "solver: empty answer", solverUsage };
   const graded = await claude(gradePrompt(item, solved.text), { cwd: graderDir, tools: "", maxTurns: 1, useModel: graderModel });
-  if (graded.error) return { error: `grader: ${graded.error}`, answer: solved.text };
+  if (graded.error) return { error: `grader: ${graded.error}`, answer: solved.text, solverUsage };
   const grades = parseGrades(graded.text, item.expectations.length);
-  if (!grades) return { error: "grader: reply was not the requested JSON", answer: solved.text };
+  if (!grades) return { error: "grader: reply was not the requested JSON", answer: solved.text, solverUsage, graderUsage: graded.usage };
   return {
     answer: solved.text,
     usedSkill: solved.skills.some((s) => s.includes(skillName)),
     references: solved.references,
     turns: solved.turns,
     costUsd: (solved.costUsd ?? 0) + (graded.costUsd ?? 0),
+    solverUsage,
+    graderUsage: graded.usage,
     grades,
   };
 }
@@ -242,6 +249,10 @@ const results = evalSet.map((item, ei) => {
     evidence: completed.map((x) => x.grades[i].evidence),
   }));
   const score = completed.length ? expectations.reduce((sum, e) => sum + e.passed / e.of, 0) : 0;
+  // Usage of every call that reached a result, solver and grader, including failed runs.
+  const solverRuns = mine.map((x) => x.solverUsage).filter(Boolean);
+  const graderRuns = mine.map((x) => x.graderUsage).filter(Boolean);
+  const totalRuns = mine.filter((x) => x.solverUsage).map((x) => sumUsage([x.solverUsage, x.graderUsage]));
   return {
     id: item.id,
     prompt: item.prompt,
@@ -252,6 +263,12 @@ const results = evalSet.map((item, ei) => {
     usedSkill: completed.filter((x) => x.usedSkill).length,
     references: [...new Set(completed.flatMap((x) => x.references))].sort(),
     costUsd: mine.reduce((sum, x) => sum + (x.costUsd ?? 0), 0),
+    usage: {
+      solverRuns,
+      graderRuns,
+      perRun: summarizeRuns(totalRuns),
+      sources: attributeReads(solverRuns),
+    },
     expectations,
     answers: mine.map((x) => x.answer ?? null),
   };
@@ -273,5 +290,23 @@ if (results.length !== scored.length)
   console.log(`${results.length - scored.length} eval(s) had runs that did not complete; they are excluded above and fail the run.`);
 console.log(`cost: $${sum(results, (r) => r.costUsd).toFixed(2)}`);
 
-if (jsonOut) writeFileSync(jsonOut, JSON.stringify({ skill: skillName, skillDir, model, graderModel, runs, results }, null, 2) + "\n");
+// Per eval: solver + grader per run. Reads are attributed from the solver only (the grader has no tools).
+const usageRows = results.map((r, ei) => ({
+  label: `#${r.id}`,
+  runs: flat.filter((x) => x.ei === ei && x.solverUsage).map((x) => sumUsage([x.solverUsage, x.graderUsage])),
+}));
+printUsageReport(usageRows);
+const graderShare = flat.filter((x) => x.graderUsage).reduce((n, x) => n + x.graderUsage.costUsd, 0);
+console.log(`
+of which grader calls: $${graderShare.toFixed(3)}`);
+
+if (jsonOut)
+  writeFileSync(
+    jsonOut,
+    JSON.stringify(
+      { skill: skillName, skillDir, model, graderModel, runs, usage: { ...usageJson(usageRows), graderCostUsd: graderShare }, results },
+      null,
+      2,
+    ) + "\n",
+  );
 process.exit(results.every((r) => !r.errors.length) ? 0 : 1);

@@ -40,6 +40,12 @@ node evals/run_functional_evals.mjs audiorective --ids 3,16,20 --runs 2 --model 
 
 Options: `--skill-dir`, `--ids <a,b,c>`, `--limit <n>`, `--runs` (1), `--concurrency` (4), `--timeout` seconds (600), `--model`, `--grader-model`, `--json <file>`. The report lists each eval's expectations met, whether the skill was opened, and which reference files were read; the JSON also keeps every answer and the grader's evidence. A run that does not complete is reported as an error and excluded from the totals, and the exit code is non-zero.
 
+### Token and cost breakdown
+
+Every functional run records what it spent, per call (solver and grader) and per eval. The report ends with a table per eval (cost, turns, tool calls as mean with min-max over `--runs`, and mean uncached input, cache-write, cache-read and output tokens), the share of cost by token category, and a list of the context loaded by `Skill`/`Read` results: `SKILL.md` (the Skill tool injects it whole) against each reference file, in characters and approximate tokens (characters / 4). The JSON keeps the same data under `usage` (overall: `tokens`, `costUsd`, `categoryCostUsd`, `categoryShare`, `toolCalls`, `sources`, `graderCostUsd`) and per result under `results[].usage` (`solverRuns`, `graderRuns`, `perRun` mean/min/max, `sources`); existing fields are unchanged.
+
+The CLI reports tokens per category and cost per model, not cost per category, so the category costs are estimates: tokens times the price table at the top of `evals/usage.mjs`, rescaled so the categories sum to the CLI's reported `costUSD`. Treat the shares as approximate when the model is not in the table. `run_guess_evals.mjs` prints the same breakdown by call role (solver, grader, cluster). `run_trigger_evals.mjs` stops a run as soon as the skill is called, so it has no result event and records no usage.
+
 Before changing a skill, run the set against the current skill and keep the JSON as the baseline, then run it again after the change with the same `--model`. Answers vary between runs, so treat a single-run drop on one eval as a reason to rerun that eval on both versions (`--ids`, `--runs 3`), not as a regression. Compare against the same prompt without the skill to see what the skill itself contributes (skill-creator's `agents/grader.md` describes that grading pass).
 
 ## Running API affordance evals
