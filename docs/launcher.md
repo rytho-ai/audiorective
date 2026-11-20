@@ -2,7 +2,7 @@
 title: Clip Launcher
 ---
 
-Quantized clip launching from `@audiorective/blocks/launcher`. Part of [Blocks](./blocks.md).
+Quantized clip launching from `@audiorective/launcher`.
 
 ## Clip Launcher
 
@@ -53,7 +53,7 @@ The launcher never calls `cancel()` after `commit()`. Replacing or withdrawing a
 The hard part is the outgoing stop. `AudioBufferSourceNode.stop(when)` cannot be retracted, so a launch that stops the outgoing clip with it cannot be cancelled. Put each launch behind its own `GainNode` gate instead: schedule `setValueAtTime(0, when)` on the outgoing gate, and undo it with `cancelScheduledValues(when)`. The sources are stopped for real only in `commit()`.
 
 ```ts
-import { ClipLauncher, type ClipLaunch, type ClipLaunchTransition } from "@audiorective/blocks/launcher";
+import { ClipLauncher, type ClipLaunch, type ClipLaunchTransition } from "@audiorective/launcher";
 import { Clock, Timeline } from "@audiorective/clock";
 
 const context = new AudioContext(); // you own it; resume() it from a user gesture

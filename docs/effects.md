@@ -328,7 +328,7 @@ const wav = await renderOffline({ seconds: 8, channels: 2, sampleRate: 44100 }, 
 
 ## Advanced: pre-warming worklets
 
-`registerWorklet(ctx, name, source)` lives in `@audiorective/core` (so blocks can use it) and `@audiorective/effects` re-exports it. It is exported for apps that want to load a worklet module ahead of first use (e.g. during a loading screen) rather than on first construction of `Compressor`, `Limiter`, or a stretch-engine `PitchShift`. `Compressor` and `Limiter` call it with the same `(ctx, name)` pair internally, so a pre-warm call and the effect's own call share one `addModule` load.
+`registerWorklet(ctx, name, source)` lives in `@audiorective/core` (so the capability packages can use it) and `@audiorective/effects` re-exports it. It is exported for apps that want to load a worklet module ahead of first use (e.g. during a loading screen) rather than on first construction of `Compressor`, `Limiter`, or a stretch-engine `PitchShift`. `Compressor` and `Limiter` call it with the same `(ctx, name)` pair internally, so a pre-warm call and the effect's own call share one `addModule` load.
 
 ## Common errors
 

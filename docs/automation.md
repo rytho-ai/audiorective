@@ -3,7 +3,7 @@ title: Automation
 ---
 
 `@audiorective/core/automation` provides reactive finite curves and audio-clock
-scheduling. Import this optional entry explicitly. It does not import blocks,
+scheduling. Import this optional entry explicitly. It does not import the capability packages,
 effects, a DOM, or create an AudioContext. Curve data and sampling work in Node.
 
 ## Automate a native parameter

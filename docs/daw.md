@@ -24,7 +24,7 @@ const keys = project.addTrack("Keys", "midi");
 const mic = project.addTrack("Mic", "audio");
 
 // `take` comes from @audiorective/midi/web MidiRecorder.stop().
-// `audioTake` comes from @audiorective/blocks/recorder AudioRecorder.stop().
+// `audioTake` comes from @audiorective/recorder AudioRecorder.stop().
 const midiClip = project.addMidiTake(keys.id, take, 0.5);
 project.addAudioClip(mic.id, audioTake, 1);
 midiClip.sequence.updateNote(take.notes[0].id, { pitch: 65 });

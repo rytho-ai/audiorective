@@ -2,7 +2,7 @@
 title: Sample Library
 ---
 
-Imported sample storage and previews from `@audiorective/blocks/samples`. Part of [Blocks](./blocks.md).
+Imported sample storage and previews from `@audiorective/samples`.
 
 ## Sample Library
 

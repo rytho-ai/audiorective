@@ -2,7 +2,7 @@
 title: Step Sequencer
 ---
 
-Step patterns and lanes from `@audiorective/blocks/sequencer`. Part of [Blocks](./blocks.md). Signatures, option lists, field ranges and units are in the package's type declarations (`sequencer.d.ts`, JSDoc on every member); this page holds what the types do not say. Deep topics (custom `transform`, per-step field semantics, shared transports, step grid wiring) are on [Step Sequencer: advanced](./sequencer-advanced.md).
+Step patterns and lanes from `@audiorective/sequencer`. Signatures, option lists, field ranges and units are in the package's type declarations (`sequencer.d.ts`, JSDoc on every member); this page holds what the types do not say. Deep topics (custom `transform`, per-step field semantics, shared transports, step grid wiring) are on [Step Sequencer: advanced](./sequencer-advanced.md).
 
 `StepSequencer` owns looping lanes of steps and borrows its time from a clock or transport. There is one way to build it: a record of named lanes. It imports only `@audiorective/core`.
 
@@ -10,7 +10,7 @@ Step patterns and lanes from `@audiorective/blocks/sequencer`. Part of [Blocks](
 
 ```ts
 import { Clock } from "@audiorective/clock";
-import { StepSequencer } from "@audiorective/blocks/sequencer";
+import { StepSequencer } from "@audiorective/sequencer";
 
 const seq = new StepSequencer({ kick: "X...X...X...X...", hat: "x.x.x.x.x.x.x.x." }, { context });
 const clock = new Clock({ context, bpm: 120 }); // makes its own Timeline
@@ -80,8 +80,8 @@ A vanilla drum machine with no DAW: your decoded buffers, a `PadBank` for choke 
 
 ```ts
 import { Clock } from "@audiorective/clock";
-import { PadBank } from "@audiorective/blocks/pads";
-import { StepSequencer } from "@audiorective/blocks/sequencer";
+import { PadBank } from "@audiorective/pads";
+import { StepSequencer } from "@audiorective/sequencer";
 import { mountStepGrid } from "@audiorective/widgets";
 
 const context = new AudioContext(); // you own it; resume() it from a user gesture
@@ -127,7 +127,7 @@ clock.destroy();
 bank.destroy();
 ```
 
-The same wiring runs in `packages/blocks/tests/drum-machine-doc.browser.test.ts`, which omits the DOM-only grid and decodes nothing (it synthesizes buffers).
+The same wiring runs in `packages/sequencer/tests/drum-machine-doc.browser.test.ts`, which omits the DOM-only grid and decodes nothing (it synthesizes buffers).
 
 ## When not to use it
 

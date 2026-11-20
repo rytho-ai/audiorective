@@ -64,24 +64,24 @@ Packages sit in four layers. An import points down, never up or sideways inside 
 Layer 4  Apps          apps/daw-demo, a drum machine, a project-file tool, your app
 Layer 3  Project and   widgets  ∥  daw (daw/runtime, daw/dawproject, daw/project)
          interaction
-Layer 2  Capabilities  clock, midi, effects, host, blocks/player, blocks/recorder,
-                       blocks/samples, blocks/pads,
-                       blocks/sequencer, blocks/launcher
+Layer 2  Capabilities  clock, midi, effects, host, player, recorder,
+                       samples, pads,
+                       sequencer, launcher
 Layer 1  Foundation    core
 Side     (core only)   react, threejs, playcanvas, devtools
 ```
 
-`widgets` and `daw` are parallel and never import each other. The app is the one place that knows both, and the wiring is app code. A box in the diagram is a responsibility, not an npm package: all `blocks` subpaths ship in one package.
+`widgets` and `daw` are parallel and never import each other. The app is the one place that knows both, and the wiring is app code. Each box in the diagram is a responsibility; the capability boxes `player`, `recorder`, `samples`, `pads`, `sequencer` and `launcher` are separate packages.
 
-| Module              | May import                                                                                             | Must not import                                            |
-| ------------------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
-| App                 | any layer                                                                                              | n/a                                                        |
-| `widgets`           | core; the pure `midi` root (values and types); types of `blocks/player`; or local structural contracts | `daw`; capability runtime classes, other `blocks` subpaths |
-| `daw/runtime`       | `daw/project`, core, the capability modules it needs                                                   | `widgets`, `daw/dawproject`                                |
-| `daw/dawproject`    | `daw/project`, core                                                                                    | the runtime, anything needing an `AudioContext`            |
-| `daw/project`       | core (including `PCMData`), `midi` root, `effects/rack-preset`                                         | the runtime, the codec, `AudioContext`, the DOM            |
-| A capability module | core                                                                                                   | other capability modules, layer 3                          |
-| `core`              | nothing                                                                                                | everything                                                 |
+| Module              | May import                                                                                      | Must not import                                              |
+| ------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| App                 | any layer                                                                                       | n/a                                                          |
+| `widgets`           | core; the pure `midi` root (values and types); types of `player`; or local structural contracts | `daw`; capability runtime classes, other capability packages |
+| `daw/runtime`       | `daw/project`, core, the capability modules it needs                                            | `widgets`, `daw/dawproject`                                  |
+| `daw/dawproject`    | `daw/project`, core                                                                             | the runtime, anything needing an `AudioContext`              |
+| `daw/project`       | core (including `PCMData`), `midi` root, `effects/rack-preset`                                  | the runtime, the codec, `AudioContext`, the DOM              |
+| A capability module | core                                                                                            | other capability modules, layer 3                            |
+| `core`              | nothing                                                                                         | everything                                                   |
 
 `pnpm check:layers` enforces these edges over the real import graph. A new edge between capability modules needs a written reason.
 
@@ -89,11 +89,11 @@ Side     (core only)   react, threejs, playcanvas, devtools
 
 "Independent" means two things: the module imports no sibling, and it works when taken out alone. They are separate questions.
 
-| Kind           | Test                                                                     | Modules                                                                                                 |
-| -------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
-| **Standalone** | Imports only core; give it an `AudioContext` and it works                | `clock`, `midi`, `effects`, `host`, `blocks/player`, `blocks/recorder`, `blocks/samples`, `blocks/pads` |
-| **Borrowing**  | Imports only core, but cannot run until the caller supplies an interface | `blocks/sequencer` (attaches to a clock or transport), `blocks/launcher` (a transport)                  |
-| **Composed**   | Imports a sibling capability module                                      | none; an exception needs a written reason and an edge that disappears when the feature is unused        |
+| Kind           | Test                                                                     | Modules                                                                                          |
+| -------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| **Standalone** | Imports only core; give it an `AudioContext` and it works                | `clock`, `midi`, `effects`, `host`, `player`, `recorder`, `samples`, `pads`                      |
+| **Borrowing**  | Imports only core, but cannot run until the caller supplies an interface | `sequencer` (attaches to a clock or transport), `launcher` (a transport)                         |
+| **Composed**   | Imports a sibling capability module                                      | none; an exception needs a written reason and an edge that disappears when the feature is unused |
 
 A borrowing module names what it needs as a structural type in [core](./core.md#shared-contracts), so `Timeline`, `Clock`, `PadBank` or the DAW runtime can each satisfy it without the module importing any of them. `SampleLibrary` previews through core `BufferPlayer` for the same reason: it stays standalone.
 
@@ -129,10 +129,10 @@ The piano roll, arrangement, automation lanes, clip grid and step grid split the
 
 ### Two reference compositions
 
-| Application                         | Needs                                              | Optional                                                       | Never loaded                                                                            |
-| ----------------------------------- | -------------------------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| A drum machine with its own buffers | `core`, `clock`, `blocks/sequencer`, `blocks/pads` | `widgets` (step grid), `blocks/samples` (load or browse sound) | `daw`, `blocks/player`, `host`, `effects`, `midi`, `blocks/recorder`, `blocks/launcher` |
-| A `.dawproject` tool in Node        | `core`, `daw/project`, `daw/dawproject`            | `effects/rack-preset`, `midi`                                  | `daw/runtime`, `clock`, `host`, `widgets`, the other blocks                             |
+| Application                         | Needs                                   | Optional                                                | Never loaded                                                             |
+| ----------------------------------- | --------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------ |
+| A drum machine with its own buffers | `core`, `clock`, `sequencer`, `pads`    | `widgets` (step grid), `samples` (load or browse sound) | `daw`, `player`, `host`, `effects`, `midi`, `recorder`, `launcher`       |
+| A `.dawproject` tool in Node        | `core`, `daw/project`, `daw/dawproject` | `effects/rack-preset`, `midi`                           | `daw/runtime`, `clock`, `host`, `widgets`, the other capability packages |
 
 Keep the dependency direction downward. Bind widgets to the module that already owns the value. Store project data once, and keep temporary runtime state where it is used.
 

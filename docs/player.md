@@ -2,14 +2,14 @@
 title: WavePlayer
 ---
 
-Range playback, selection, loading and offline stretch from `@audiorective/blocks/player`. Part of [Blocks](./blocks.md).
+Range playback, selection, loading and offline stretch from `@audiorective/player`.
 
 ## WavePlayer
 
 `WavePlayer` loads audio, selects a range in the committed output timeline, and auditions it. Pass an optional borrowed offline stretch processor to render another duration while preserving pitch. It extends `AudioProcessor`, reuses core's `BufferPlayer`, and exposes `params.volume` with the standard `.value`, `$`, and scheduling methods. The caller supplies an `AudioContext`, routes its output, and destroys it when finished.
 
 ```typescript
-import { WavePlayer } from "@audiorective/blocks/player";
+import { WavePlayer } from "@audiorective/player";
 
 const context = new AudioContext(); // or your existing context
 const player = new WavePlayer(context);
@@ -148,7 +148,7 @@ Cancellation or replacement prevents stale progress/results from updating the bl
 
 `WavePlayerOptions.loadSource?: WaveSourceLoader` replaces **URL** loading; File inputs use the built-in loader. The adapter receives `(url, { context, signal, onProgress })` and returns `Promise<AudioBuffer>`. It reports actual `download`/`read` or `decode` phases through `onProgress`; the block owns the `peaks` phase, loading/error state, version commit and stale-result guards. A decoded cache hit can return its buffer without reporting artificial I/O phases. The buffer is borrowed and must be treated as immutable.
 
-Detach this waiter's progress observers when `signal` aborts or the adapter settles. Shared cache work may continue for other readers; cancellation does not require aborting their request. Byte reports require non-negative safe integers, `totalBytes: null` or a total at least as large as `loadedBytes`. Invalid progress rejects the current load. `WaveLoadProgress` and `WaveSourceLoader` are exported from `@audiorective/blocks/player`.
+Detach this waiter's progress observers when `signal` aborts or the adapter settles. Shared cache work may continue for other readers; cancellation does not require aborting their request. Byte reports require non-negative safe integers, `totalBytes: null` or a total at least as large as `loadedBytes`. Invalid progress rejects the current load. `WaveLoadProgress` and `WaveSourceLoader` are exported from `@audiorective/player`.
 
 Built-in HTTP loading rejects unsuccessful responses, text/SPA fallback content, and known-length transfers whose actual bytes do not match Content-Length. These failures clear loading/progress and permit retry; decoding errors retain the browser's message.
 
@@ -190,7 +190,7 @@ This browser example uses a WASM URL hosted by the application. The file must im
 
 ```typescript
 import { TimeStretch } from "@audiorective/effects/time-stretch";
-import { WavePlayer } from "@audiorective/blocks/player";
+import { WavePlayer } from "@audiorective/player";
 import { mountWaveformSelector } from "@audiorective/widgets";
 
 async function createEditor(context: AudioContext, root: HTMLElement, wasmURL: string) {
@@ -254,7 +254,7 @@ URL loading follows browser CORS rules; URL fetch and File decode failures rejec
 ## Share a block between widgets
 
 ```typescript
-import { WavePlayer } from "@audiorective/blocks/player";
+import { WavePlayer } from "@audiorective/player";
 import { mountWaveformSelector } from "@audiorective/widgets";
 
 const context = new AudioContext();

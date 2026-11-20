@@ -2,14 +2,14 @@
 title: Pad Bank
 ---
 
-Sample hits with choke groups from `@audiorective/blocks/pads`. Part of [Blocks](./blocks.md).
+Sample hits with choke groups from `@audiorective/pads`.
 
 ## Pad Bank
 
 `PadBank` plays sample hits and owns reversible same-group choke policy. Use it when a sequencer can edit or cancel a hit after the Clock has scheduled it, or when a future closed-hat hit must choke an open-hat hit only if that closed hit still exists. Ordinary one-shot pads without choke can keep using core `Sampler` and `Voice`.
 
 ```typescript
-import { PadBank } from "@audiorective/blocks/pads";
+import { PadBank } from "@audiorective/pads";
 
 const instruments = new PadBank(context, [
   { id: "open-hat", buffer: openHat, group: "hat", gate: true },
