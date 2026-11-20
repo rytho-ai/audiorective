@@ -86,6 +86,8 @@ export type PlaySoundOptions = Readonly<{
   release?: number;
   /** MIDI note the voice reports. Default null. */
   note?: number | null;
+  /** Hold an open-ended voice for `hit.duration` before fading it. Default true; false leaves `hit.duration` informational and only `stop` ends the voice. */
+  hold?: boolean;
   /** Called once when every node of the voice is disconnected, after a release has rung out. */
   onFree?: () => void;
 }>;
@@ -139,7 +141,8 @@ class PlayedVoice implements Voice {
   private freed = false;
   private readonly context: BaseAudioContext;
   private readonly limit: number;
-  private stopAt = Infinity;
+  private heldEnd = Infinity;
+  private explicit: number | null = null;
   private open = 0;
   private done = false;
 
@@ -151,6 +154,7 @@ class PlayedVoice implements Voice {
     release: number,
     note: number | null,
     onFree?: () => void,
+    hold = true,
   ) {
     this.onFree = onFree;
     this.context = context;
@@ -171,14 +175,18 @@ class PlayedVoice implements Voice {
       source.start(hit.when);
     }
     if (own !== undefined) for (const source of sources) source.stop(hit.when + own);
-    else if (Number.isFinite(hit.duration)) this.fade(hit.when + Math.max(0, hit.duration));
+    else if (hold && Number.isFinite(hit.duration)) {
+      this.heldEnd = hit.when + Math.max(0, hit.duration);
+      this.fade();
+    }
   }
 
-  private fade(at: number): void {
-    if (at >= this.stopAt) return;
-    this.stopAt = at;
+  /** Schedule the release at the earlier of the held end and the explicit stop; a later `stop(when)` replaces an earlier pending one, like `AudioScheduledSourceNode.stop`. */
+  private fade(): void {
+    const at = Math.min(this.heldEnd, this.explicit ?? Infinity);
+    if (!Number.isFinite(at)) return;
     const { gain } = this.gain;
-    gain.cancelScheduledValues(at);
+    gain.cancelScheduledValues(0);
     gain.setValueAtTime(this.velocity, at);
     gain.linearRampToValueAtTime(0, at + this.release);
     for (const source of this.sources) {
@@ -193,10 +201,11 @@ class PlayedVoice implements Voice {
   stop(when?: number): void {
     if (this.done) return;
     const now = this.context.currentTime;
+    if (this.explicit !== null && this.explicit <= now) return;
     const at = Math.max(when ?? now, now);
+    this.explicit = at;
     if (at <= this.when) {
       // Not started yet: Web Audio's stop before start, nothing is ever heard.
-      this.stopAt = at;
       for (const source of this.sources) {
         try {
           source.stop(at);
@@ -208,7 +217,7 @@ class PlayedVoice implements Voice {
       this.finish();
       return;
     }
-    this.fade(at);
+    this.fade();
     if (at <= now) this.finish();
   }
 

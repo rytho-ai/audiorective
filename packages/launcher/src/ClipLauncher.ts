@@ -1,7 +1,18 @@
-import { batch, cell, effect, readonlyCell, untracked, type BeatTiming, type Cell, type ReadonlyCell } from "@audiorective/core";
+import {
+  assertSound,
+  batch,
+  cell,
+  effect,
+  playSound,
+  readonlyCell,
+  untracked,
+  type BeatTiming,
+  type Cell,
+  type ReadonlyCell,
+  type Sound,
+} from "@audiorective/core";
 import type {
   ClipEventType,
-  ClipFactory,
   ClipLength,
   ClipMode,
   ClipOptions,
@@ -131,7 +142,17 @@ export interface LauncherOptions {
 }
 
 // ---------------------------------------------------------------- internal records
-type Src = { kind: "buffer"; buffer: AudioBuffer } | { kind: "factory"; factory: ClipFactory } | { kind: "scheduler"; sched: ClipScheduler };
+type Src =
+  | { kind: "buffer"; buffer: AudioBuffer }
+  | { kind: "factory"; factory: Exclude<Sound, AudioBuffer> }
+  | { kind: "scheduler"; sched: ClipScheduler };
+
+/** What the launcher does to a clip's running source: a node, or a factory voice that frees itself. */
+type Playing = {
+  stop(when?: number): void;
+  disconnect(): void;
+  addEventListener(type: "ended", listener: () => void, options?: { once?: boolean }): void;
+};
 
 /** One playback of a clip: from its start until it is replaced, stopped or ends. */
 type Inst = {
@@ -153,7 +174,7 @@ type Inst = {
   loop: { start: number; end: number } | null; // buffer loop region in material beats
   period: number | null; // non-buffer loop period
   endMat: number | null; // material beat where a one-shot ends
-  source: AudioScheduledSourceNode | null;
+  source: Playing | null;
   stopTime: number | null; // scheduled replacement/stop
   stopBeat: number | null;
   follow: { beat: number } | null;
@@ -218,12 +239,15 @@ export class Clip {
     this.track = track;
     this.index = index;
     this._uid = `${track.name}/${index}`;
-    const o: ClipOptions = spec instanceof AudioBuffer ? { buffer: spec } : typeof spec === "function" ? { sound: spec } : spec;
+    const o: ClipOptions = spec instanceof AudioBuffer ? { buffer: spec } : spec;
+    if ("sound" in o) assertSound(o.sound);
     this._src =
       "buffer" in o
         ? { kind: "buffer", buffer: o.buffer }
         : "sound" in o
-          ? { kind: "factory", factory: o.sound }
+          ? o.sound instanceof AudioBuffer
+            ? { kind: "buffer", buffer: o.sound }
+            : { kind: "factory", factory: o.sound }
           : { kind: "scheduler", sched: o.scheduler };
     this._bpmPending = o.bpm === undefined;
     this._opts = cell<ClipSettings>({
@@ -897,11 +921,16 @@ export class ClipLauncher extends EventTarget implements Scheduler {
       node.start(when, (matStart * 60) / inst.cfg.bpm);
       inst.source = node;
     } else if (src.kind === "factory") {
-      const voice = src.factory(this.context, { loop: !!inst.cfg.loop, pitch: inst.clip.pitch.value });
-      const [node, out] = "source" in voice ? [voice.source, voice.output] : [voice, voice];
-      out.connect(inst.clip._out);
-      node.start(when);
-      inst.source = node;
+      // The factory sees the clip's length in seconds (Infinity while looping or endless); the launcher alone ends the voice, so a tempo change moves its end.
+      const end = this.naturalEnd(inst);
+      const voice = playSound(
+        this.context,
+        src.factory,
+        inst.clip._out,
+        { when, velocity: 1, pitch: inst.clip.pitch.value, duration: end ? Math.max(0, end.time - when) : Infinity },
+        { hold: false },
+      );
+      inst.source = { stop: (at) => voice.stop(at), disconnect: () => {}, addEventListener: () => {} };
     }
   }
   /** Where a one-shot ends by itself (null for loops and endless clips), from the current anchor. */

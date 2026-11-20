@@ -273,3 +273,15 @@ test("the nodes of a released voice are disconnected once it rings out", async (
   sampler.dispose();
   await context.close();
 });
+
+test("a later stop(when) replaces an earlier pending one, like AudioScheduledSourceNode.stop", async () => {
+  const data = await render(0.6, (context) => {
+    const sampler = new Sampler(context, { sound: constant(1), release: 0.01 });
+    sampler.connect(context.destination);
+    const voice = sampler.trigger({ when: 0 })!;
+    voice.stop(0.1);
+    voice.stop(0.4);
+  });
+  expect(at(data, 0.2)).toBeCloseTo(1, 5);
+  expect(at(data, 0.5)).toBe(0);
+});
