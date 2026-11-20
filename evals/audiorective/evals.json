@@ -915,11 +915,11 @@
     {
       "id": 69,
       "prompt": "In my audiorective StepSequencer I want a transform that pushes every hit on an odd lane step a 32nd note (an eighth of a beat) late, and it has to stay musically the same when I automate the tempo. don't fork the block and don't run anything.",
-      "expected_output": "Lane `swing` or per-step `offset` (beat-based) instead of a seconds `transform`, with the reason.",
+      "expected_output": "A tempo-locked push: a `transform` that moves `hit.beat` by 0.125, or lane `swing` / per-step `offset`, never a fixed seconds shift of `when`.",
       "files": [],
       "expectations": [
-        "Does not write a seconds-domain `transform` that adds a fixed time to `when`, and explains that `transform` runs in seconds and would not follow tempo automation",
-        "Uses a beat-based per-lane or per-step field instead: lane `swing` of 1 (\"100%\") on a 16th-note lane delays odd steps by half a step, one eighth of a beat, or `steps[i].offset = 0.5` on the odd steps; both follow tempo",
+        "Does not write a transform that adds a fixed time to `when` (a seconds shift drifts off the grid under tempo automation)",
+        "Stays tempo-locked in one of these ways: a `transform` returning `beat: hit.beat + 0.125` on odd `hit.index`, or lane `swing` of 1 (\"100%\") on a 16th-note lane, or `steps[i].offset = 0.5` on the odd steps",
         "Does not fork the block and keeps no state in a transform; the nudge is a fixed beat offset that stays the same when the tempo is automated"
       ]
     },

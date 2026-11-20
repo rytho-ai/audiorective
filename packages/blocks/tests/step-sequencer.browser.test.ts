@@ -523,6 +523,72 @@ describe("transform", () => {
     expect(hits[3]!.when - ramp.beatToTime(0.75)).not.toBeCloseTo(hits[1]!.when - ramp.beatToTime(0.25), 3);
   });
 
+  describe("beats", () => {
+    const ramp: BeatTiming = {
+      beatToTime: (beat) => 10 + 0.5 * beat + 0.1 * beat * beat,
+      timeToBeat: (time) => (-0.5 + Math.sqrt(0.25 + 0.4 * (time - 10))) / 0.2,
+    };
+    const runRamp = (transform: HitTransform | undefined, lanes: Record<string, Pattern | LaneOptions> = { a: "XXXXXXXX" }) => {
+      const hits: Hit[] = [];
+      const sequencer = new StepSequencer(lanes, { transform, onHit: (hit) => void hits.push(hit) });
+      sequencer.schedule({ beat: { start: 0, end: 2 }, time: { current: ramp.beatToTime(0) }, own: () => {} }, ramp);
+      return hits;
+    };
+
+    test("a beat shift stays exactly that late in beats across a tempo ramp", () => {
+      const plain = runRamp(undefined);
+      const late = runRamp((hit) => (hit.index % 2 ? { ...hit, beat: hit.beat + 0.125 } : hit));
+      expect(late).toHaveLength(8);
+      late.forEach((hit, i) => {
+        const shift = i % 2 ? 0.125 : 0;
+        expect(hit.beat).toBeCloseTo(plain[i]!.beat + shift, 12);
+        expect(ramp.timeToBeat(hit.when)).toBeCloseTo(plain[i]!.beat + shift, 9);
+      });
+      // the same delay in seconds differs between steps because the tempo changes
+      expect(late[7]!.when - plain[7]!.when).not.toBeCloseTo(late[1]!.when - plain[1]!.when, 3);
+    });
+
+    test("onHit and the hit event see beat and durationBeats", () => {
+      const [first, second] = runRamp(undefined, { a: { pattern: "XX", rate: "8n" } });
+      expect(first).toMatchObject({ beat: 0 });
+      expect(first!.durationBeats).toBeCloseTo(0.5, 12);
+      expect(second!.beat).toBeCloseTo(0.5, 12);
+      expect(ramp.beatToTime(second!.beat)).toBeCloseTo(second!.when, 12);
+    });
+
+    test("changing durationBeats resizes the hit tempo-locked", () => {
+      const [hit] = runRamp((h) => ({ ...h, durationBeats: 1 }));
+      expect(hit!.duration).toBeCloseTo(ramp.beatToTime(1) - ramp.beatToTime(0), 9);
+      expect(hit!.durationBeats).toBe(1);
+    });
+
+    test("a when-only transform keeps its seconds and reports the matching beat", () => {
+      const plain = runRamp(undefined);
+      const jitter = runRamp((hit) => ({ ...hit, when: hit.when + 0.004 }));
+      jitter.forEach((hit, i) => {
+        expect(hit.when).toBeCloseTo(plain[i]!.when + 0.004, 12);
+        expect(hit.beat).toBeCloseTo(ramp.timeToBeat(hit.when), 9);
+      });
+    });
+
+    test("when both beat and when change, beat wins and the when delta is added", () => {
+      const plain = runRamp(undefined);
+      const both = runRamp((hit) => ({ ...hit, beat: hit.beat + 0.125, when: hit.when + 0.01 }));
+      both.forEach((hit, i) => expect(hit.when).toBeCloseTo(ramp.beatToTime(plain[i]!.beat + 0.125) + 0.01, 12));
+    });
+
+    test("a non-finite beat or durationBeats throws an error naming the transform", () => {
+      expect(() => runRamp((hit) => ({ ...hit, beat: NaN }))).toThrow('Event transform "transform" returned an event without a finite "beat".');
+      expect(() => runRamp((hit) => ({ ...hit, durationBeats: 0 }))).toThrow(/"transform".*"durationBeats"/);
+    });
+
+    test("a beat before now plays at now", () => {
+      const { run, hits } = withTransform((hit) => ({ ...hit, beat: -5 }));
+      run(0, 1, 12);
+      expect(hits.map((hit) => hit.when)).toEqual([12, 12, 12, 12]);
+    });
+  });
+
   test("invalid outputs throw an error that names the transform", () => {
     const bad = (patch: Partial<Hit>) => {
       const { run } = withTransform((hit) => ({ ...hit, ...patch }));

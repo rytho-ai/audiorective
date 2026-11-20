@@ -42,7 +42,10 @@ export type StepSequencerOptions = Readonly<{
    */
   onHit?: (hit: Hit) => void | (() => void);
   /**
-   * Adjust or drop each hit in seconds just before it is scheduled. `random(key?)` is stable for the same `seed`, lane, loop, index and
+   * Adjust or drop each hit just before it is scheduled. Move `beat` (or change `durationBeats`) for musical shifts that stay on the grid under
+   * tempo changes; move `when` (or change `duration`) for millisecond nudges. If `beat` or `durationBeats` changed, `when` and `duration` are
+   * recomputed from the beats through the transport's timing; if both `beat` and `when` changed, `when` is `beatToTime(beat)` plus the `when`
+   * delta (likewise `duration`). `random(key?)` is stable for the same `seed`, lane, loop, index and
    * `key`, so a retracted and re-queued hit gets the same number. Return the hit (changed or not), or `null` to drop it.
    */
   transform?: HitTransform;
@@ -61,7 +64,7 @@ export type LaneOptions = Readonly<{
    * converted to beats at the tempo at beat 0) or a `StepRate` ("1/16"). Default "16n".
    */
   rate?: Time | StepRate;
-  /** 0..1 or "30%": delays every second step by that fraction of half a step. Default 0. */
+  /** 0..1 or "30%": delays every odd step (1, 3, 5 ... from each loop start) by that fraction of half a step, a fixed beat offset that follows tempo. Default 0. */
   swing?: number | `${number}%`;
   /** Order the lane walks its steps in. Default "forward". */
   direction?: StepDirection;
@@ -81,10 +84,14 @@ export type Hit = Readonly<{
   lane: string;
   /** Zero-based position (0 = first step). */
   index: number;
-  /** Audio-context seconds. */
+  /** Audio-context seconds; move it for millisecond nudges. */
   when: number;
   /** Seconds. */
   duration: number;
+  /** Beat position, after offset, swing and repeat; move it to shift the hit and stay on the grid when the tempo changes. */
+  beat: number;
+  /** Length in beats; change it to resize the hit tempo-locked. */
+  durationBeats: number;
   /** 0..1. */
   velocity: number;
   /** Semitones. */
@@ -189,6 +196,9 @@ type StepEvent = TimedBeatEvent &
     loop: number;
     repeatIndex: number;
     repeatCount: number;
+    /** The hit's beat and length in beats as `Hit` reports them; they survive the beat-to-seconds conversion. */
+    beatAt: number;
+    durationBeatsAt: number;
   }>;
 type StepHit = SecondsOf<StepEvent>;
 
@@ -439,10 +449,39 @@ export class StepSequencer extends EventTarget {
       unit: "second",
       apply: (events, context) => {
         const out: SecondsOf<StepEvent>[] = [];
+        const { timing } = context;
+        const bad = (field: string): never => {
+          throw new Error(`Event transform "transform" returned an event without a finite "${field}".`);
+        };
         for (const event of events) {
-          const result = transform(this.publicHit(event), (key) => context.randomFor(event, key));
+          const hit = this.publicHit(event);
+          const result = transform(hit, (key) => context.randomFor(event, key));
           if (result === null) continue;
-          out.push({ ...event, when: result.when, duration: result.duration, velocity: result.velocity, pitch: result.pitch, custom: result.values });
+          if (typeof result !== "object") return bad("when");
+          // Beats win: a changed `beat` or `durationBeats` is mapped through the transport's timing, then any `when` / `duration` delta is added.
+          const beatMoved = result.beat !== undefined && result.beat !== hit.beat;
+          const lengthMoved = result.durationBeats !== undefined && result.durationBeats !== hit.durationBeats;
+          if (beatMoved && !Number.isFinite(result.beat)) bad("beat");
+          if (lengthMoved && !(Number.isFinite(result.durationBeats) && result.durationBeats > 0)) bad("durationBeats");
+          const whenMoved = result.when !== hit.when;
+          const durationMoved = result.duration !== hit.duration;
+          let when = result.when;
+          let beatAt = hit.beat;
+          if (beatMoved) {
+            when = timing.beatToTime(result.beat) + (whenMoved ? result.when - hit.when : 0);
+            beatAt = whenMoved ? timing.timeToBeat(when) : result.beat;
+          } else if (whenMoved && Number.isFinite(when)) beatAt = timing.timeToBeat(when);
+          let duration = result.duration;
+          let durationBeatsAt = hit.durationBeats;
+          if (beatMoved || lengthMoved) {
+            const start = beatMoved ? result.beat : hit.beat;
+            duration =
+              timing.beatToTime(start + result.durationBeats) - timing.beatToTime(start) + (durationMoved ? result.duration - hit.duration : 0);
+            durationBeatsAt = result.durationBeats;
+          }
+          if (durationMoved && Number.isFinite(when) && Number.isFinite(duration))
+            durationBeatsAt = timing.timeToBeat(when + duration) - timing.timeToBeat(when);
+          out.push({ ...event, when, duration, velocity: result.velocity, pitch: result.pitch, custom: result.values, beatAt, durationBeatsAt });
         }
         return out;
       },
@@ -455,6 +494,8 @@ export class StepSequencer extends EventTarget {
       index: hit.step,
       when: hit.when,
       duration: hit.duration,
+      beat: hit.beatAt,
+      durationBeats: hit.durationBeatsAt,
       velocity: hit.velocity,
       pitch: hit.pitch,
       values: hit.custom,
@@ -568,6 +609,8 @@ export class StepSequencer extends EventTarget {
               loop,
               beat: trigger + (repeat * rate) / data.repeat,
               durationBeats: (data.length * rate) / data.repeat,
+              beatAt: trigger + (repeat * rate) / data.repeat,
+              durationBeatsAt: (data.length * rate) / data.repeat,
               repeatIndex: repeat,
               repeatCount: data.repeat,
             });
