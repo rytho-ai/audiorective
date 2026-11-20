@@ -1,0 +1,61 @@
+{
+  "area": "clip-launcher",
+  "description": "API-shape experiment for clip launching (session view). The same six tasks are given with no API (desire mode) or with one variant's type declarations only (guess mode). Expectations are variant-agnostic: they describe behaviour, not names.",
+  "tasks": [
+    {
+      "id": "L1-launch-on-bar",
+      "prompt": "A browser session view has a Bass track with two looping audio clips, A and B (both AudioBuffers you already have), at 120 BPM in 4/4. Bass is playing clip A. When the user clicks clip B, B must start exactly on the next bar line and A must stop at that same instant. Start the transport from a button click (browser autoplay rules apply).",
+      "expectations": [
+        "Starts or resumes the audio context inside the click handler (or calls an API documented as doing so).",
+        "Clip B is scheduled at the next bar boundary computed from the transport (4 beats at 120 BPM), not immediately and not with setTimeout.",
+        "Clip A stops at the same audio time B starts (no gap, no overlap beyond what the API defines).",
+        "Clips loop until replaced."
+      ]
+    },
+    {
+      "id": "L2-scene-launch",
+      "prompt": "Launch a scene: Drums clip 2, Bass clip 2 and Keys clip 2 must all start together on the next bar, sample-aligned, replacing whatever each of those tracks was playing. A fourth track, Vocals, must keep playing untouched.",
+      "expectations": [
+        "Queues all three track changes so they share one start time (a single launch call or three calls that land on the same boundary).",
+        "The start time is the next bar boundary from the transport.",
+        "Vocals is not part of the launch and keeps playing."
+      ]
+    },
+    {
+      "id": "L3-cancel-queued",
+      "prompt": "The user queued Bass clip B for the next bar, then clicks it again before the bar line. That second click must withdraw the queued launch so that clip A keeps playing without any interruption. Other tracks' queued launches must stay queued.",
+      "expectations": [
+        "Withdraws only the Bass launch before its boundary.",
+        "Clip A keeps playing with no gap or restart.",
+        "Other tracks' pending launches are not cancelled."
+      ]
+    },
+    {
+      "id": "L4-stop-track-and-all",
+      "prompt": "Add per-track stop buttons and a Stop All button. A track's stop takes effect on the next bar line (the track falls silent there); Stop All silences every track on the next bar line. The transport itself keeps running.",
+      "expectations": [
+        "A track stop is quantized to the next bar boundary and silences only that track.",
+        "Stop All is quantized to the next bar boundary and silences every track.",
+        "The transport is not stopped by either button."
+      ]
+    },
+    {
+      "id": "L5-one-shot-fill",
+      "prompt": "Drums has a one-bar fill clip. Launching it should play it once, starting on the next bar, and then the Drums track should go back to silence when the fill ends (not loop).",
+      "expectations": [
+        "Launches the fill as a one-shot (plays once) rather than a loop.",
+        "It starts on the next bar boundary.",
+        "When it ends the track is silent; the code does not schedule a manual stop with setTimeout."
+      ]
+    },
+    {
+      "id": "L6-quantize-options",
+      "prompt": "Add a global quantize select with options: none (start immediately), 1 beat, 1 bar, 2 bars. Every clip or scene launch uses the selected quantize. Show, for each queued clip, the exact audio time it will start.",
+      "expectations": [
+        "'none' launches at the current audio time (no boundary wait).",
+        "1 beat / 1 bar / 2 bars map to 1 / 4 / 8 beats at 4/4 and the launch waits for that boundary.",
+        "The displayed start time is the audio-context time returned or exposed by the launch, not a separately recomputed estimate."
+      ]
+    }
+  ]
+}
