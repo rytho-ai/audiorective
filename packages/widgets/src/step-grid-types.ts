@@ -29,9 +29,11 @@ export interface StepGridStep {
 export interface StepGridLane {
   /** Steps this lane loops over; assigning it resizes the lane. */
   length: number;
+  /** The lane's velocities as text ("X.x.") or one number per step; assigning sets the length too. Plugins write whole patterns through it. */
+  pattern: string | readonly number[];
   /** A rate such as "1/16" or "1/8T" (a `StepRate`), or any other value the model accepts (shown as is). */
   rate: string | number;
-  /** 0..1, shown as a percentage. */
+  /** 0..1, shown as a percentage: delays every odd step by that share of half a step. */
   swing: number;
   direction: StepGridDirection;
   mute: boolean;
