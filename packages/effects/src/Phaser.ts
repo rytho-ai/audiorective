@@ -99,10 +99,10 @@ export class Phaser extends Effect<{ frequency: SchedulableParam; Q: Schedulable
     this.qSource = q;
   }
 
-  override destroy(): void {
+  override dispose(): void {
     this.lfo.disconnect();
     this.qSource.stop();
     this.qSource.disconnect();
-    super.destroy();
+    super.dispose();
   }
 }

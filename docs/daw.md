@@ -35,8 +35,8 @@ const notes = reopened.tracks[0].clips[0];
 if (notes.kind === "midi") {
   const events = notes.playbackEvents(); // clip-relative seconds, still needs your synth/Clock
 }
-project.destroy();
-reopened.destroy();
+project.dispose();
+reopened.dispose();
 ```
 
 The take placement argument is **project seconds**, chosen by the caller. `RecordedMidi.startTime` and `RecordedAudio.startFrame/startTime` are absolute AudioContext capture positions; Project does not infer arrangement placement from them. `addMidiTake` defaults to seconds, or accepts `{ timeUnit: "beats" }` to convert the take's notes, duration and complete ordered message stream at that placement through the current tempo map. The resulting `MidiClip.time`, `duration`, note times and `playbackEvents()` times all use `clip.timeUnit`. `MidiClip.sequence` owns editable notes and may be passed to `mountPianoRoll` with `timeUnit: clip.timeUnit`. `Project.tracks`, `tempoMap`, `markers` and `title` are tracked reads: an effect or `useValue` that reads one re-runs after every `Project` edit, and each read returns the current immutable snapshot. `MidiClip.time` and `MidiClip.duration` are tracked as well.
@@ -137,7 +137,7 @@ Observe `workspace.cells.auditioningRange` (also `workspace.auditioningRange`) f
 
 ### Pitch-preserving clip stretch
 
-`Workspace.prepareAudioClipStretch(clipId, ratio, processor, { anchors?, signal? })` borrows a `WaveStretchProcessor`. Pass the desired length divided by original length. Call `apply()` on the prepared result inside the app's undo transaction, then await `workspace.flush()` if the next action depends on the applied render. Preparation leaves Project unchanged. Moving, trimming, deleting or replacing the clip invalidates a prepared edit. Preparing a newer result for that clip, cancelling the supplied signal and destroying Workspace all cancel outstanding work. Apply a prepared result once.
+`Workspace.prepareAudioClipStretch(clipId, ratio, processor, { anchors?, signal? })` borrows a `WaveStretchProcessor`. Pass the desired length divided by original length. Call `apply()` on the prepared result inside the app's undo transaction, then await `workspace.flush()` if the next action depends on the applied render. Preparation leaves Project unchanged. Moving, trimming, deleting or replacing the clip invalidates a prepared edit. Preparing a newer result for that clip, cancelling the supplied signal and disposing Workspace all cancel outstanding work. Apply a prepared result once.
 
 ```ts
 import { TimeStretch } from "@audiorective/effects/time-stretch";
@@ -148,7 +148,7 @@ try {
   edit.apply();
   await workspace.flush();
 } finally {
-  processor.destroy();
+  processor.dispose();
 }
 ```
 
@@ -212,14 +212,14 @@ project.setVolumeAutomation(track.id, [
 await workspace.flush();
 const bytes = await saveWorkspace(workspace); // checkpoints live plug-in state, then encodes
 detachEditor?.();
-workspace.destroy();
-project.destroy(); // `create` borrows the project, so the caller destroys it
+workspace.dispose();
+project.dispose(); // `create` borrows the project, so the caller disposes it
 
 const reopened = await openWorkspace(context, bytes, { destination: context.destination, workletUrl: "/assets/webclap-worklet.js" });
 // Inspect reopened.warnings and reopened.project before playing.
 ```
 
-`Workspace` owns runtime nodes and Clock. The caller owns its context and any `Project` passed to `Workspace.create`, and destroys that project separately. A Workspace from `openWorkspace` or `openWorkspaceBlob` owns the project it opened: `workspace.destroy()` destroys it (destroying it again is harmless). Pass `{ ownsProject: true }` to `Workspace.create` to hand a project over the same way; replacing `workspace.project` ends that ownership. `workspace.host(device.id)` returns the loaded plug-in host, if available. `workspace.cells` holds every observable value as a read-only cell: `needsSync`, `error`, `warnings`, `session`, `auditioningClip` and `auditioningRange`. `workspace.position` and `workspace.duration` are project seconds for external playheads and seek controls. For a beat MIDI piano roll, pass `project.tempoMap.secondsToBeat(workspace.position) - clip.time` as its playhead; for seconds clips subtract `clip.time` directly. `sync()` rebuilds routing after changing tracks or devices (`cells.needsSync` reports when), preserving the playhead and stopping playback. MIDI note edits refresh Clock while playing. `pause`, `stop` and `seek` cancel active audio clips and panic hosted instruments. `resolveBundle(device)` can map a saved plug-in descriptor to a deployment-specific bundle URL. A missing or mismatched bundle yields a warning and leaves that track's device silent. `workspace.warnings` (also `workspace.cells.warnings`) is a frozen array of these notices plus file-open notices passed through `WorkspaceOptions.warnings` (`openWorkspace` supplies them first); it is a tracked read, never mutated in place, and each new notice replaces it.
+`Workspace` owns runtime nodes and Clock. The caller owns its context and any `Project` passed to `Workspace.create`, and disposes that project separately. A Workspace from `openWorkspace` or `openWorkspaceBlob` owns the project it opened: `workspace.dispose()` disposes it (disposing it again is harmless). Pass `{ ownsProject: true }` to `Workspace.create` to hand a project over the same way; replacing `workspace.project` ends that ownership. `workspace.host(device.id)` returns the loaded plug-in host, if available. `workspace.cells` holds every observable value as a read-only cell: `needsSync`, `error`, `warnings`, `session`, `auditioningClip` and `auditioningRange`. `workspace.position` and `workspace.duration` are project seconds for external playheads and seek controls. For a beat MIDI piano roll, pass `project.tempoMap.secondsToBeat(workspace.position) - clip.time` as its playhead; for seconds clips subtract `clip.time` directly. `sync()` rebuilds routing after changing tracks or devices (`cells.needsSync` reports when), preserving the playhead and stopping playback. MIDI note edits refresh Clock while playing. `pause`, `stop` and `seek` cancel active audio clips and panic hosted instruments. `resolveBundle(device)` can map a saved plug-in descriptor to a deployment-specific bundle URL. A missing or mismatched bundle yields a warning and leaves that track's device silent. `workspace.warnings` (also `workspace.cells.warnings`) is a frozen array of these notices plus file-open notices passed through `WorkspaceOptions.warnings` (`openWorkspace` supplies them first); it is a tracked read, never mutated in place, and each new notice replaces it.
 
 For recorded takes, capture `const anchor = workspace.takeAnchor()` before arming `AudioRecorder`; use `workspace.takePosition(anchor, take, measuredInputLatencySeconds)` when adding the result to `Project`. For `MidiRecorder`, use its returned output-clock start: `const anchor = workspace.takeAnchor(recorder.start())`. `takePosition` maps the actual take start to project seconds while transport plays; while transport is stopped, it keeps the anchor's project cursor. A positive measured input latency moves the placement earlier. If that would cross project zero, the method throws instead of silently losing timing; record with preroll or reduce the correction. The demo exposes a locally stored millisecond correction field in its browser panel and defaults to zero until the user measures their device.
 
@@ -246,7 +246,7 @@ workspace.cells.warnings.value; // frozen array of non-fatal notices; workspace.
 
 `workspace.cells.error` is a read-only cell holding the message of the latest failed automatic application (for example a plug-in rejecting saved state), or `null`. The next successful application or `sync()` clears it. Failures never become unhandled rejections. An application is not retried by itself: edit again or call `sync()`.
 
-`await workspace.flush()` resolves when all pending automatic application has finished and rejects with the latest failure. `checkpoint()` (and so `saveWorkspace()` and `saveWorkspaceTo()`) and `exportAudioFallbackTo(workspace, …)` wait for pending application first, but do not reject because of an earlier failure: `Project` is the document. After `destroy()` the watcher is disposed, pending applications are dropped, and `flush()` resolves without error.
+`await workspace.flush()` resolves when all pending automatic application has finished and rejects with the latest failure. `checkpoint()` (and so `saveWorkspace()` and `saveWorkspaceTo()`) and `exportAudioFallbackTo(workspace, …)` wait for pending application first, but do not reject because of an earlier failure: `Project` is the document. After `dispose()` the watcher is disposed, pending applications are dropped, and `flush()` resolves without error.
 
 Edits the runtime makes itself, such as capturing plug-in state into `Project` during `sync()` or `save()`, and the `Workspace` mixer and effect methods, are marked as already applied, so they cause no second application. `refreshArrangement()` and `sync()` remain public for callers that want to drive those operations explicitly.
 
@@ -263,15 +263,15 @@ const workspace = await openWorkspaceBlob(context, file, options);
 const controls = mountPlayer(container, { player: workspace.player });
 
 // On teardown or before mounting controls for another Workspace:
-controls.destroy();
-workspace.destroy(); // also destroys the project it opened
+controls.dispose();
+workspace.dispose(); // also disposes the project it opened
 ```
 
 The same view works with `Workspace.create()` and `openWorkspace()`. Pass a `destination` in all three paths for audible output, or connect `workspace.output` to your own graph. The widget borrows the transport. Your app still decides when to stop playback at the end or loop a region.
 
 ## Runtime internals
 
-`Workspace` is a facade over small internal modules; none is part of the `daw/runtime` surface except what `Workspace` re-exports. A collaborator receives a narrow handle (a function returning the current `Project`, the shared track-runtime map, an `isDestroyed` check) and never imports `Workspace`. Project stays the only owner of persistent data. The only collaborator write is a prepared stretch the caller applies in its own undo transaction, and observable state stays in `Workspace.cells`.
+`Workspace` is a facade over small internal modules; none is part of the `daw/runtime` surface except what `Workspace` re-exports. A collaborator receives a narrow handle (a function returning the current `Project`, the shared track-runtime map, an `isDisposed` check) and never imports `Workspace`. Project stays the only owner of persistent data. The only collaborator write is a prepared stretch the caller applies in its own undo transaction, and observable state stays in `Workspace.cells`.
 
 | Module                                  | Owns                                                                                                                                                                             | Reads                                                     |
 | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
@@ -332,7 +332,7 @@ grid.setLayout({
   ],
 });
 // Tear down the DOM view while leaving the borrowed Workspace available.
-grid.destroy();
+grid.dispose();
 ```
 
 ## Effect rack
@@ -412,7 +412,7 @@ A small [Cubase 14 export shared on the Steinberg forum](https://forums.steinber
 | `Project markers need unique non-negative times and names.` / `Project markers need seconds time.`                                                                                                                        | Supply named markers at distinct non-negative project seconds.                                                                                                |
 | `Project has invalid channel mute or solo.` / `Project has unsupported track pan units.` / `Project has invalid track pan.`                                                                                               | Supply DAWproject channel mute/solo as booleans and normalized pan between 0 and 1.                                                                           |
 | `Project WebCLAP device needs an ID, name, bundle URL and byte state.` / `Project device needs an existing track.`                                                                                                        | Supply a current track ID, CLAP identity and URL; state must be `Uint8Array`.                                                                                 |
-| `Project device state needs bytes.` / `Workspace is destroyed.`                                                                                                                                                           | Supply `Uint8Array` state or create a new Workspace after destroying one.                                                                                     |
+| `Project device state needs bytes.` / `Workspace is disposed.`                                                                                                                                                            | Supply `Uint8Array` state or create a new Workspace after disposing one.                                                                                      |
 | `Project has an unsupported device role.` / `Project device state asset is missing.`                                                                                                                                      | Open a CLAP instrument on a MIDI track or audio effect on an audio track, with its referenced state file in `plugins/`.                                       |
 | `workspace.cells.error` holds a message / `await workspace.flush()` rejects                                                                                                                                               | An automatic application failed (often a plug-in rejecting `loadState`). Fix the edit, edit again, or call `await workspace.sync()`; success clears the cell. |
 | `workspace.cells.needsSync` stays true and edits are silent                                                                                                                                                               | Tracks or devices changed. Call `await workspace.sync()`; light edits wait until then.                                                                        |

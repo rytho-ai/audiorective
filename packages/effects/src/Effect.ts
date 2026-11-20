@@ -91,11 +91,11 @@ export abstract class Effect<P extends ParamRegistry = {}, C extends CellRegistr
     return this._output;
   }
 
-  override destroy(): void {
+  override dispose(): void {
     for (const s of this._sources) {
       s.stop();
       s.disconnect();
     }
-    super.destroy();
+    super.dispose();
   }
 }

@@ -26,7 +26,7 @@ export function mountStudioSession(
     queued: (beat: number) => `等待第 ${Number((beat + 1).toFixed(3))} 拍`,
   };
   const mount = (launcher: ClipLauncher) => {
-    grid?.destroy();
+    grid?.dispose();
     mounted = launcher;
     grid = mountClipGrid(root, {
       launcher,
@@ -36,7 +36,7 @@ export function mountStudioSession(
         launcher.cancelQueued();
       },
       launch(command) {
-        const generation = request; // only cancel and destroy invalidate an in-flight launch; independent clicks coexist
+        const generation = request; // only cancel and dispose invalidate an in-flight launch; independent clicks coexist
         const run = async () => {
           await workspace.flush();
           if (generation !== request) return;
@@ -104,10 +104,10 @@ export function mountStudioSession(
     });
   });
   return {
-    destroy() {
+    dispose() {
       request++;
       stopLayout();
-      grid?.destroy();
+      grid?.dispose();
     },
   };
 }

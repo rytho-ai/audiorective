@@ -129,8 +129,8 @@ try {
       await workspace.flush();
       await OfflineAudioContext.prototype.resume.call(context);
       const data = (await rendering).getChannelData(0);
-      workspace.destroy();
-      project.destroy();
+      workspace.dispose();
+      project.dispose();
       return { starts, values: atTimes(data, [0.1, 0.3, 0.55, 0.75, 0.82, 0.95]) };
     }
     async function renderStored(kind) {
@@ -191,8 +191,8 @@ try {
       }
       const data = (await rendering).getChannelData(0);
       await Promise.all(sessionPumps);
-      workspace.destroy();
-      project.destroy();
+      workspace.dispose();
+      project.dispose();
       return atTimes(data, kind === "file" ? [0.1, 0.35] : [0.25, 0.55, 0.75]);
     }
     return { live: await liveEdit(), file: await renderStored("file"), session: await renderStored("session") };
@@ -248,8 +248,8 @@ try {
       }
       const data = (await context.startRendering()).getChannelData(0);
       await Promise.all(sessionPumps);
-      runtime.destroy();
-      project.destroy();
+      runtime.dispose();
+      project.dispose();
       if (blob) await source.dispose();
       const times = kind === "session" ? [0.49, 0.55, 0.7] : [0.005, 0.1, 0.3, 0.5, 0.85];
       return times.map((time) => data[Math.round(time * rate)]);
@@ -338,8 +338,8 @@ try {
       const result = { cancelledState, pcmValue, first, second, reads, position: workspace.position, clock: workspace.clock.state.value };
       return result;
     } finally {
-      workspace.destroy();
-      project.destroy();
+      workspace.dispose();
+      project.dispose();
       await media.dispose();
       await context.close();
     }
@@ -409,8 +409,8 @@ try {
       const samples = times.map((time) => [0, 1].map((channel) => output.getChannelData(channel)[Math.round(time * rate)]));
       return { samples, allocatedBuffers: buffers.size, mediaReads, position: workspace.position, clock: workspace.clock.state.value };
     } finally {
-      workspace.destroy();
-      project.destroy();
+      workspace.dispose();
+      project.dispose();
       await media.dispose();
     }
   });

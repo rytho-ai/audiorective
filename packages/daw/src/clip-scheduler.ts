@@ -162,7 +162,7 @@ export class ClipScheduler {
     let binding: AutomationBinding | undefined;
     const setAutomation = (automation: AudioClipGainAutomation | undefined) => {
       if (!automation) {
-        binding?.destroy();
+        binding?.dispose();
         binding = undefined;
         gain?.gain.setValueAtTime(1, this.context.currentTime);
         return;
@@ -187,7 +187,7 @@ export class ClipScheduler {
     return {
       setAutomation,
       dispose() {
-        binding?.destroy();
+        binding?.dispose();
         envelopeGain?.disconnect();
         gain?.disconnect();
       },

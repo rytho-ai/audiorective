@@ -124,11 +124,11 @@ export async function exportAudioFallbackTo(
     if (progressTimer) clearInterval(progressTimer);
     signal?.removeEventListener("abort", cancel);
     cancel();
-    recorder?.destroy();
+    recorder?.dispose();
     await mediaWriter?.abort();
     await media?.dispose();
-    render?.destroy();
-    project?.destroy();
+    render?.dispose();
+    project?.dispose();
     await context?.close();
   }
 }

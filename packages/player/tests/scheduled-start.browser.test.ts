@@ -18,7 +18,7 @@ async function fixture(fftSize = 2048) {
   analyser.connect(context.destination);
   disposers.push(
     () => context.close(),
-    () => player.destroy(),
+    () => player.dispose(),
     () => analyser.disconnect(),
   );
   await context.resume();
@@ -72,7 +72,7 @@ test("a source onset and a gain automation started from one shared `when` line u
   const detach = player.attachSourceAutomation(binding);
   disposers.push(
     () => detach(),
-    () => binding.destroy(),
+    () => binding.dispose(),
     () => envelope.disconnect(),
   );
 
@@ -125,8 +125,8 @@ test("source automation maps a stretched output selection and follows a queued s
   const detach = player.attachSourceAutomation(binding);
   disposers.push(
     () => context.close(),
-    () => player.destroy(),
-    () => binding.destroy(),
+    () => player.dispose(),
+    () => binding.dispose(),
     () => detach(),
   );
   await context.resume();
@@ -162,7 +162,7 @@ test("a selection edit invalidates a play still awaiting resume when source auto
   });
   const detach = player.attachSourceAutomation(binding);
   disposers.push(
-    () => binding.destroy(),
+    () => binding.dispose(),
     () => detach(),
   );
   let release!: () => void;
@@ -191,8 +191,8 @@ test("starting an unfinished stretch invalidates pending and queued source autom
   const detach = player.attachSourceAutomation(binding);
   disposers.push(
     () => context.close(),
-    () => player.destroy(),
-    () => binding.destroy(),
+    () => player.dispose(),
+    () => binding.dispose(),
     () => detach(),
   );
   await context.resume();
@@ -229,8 +229,8 @@ test("source automation rejects another audio clock and looping, and manual deta
   const wrong = new AutomationBinding(other, curve, audioParamTarget(gain.gain));
   const binding = new AutomationBinding(context, curve, audioParamTarget(gain.gain));
   disposers.push(
-    () => wrong.destroy(),
-    () => binding.destroy(),
+    () => wrong.dispose(),
+    () => binding.dispose(),
     () => gain.disconnect(),
   );
   expect(() => player.attachSourceAutomation(wrong)).toThrow("Source automation must use the player's AudioContext.");
@@ -241,8 +241,8 @@ test("source automation rejects another audio clock and looping, and manual deta
   gain.gain.value = 0.4;
   expect(gain.gain.value).toBeCloseTo(0.4, 2);
   expect(player.isPlaying).toBe(true);
-  player.destroy();
-  expect(() => binding.start()).not.toThrow(); // player borrowed the binding; it did not destroy it
+  player.dispose();
+  expect(() => binding.start()).not.toThrow(); // player borrowed the binding; it did not dispose it
 });
 
 test("a reentrant automation target can pause without the old play starting sound", async () => {
@@ -256,7 +256,7 @@ test("a reentrant automation target can pause without the old play starting soun
   });
   const detach = player.attachSourceAutomation(binding);
   disposers.push(
-    () => binding.destroy(),
+    () => binding.dispose(),
     () => detach(),
   );
   expect(await player.play({ when: context.currentTime + 0.2 })).toBeNull();
@@ -278,11 +278,11 @@ test("a failing automation hold does not prevent player cleanup", async () => {
   });
   const detach = player.attachSourceAutomation(binding);
   disposers.push(
-    () => binding.destroy(),
+    () => binding.dispose(),
     () => detach(),
   );
   expect(await player.play({ when: context.currentTime + 0.2 })).not.toBeNull();
-  expect(() => player.destroy()).not.toThrow();
+  expect(() => player.dispose()).not.toThrow();
   expect(player.isPlaying).toBe(false);
   expect(errorLog).toHaveBeenCalledWith("WavePlayer source automation stop failed:", expect.any(Error));
 });
@@ -314,7 +314,7 @@ test("a queued start counts as playing, holds position until `when`, then follow
   expect(player.position).toBe(2.5);
 });
 
-for (const command of ["pause", "stop", "load", "setStretch", "destroy"] as const) {
+for (const command of ["pause", "stop", "load", "setStretch", "dispose"] as const) {
   test(`${command} before \`when\` cancels the queued start: nothing sounds`, async () => {
     const { context, player, analyser } = await fixture();
     player.output.connect(analyser);
@@ -326,7 +326,7 @@ for (const command of ["pause", "stop", "load", "setStretch", "destroy"] as cons
     else if (command === "setStretch") await player.setStretch(1);
     else player[command]();
     expect(context.currentTime).toBeLessThan(when);
-    if (command !== "destroy") expect(player.getState().isPlaying).toBe(false);
+    if (command !== "dispose") expect(player.getState().isPlaying).toBe(false);
     for (let i = 0; i < 6; i++) {
       await delay(60);
       expect(peak(analyser)).toBeLessThan(0.001);

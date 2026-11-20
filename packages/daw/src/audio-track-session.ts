@@ -61,7 +61,7 @@ export class AudioTrackSession {
     for (const time of [...times].sort((left, right) => left - right)) gain.setValueAtTime(this.levelAt(time), time);
   }
 
-  destroy(): void {
+  dispose(): void {
     this.changes = [];
     this.arrangementInput.disconnect();
   }

@@ -90,7 +90,7 @@ describe("createEngineContext", () => {
 
       expect(screen.getByTestId("child")).toBeTruthy();
       expect(engine.core.state()).toBe("idle");
-      engine.core.destroy();
+      engine.core.dispose();
     });
 
     test("useEngine() returns typed engine", () => {
@@ -109,7 +109,7 @@ describe("createEngineContext", () => {
       );
 
       expect(screen.getByTestId("processor").textContent).toBe("0.5");
-      engine.core.destroy();
+      engine.core.dispose();
     });
   });
 
@@ -126,7 +126,7 @@ describe("createEngineContext", () => {
       const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
       expect(() => render(<Bad />)).toThrow("useEngine must be used within an EngineProvider");
       consoleSpy.mockRestore();
-      engine.core.destroy();
+      engine.core.dispose();
     });
   });
 
@@ -147,7 +147,7 @@ describe("createEngineContext", () => {
       });
 
       expect(startSpy).toHaveBeenCalled();
-      engine.core.destroy();
+      engine.core.dispose();
     });
 
     test("removes listeners after first gesture", async () => {
@@ -171,7 +171,7 @@ describe("createEngineContext", () => {
       });
 
       expect(startSpy).not.toHaveBeenCalled();
-      engine.core.destroy();
+      engine.core.dispose();
     });
 
     test("autoStart={false} disables gesture listener", async () => {
@@ -190,7 +190,7 @@ describe("createEngineContext", () => {
       });
 
       expect(startSpy).not.toHaveBeenCalled();
-      engine.core.destroy();
+      engine.core.dispose();
     });
 
     test("re-arms listeners when engine state drops from running", async () => {
@@ -221,7 +221,7 @@ describe("createEngineContext", () => {
       });
       expect(engine.core.state()).toBe("running");
 
-      engine.core.destroy();
+      engine.core.dispose();
     });
   });
 });

@@ -40,7 +40,7 @@ async function renderSoloDryKick(): Promise<Float32Array> {
   machine.output.connect(ctx.destination);
   machine.tracks.find((t) => t.id === "kick")!.sampler.trigger({ when: HIT_TIME });
   const rendered = await ctx.startRendering();
-  machine.destroy();
+  machine.dispose();
   return rendered.getChannelData(0);
 }
 

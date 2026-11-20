@@ -121,10 +121,10 @@ clock.bpm.value = 140; // takes effect on the next look-ahead window
 sequencer.lanes.closed.steps[4].velocity = 0;
 
 // Teardown: the caller keeps the AudioContext.
-grid.destroy();
+grid.dispose();
 sequencer.dispose();
-clock.destroy();
-bank.destroy();
+clock.dispose();
+bank.dispose();
 ```
 
 The same wiring runs in `packages/sequencer/tests/drum-machine-doc.browser.test.ts`, which omits the DOM-only grid and decodes nothing (it synthesizes buffers).

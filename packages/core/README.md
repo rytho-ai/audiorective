@@ -160,7 +160,7 @@ voice.onEnded(() => console.log("done"));
 // polyphony N                  → bounded overlap
 
 player.stopAll();
-player.destroy();
+player.dispose();
 ```
 
 `trigger()` returns a `Voice` handle for per-voice control (`voice.stop()`, `voice.pause()`, `voice.resume()`, `voice.seek()`, `voice.volume =`, `voice.rate =`). It returns `null` when no buffer is set or `steal: "none"` drops the voice.
@@ -223,7 +223,7 @@ player.cells.currentTime; // Cell<number>
 player.cells.duration; // Cell<number> — NaN until metadata loads
 
 player.onEnded(() => console.log("track ended"));
-player.destroy();
+player.dispose();
 ```
 
 `play()` silently swallows autoplay-gesture errors and `AbortError`s — it's safe to call unconditionally. Gate on `player.cells.isPlaying` to react to actual state.
@@ -245,10 +245,10 @@ engine.synth; // fully typed
 await engine.start();
 engine.state.value; // "running"
 await engine.suspend();
-engine.destroy(); // terminal — processors cleaned up, context closed
+engine.dispose(); // terminal — processors cleaned up, context closed
 ```
 
-State transitions: `idle` -> `running` <-> `suspended` -> `destroyed`
+State transitions: `idle` -> `running` <-> `suspended` -> `disposed`
 
 The `AudioContext` is created eagerly at construction — the browser suspends it via autoplay policy. All processors are wired and accessible immediately. Only `start()` requires a user gesture.
 

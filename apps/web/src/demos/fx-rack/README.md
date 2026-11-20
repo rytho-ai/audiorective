@@ -33,7 +33,7 @@ Press **Play** to loop the drum stems, or hit the pads to trigger drum sounds. T
      const next = build(pitchEngine, old.deck.buffer);
      await next.ready;
      applySettings(next, settings);
-     old.destroy();
+     old.dispose();
      rack.value = next;
    };
    ```

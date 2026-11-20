@@ -57,8 +57,8 @@ test("a Clock-owned future choke is cancellable while a manual pad hit keeps sou
     expect(bank.cells.activeEvents.value).toBe(0);
     manual.cancel();
   } finally {
-    clock.destroy();
-    bank.destroy();
+    clock.dispose();
+    bank.dispose();
     analyser.disconnect();
     await context.close();
   }
@@ -90,8 +90,8 @@ test("refresh at a hit's exact audio time renders one hit, not two", async () =>
     ticks.tick();
     if (refresh) clock.refresh(); // the same AudioContext time: 0
     const output = await context.startRendering();
-    clock.destroy();
-    bank.destroy();
+    clock.dispose();
+    bank.dispose();
     return output.getChannelData(0)[rate / 100]!;
   }
   expect(await render(false)).toBeCloseTo(0.3, 5);

@@ -131,7 +131,7 @@ export async function renderScenario(s: Scenario): Promise<{ events: ClipEvent[]
     () => clock.start(0.1, 0),
   );
   recording = false; // tearing down silences what still plays: not a clip event of the scenario
-  clock.destroy();
+  clock.dispose();
   launcher.dispose();
 
   const perTrack = {} as Record<TrackId, AudioBuffer>;

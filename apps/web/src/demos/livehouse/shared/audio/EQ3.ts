@@ -41,8 +41,8 @@ export class EQ3 extends AudioProcessor<Params> {
     return this._output;
   }
 
-  override destroy(): void {
-    super.destroy();
+  override dispose(): void {
+    super.dispose();
     this._input.disconnect();
     this._output.disconnect();
   }

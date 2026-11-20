@@ -68,7 +68,7 @@ describe("Convolver", () => {
     stop();
     expect(seen).toEqual([false, true, false]);
   });
-  it("a load that settles after destroy() is ignored", async () => {
+  it("a load that settles after dispose() is ignored", async () => {
     const ctx = new OfflineAudioContext(1, 128, 44100);
     const ir = ctx.createBuffer(1, 4, 44100);
     const core = await import("@audiorective/core");
@@ -76,7 +76,7 @@ describe("Convolver", () => {
     vi.spyOn(core.AudioBufferCache.prototype, "load").mockImplementation(() => new Promise((r) => (resolve = r)));
     const fx = new Convolver(ctx);
     const pending = fx.load("/late.wav");
-    fx.destroy();
+    fx.dispose();
     resolve(ir);
     await pending;
     expect(fx.buffer).toBeNull();

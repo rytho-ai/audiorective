@@ -2,7 +2,7 @@ import { AudioProcessor, cell, readonlyCell, registerWorklet, untracked, type Ce
 import type { PCMData } from "@audiorective/core/peaks";
 import { AUDIO_RECORDER_WORKLET, AUDIO_RECORDER_WORKLET_NAME } from "./recording/audio-recorder.worklet";
 
-export type AudioRecorderState = "idle" | "armed" | "recording" | "stopping" | "destroyed";
+export type AudioRecorderState = "idle" | "armed" | "recording" | "stopping" | "disposed";
 export interface AudioRecorderOptions {
   /** Captured channel count, with discrete up/down-mixing by Web Audio. Default: 2. */
   channels?: number;
@@ -91,7 +91,7 @@ export class AudioRecorder extends AudioProcessor<{}, { state: ReadonlyCell<Audi
   }
   /** Preload the worklet when a gesture or a transport countdown gives time to do so. */
   get ready(): Promise<void> {
-    if (this.disposed) return Promise.reject(new Error("AudioRecorder is destroyed."));
+    if (this.disposed) return Promise.reject(new Error("AudioRecorder is disposed."));
     return (this.registration ??= registerRecorder(this.context).catch((error: unknown) => {
       this.registration = null;
       throw error;
@@ -110,7 +110,7 @@ export class AudioRecorder extends AudioProcessor<{}, { state: ReadonlyCell<Audi
   }
 
   private async startCapture(options: { when?: number }, writeChunk?: (chunk: RecordedAudioChunk) => void | Promise<void>): Promise<void> {
-    if (this.disposed) throw new Error("AudioRecorder is destroyed.");
+    if (this.disposed) throw new Error("AudioRecorder is disposed.");
     if (this.active) throw new Error("AudioRecorder already has an active take.");
     const when = options.when ?? this.context.currentTime;
     if (!Number.isFinite(when) || when < 0) throw new RangeError("AudioRecorder time must be finite, non-negative seconds.");
@@ -169,13 +169,13 @@ export class AudioRecorder extends AudioProcessor<{}, { state: ReadonlyCell<Audi
 
   /** Finish streaming after every accepted chunk has reached the caller's writer. */
   stopStream(options: { when?: number } = {}): Promise<RecordedAudioSpan> {
-    if (this.disposed) throw new Error("AudioRecorder is destroyed.");
+    if (this.disposed) throw new Error("AudioRecorder is disposed.");
     if (!this.active?.writeChunk) throw new Error("AudioRecorder has no started stream to stop.");
     return this.stopCapture(options) as Promise<RecordedAudioSpan>;
   }
 
   private stopCapture(options: { when?: number }): Promise<RecordedAudio | RecordedAudioSpan> {
-    if (this.disposed) throw new Error("AudioRecorder is destroyed.");
+    if (this.disposed) throw new Error("AudioRecorder is disposed.");
     const session = this.active;
     if (!session?.node || untracked(() => this.stateStore.value) === "stopping") throw new Error("AudioRecorder has no started take to stop.");
     const when = options.when ?? this.context.currentTime;
@@ -318,12 +318,12 @@ export class AudioRecorder extends AudioProcessor<{}, { state: ReadonlyCell<Audi
     this.release(session);
   }
 
-  override destroy(): void {
+  override dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    if (this.active) this.fail(this.active, new Error("AudioRecorder is destroyed."));
+    if (this.active) this.fail(this.active, new Error("AudioRecorder is disposed."));
     this.source.disconnect();
-    this.stateStore.value = "destroyed";
-    super.destroy();
+    this.stateStore.value = "disposed";
+    super.dispose();
   }
 }

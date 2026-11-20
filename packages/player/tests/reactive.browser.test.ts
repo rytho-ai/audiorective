@@ -32,7 +32,7 @@ function fixture(extra: { loadSource?: WaveSourceLoader } = {}) {
   const player = new WavePlayer(context, { stretch, ...extra });
   disposers.push(
     () => context.close(),
-    () => player.destroy(),
+    () => player.dispose(),
   );
   return { context, player, jobs };
 }
@@ -421,7 +421,7 @@ test("the isPlaying getter and cell agree, through a queued start, playback and 
   for (const [getter, cell] of seen) expect(getter).toBe(cell);
 });
 
-test("an unsubscribed listener is not called, and destroy releases subscribers", async () => {
+test("an unsubscribed listener is not called, and dispose releases subscribers", async () => {
   const { context, player } = fixture();
   await player.load(audio(context));
   const kept = vi.fn(),
@@ -431,7 +431,7 @@ test("an unsubscribed listener is not called, and destroy releases subscribers",
   player.setLooping(true);
   expect(dropped).not.toHaveBeenCalled();
   expect(kept).toHaveBeenCalledTimes(1);
-  player.destroy();
+  player.dispose();
   kept.mockClear();
   expect(kept).not.toHaveBeenCalled();
 });

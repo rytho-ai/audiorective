@@ -134,17 +134,17 @@ export class FxRack extends AudioProcessor<{}, { isReady: Cell<boolean> }> {
     }
   }
 
-  override destroy(): void {
-    this.deck.destroy();
-    for (const p of Object.values(this.pads)) p.destroy();
-    for (const fx of Object.values(this.inserts)) fx.destroy();
-    this.sends.delay.effect.destroy();
-    this.sends.reverb.effect.destroy();
-    this.compressor.destroy();
-    this.limiter.destroy();
-    this.channel.destroy();
-    this.bus.destroy();
+  override dispose(): void {
+    this.deck.dispose();
+    for (const p of Object.values(this.pads)) p.dispose();
+    for (const fx of Object.values(this.inserts)) fx.dispose();
+    this.sends.delay.effect.dispose();
+    this.sends.reverb.effect.dispose();
+    this.compressor.dispose();
+    this.limiter.dispose();
+    this.channel.dispose();
+    this.bus.dispose();
     this.out.disconnect();
-    super.destroy();
+    super.dispose();
   }
 }

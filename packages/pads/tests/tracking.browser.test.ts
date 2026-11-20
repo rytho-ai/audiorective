@@ -42,7 +42,7 @@ describe("PadBank readers are tracked", () => {
     const bank = watch(new PadBank(context, [{ id: "kick", buffer: tone(context) }]), touched.padBank);
     disposers.push(
       () => context.close(),
-      () => bank.destroy(),
+      () => bank.dispose(),
     );
     await expectTracked(
       () => bank.cells.activeEvents.value,
@@ -58,7 +58,7 @@ describe("PadBank readers are tracked", () => {
     const bank = watch(new PadBank(context, [{ id: "kick", buffer: tone(context) }]), touched.padBank);
     disposers.push(
       () => context.close(),
-      () => bank.destroy(),
+      () => bank.dispose(),
     );
     await expectTracked(
       () => bank.cells.pads.value,
@@ -73,7 +73,7 @@ describe("command methods called inside an effect do not subscribe it", () => {
     const bank = watch(new PadBank(context, [{ id: "kick", buffer: tone(context) }]), touched.padBank);
     disposers.push(
       () => context.close(),
-      () => bank.destroy(),
+      () => bank.dispose(),
     );
     const destination = context.createGain();
     let runs = 0;

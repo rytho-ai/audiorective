@@ -49,8 +49,8 @@ async function drumMachine() {
 
   disposers.push(() => {
     sequencer.dispose();
-    clock.destroy();
-    bank.destroy();
+    clock.dispose();
+    bank.dispose();
   });
   return { context, bank, sequencer, clock };
 }

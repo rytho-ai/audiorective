@@ -23,7 +23,7 @@ export class StretchShifter extends AudioProcessor<{}, {}> {
   private node: StretchNode | null = null;
   private pitch: number;
   private readonly opts: StretchOptions;
-  private destroyed = false;
+  private disposed = false;
 
   constructor(ctx: BaseAudioContext, pitch: number, opts: StretchOptions = {}) {
     const input = new GainNode(ctx),
@@ -40,21 +40,21 @@ export class StretchShifter extends AudioProcessor<{}, {}> {
       .then(async (node) => {
         // Every remote method (configure/schedule/start/latency) is a message round-trip to the worklet thread,
         // resolving once the worklet has applied it — awaiting each keeps rendering from starting before it has.
-        // `destroy()` can land between any two of those awaits, so each step re-checks the flag: before the node
-        // is adopted it is stopped here; after adoption `destroy()` has already stopped it, and the only thing
+        // `dispose()` can land between any two of those awaits, so each step re-checks the flag: before the node
+        // is adopted it is stopped here; after adoption `dispose()` has already stopped it, and the only thing
         // left to avoid is `start()` reviving a node that was stopped underneath us.
-        if (this.destroyed) return void node.stop();
+        if (this.disposed) return void node.stop();
         if (opts.blockMs !== undefined) await node.configure({ blockMs: opts.blockMs });
-        if (this.destroyed) return void node.stop();
+        if (this.disposed) return void node.stop();
         input.connect(node);
         node.connect(output);
         this.node = node;
         await this.apply();
-        if (this.destroyed) return;
+        if (this.disposed) return;
         await node.start();
-        if (this.destroyed) return void node.stop();
+        if (this.disposed) return void node.stop();
         const seconds = await node.latency();
-        if (this.destroyed) return;
+        if (this.disposed) return;
         latency.value = Math.round(seconds * ctx.sampleRate);
       });
   }
@@ -83,8 +83,8 @@ export class StretchShifter extends AudioProcessor<{}, {}> {
     this.apply();
   }
 
-  override destroy(): void {
-    this.destroyed = true;
+  override dispose(): void {
+    this.disposed = true;
     if (this.node) {
       // The Signalsmith node exposes no dispose API; stop() halts its WASM work.
       this.node.stop();
@@ -93,7 +93,7 @@ export class StretchShifter extends AudioProcessor<{}, {}> {
     }
     this._input.disconnect();
     this._output.disconnect();
-    this.latency.destroy();
-    super.destroy();
+    this.latency.dispose();
+    super.dispose();
   }
 }

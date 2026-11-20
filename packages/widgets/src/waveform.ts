@@ -63,7 +63,7 @@ export function mountWaveform(root: HTMLElement, options: WaveformOptions = {}):
     zoom = 1,
     amplitudeZoom = 1;
   let position = options.playhead ?? null,
-    destroyed = false;
+    disposed = false;
   const snapshot = (): WaveformViewport =>
     Object.freeze({ duration, pixelsPerSecond: scale, scrollLeft: viewport.scrollLeft, width: viewport.clientWidth, height: surface.clientHeight });
   const emitViewport = () => {
@@ -78,7 +78,7 @@ export function mountWaveform(root: HTMLElement, options: WaveformOptions = {}):
     playhead.style.transform = position !== null && position >= duration ? "translateX(-100%)" : "";
   }
   function layout(): void {
-    if (destroyed) return;
+    if (disposed) return;
     scale = Math.min(maxScale(), fit() * zoom);
     const width = Math.max(viewport.clientWidth, duration * scale),
       height = surface.clientHeight || 180;
@@ -101,7 +101,7 @@ export function mountWaveform(root: HTMLElement, options: WaveformOptions = {}):
     emitViewport();
   }
   function setZoom(factor: number): void {
-    if (destroyed) throw new Error("Waveform is destroyed.");
+    if (disposed) throw new Error("Waveform is disposed.");
     if (!Number.isFinite(factor) || factor < 1) throw new RangeError("Zoom must be finite and at least 1.");
     const middle = (viewport.scrollLeft + viewport.clientWidth / 2) / scale;
     zoom = clamp(factor, 1, maxScale() / fit());
@@ -133,7 +133,7 @@ export function mountWaveform(root: HTMLElement, options: WaveformOptions = {}):
     },
     getViewportRect: () => viewport.getBoundingClientRect(),
     mountOverlay(element) {
-      if (!isActive()) throw new Error("Plugin attachment is destroyed.");
+      if (!isActive()) throw new Error("Plugin attachment is disposed.");
       Object.assign(element.style, { position: "absolute", inset: "0", pointerEvents: "none" });
       surface.append(element);
       return own(() => element.remove());
@@ -154,7 +154,7 @@ export function mountWaveform(root: HTMLElement, options: WaveformOptions = {}):
   }));
   const handle: WaveformHandle = {
     setData(data) {
-      if (destroyed) throw new Error("Waveform is destroyed.");
+      if (disposed) throw new Error("Waveform is disposed.");
       let next: Peaks | null = null;
       if (data) {
         if ("getChannelData" in data) next = cachePeaks(data);
@@ -182,7 +182,7 @@ export function mountWaveform(root: HTMLElement, options: WaveformOptions = {}):
       layout();
     },
     setPlayhead(seconds) {
-      if (destroyed) return;
+      if (disposed) return;
       if (seconds !== null && !Number.isFinite(seconds)) throw new RangeError("Playhead must be finite or null.");
       position = seconds;
       drawPlayhead();
@@ -190,24 +190,24 @@ export function mountWaveform(root: HTMLElement, options: WaveformOptions = {}):
     getViewport: snapshot,
     setZoom,
     setAmplitudeZoom(factor) {
-      if (destroyed) throw new Error("Waveform is destroyed.");
+      if (disposed) throw new Error("Waveform is disposed.");
       if (!Number.isFinite(factor) || factor < 1 || factor > 32) throw new RangeError("Amplitude zoom must be finite and from 1 to 32.");
       amplitudeZoom = factor;
       layout();
     },
     getAmplitudeZoom: () => amplitudeZoom,
     scrollTo(seconds) {
-      if (destroyed) return;
+      if (disposed) return;
       viewport.scrollLeft = clamp(seconds, 0, duration) * scale;
       emitViewport();
     },
     attach: (plugin) => plugins.attach(plugin),
-    destroy() {
-      if (destroyed) return;
-      destroyed = true;
-      plugins.destroy();
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      plugins.dispose();
       try {
-        renderer?.destroy?.();
+        renderer?.dispose?.();
       } catch (error) {
         console.error("Waveform renderer cleanup failed:", error);
       }
@@ -228,7 +228,7 @@ export function mountWaveform(root: HTMLElement, options: WaveformOptions = {}):
     if (options.data) handle.setData(options.data);
     else layout();
   } catch (error) {
-    handle.destroy();
+    handle.dispose();
     throw error;
   }
   return handle;

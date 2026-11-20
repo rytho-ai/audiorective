@@ -38,7 +38,7 @@ document.querySelector<HTMLButtonElement>("#play")!.onclick = async () => {
 };
 ```
 
-The click starts the audio context. `Sampler` plays the buffer and applies short fades at its edges. Change `engine.tone.params.volume.value` to adjust its level. When your application unmounts, call `engine.core.destroy()` to release the engine and its processors.
+The click starts the audio context. `Sampler` plays the buffer and applies short fades at its edges. Change `engine.tone.params.volume.value` to adjust its level. When your application unmounts, call `engine.core.dispose()` to release the engine and its processors.
 
 For Astro, Next.js, or another server-rendered framework, use a [client-only boundary](/docs/client-boundary).
 

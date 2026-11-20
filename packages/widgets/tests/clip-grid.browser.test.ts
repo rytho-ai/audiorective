@@ -79,7 +79,7 @@ describe("mountClipGrid", () => {
     expect(cellButton.dataset.clipState).toBe("active");
     expect(cellButton.getAttribute("aria-pressed")).toBe("true");
     expect(document.querySelector("[role=status]")!.textContent).toBe("Session playback");
-    grid.destroy();
+    grid.dispose();
   });
 
   test("the launch option wraps every command, so an app can start playback first", () => {
@@ -93,7 +93,7 @@ describe("mountClipGrid", () => {
     expect(only.launch).not.toHaveBeenCalled();
     wrapped[0]!();
     expect(only.launch).toHaveBeenCalledTimes(1);
-    grid.destroy();
+    grid.dispose();
   });
 
   test("an empty layout shows the empty label and hides the toolbar", () => {
@@ -102,6 +102,6 @@ describe("mountClipGrid", () => {
     const grid = mountClipGrid(root, { launcher, labels: { empty: "Nothing to launch" } });
     grid.setLayout({ tracks: [], scenes: [] });
     expect(root.textContent).toContain("Nothing to launch");
-    grid.destroy();
+    grid.dispose();
   });
 });

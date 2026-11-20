@@ -49,7 +49,7 @@ describe("Clock.attach", () => {
     expect(a.windows).toHaveLength(1);
   });
 
-  test("start, pause, stop, seek and destroy reset attached schedulers after cancelling owned events", () => {
+  test("start, pause, stop, seek and dispose reset attached schedulers after cancelling owned events", () => {
     const { clock, recorder } = harness();
     const a = recorder();
     clock.attach(a);
@@ -62,7 +62,7 @@ describe("Clock.attach", () => {
     expect(a.resets).toBe(3);
     clock.stop();
     expect(a.resets).toBe(4);
-    clock.destroy();
+    clock.dispose();
     expect(a.resets).toBe(5);
   });
 
@@ -112,7 +112,7 @@ describe("Clock.attach", () => {
     expect(cancelled).toBe(1);
   });
 
-  test("attaching while playing refreshes the look-ahead; double attach and attach after destroy throw", async () => {
+  test("attaching while playing refreshes the look-ahead; double attach and attach after dispose throw", async () => {
     const { tickSource, clock, recorder } = harness();
     clock.start();
     tickSource.tick();
@@ -122,11 +122,11 @@ describe("Clock.attach", () => {
     await Promise.resolve();
     expect(s.windows.length).toBeGreaterThan(0); // the refill after attach
     expect(() => clock.attach(s)).toThrow(/already has this scheduler/);
-    clock.destroy();
-    expect(() => clock.attach(late)).toThrow(/destroyed/);
+    clock.dispose();
+    expect(() => clock.attach(late)).toThrow(/disposed/);
   });
 
-  test("attached(handle) gets refresh and detach; its cleanup runs after reset on detach and on destroy", () => {
+  test("attached(handle) gets refresh and detach; its cleanup runs after reset on detach and on dispose", () => {
     const { clock, tickSource } = harness();
     const order: string[] = [];
     let handle: { refresh(): void; detach(): void } | undefined;
@@ -149,7 +149,7 @@ describe("Clock.attach", () => {
     order.length = 0;
     clock.attach(scheduler);
     order.length = 0;
-    clock.destroy();
+    clock.dispose();
     expect(order).toEqual(["reset", "cleanup"]);
   });
 });

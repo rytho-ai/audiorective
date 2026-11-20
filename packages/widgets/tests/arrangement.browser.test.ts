@@ -40,7 +40,7 @@ function mounted(timeUnit: "seconds" | "beats" = "seconds") {
     onOpen,
     onSelect,
   });
-  own(() => gesture.destroy());
+  own(() => gesture.dispose());
   return { clip, onMove, onOpen, onSelect };
 }
 
@@ -119,7 +119,7 @@ test("continuous zoom keeps the time under the pointer and detaches wheel handli
       ruler.style.width = `${16 * scale}px`;
     },
   });
-  own(() => zoom.destroy());
+  own(() => zoom.dispose());
   const x = root.getBoundingClientRect().left + 300;
   const timeUnderPointer = () => (x - ruler.getBoundingClientRect().left) / scale;
   expect(timeUnderPointer()).toBeCloseTo(3);
@@ -133,9 +133,9 @@ test("continuous zoom keeps the time under the pointer and detaches wheel handli
   expect(wheel.defaultPrevented).toBe(true);
   expect(scale).toBeGreaterThan(200);
   expect(timeUnderPointer()).toBeCloseTo(3, 2);
-  zoom.destroy();
-  const afterDestroy = scale;
+  zoom.dispose();
+  const afterDispose = scale;
   root.dispatchEvent(new WheelEvent("wheel", { bubbles: true, ctrlKey: true, clientX: x, deltaY: -100 }));
   await new Promise(requestAnimationFrame);
-  expect(scale).toBe(afterDestroy);
+  expect(scale).toBe(afterDispose);
 });

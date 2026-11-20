@@ -23,10 +23,10 @@ const outputStart = recorder.start({ when: context.currentTime + 0.1 });
 const take = recorder.stop();
 const sequence = new MidiSequence({ notes: take.notes, duration: take.duration });
 // A future clip owner receives take.startTime/endTime and places the sequence.
-recorder.destroy();
+recorder.dispose();
 ```
 
-`start({ when? })` accepts absolute AudioContext seconds and returns the actual output-clock start time for placement anchors; omitted means the current audible output position. It filters messages whose mapped time precedes the start. `stop()` ends at the current output position and returns immediately; call it when the desired end arrives. Stopping before a future start throws and leaves that take active. `cancel()` discards an active take. A recorder can make repeated takes, while `destroy()` only removes its own listener. `cells.state` is a read-only reactive `"idle" | "recording" | "destroyed"` value; `recording` means a take is active even if its future start has not arrived.
+`start({ when? })` accepts absolute AudioContext seconds and returns the actual output-clock start time for placement anchors; omitted means the current audible output position. It filters messages whose mapped time precedes the start. `stop()` ends at the current output position and returns immediately; call it when the desired end arrives. Stopping before a future start throws and leaves that take active. `cancel()` discards an active take. A recorder can make repeated takes, while `dispose()` only removes its own listener. `cells.state` is a read-only reactive `"idle" | "recording" | "disposed"` value; `recording` means a take is active even if its future start has not arrived.
 
 The returned `RecordedMidi` has absolute `startTime`/`endTime`, `duration`, an immutable `notes` array in **take-relative seconds**, and `events` in delivery order. Each event has an absolute `audioTime` and a copied `Uint8Array` of the MIDI bytes. Matched note-on/off events also carry the projected note's `noteId`; this links later edits to their original event order. The byte arrays themselves remain mutable. Notes use track 0 and retain channel, pitch and attack velocity. Same-channel, same-pitch overlapping note-ons pair with note-offs FIFO; a velocity-zero note-on is an off. Unreleased notes end at the take's end. Unmatched note-offs have no projected note. Controller, program-change and other messages remain in `events`, but sustain pedal does not extend the projected notes. A caller may use `MidiSequence.setData({ notes: take.notes, duration: take.duration })` to show one take; merging takes and clip placement belong to a higher owner.
 
@@ -65,9 +65,9 @@ const b = mountPianoRoll(right, { model: sequence, grid, snap: "beat" });
 if (parsed.duration > 0) sequence.setSelection({ start: 0, end: Math.min(2, parsed.duration) });
 const note = sequence.getState().notes[0];
 if (note) sequence.updateNote(note.id, { pitch: 69, velocity: 100 });
-a.destroy(); // The data and the other view remain available.
-b.destroy();
-sequence.destroy();
+a.dispose(); // The data and the other view remain available.
+b.dispose();
+sequence.dispose();
 ```
 
 `load` is synchronous parsing of supplied bytes; URL fetches and File reads belong to the caller. Guard stale asynchronous reads before calling `load`. A parse failure leaves the previous data snapshot unchanged. The APIs are Unreleased; use a workspace build or matching packed artifacts.
@@ -112,7 +112,7 @@ Velocity-zero note-on is treated as note-off. Overlapping notes of the same trac
 | `getSelection()` / `setSelection(range \| null)` | One shared time range; requires finite `0 <= start < end <= duration`. No audio is started or changed.                                                                                                                                                                        |
 | `updateNote(id, patch)`                          | Validates before committing once; keeps ID and selection, extends duration if necessary. Invalid edits leave the previous snapshot intact.                                                                                                                                    |
 | `query(range, pitches?)`                         | Same interval query against the owned sorted notes.                                                                                                                                                                                                                           |
-| `destroy()`                                      | Clears model listeners; idempotent. Mutations/subscriptions after destroy throw. Views and caller audio have separate lifetimes.                                                                                                                                              |
+| `dispose()`                                      | Clears model listeners; idempotent. Mutations/subscriptions after dispose throw. Views and caller audio have separate lifetimes.                                                                                                                                              |
 
 ### Observing state reactively
 
@@ -143,14 +143,14 @@ Drag on the background to select a time range. Selection handles support arrow k
 | `setZoom(factor)`                 | Finite factor 1..64; 1 fits the source, changes retain the viewport center.                    |
 | `scrollTo(seconds)`               | Moves the horizontal viewport using finite source seconds.                                     |
 | `setPitchRange({low, high})`      | Integer `0 <= low <= high <= 127`, inclusive.                                                  |
-| `attach(plugin)`                  | Attaches a `TimeViewPlugin`; returns an independently destroyable `PluginAttachment`.          |
+| `attach(plugin)`                  | Attaches a `TimeViewPlugin`; returns an independently disposable `PluginAttachment`.           |
 | `getViewport()`                   | `{duration, pixelsPerSecond, scrollLeft, width, height}` in content/viewport pixels.           |
 | `setSnap(mode)` / `setGrid(grid)` | Changes this view's snapping/grid; selection remains in the borrowed model.                    |
-| `destroy()`                       | Detaches observers, listeners, selection and renderer; preserves model, other views and audio. |
+| `dispose()`                       | Detaches observers, listeners, selection and renderer; preserves model, other views and audio. |
 
 ## Replace note drawing
 
-A `PianoRollRenderer` is `(root) => { render(frame), destroy?() }`. Allocate SVG/Canvas/DOM once, then update it from frames. The supplied root spans the full scrolling content.
+A `PianoRollRenderer` is `(root) => { render(frame), dispose?() }`. Allocate SVG/Canvas/DOM once, then update it from frames. The supplied root spans the full scrolling content.
 
 A frame contains viewport/pitch-filtered `notes` (including spanning notes), content `width`/`height`, `duration`, `pitches`, `viewport`, `timeToX(seconds)`, `pitchToY(pitch)`, `editable`, `onNotePointerDown(note, event, kind?)` and `onNoteClick(note)`. `pitchToY` returns the row's top; row height is `height / (high - low + 1)`. Use these coordinates rather than a separate time-to-pixel mapping. Drawings live under the selection handles and external playhead. Forward note pointer presses to `frame.onNotePointerDown(note, event)` to keep inspection and editing separate from background range dragging. The widget infers move/start-edge/end-edge from source-time geometry; a renderer can explicitly pass `"move"`, `"resize-start"` or `"resize-end"`. Keep click/keyboard inspection connected to `frame.onNoteClick`.
 
@@ -158,7 +158,7 @@ Theme with the shared `--waveform-*` appearance variables, `--piano-roll-height`
 
 ## Replace keyboard, toolbar and layout
 
-`layout` has the same mount/render/destroy lifecycle as `renderer`. The factory receives `(root, viewport, controls)`. Mount the **supplied viewport** inside root; the widget retains its content, scrolling, selection, plugins and note gestures. The layout owns the surrounding DOM, keyboard drawing and controls. Use your own classes and elements instead of internal widget selectors.
+`layout` has the same mount/render/dispose lifecycle as `renderer`. The factory receives `(root, viewport, controls)`. Mount the **supplied viewport** inside root; the widget retains its content, scrolling, selection, plugins and note gestures. The layout owns the surrounding DOM, keyboard drawing and controls. Use your own classes and elements instead of internal widget selectors.
 
 ```typescript
 import { mountPianoRoll, type PianoRollLayout } from "@audiorective/widgets/piano-roll";
@@ -175,7 +175,7 @@ const compact: PianoRollLayout = (root, viewport, controls) => {
       factor = frame.zoom;
       zoom.disabled = factor >= 64;
     },
-    destroy() {
+    dispose() {
       zoom.onclick = null;
       root.replaceChildren();
     },
@@ -186,7 +186,7 @@ const view = mountPianoRoll(root, { model: sequence, layout: compact });
 
 `controls` exposes `setZoom`, `scrollTo`, `setPitchRange`, `setSnap` and `setGrid`. Layout frames contain `duration`, `height`, inclusive `pitches`, `viewport`, `pitchToY`, `zoom` and `snap`. Initialize custom snap controls from `frame.snap` (`"off"`, `"beat"` or `"downbeat"`) and read it again in each render; `setSnap` synchronously refreshes the layout, including calls through the returned handle or layout controls. The widget owns this state, so an external snap change also updates your control without a second store. Use `pitchToY` and `height / (high-low+1)` to draw your keyboard aligned with the content. Viewport frames follow scroll/zoom/resize/pitch/data changes; render updates presentation without calling control mutations recursively. `root` excludes the widget's base style element, so a layout may replace its own children. Keep the supplied viewport identity and mount it once; cloning/removing it breaks the interaction owner. A missing viewport throws `Piano roll layout must mount its viewport inside the supplied root.`
 
-Layouts can set public viewport styles and inherited CSS variables. Preserve finite dimensions, horizontal overflow scrolling and an accessible keyboard-focusable viewport. Interactive controls need labels, focus styles and responsive wrapping. Destroy removes layout resources even if another cleanup fails. The showroom's second view draws its numeric keyboard on the right and its wrapping toolbar below, without implementing any drag logic.
+Layouts can set public viewport styles and inherited CSS variables. Preserve finite dimensions, horizontal overflow scrolling and an accessible keyboard-focusable viewport. Interactive controls need labels, focus styles and responsive wrapping. Dispose removes layout resources even if another cleanup fails. The showroom's second view draws its numeric keyboard on the right and its wrapping toolbar below, without implementing any drag logic.
 
 ## Widget-owned note moves and resizes
 
@@ -236,21 +236,21 @@ function markerAt(time: number): TimeViewPlugin {
 
 const view = mountPianoRoll(root, { model: sequence });
 const marker = view.attach(markerAt(1));
-// marker.destroy() removes just this overlay and its subscriptions.
-// view.destroy() removes every attachment, preserving the borrowed sequence/audio.
+// marker.dispose() removes just this overlay and its subscriptions.
+// view.dispose() removes every attachment, preserving the borrowed sequence/audio.
 ```
 
 The context provides `surface`, live `duration`, `getViewport()`, `getViewportRect()`, `timeToX(time)`, `clientXToTime(clientX)`, `scrollBy(pixels)`, `mountOverlay(element)`, `onViewportChange`, `onDataChange`, `listen` and `onCleanup`. Times use the borrowed model's declared unit; `timeToX` returns pixels in the full scrolling note surface. `clientXToTime` accounts for the actual content origin and current scroll. `getViewportRect` is the visible viewport's browser rectangle, including its border; `surface.getBoundingClientRect()` gives the scrolling content origin. Keyboard width is internal: callers do not calculate or inspect it.
 
 Overlay layers fill the note surface and default to `pointer-events: none`. Interactive children can set `pointer-events: auto`; stop their `pointerdown` propagation when they should not start native background range selection. Use `ctx.listen` for events and `ctx.onCleanup` for caller resources such as observers or animation frames. Data notifications occur on note-array or duration replacement, before layout; viewport notifications follow layout, horizontal scroll, zoom and pitch-range changes. Selection-only changes are observed through the borrowed model's subscription.
 
-Each attachment owns its overlays, listeners and subscriptions. `attachment.destroy()` is idempotent and leaves peer plugins, the view, model and audio alive. A failed attach rolls back registered resources. Registrations made after detachment are cleaned up immediately; `mountOverlay` then throws. A plugin can return a disposer or `{destroy()}`. Throwing cleanup is logged while other resources continue to clean up. The same plugin object cannot be attached twice to one view simultaneously; create an instance per view if the plugin holds mutable state. The built-in selection plugin remains the single selection owner; added plugins extend visualization/interaction rather than attaching a second selection owner.
+Each attachment owns its overlays, listeners and subscriptions. `attachment.dispose()` is idempotent and leaves peer plugins, the view, model and audio alive. A failed attach rolls back registered resources. Registrations made after detachment are cleaned up immediately; `mountOverlay` then throws. A plugin can return a disposer or `{dispose()}`. Throwing cleanup is logged while other resources continue to clean up. The same plugin object cannot be attached twice to one view simultaneously; create an instance per view if the plugin holds mutable state. The built-in selection plugin remains the single selection owner; added plugins extend visualization/interaction rather than attaching a second selection owner.
 
 This context covers the time axis. Custom note drawing uses the renderer frame's `pitchToY`; plugins do not expose a pitch-editing contract.
 
 ## Audio integration
 
-The application chooses instruments, scheduling and routing. Read the selected interval and `sequence.query(range)`, clip notes to that interval, and schedule them on the caller's audio clock. Keep cancellation handles for active and already-scheduled voices: pause, seek, source replacement, edits and destroy must cancel obsolete sound. A view's destruction must not cancel application-owned audio.
+The application chooses instruments, scheduling and routing. Read the selected interval and `sequence.query(range)`, clip notes to that interval, and schedule them on the caller's audio clock. Keep cancellation handles for active and already-scheduled voices: pause, seek, source replacement, edits and dispose must cancel obsolete sound. A view's destruction must not cancel application-owned audio.
 
 This split supports both a silent MIDI inspector and an audible application without putting a specific synth, device permission, transport or whole DAW into the widget. The showroom's sine-note auditioner is example application code, not a public MIDI sequencer or Web MIDI output.
 
@@ -266,8 +266,8 @@ This split supports both a silent MIDI inspector and an audible application with
 | `MIDI grid exceeds 100000 points.`                                                         | Use a bounded caller-supplied grid or omit grid generation for very long data.                                         |
 | `MIDI duration must be finite and non-negative.`                                           | Repair the supplied duration.                                                                                          |
 | `MIDI notes need unique ids, valid source times and integer pitch/velocity/channel/track.` | Normalize note records to the documented bounds in the caller's time unit.                                             |
-| `MidiSequence is destroyed.`                                                               | Create another owner; remove its borrowed views before final owner cleanup.                                            |
-| `MidiRecorder is destroyed.`                                                               | Construct a new recorder after final cleanup.                                                                          |
+| `MidiSequence is disposed.`                                                                | Create another owner; remove its borrowed views before final owner cleanup.                                            |
+| `MidiRecorder is disposed.`                                                                | Construct a new recorder after final cleanup.                                                                          |
 | `MidiRecorder already has an active take.` / `MidiRecorder has no active take to stop.`    | Finish or cancel the current take before starting another; start before stopping.                                      |
 | `MidiRecorder needs a running AudioContext.`                                               | Resume the caller-owned context from a user gesture before recording.                                                  |
 | `MidiRecorder time must be finite, non-negative seconds.`                                  | Pass an absolute finite AudioContext start time.                                                                       |
@@ -281,5 +281,5 @@ This split supports both a silent MIDI inspector and an audible application with
 | `Piano roll scroll time must be finite.`                                                   | Use a finite position in the model's unit.                                                                             |
 | `Playhead must be finite or null.`                                                         | Use a finite position in the model's unit, or null to hide it.                                                         |
 | `Piano roll layout must mount its viewport inside the supplied root.`                      | Layout omitted/cloned the supplied viewport. Append the supplied viewport inside the layout root; retain its identity. |
-| `Piano roll is destroyed.`                                                                 | Attaching after view cleanup. Mount another view; keep the borrowed model if still needed.                             |
-| `Plugin is already attached to this piano roll.`                                           | Same object attached twice to one view. Destroy its attachment first, or create another plugin instance.               |
+| `Piano roll is disposed.`                                                                  | Attaching after view cleanup. Mount another view; keep the borrowed model if still needed.                             |
+| `Plugin is already attached to this piano roll.`                                           | Same object attached twice to one view. Dispose its attachment first, or create another plugin instance.               |

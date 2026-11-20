@@ -43,7 +43,7 @@ export class Param<T> {
     this.$(newValue);
   }
 
-  destroy(): void {
+  dispose(): void {
     this._stopEffect?.();
     this._stopEffect = undefined;
   }

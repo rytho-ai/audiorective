@@ -209,8 +209,8 @@ export class MidiClip {
     );
   }
 
-  destroy(): void {
-    this.sequence.destroy();
+  dispose(): void {
+    this.sequence.dispose();
   }
 }
 
@@ -580,7 +580,7 @@ export class Project {
     if (!track) throw new Error("Project track does not exist.");
     for (const clip of track.clips) {
       this.ids.delete(clip.id);
-      if (clip instanceof MidiClip) clip.destroy();
+      if (clip instanceof MidiClip) clip.dispose();
     }
     for (const device of track.devices) this.ids.delete(device.id);
     this.ids.delete(track.id);
@@ -973,7 +973,7 @@ export class Project {
       throw new RangeError("Project trim needs 0 <= start < end <= clip duration.");
     const trimmed = this.segment(clip, start, end, clip.id);
     this.replace(track, { clips: this.sortClips(track.clips.map((item) => (item.id === clipId ? trimmed : item))) });
-    if (clip instanceof MidiClip) clip.destroy();
+    if (clip instanceof MidiClip) clip.dispose();
     return trimmed;
   }
 
@@ -989,15 +989,15 @@ export class Project {
       left = this.segment(clip, 0, offset, clip.id);
       right = this.segment(clip, offset, duration, rightId);
     } catch (error) {
-      if (left instanceof MidiClip) left.destroy();
-      if (right instanceof MidiClip) right.destroy();
+      if (left instanceof MidiClip) left.dispose();
+      if (right instanceof MidiClip) right.dispose();
       this.ids.delete(rightId);
       throw error;
     }
     this.replace(track, {
       clips: this.sortClips([...track.clips.filter((item) => item.id !== clipId), left, right]),
     });
-    if (clip instanceof MidiClip) clip.destroy();
+    if (clip instanceof MidiClip) clip.dispose();
     return [left, right];
   }
 
@@ -1007,10 +1007,10 @@ export class Project {
     if (!track || !clip) throw new Error("Project clip does not exist.");
     this.replace(track, { clips: Object.freeze(track.clips.filter((item) => item.id !== clipId)) });
     this.ids.delete(clipId);
-    if (clip instanceof MidiClip) clip.destroy();
+    if (clip instanceof MidiClip) clip.dispose();
   }
 
-  destroy(): void {
-    for (const track of this.s.tracks) for (const clip of track.clips) if (clip instanceof MidiClip) clip.destroy();
+  dispose(): void {
+    for (const track of this.s.tracks) for (const clip of track.clips) if (clip instanceof MidiClip) clip.dispose();
   }
 }

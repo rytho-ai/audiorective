@@ -45,7 +45,7 @@ export const rightKeyboardLayout: PianoRollLayout = (root, viewport, controls) =
       buttons[1].disabled = zoom <= 1;
       buttons[2].disabled = zoom >= 64;
     },
-    destroy() {
+    dispose() {
       for (const button of buttons) button.onclick = null;
       root.replaceChildren();
     },

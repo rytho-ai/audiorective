@@ -21,8 +21,8 @@ describe("project mixer routing", () => {
     const { project: reopened, warnings } = openDawProject(saved);
     expect(warnings).toEqual([]);
     expect(reopened.tracks).toEqual(project.tracks);
-    reopened.destroy();
-    project.destroy();
+    reopened.dispose();
+    project.dispose();
   });
 
   test("validates destinations and cycles atomically, and clears incoming edges when a bus is removed", () => {
@@ -39,6 +39,6 @@ describe("project mixer routing", () => {
     project.removeTrack(first.id);
     expect(project.tracks[0].routing).toEqual({ outputBusId: null, sends: [{ busId: second.id, gain: 0.5 }] });
     expect(project.tracks[1].routing).toEqual({ outputBusId: null, sends: [] });
-    project.destroy();
+    project.dispose();
   });
 });

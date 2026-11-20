@@ -8,7 +8,7 @@ afterEach(cleanup);
 
 test("custom layout reads initial snap and follows caller and layout control writes", () => {
   const model = new MidiSequence({ duration: 4, notes: [] });
-  own(() => model.destroy());
+  own(() => model.dispose());
   const output = document.createElement("output");
   let controls!: PianoRollControls;
   const view = mountPianoRoll(host(), {
@@ -24,7 +24,7 @@ test("custom layout reads initial snap and follows caller and layout control wri
       };
     },
   });
-  own(() => view.destroy());
+  own(() => view.dispose());
   expect(output.textContent).toBe("beat");
   view.setSnap("downbeat");
   expect(output.textContent).toBe("downbeat");
@@ -32,9 +32,9 @@ test("custom layout reads initial snap and follows caller and layout control wri
   expect(output.textContent).toBe("off");
 });
 
-test("default snap is off and a destroyed view cannot render a snap update", () => {
+test("default snap is off and a disposed view cannot render a snap update", () => {
   const model = new MidiSequence({ duration: 4, notes: [] });
-  own(() => model.destroy());
+  own(() => model.dispose());
   const render = vi.fn();
   const view = mountPianoRoll(host(), {
     model,
@@ -43,9 +43,9 @@ test("default snap is off and a destroyed view cannot render a snap update", () 
       return { render };
     },
   });
-  own(() => view.destroy());
+  own(() => view.dispose());
   expect(render.mock.lastCall![0].snap).toBe("off");
-  view.destroy();
+  view.dispose();
   const count = render.mock.calls.length;
   view.setSnap("beat");
   expect(render).toHaveBeenCalledTimes(count);

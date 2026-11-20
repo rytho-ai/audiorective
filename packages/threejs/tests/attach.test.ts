@@ -16,7 +16,7 @@ describe("attach", () => {
     const detach = attach(engine, renderer);
     expect(typeof detach).toBe("function");
     detach();
-    engine.destroy();
+    engine.dispose();
   });
 
   test("accepts a createEngine wrapper ({ core })", () => {
@@ -25,7 +25,7 @@ describe("attach", () => {
     const detach = attach(engine, renderer);
     expect(typeof detach).toBe("function");
     detach();
-    engine.core.destroy();
+    engine.core.dispose();
   });
 
   test("sets the THREE.AudioContext to the engine's context", () => {
@@ -34,7 +34,7 @@ describe("attach", () => {
     const detach = attach(engine, renderer);
     expect(THREE.AudioContext.getContext()).toBe(engine.context);
     detach();
-    engine.destroy();
+    engine.dispose();
   });
 
   test("starts the engine on a gesture on renderer.domElement", async () => {
@@ -45,7 +45,7 @@ describe("attach", () => {
     await engine.untilReady();
     expect(engine.state()).toBe("running");
     detach();
-    engine.destroy();
+    engine.dispose();
   });
 
   test("returned detach stops the auto-start listener", () => {
@@ -57,6 +57,6 @@ describe("attach", () => {
     renderer.domElement.dispatchEvent(new Event("click"));
     expect(startSpy).not.toHaveBeenCalled();
     startSpy.mockRestore();
-    engine.destroy();
+    engine.dispose();
   });
 });

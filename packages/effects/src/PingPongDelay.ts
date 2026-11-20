@@ -59,11 +59,11 @@ export class PingPongDelay extends Effect<{ delayTime: SchedulableParam; feedbac
     this.sources = [time, fb];
   }
 
-  override destroy(): void {
+  override dispose(): void {
     for (const s of this.sources) {
       s.stop();
       s.disconnect();
     }
-    super.destroy();
+    super.dispose();
   }
 }

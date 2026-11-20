@@ -29,7 +29,7 @@ export type WorkspaceOptions = {
   resolveBundle?: (device: WebClapDevice) => string | Promise<string | undefined> | undefined;
   /** Messages produced before the workspace existed, such as file-open warnings; they precede the workspace's own. */
   warnings?: readonly string[];
-  /** Hand the Project to the Workspace: `destroy()` destroys it too. Ownership ends if `workspace.project` is later replaced. Default: the caller owns it. */
+  /** Hand the Project to the Workspace: `dispose()` disposes it too. Ownership ends if `workspace.project` is later replaced. Default: the caller owns it. */
   ownsProject?: boolean;
 };
 /** A borrowed transport view that can be passed directly to a player widget. */
@@ -94,7 +94,7 @@ export class Workspace {
   private readonly sessionClipEdits = cell(0);
 
   private readonly projectSource: Cell<Project>;
-  /** The Project this Workspace destroys with itself, when it was handed one. */
+  /** The Project this Workspace disposes with itself, when it was handed one. */
   private ownedProject?: Project;
   private readonly options: WorkspaceOptions;
   /** What a separate render workspace needs to load the same devices. */
@@ -114,7 +114,7 @@ export class Workspace {
   private applyingOwnEdit = false;
   private failedApplication?: { cause: unknown };
   private playRequest = 0;
-  private destroyed = false;
+  private disposed = false;
   private readonly mixer: Mixer;
 
   private constructor(context: AudioContext, project: Project, options: WorkspaceOptions) {
@@ -128,14 +128,14 @@ export class Workspace {
     this.mixer = new Mixer(context, this.output, this.tracks, () => this.project);
     this.stretch = new ClipStretch(
       () => this.project,
-      () => this.destroyed,
+      () => this.disposed,
     );
     this.audition = new Audition(
       context,
       this.output,
       () => this.project,
       this.scheduler,
-      () => this.destroyed,
+      () => this.disposed,
     );
     if (options.destination) this.output.connect(options.destination);
     this.timeline = new Timeline({ audioContext: context, bpm: project.bpm });
@@ -204,7 +204,7 @@ export class Workspace {
       });
       return workspace;
     } catch (error) {
-      workspace.destroy();
+      workspace.dispose();
       throw error;
     }
   }
@@ -234,14 +234,14 @@ export class Workspace {
 
   /** Capture the relationship between the audio clock and the project before arming a recorder. */
   takeAnchor(audioTime = this.context.currentTime): TakeAnchor {
-    if (this.destroyed) throw new Error("Workspace is destroyed.");
+    if (this.disposed) throw new Error("Workspace is disposed.");
     assertTakeAudioTime(audioTime);
     return untracked(() => ({ audioTime, projectTime: this.position, advancing: this.clock.state.value === "playing" }));
   }
 
   /** Positive input latency moves a take earlier. Use preroll when this would cross project zero. */
   takePosition(anchor: TakeAnchor, take: Readonly<{ startTime: number }>, inputLatencySeconds = 0): number {
-    if (this.destroyed) throw new Error("Workspace is destroyed.");
+    if (this.disposed) throw new Error("Workspace is disposed.");
     return placeTake(anchor, take, inputLatencySeconds);
   }
 
@@ -282,15 +282,15 @@ export class Workspace {
   }
 
   private scheduleProjectEdit(): void {
-    if (this.destroyed || this.automaticApply) return;
+    if (this.disposed || this.automaticApply) return;
     this.automaticApply = this.serialize(async () => {
       try {
-        if (!this.destroyed && !this.isCurrentProject()) await this.applyProjectEdit(() => this.applyLight());
+        if (!this.disposed && !this.isCurrentProject()) await this.applyProjectEdit(() => this.applyLight());
       } catch {
         // The caller can observe cells.error or await flush() for the cause.
       } finally {
         this.automaticApply = undefined;
-        if (!this.destroyed && !this.isCurrentProject()) this.scheduleProjectEdit();
+        if (!this.disposed && !this.isCurrentProject()) this.scheduleProjectEdit();
       }
     });
   }
@@ -301,7 +301,7 @@ export class Workspace {
       this.failedApplication = undefined;
       this.applicationError.value = null;
     } catch (cause) {
-      if (!this.destroyed) {
+      if (!this.disposed) {
         this.failedApplication = { cause };
         this.applicationError.value = cause instanceof Error ? cause.message : String(cause);
       }
@@ -316,7 +316,7 @@ export class Workspace {
       await tail;
       if (tail === this.commitTail) break;
     }
-    if (!this.destroyed && this.failedApplication) throw this.failedApplication.cause;
+    if (!this.disposed && this.failedApplication) throw this.failedApplication.cause;
   }
 
   /** Explicitly rebuild the graph after structural edits. Stops transport. */
@@ -325,7 +325,7 @@ export class Workspace {
   }
 
   private async rebuildTracks(position = this.position): Promise<void> {
-    if (this.destroyed) throw new Error("Workspace is destroyed.");
+    if (this.disposed) throw new Error("Workspace is disposed.");
     this.recordCurrentProject();
     this.audition.stopStale();
     this.stop();
@@ -337,9 +337,9 @@ export class Workspace {
       const tracks = this.project.tracks;
       for (const track of tracks) {
         const runtime = await this.createTrack(track);
-        if (this.destroyed) {
+        if (this.disposed) {
           this.disposeTrack(runtime);
-          throw new Error("Workspace is destroyed.");
+          throw new Error("Workspace is disposed.");
         }
         this.tracks.set(track.id, runtime);
       }
@@ -352,7 +352,7 @@ export class Workspace {
       this.topologyPending.value = false;
     } catch (error) {
       this.disposeTracks();
-      if (!this.destroyed) this.topologyPending.value = true;
+      if (!this.disposed) this.topologyPending.value = true;
       throw error;
     }
   }
@@ -399,7 +399,7 @@ export class Workspace {
         try {
           host = await WebClapHost.load(this.context, { url: bundleUrl, pluginId: device.pluginId, workletUrl: this.options.workletUrl });
           if (host.descriptor?.id !== device.pluginId) {
-            host.destroy();
+            host.dispose();
             this.warn(`Device ${device.name} has a different CLAP ID in its bundle.`);
             continue;
           }
@@ -409,7 +409,7 @@ export class Workspace {
           runtime.hosts.set(device.id, host);
           if (track.kind === "midi" && !runtime.midiHost) runtime.midiHost = host;
         } catch (error) {
-          host?.destroy();
+          host?.dispose();
           this.warn(`Device ${device.name} could not load: ${String(error)}`);
         }
       }
@@ -432,7 +432,7 @@ export class Workspace {
    * A track or device topology change sets `cells.needsSync` and applies nothing until the caller runs `sync()`.
    */
   private async applyLight(): Promise<void> {
-    if (this.destroyed) throw new Error("Workspace is destroyed.");
+    if (this.disposed) throw new Error("Workspace is disposed.");
     this.recordCurrentProject();
     const project = this.project;
     const tracks = project.tracks;
@@ -462,7 +462,7 @@ export class Workspace {
         if (runtime.deviceStates.get(device.id) === device.state) continue;
         const host = runtime.hosts.get(device.id);
         if (host) await host.loadState(device.state);
-        if (this.destroyed) return;
+        if (this.disposed) return;
         runtime.deviceStates.set(device.id, device.state);
         if (this.project !== project || project.tracks !== tracks) return this.applyLight();
       }
@@ -477,9 +477,9 @@ export class Workspace {
       for (const runtime of created.values()) this.disposeTrack(runtime);
       throw error;
     }
-    if (this.destroyed || this.project !== project || project.tracks !== tracks) {
+    if (this.disposed || this.project !== project || project.tracks !== tracks) {
       for (const runtime of created.values()) this.disposeTrack(runtime);
-      if (!this.destroyed) return this.applyLight();
+      if (!this.disposed) return this.applyLight();
       return;
     }
     for (const [id, runtime] of created) this.tracks.set(id, runtime);
@@ -517,7 +517,7 @@ export class Workspace {
     const points = track.volumeAutomation;
     if (!points.length) {
       if (!runtime.automationBinding) return;
-      runtime.automationBinding?.destroy();
+      runtime.automationBinding?.dispose();
       runtime.automationBinding = undefined;
       runtime.automationCurve = undefined;
       runtime.automationPoints = undefined;
@@ -610,7 +610,7 @@ export class Workspace {
   }
 
   async play(): Promise<void> {
-    if (this.destroyed) throw new Error("Workspace is destroyed.");
+    if (this.disposed) throw new Error("Workspace is disposed.");
     if (untracked(() => this.clock.state.value === "playing")) return;
     const request = ++this.playRequest;
     await this.flush();
@@ -672,7 +672,7 @@ export class Workspace {
     untracked(() => this.refreshArrangementUntracked());
   }
   private refreshArrangementUntracked(): void {
-    if (this.destroyed) throw new Error("Workspace is destroyed.");
+    if (this.disposed) throw new Error("Workspace is disposed.");
     this.audition.stopStale();
     for (const track of this.project.tracks) {
       const runtime = this.tracks.get(track.id);
@@ -836,7 +836,7 @@ export class Workspace {
    * Returns the Project, which is then safe to hand to a file codec.
    */
   async checkpoint(): Promise<Project> {
-    if (this.destroyed) throw new Error("Workspace is destroyed.");
+    if (this.disposed) throw new Error("Workspace is disposed.");
     await this.flush();
     await this.serialize(() => this.captureStates());
     return this.project;
@@ -854,7 +854,7 @@ export class Workspace {
         const runtime = this.tracks.get(track.id);
         if (host && runtime?.deviceStates.get(device.id) === device.state) {
           const state = await host.saveState();
-          if (this.destroyed || this.project !== project) return;
+          if (this.disposed || this.project !== project) return;
           const currentTrack = () => project.tracks.find(({ id }) => id === track.id);
           if (currentTrack()?.devices.find(({ id }) => id === device.id)?.state !== device.state) continue;
           this.reflectProjectEdit(() => {
@@ -879,10 +879,10 @@ export class Workspace {
   }
 
   private disposeTrack(runtime: TrackRuntime): void {
-    runtime.session?.destroy();
-    runtime.rack.destroy();
-    for (const host of runtime.hosts.values()) host.destroy();
-    runtime.automationBinding?.destroy();
+    runtime.session?.dispose();
+    runtime.rack.dispose();
+    for (const host of runtime.hosts.values()) host.dispose();
+    runtime.automationBinding?.dispose();
     runtime.automationGain.disconnect();
     this.mixer.disposeStrip(runtime);
   }
@@ -896,17 +896,17 @@ export class Workspace {
     this.scheduler.forget();
   }
 
-  destroy(): void {
-    if (this.destroyed) return;
+  dispose(): void {
+    if (this.disposed) return;
     this.stopWatchingProject?.();
     this.stop();
-    this.destroyed = true;
+    this.disposed = true;
     this.audition.stop();
     this.stretch.abortAll();
-    this.clock.destroy();
+    this.clock.dispose();
     this.disposeTracks();
     this.output.disconnect();
-    this.ownedProject?.destroy();
+    this.ownedProject?.dispose();
     this.ownedProject = undefined;
   }
 }

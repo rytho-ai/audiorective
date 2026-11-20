@@ -70,13 +70,13 @@ export class FrequencyShifter extends Effect<{ frequency: SchedulableParam }> {
     this.freqSource = freq;
   }
 
-  override destroy(): void {
+  override dispose(): void {
     for (const o of this.oscillators) {
       o.stop();
       o.disconnect();
     }
     this.freqSource.stop();
     this.freqSource.disconnect();
-    super.destroy();
+    super.dispose();
   }
 }

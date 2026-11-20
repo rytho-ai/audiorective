@@ -67,7 +67,7 @@
         "Edits the single cell (lane snare, step 7, velocity 0.8; index translated correctly) through the API while playing.",
         "Does not stop/restart playback to make the edit take effect (or relies on an API that re-queues automatically (explicitly or by its documented default), or calls the API's documented refresh).",
         "Stops playback so that no further hits sound.",
-        "Releases/destroys the resources the sequencer created (nodes, timers, subscriptions) via the API's teardown."
+        "Releases/disposes the resources the sequencer created (nodes, timers, subscriptions) via the API's teardown."
       ],
       "checks": [
         {

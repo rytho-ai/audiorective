@@ -27,7 +27,7 @@ export class PitchShift extends Effect<{ pitch: Param<number> }, { isReady: Read
   /** Resolves once the engine is ready to process audio. */
   readonly ready: Promise<void>;
   private readonly core: GranularShifter | StretchShifter;
-  private destroyed = false;
+  private disposed = false;
   private readonly _isReady: Cell<boolean>;
 
   constructor(ctx: BaseAudioContext, opts: PitchShiftOptions = {}) {
@@ -58,7 +58,7 @@ export class PitchShift extends Effect<{ pitch: Param<number> }, { isReady: Read
     this.ready =
       core instanceof StretchShifter
         ? core.ready.then(() => {
-            if (this.destroyed) return;
+            if (this.disposed) return;
             this._isReady.value = true;
           })
         : Promise.resolve();
@@ -67,9 +67,9 @@ export class PitchShift extends Effect<{ pitch: Param<number> }, { isReady: Read
     this.core = core;
   }
 
-  override destroy(): void {
-    this.destroyed = true;
-    this.core.destroy();
-    super.destroy();
+  override dispose(): void {
+    this.disposed = true;
+    this.core.dispose();
+    super.dispose();
   }
 }

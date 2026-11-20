@@ -18,13 +18,13 @@ describe("SamplerSource", () => {
   test("output is an AudioNode", () => {
     const s = new SamplerSource(ctx);
     expect(s.output).toBeInstanceOf(AudioNode);
-    s.destroy();
+    s.dispose();
   });
 
   test("trigger with no pad loaded returns null", () => {
     const s = new SamplerSource(ctx);
     expect(s.trigger("vfx1")).toBeNull();
-    s.destroy();
+    s.dispose();
   });
 
   test("setPadBuffer creates the pad on demand; trigger fires it", () => {
@@ -32,7 +32,7 @@ describe("SamplerSource", () => {
     s.setPadBuffer("vfx1", makeBuffer(ctx, 1));
     expect(s.padIds).toEqual(["vfx1"]);
     expect(s.trigger("vfx1")).not.toBeNull();
-    s.destroy();
+    s.dispose();
   });
 
   test("supports an arbitrary set of pad ids", () => {
@@ -41,6 +41,6 @@ describe("SamplerSource", () => {
     expect(s.padIds).toEqual(["vfx1", "vfx2", "vfx3"]);
     expect(s.trigger("vfx2")).not.toBeNull();
     expect(s.trigger("nope")).toBeNull();
-    s.destroy();
+    s.dispose();
   });
 });

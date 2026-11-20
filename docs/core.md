@@ -141,11 +141,11 @@ class Param<T> implements Readable<T> {
   readonly $: SignalAccessor<T>;
   get value(): T;
   set value(v: T);
-  destroy(): void; // stops bind effect (no-op if no bind)
+  dispose(): void; // stops bind effect (no-op if no bind)
 }
 ```
 
-When `bind.set` is provided, an internal effect pushes value changes to the target. Call `destroy()` to stop it. When `bind.get` is provided, the param starts from `bind.get()` rather than `default` (`default` still applies if the getter returns `undefined`); it is read once at construction, and later changes to the external state are not polled.
+When `bind.set` is provided, an internal effect pushes value changes to the target. Call `dispose()` to stop it. When `bind.get` is provided, the param starts from `bind.get()` rather than `default` (`default` still applies if the getter returns `undefined`); it is read once at construction, and later changes to the external state are not polled.
 
 ### SchedulableParamOptions
 
@@ -174,7 +174,7 @@ class SchedulableParam extends Param<number> {
   cancelScheduledValues(cancelTime: number): this;
   cancelAndHoldAtTime(cancelTime: number): this;
 
-  destroy(): void; // unregisters from ParamSync
+  dispose(): void; // unregisters from ParamSync
 }
 ```
 
@@ -204,7 +204,7 @@ class ParamSync {
 }
 ```
 
-`SchedulableParam` auto-registers/unregisters on construction/destroy — you rarely need to use `ParamSync` directly.
+`SchedulableParam` auto-registers/unregisters on construction/dispose — you rarely need to use `ParamSync` directly.
 
 ### Readable\<T\>
 
@@ -348,7 +348,7 @@ abstract class AudioProcessor<
   protected effect(fn: () => void): () => void;
   protected defineGraph(fn: () => EdgeList, opts?: { compensate?: boolean }): GraphHandle;
 
-  destroy(): void;
+  dispose(): void;
 }
 
 interface BuildHelpers {
@@ -361,7 +361,7 @@ interface BuildHelpers {
 }
 ```
 
-**`destroy()`** stops all effects, calls `destroy()` on every param in the registry (cleaning up bind effects and `ParamSync` registrations), and stops and disconnects any internally-created `ConstantSourceNode`s and the internal silencer gain that keeps them alive. Cells are not destroyed automatically — they're plain reactive containers with no audio-graph resources.
+**`dispose()`** stops all effects, calls `dispose()` on every param in the registry (cleaning up bind effects and `ParamSync` registrations), and stops and disconnects any internally-created `ConstantSourceNode`s and the internal silencer gain that keeps them alive. Cells are not disposed automatically — they're plain reactive containers with no audio-graph resources.
 
 **Effects vs instruments — the `.input` convention.** A processor that **transforms** incoming audio (EQ, compressor, reverb, distortion) declares both `input` and `output`. A processor that **produces** audio from scratch (synth, sampler, oscillator) declares only `output`; `input` returns `undefined` from the base class. There are no `EffectProcessor`/`InstrumentProcessor` subclasses — the convention is purely about which getters a processor exposes. Downstream code that needs to insert a processor as an effect (e.g. `bindEffect` in `@audiorective/playcanvas`) checks `processor.input !== undefined`. Spatial's `input` getter is the prototype: it returns the entry `GainNode` that connects into the underlying `PannerNode`.
 
@@ -412,7 +412,7 @@ class Layered extends AudioProcessor<{ useShifter: Param<boolean> }> {
 - **`this.defineGraph(fn, opts?)`** is the protected instance method, used after `super()` (like `effect()`/`computed()`) so the edge callback can read `this.params`. **`defineGraph(fn, { context, compensate? })`** is the standalone export for a graph owned by no processor — the engine's root graph uses this form (see [`AudioEngine`](#audioengine) below).
 - The edge function runs inside an `effect()`; every re-run diffs the new edge list against the current one (keyed by endpoint identity) and applies only the minimal `connect`/`disconnect` calls, then re-solves compensation.
 - `defineGraph(fn, { compensate: false })` keeps the diffing but turns off compensating delays for that graph.
-- Returns a `GraphHandle` with `dispose()`. `AudioProcessor.destroy()` disposes every graph the processor created.
+- Returns a `GraphHandle` with `dispose()`. `AudioProcessor.dispose()` disposes every graph the processor created.
 - `GraphOptions.onSolve?: (handle: GraphHandle) => void` runs after every solve — the engine uses it to keep `AudioEngine.latency` current, and any caller can use it the same way to react to a fresh solve. `handle.snapshot()` returns a `GraphSnapshot` (`{ solveId, nodes, edges }`) reflecting the graph's last solve: each node carries its `kind` (`"native"` or `"processor"`), `label`, declared/derived `latency`, and solved `arrival`; each edge carries its `kind` (`"audio"`, `"param"` for an `AudioParam` sink, `"virtual"` for a processor's own internal input→output path, or `"back"` for an excluded feedback edge) and `compensationSamples` (always `0` for anything but an `"audio"` edge, and `0` everywhere when `compensate: false`). `handle.idOf(endpoint)` returns the same id `snapshot()` assigned that endpoint (for an `AudioProcessor`, its output node's id — the input side, when different, is reachable via a `"virtual"` edge), so ids stay stable across solves and a consumer can filter by `kind` to render only what it cares about. `handle.reaches(from, to)` reports whether `from` forward-connects to `to` in the last solve, `false` for either endpoint outside that solve — `AudioEngine.getPathLatency` uses it to reject a processor sitting in a disconnected component of the same graph.
 
 ### Latency (PDC)
@@ -443,7 +443,7 @@ super(ctx, ({ param }) => ({
 }));
 ```
 
-A `latency` created with the `param()` helper but not also placed in the returned `params` registry has nothing to destroy it — `AudioProcessor.destroy()` only destroys params it owns via `params`. Track a param-backed `latency` in `params` yourself, or declare a plain number when it never changes at runtime.
+A `latency` created with the `param()` helper but not also placed in the returned `params` registry has nothing to dispose it — `AudioProcessor.dispose()` only disposes params it owns via `params`. Track a param-backed `latency` in `params` yourself, or declare a plain number when it never changes at runtime.
 
 When a processor calls `this.defineGraph(...)` and declares no `latency`, it's **derived**: the longest path in samples from `input` to `output` through its own graph. A processor that declares a value and also has a `defineGraph` uses the declared value (a worklet-backed processor may still use `defineGraph` for its surrounding wiring).
 
@@ -654,7 +654,7 @@ voice2.stop();
 
 // silence everything
 player.stopAll();
-player.destroy();
+player.dispose();
 ```
 
 **Constructor options** (`SamplerOptions`):
@@ -695,7 +695,7 @@ player.cells.activeVoices: ReadonlyCell<number> // reactive voice count, written
 player.trigger(opts?: TriggerOptions): Voice | null
 // Returns null when no buffer is set, or steal:"none" drops the voice.
 player.stopAll(when?: number): void
-player.destroy(): void
+player.dispose(): void
 ```
 
 **`TriggerOptions`** (all optional):
@@ -794,7 +794,7 @@ player.cells.isPlaying: ReadonlyCell<boolean> // written only by the player
 player.start(when?: number, offset?: number): void  // sample-accurate; no-op while playing or with no buffer
 player.stop(when?: number): void                     // immediate, or future-dated (plays until `when`)
 player.loop = true; player.loopStart = 0; player.loopEnd = 3.69;  // same as writing params.loop / loopStart / loopEnd; write through to the live source
-player.destroy(): void
+player.dispose(): void
 ```
 
 **Why `rate` is schedulable but the others aren't special.** An `AudioBufferSourceNode` is one-shot — `stop()` permanently kills it, so each `start()` builds a fresh node with a fresh `playbackRate`. `BufferPlayer` keeps `params.rate` a **stable reference** (so `useValue(player.rate)` gives a live pitch readout) and re-points it at the new node's `playbackRate` via [`SchedulableParam.rebind`](#schedulableparam) on every `start()`. Consequences:
@@ -824,7 +824,7 @@ player.src = "/music/other.mp3"; // swap track; resets currentTime / duration
 
 player.onEnded(() => console.log("track finished")); // natural end only
 
-player.destroy();
+player.dispose();
 ```
 
 **Constructor options** (`FilePlayerOptions`):
@@ -860,7 +860,7 @@ player.pause(): void
 player.seek(t: number): void
 player.stop(): void            // pause + seek(0)
 player.onEnded(cb: () => void): () => void   // returns an unsubscribe
-player.destroy(): void
+player.dispose(): void
 ```
 
 **`play()` swallows two error classes silently:** autoplay-gesture errors (browser blocked playback before a user gesture) and `AbortError` (the element was replaced or unloaded mid-play). Read `player.cells.isPlaying` for actual playback state; a false value after `play()` cannot distinguish a blocked request from an interrupted one. For a plain control bar that reports its own play failures, use [`mountPlayer` with `fromFilePlayer(player)`](./widgets.md#plain-player-controls); its adapter calls the documented `audio.play()` escape hatch and ignores `AbortError`.
@@ -1033,7 +1033,7 @@ const waveform = new Param<OscillatorType>({
   },
 });
 waveform.value = "square"; // pushes to osc.type
-waveform.destroy(); // cleanup
+waveform.dispose(); // cleanup
 
 // schedulable param bound to an existing AudioParam
 const gain = new GainNode(ctx);
@@ -1043,7 +1043,7 @@ const vol = new SchedulableParam({
   audioParam: gain.gain,
 });
 vol.linearRampToValueAtTime(0, ctx.currentTime + 1);
-vol.destroy(); // cleanup when done
+vol.dispose(); // cleanup when done
 ```
 
 ---
@@ -1061,21 +1061,21 @@ createEngine() / new Engine()  →  context created (suspended)               �
 .core.start()                  →  context.resume() (needs user gesture)      →  'running'
 .core.suspend()                →  context.suspend()                          →  'suspended'
 .core.resume()                 →  context.resume()                           →  'running'
-.core.destroy()                →  processors destroyed, context closed*      →  'destroyed' (terminal)
+.core.dispose()                →  processors disposed, context closed*      →  'disposed' (terminal)
 ```
 
-\* **Context ownership.** An engine that creates its own `AudioContext` closes it on `destroy()`. A context passed in (`new AudioEngine(ctx)`, `createEngine(setup, { context })`) is borrowed and is never closed by the engine; the caller closes it. The engine listens with `addEventListener("statechange")` rather than assigning `onstatechange`, so a borrowed context keeps its own handler, and `destroy()` removes the engine's listener.
+\* **Context ownership.** An engine that creates its own `AudioContext` closes it on `dispose()`. A context passed in (`new AudioEngine(ctx)`, `createEngine(setup, { context })`) is borrowed and is never closed by the engine; the caller closes it. The engine listens with `addEventListener("statechange")` rather than assigning `onstatechange`, so a borrowed context keeps its own handler, and `dispose()` removes the engine's listener.
 
-`engine.state` and `engine.latency` are read-only: `state` is a callable view (`engine.state()`, `.value`, `$()`) and `latency` is a `ReadonlyCell<number>`. Only the engine writes them. `start()`, `suspend()`, `resume()` and `untilReady()` read the state untracked, so calling them inside an effect does not subscribe it. `destroy()` and an external close of the context (state `"destroyed"`) reject any pending `untilReady()` with an error, and a call made once the engine is destroyed rejects at once. A `start()`, `resume()` or `suspend()` still awaiting the context when it closes leaves the state `"destroyed"`.
+`engine.state` and `engine.latency` are read-only: `state` is a callable view (`engine.state()`, `.value`, `$()`) and `latency` is a `ReadonlyCell<number>`. Only the engine writes them. `start()`, `suspend()`, `resume()` and `untilReady()` read the state untracked, so calling them inside an effect does not subscribe it. `dispose()` and an external close of the context (state `"disposed"`) reject any pending `untilReady()` with an error, and a call made once the engine is disposed rejects at once. A `start()`, `resume()` or `suspend()` still awaiting the context when it closes leaves the state `"disposed"`.
 
-Calling `.core.start()` on a destroyed engine throws. Calling `.core.suspend()`/`.core.resume()` on a destroyed engine warns and no-ops.
+Calling `.core.start()` on a disposed engine throws. Calling `.core.suspend()`/`.core.resume()` on a disposed engine warns and no-ops.
 
-The engine mirrors every `statechange` its context reports, not just the transition its own methods cause: a raw `context.resume()`/`context.suspend()` called on the underlying `AudioContext`, Safari's non-standard `interrupted` state (a phone call, Siri, another app taking the audio session), and `closed`. `interrupted` reads as `"suspended"`; `closed` reads as `"destroyed"`. `start()` and `resume()` check the real `context.state` rather than the mirror, so either one reliably means "make sure the context is running now" even if the mirror was stale.
+The engine mirrors every `statechange` its context reports, not just the transition its own methods cause: a raw `context.resume()`/`context.suspend()` called on the underlying `AudioContext`, Safari's non-standard `interrupted` state (a phone call, Siri, another app taking the audio session), and `closed`. `interrupted` reads as `"suspended"`; `closed` reads as `"disposed"`. `start()` and `resume()` check the real `context.state` rather than the mirror, so either one reliably means "make sure the context is running now" even if the mirror was stale.
 
 ### EngineState
 
 ```typescript
-type EngineState = "idle" | "running" | "suspended" | "destroyed";
+type EngineState = "idle" | "running" | "suspended" | "disposed";
 ```
 
 ### AudioEngine
@@ -1088,12 +1088,12 @@ class AudioEngine {
   get state(): EngineStateView; // read-only: state(), state.value, state.$()
   readonly latency: ReadonlyCell<number>; // samples — see Latency (PDC)
   get perceivedTime(): number;
-  untilReady(): Promise<void>; // resolves when state becomes 'running'; rejects if the engine is destroyed first
+  untilReady(): Promise<void>; // resolves when state becomes 'running'; rejects if the engine is disposed first
 
   start(): Promise<void>; // context.resume(), requires user gesture
   suspend(): Promise<void>;
   resume(): Promise<void>;
-  destroy(): void; // terminal — cannot restart
+  dispose(): void; // terminal — cannot restart
 
   register<T extends AudioProcessor>(processor: T): T;
   defineGraph(fn: () => EdgeList, opts?: Omit<GraphOptions, "context">): GraphHandle; // root graph, sink = ctx.destination
@@ -1108,7 +1108,7 @@ class AudioEngine {
 
 ### `autoStart(target, options?)`
 
-Arms one-shot gesture listeners on `target` that call `start()` on the first user interaction. Re-arms automatically if the engine state later drops from `running` (e.g. mobile background suspend). Disarms permanently when the engine is destroyed. Returns a detach function that stops the effect and removes any armed listeners.
+Arms one-shot gesture listeners on `target` that call `start()` on the first user interaction. Re-arms automatically if the engine state later drops from `running` (e.g. mobile background suspend). Disarms permanently when the engine is disposed. Returns a detach function that stops the effect and removes any armed listeners.
 
 This is the engine-side primitive used by `@audiorective/react`'s `EngineProvider` and `@audiorective/threejs`'s `attach()`. Use it directly in frameworks without a wrapper.
 
@@ -1124,7 +1124,7 @@ engine.core.autoStart(canvas, { events: ["pointerdown"] });
 
 ### Build the engine after async assets
 
-`createEngine`'s `setup` is synchronous. When the engine needs decoded buffers or an offline render, load them first and create the engine afterwards, inside an effect that destroys it on cleanup. Module-scope `createEngine` and `createEngineContext(engine)` assume the engine already exists, so use plain state in this shape:
+`createEngine`'s `setup` is synchronous. When the engine needs decoded buffers or an offline render, load them first and create the engine afterwards, inside an effect that disposes it on cleanup. Module-scope `createEngine` and `createEngineContext(engine)` assume the engine already exists, so use plain state in this shape:
 
 ```tsx
 function App() {
@@ -1143,7 +1143,7 @@ function App() {
     return () => {
       cancelled = true;
       detach?.();
-      built?.core.destroy();
+      built?.core.dispose();
     };
   }, []);
 
@@ -1196,17 +1196,17 @@ Auto-registers all `AudioProcessor` instances from the returned object. Only one
 
 Throws [`EngineEnvironmentError`](#engineenvironmenterror) if the environment has no `AudioContext` constructor. Passing your own context — `createEngine(setup, { context })` — bypasses the check entirely, which is how you run against a mock or a host-provided context. The throw happens before `setup` runs, so a failed call never leaves a partly built graph behind.
 
-**What gets registered.** Only values that are `AudioProcessor` instances at the top level of the returned object are registered, and `engine.core.destroy()` destroys exactly those, then closes a context the engine created. A processor nested inside another object (a plain composite such as a drum machine that owns processors) is not registered, and neither is the composite itself. Return the composite beside its processors, so the engine destroys the processors; the composite's own non-audio state (cells, timers, a `Clock`) is yours to tear down:
+**What gets registered.** Only values that are `AudioProcessor` instances at the top level of the returned object are registered, and `engine.core.dispose()` disposes exactly those, then closes a context the engine created. A processor nested inside another object (a plain composite such as a drum machine that owns processors) is not registered, and neither is the composite itself. Return the composite beside its processors, so the engine disposes the processors; the composite's own non-audio state (cells, timers, a `Clock`) is yours to tear down:
 
 ```typescript
 const engine = createEngine((ctx) => {
-  const kit = new Kit(ctx); // AudioProcessor: registered and destroyed by the engine
+  const kit = new Kit(ctx); // AudioProcessor: registered and disposed by the engine
   const machine = new DrumMachine(kit); // plain composite: kept on the result, not registered
   return { machine, kit };
 });
 
-engine.machine.clock.destroy(); // yours to destroy
-engine.core.destroy(); // destroys kit
+engine.machine.clock.dispose(); // yours to dispose
+engine.core.dispose(); // disposes kit
 ```
 
 A processor you build later, outside `setup`, joins with `engine.core.register(processor)`.
@@ -1231,7 +1231,7 @@ engine.core.state(); // EngineState
 engine.core.latency.value; // samples — longest path into ctx.destination
 engine.core.perceivedTime; // ctx.currentTime minus latency and output latency — what the listener hears now
 engine.core.getPathLatency(synth); // samples from synth.output to ctx.destination
-engine.core.destroy(); // cleanup
+engine.core.dispose(); // cleanup
 engine.core.context; // AudioContext
 ```
 
@@ -1402,7 +1402,7 @@ export type {
 
 | Message                                                                                          | Cause                                                                                                                                            | Fix                                                                                                    |
 | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| `AudioEngine destroyed before it became ready`                                                   | `untilReady()` was called on, or was pending when, a destroyed engine.                                                                           | Create a new engine; `destroy()` is final. Do not await readiness across a teardown.                   |
+| `AudioEngine disposed before it became ready`                                                    | `untilReady()` was called on, or was pending when, a disposed engine.                                                                            | Create a new engine; `dispose()` is final. Do not await readiness across a teardown.                   |
 | `An immer producer returned a new value *and* modified its draft. …`                             | Immer's message, thrown from `Cell.update` when an expression-bodied recipe such as `p => Object.assign(p, x)` mutates the draft and returns it. | Use a block body, `p => { Object.assign(p, x); }`, or assign `cell.value = next` to replace the value. |
 | `createEngine: setup returned reserved key "core"`                                               | The object returned by `setup` has a `core` property, which the engine reserves for itself.                                                      | Rename that property; read the engine core as `engine.core`.                                           |
 | `Event transform "<id>" returned an event without a finite "beat".`                              | A beat transform (the default unit) returned an event whose `beat` is missing or not finite.                                                     | Fix that transform; return finite beats, or set `unit: "second"` to work with `when`.                  |

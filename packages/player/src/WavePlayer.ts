@@ -353,7 +353,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
     });
   }
   private assertAlive(): void {
-    if (this.disposed) throw new Error("WavePlayer is destroyed.");
+    if (this.disposed) throw new Error("WavePlayer is disposed.");
   }
   private change(action: () => void): void {
     batch(() => untracked(action));
@@ -648,7 +648,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
       if (request === this.request) this.abort = null;
     }
   }
-  override destroy(): void {
+  override dispose(): void {
     if (this.disposed) return;
     // Stop subscribers first: resetting state inside the batch would otherwise notify them after `disposed`.
     for (const unsubscribe of [...this.subscribers]) unsubscribe();
@@ -668,8 +668,8 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
       this.loadProgress = null;
       this.original = null;
       this.store.version.value = null;
-      this.player.destroy();
-      super.destroy();
+      this.player.dispose();
+      super.dispose();
       this.gain.disconnect();
     });
   }

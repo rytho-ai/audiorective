@@ -39,7 +39,7 @@ function instrumentSource(context: AudioContext) {
     { id: "kick", buffer },
     { id: "snare", buffer },
   ]);
-  disposers.push(() => bank.destroy());
+  disposers.push(() => bank.dispose());
   const played: Played[] = [];
   const spy = vi.spyOn(bank, "trigger");
   return {

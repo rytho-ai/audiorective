@@ -36,7 +36,7 @@ export class Mixer {
       this.sendBus.define(sendName);
       return { channel, sendName };
     } catch (error) {
-      channel.destroy();
+      channel.dispose();
       throw error;
     }
   }
@@ -48,7 +48,7 @@ export class Mixer {
 
   /** Release a strip that never became part of a track runtime. */
   releaseStrip(strip: MixerStrip): void {
-    strip.channel.destroy();
+    strip.channel.dispose();
     this.sendBus.undefine(strip.sendName);
   }
 

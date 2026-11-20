@@ -27,7 +27,7 @@ export interface SchedulerWindow {
   own(event: CancellableEvent, when: number): void;
 }
 
-/** Why a scheduler is being reset: the transport started, stopped, paused or jumped, or the scheduler is leaving (detached, or the clock was destroyed). */
+/** Why a scheduler is being reset: the transport started, stopped, paused or jumped, or the scheduler is leaving (detached, or the clock was disposed). */
 export type ResetReason = "start" | "stop" | "pause" | "seek" | "detach";
 
 export type TransportChangeType = "start" | "stop" | "pause" | "resume" | "seek" | "tempo";
@@ -51,7 +51,7 @@ export interface Scheduler {
   schedule(window: SchedulerWindow, timing: BeatTiming): void;
   /**
    * Called before the transport state changes, after owned events are cancelled. "start": `clock.start()` was called (the first window begins at its
-   * `offsetBeats`); "stop", "pause", "seek": the transport left or jumped; "detach": the scheduler was detached or the clock destroyed. `resume()` does
+   * `offsetBeats`); "stop", "pause", "seek": the transport left or jumped; "detach": the scheduler was detached or the clock disposed. `resume()` does
    * not call it. A scheduler that ignores `reason` resets on every one; one that keeps work queued while stopped keeps it on "start".
    */
   reset?(reason: ResetReason): void;
@@ -65,7 +65,7 @@ export interface Scheduler {
    * Optional. Called once, synchronously inside `attach`, with a handle to the transport the scheduler now follows: its timeline, state and time
    * signature are live at once, so commands issued right after `attach` can compute beats. It can re-queue its look-ahead after an edit
    * (`handle.refresh()`) or leave on its own (`handle.detach()`). May return a cleanup, which runs when the scheduler is detached or the clock is
-   * destroyed, after `reset`.
+   * disposed, after `reset`.
    */
   attached?(handle: SchedulerHandle): void | (() => void);
 }
@@ -140,7 +140,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
   // lets that first tick land exactly on the target beat with no false miss.
   private _previousWindowEndGeneration = -1;
   private _startedAt = 0;
-  private _destroyed = false;
+  private _disposed = false;
   private readonly _owned = new Map<CancellableEvent, number>();
   // which scheduler's window registered an owned event; onTick events have no entry
   private readonly _owners = new Map<CancellableEvent, Scheduler>();
@@ -187,7 +187,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
    * and does not stop the others.
    */
   attach(scheduler: Scheduler): () => void {
-    if (this._destroyed) throw new Error("Clock is destroyed.");
+    if (this._disposed) throw new Error("Clock is disposed.");
     if (this._schedulers.has(scheduler)) throw new Error("Clock already has this scheduler attached.");
     this._schedulers.add(scheduler);
     let detached = false;
@@ -243,7 +243,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
   }
 
   private _notify(change: TransportChange): void {
-    if (this._destroyed) return;
+    if (this._disposed) return;
     for (const scheduler of [...this._schedulers]) {
       if (!scheduler.transport) continue;
       try {
@@ -354,10 +354,10 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
    * (a callback, an effect or a launcher method that edits and refreshes). Further calls before that
    * microtask are no-ops: nothing has been refilled yet, so there is nothing new to retract, and the
    * first boundary stays the refill's start so no beat is skipped. Any transport call (`start`, `pause`,
-   * `stop`, `seek`, `destroy`) cancels the pending refill; a tick that runs first performs it.
+   * `stop`, `seek`, `dispose`) cancels the pending refill; a tick that runs first performs it.
    */
   refresh(): void {
-    if (this._destroyed || this._timeline._transportState !== "playing" || this._refillPending) return;
+    if (this._disposed || this._timeline._transportState !== "playing" || this._refillPending) return;
     const now = this._timeline.now;
     this._cancelOwned(true, now);
     this._previousWindowEndBeat = this._timeline._invalidate(now);
@@ -368,9 +368,9 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
   }
 
   /** Stops the tick loop for good (terminates the underlying worker/timer). */
-  destroy(): void {
-    if (this._destroyed) return;
-    this._destroyed = true;
+  dispose(): void {
+    if (this._disposed) return;
+    this._disposed = true;
     this._refillPending = false;
     this._tickSource.stop();
     this._stopTempoWatch();
@@ -422,7 +422,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
       event.cancel();
       throw new RangeError("Clock owned event time must be finite, non-negative seconds.");
     }
-    if (this._destroyed || this._cancelling || this._timeline._transportState !== "playing" || this._timeline.generation !== generation) {
+    if (this._disposed || this._cancelling || this._timeline._transportState !== "playing" || this._timeline.generation !== generation) {
       event.cancel();
       return;
     }
@@ -444,8 +444,8 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
 
   private _tick(): void {
     // a tick already in flight (posted by the worker before terminate())
-    // can still arrive after destroy() -- ignore it
-    if (this._destroyed) return;
+    // can still arrive after dispose() -- ignore it
+    if (this._disposed) return;
     if (this._ticking) return;
     this._ticking = true;
     // this tick is the refill a pending refresh() asked for

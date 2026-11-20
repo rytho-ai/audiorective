@@ -90,7 +90,7 @@ function bindPanner(app: pc.AppBase, entity: pc.Entity, panner: PannerNode): () 
 
 Each frame it writes the entity's world position into `panner.positionX/Y/Z` and the entity's forward vector into `panner.orientationX/Y/Z`. It writes once eagerly at call time so the panner isn't silent-at-origin until the first frame. Returns a disposer that unhooks the per-frame sync.
 
-`bindPanner` does **not** own the panner's lifetime — it never disconnects or destroys it. The `Spatial` (or whoever created the panner) owns teardown; the disposer only stops the transform sync. Pass `engine.spatial.panner` in and let the engine own teardown.
+`bindPanner` does **not** own the panner's lifetime — it never disconnects or disposes it. The `Spatial` (or whoever created the panner) owns teardown; the disposer only stops the transform sync. Pass `engine.spatial.panner` in and let the engine own teardown.
 
 > Convention note: three.js's `getWorldDirection()` returns `+Z`, whereas PlayCanvas's `entity.forward` is `-Z`. Both mean "the way the object faces", so the panner orientation is consistent across renderers.
 
@@ -153,11 +153,11 @@ Because the `Spatial` lives in core and already connects to `ctx.destination`, t
 
 ## Lifecycle
 
-`AudioProcessor.destroy()` is the cleanup primitive. The bindings do not own the audio:
+`AudioProcessor.dispose()` is the cleanup primitive. The bindings do not own the audio:
 
 - `attach()`'s disposer only removes the gesture-autostart listeners. Calling it doesn't tear down the audio engine or close the AudioContext.
 - `bindPanner()`'s disposer only unhooks the per-frame `update` sync. It never disconnects the panner — `Spatial` owns that. (`app.destroy()` also tears down `update` listeners, but call the disposer explicitly if the app outlives the scene.)
-- Tie `engine.core.destroy()` / `processor.destroy()` to your own scene-cleanup path.
+- Tie `engine.core.dispose()` / `processor.dispose()` to your own scene-cleanup path.
 
 ---
 

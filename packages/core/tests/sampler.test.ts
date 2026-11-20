@@ -24,14 +24,14 @@ describe("Sampler — trigger & polyphony", () => {
     expect((p.output as GainNode).gain.value).toBeCloseTo(0.5);
     p.params.volume.value = 0.25;
     expect((p.output as GainNode).gain.value).toBeCloseTo(0.25);
-    p.destroy();
+    p.dispose();
   });
 
   test("trigger with no buffer returns null", () => {
     const p = new Sampler(ctx);
     expect(p.trigger()).toBeNull();
     expect(p.cells.activeVoices.value).toBe(0);
-    p.destroy();
+    p.dispose();
   });
 
   test("trigger spawns a voice and increments activeVoices", () => {
@@ -41,7 +41,7 @@ describe("Sampler — trigger & polyphony", () => {
     expect(p.cells.activeVoices.value).toBe(1);
     p.stopAll();
     expect(p.cells.activeVoices.value).toBe(0);
-    p.destroy();
+    p.dispose();
   });
 
   test("polyphony 1 + steal 'oldest' restarts (count stays 1)", () => {
@@ -50,7 +50,7 @@ describe("Sampler — trigger & polyphony", () => {
     p.trigger();
     expect(p.cells.activeVoices.value).toBe(1);
     p.stopAll();
-    p.destroy();
+    p.dispose();
   });
 
   test("polyphony 1 + steal 'none' drops the retrigger", () => {
@@ -59,7 +59,7 @@ describe("Sampler — trigger & polyphony", () => {
     expect(p.trigger()).toBeNull();
     expect(p.cells.activeVoices.value).toBe(1);
     p.stopAll();
-    p.destroy();
+    p.dispose();
   });
 
   test("polyphony N overlaps up to N concurrent voices", () => {
@@ -71,7 +71,7 @@ describe("Sampler — trigger & polyphony", () => {
     p.trigger(); // steal oldest, still 3
     expect(p.cells.activeVoices.value).toBe(3);
     p.stopAll();
-    p.destroy();
+    p.dispose();
   });
 
   test("a voice that ends naturally is evicted from the pool", async () => {
@@ -80,7 +80,7 @@ describe("Sampler — trigger & polyphony", () => {
     expect(p.cells.activeVoices.value).toBe(1);
     await delay(200);
     expect(p.cells.activeVoices.value).toBe(0);
-    p.destroy();
+    p.dispose();
   });
 
   test("buffer is hot-swappable for future triggers", () => {
@@ -89,7 +89,7 @@ describe("Sampler — trigger & polyphony", () => {
     p.buffer = makeBuffer(ctx, 1);
     expect(p.trigger()).not.toBeNull();
     p.stopAll();
-    p.destroy();
+    p.dispose();
   });
 
   test("stopAll(when) in the future evicts only after it fires", async () => {
@@ -102,7 +102,7 @@ describe("Sampler — trigger & polyphony", () => {
     expect(p.cells.activeVoices.value).toBe(2); // still audible during the window
     await delay(400);
     expect(p.cells.activeVoices.value).toBe(0);
-    p.destroy();
+    p.dispose();
   });
 
   test("a looping voice is not auto-evicted (stays active)", async () => {
@@ -112,7 +112,7 @@ describe("Sampler — trigger & polyphony", () => {
     await delay(250);
     expect(p.cells.activeVoices.value).toBe(1);
     p.stopAll();
-    p.destroy();
+    p.dispose();
   });
 
   test("the pad has no transport API (trigger-only)", () => {
@@ -124,6 +124,6 @@ describe("Sampler — trigger & polyphony", () => {
     expect(api.seek).toBeUndefined();
     expect(api.stop).toBeUndefined();
     expect((p.cells as Record<string, unknown>).isPlaying).toBeUndefined();
-    p.destroy();
+    p.dispose();
   });
 });

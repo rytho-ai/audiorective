@@ -27,14 +27,14 @@ const gesture = attachClipGesture(clipElement, {
 });
 
 // Before removing the element:
-gesture.destroy();
+gesture.dispose();
 ```
 
 The caller renders lanes and clip appearance, supplies compatible track hit testing, and keeps shared selection/history. `time` and `onMove.time` use `timeUnit` (seconds by default, or beats); the widget converts through `timeMap` for its second-based pointer geometry and beat keyboard nudges. The widget never creates an AudioContext or changes the Project by itself. This interaction entry has no dependency on `@audiorective/daw`.
 
-`attachTimelineZoom` from the same entry owns continuous zoom gestures over a caller-rendered time axis. It connects an optional range input and Ctrl/⌘+wheel, keeps the project time under the pointer (or viewport center for the slider), and batches redraws to animation frames. The caller supplies `getScale()` in pixels per project second and `onScale(next)` to redraw its arrangement; `ruler()` returns the current time-axis element after that redraw. Buttons can call `zoom.zoomBy(1.45)` and fit-to-project can call `zoom.zoomTo(scale, leftEdgeX)`. Call `zoom.cancel()` when switching projects and `zoom.destroy()` when removing the view. The default range is 2–2000 pixels per second; `minScale` and `maxScale` can change it. The slider's `aria-valuetext` reads "<n> px/s"; pass `labels: { scale(pixelsPerSecond) }` to localize it.
+`attachTimelineZoom` from the same entry owns continuous zoom gestures over a caller-rendered time axis. It connects an optional range input and Ctrl/⌘+wheel, keeps the project time under the pointer (or viewport center for the slider), and batches redraws to animation frames. The caller supplies `getScale()` in pixels per project second and `onScale(next)` to redraw its arrangement; `ruler()` returns the current time-axis element after that redraw. Buttons can call `zoom.zoomBy(1.45)` and fit-to-project can call `zoom.zoomTo(scale, leftEdgeX)`. Call `zoom.cancel()` when switching projects and `zoom.dispose()` when removing the view. The default range is 2–2000 pixels per second; `minScale` and `maxScale` can change it. The slider's `aria-valuetext` reads "<n> px/s"; pass `labels: { scale(pixelsPerSecond) }` to localize it.
 
-The widgets implement their own waveform display and interaction. They require no UI framework or WaveSurfer dependency. The selector uses [WavePlayer](./player.md) for audio and selection. Pass a shared `player`, or supply `createPlayer` to let the selector construct, own and destroy one. Its public audio connection is `handle.output`.
+The widgets implement their own waveform display and interaction. They require no UI framework or WaveSurfer dependency. The selector uses [WavePlayer](./player.md) for audio and selection. Pass a shared `player`, or supply `createPlayer` to let the selector construct, own and dispose one. Its public audio connection is `handle.output`.
 
 ## Parameter controls and metering
 
@@ -57,14 +57,14 @@ const level = mountLevelMeter(meters, {
   sampleCount: analyser.fftSize,
   read: (samples) => analyser.getFloatTimeDomainData(samples),
 });
-// cutoff.destroy() and level.destroy() release just the views.
+// cutoff.dispose() and level.dispose() release just the views.
 ```
 
-For app-owned commands, supply a structural getter that reads the current tracked value and a setter that calls the command. `mountLevelMeter()` reports mono sample peak and RMS per snapshot, including samples over full scale. Call `destroy()` to stop the sampling loop. The caller owns the analyser and audio routing.
+For app-owned commands, supply a structural getter that reads the current tracked value and a setter that calls the command. `mountLevelMeter()` reports mono sample peak and RMS per snapshot, including samples over full scale. Call `dispose()` to stop the sampling loop. The caller owns the analyser and audio routing.
 
 ## Clip envelope editor
 
-`mountClipEnvelopeEditor(root, { duration, envelope, onChange })` takes a local `{ gain, fadeIn, fadeOut }` shape (the `ClipEnvelope` in `@audiorective/daw/project` fits) and exposes linear gain, fade-in and fade-out fields for a caller-owned reactive envelope. It commits changes in clip-local seconds and limits the combined fade length to `duration`. Use its `labels` option to localize the controls. The widget updates when the borrowed state changes and tears down its own observer on `destroy()`.
+`mountClipEnvelopeEditor(root, { duration, envelope, onChange })` takes a local `{ gain, fadeIn, fadeOut }` shape (the `ClipEnvelope` in `@audiorective/daw/project` fits) and exposes linear gain, fade-in and fade-out fields for a caller-owned reactive envelope. It commits changes in clip-local seconds and limits the combined fade length to `duration`. Use its `labels` option to localize the controls. The widget updates when the borrowed state changes and tears down its own observer on `dispose()`.
 
 ## Automation overlay
 
@@ -84,7 +84,7 @@ The attachment owns its gesture and drawing. The caller owns the points and play
 
 ## Step grid and pads
 
-`mountStepGrid(root, { sequencer, formatStep?, labels?, laneLabel? })` is a lane-aware, pluggable step editor. `sequencer` is a local structural contract, `StepGridSequencer = { lanes: Record<string, StepGridLane> }` (a lane carries `pattern`, `length`, `rate`, `swing`, `direction`, `mute`, `solo`, `params`, `playhead`, `progress` and `steps`); a `StepSequencer` from [Step Sequencer](./sequencer.md) satisfies it directly, as can your own model with the same lane shape (the widget imports no capability-class values). Destroying the view leaves the borrowed sequencer available.
+`mountStepGrid(root, { sequencer, formatStep?, labels?, laneLabel? })` is a lane-aware, pluggable step editor. `sequencer` is a local structural contract, `StepGridSequencer = { lanes: Record<string, StepGridLane> }` (a lane carries `pattern`, `length`, `rate`, `swing`, `direction`, `mute`, `solo`, `params`, `playhead`, `progress` and `steps`); a `StepSequencer` from [Step Sequencer](./sequencer.md) satisfies it directly, as can your own model with the same lane shape (the widget imports no capability-class values). Disposeing the view leaves the borrowed sequencer available.
 
 The grid reads each lane's length, rate, direction, swing, mute, solo, `steps`, `playhead` and `progress` and writes through the lane's setters and `steps[i]` fields. The column count is the longest lane length seen. `laneLabel(name)` names a lane for display (default: the lane name).
 
@@ -132,7 +132,7 @@ Each lane row has a header and a row of cells.
 
 ### Step grid plugins
 
-`mountStepGrid` returns `{ attach(plugin), destroy() }` and implements `PluginTarget<StepGridPluginContext>`, the same host that backs the waveform, piano roll and selector. Registrations are released when the attachment is destroyed, and a throwing plugin or listener does not break the grid. Plugin attachments are destroyed with the grid.
+`mountStepGrid` returns `{ attach(plugin), dispose() }` and implements `PluginTarget<StepGridPluginContext>`, the same host that backs the waveform, piano roll and selector. Registrations are released when the attachment is disposed, and a throwing plugin or listener does not break the grid. Plugin attachments are disposed with the grid.
 
 `StepGridPluginContext` extends `WidgetPluginContext` (`listen`, `onCleanup`) with the members below; `StepGridPlugin` is `WidgetPlugin<StepGridPluginContext>`:
 
@@ -179,18 +179,18 @@ const euclid: StepGridPlugin = {
 };
 
 const grid = mountStepGrid(document.querySelector<HTMLElement>("#grid")!, { sequencer });
-const attachment = grid.attach(euclid); // attachment.destroy() removes the button and overlay
+const attachment = grid.attach(euclid); // attachment.dispose() removes the button and overlay
 ```
 
 `mountPadGrid(root, { pads, press })` turns pointer or focused keyboard presses into calls to `press(id)`. A one-shot callback returns nothing. For a gated sound, return a release callback for that specific press. The widget releases held inputs on key or pointer release, focus loss and destruction. It leaves the audio engine and pad mapping with the caller.
 
 ## Sample browser
 
-`mountSampleBrowser(root, { library, choose, onError, labels? })` renders a borrowed [Sample Library](./samples.md#sample-library), or any `library` with a `state` readable of rows, `preview`, `stopPreview` and `remove`. The caller supplies file input and placement. On `choose(id)`, acquire the buffer, copy or retain it in the destination and release the lease when finished. `destroy()` removes the view, leaving audition and imports available to the caller.
+`mountSampleBrowser(root, { library, choose, onError, labels? })` renders a borrowed [Sample Library](./samples.md#sample-library), or any `library` with a `state` readable of rows, `preview`, `stopPreview` and `remove`. The caller supplies file input and placement. On `choose(id)`, acquire the buffer, copy or retain it in the destination and release the lease when finished. `dispose()` removes the view, leaving audition and imports available to the caller.
 
 ## Mixer controls
 
-`mountMixer(root, { state, editTrack, editMaster, meter? })` binds volume, pan, mute and solo controls to an external mixer state. Give it a `Readable<MixerState>` and apply edits in the owner. To display meters, return a reader `{ sampleCount?, read(samples), destroy?() }` from `meter(id)` for each track and from `meter(null)` for the master. The caller creates and wires its own analysis node (for example an `AnalyserNode` on a post-fader tap) inside `meter`; the view only calls `read` per animation frame and calls `destroy()` when the strip goes away so the caller can disconnect. The widget touches no audio node. On `destroy()` it removes its own reactive subscription and views. Add app-specific routing controls with `appendControls(id, element)`, whose optional return value cleans up that strip. Strips are created outside the state subscription, so a reactive widget mounted there, such as `mountParameter`, keeps following its value after the mixer state changes.
+`mountMixer(root, { state, editTrack, editMaster, meter? })` binds volume, pan, mute and solo controls to an external mixer state. Give it a `Readable<MixerState>` and apply edits in the owner. To display meters, return a reader `{ sampleCount?, read(samples), dispose?() }` from `meter(id)` for each track and from `meter(null)` for the master. The caller creates and wires its own analysis node (for example an `AnalyserNode` on a post-fader tap) inside `meter`; the view only calls `read` per animation frame and calls `dispose()` when the strip goes away so the caller can disconnect. The widget touches no audio node. On `dispose()` it removes its own reactive subscription and views. Add app-specific routing controls with `appendControls(id, element)`, whose optional return value cleans up that strip. Strips are created outside the state subscription, so a reactive widget mounted there, such as `mountParameter`, keeps following its value after the mixer state changes.
 
 ```typescript
 type MixerStrip = Readonly<{ id: string; name: string; volume: number; pan: number; muted: boolean; solo: boolean }>;
@@ -207,7 +207,7 @@ Track `volume` spans 0..1.5 on the slider, as does the master; `pan` spans -1..1
 
 ## Timeline range gesture
 
-`attachTimeRangeGesture(element, { timeAt, onPreview, onSelect })` from `@audiorective/widgets/arrangement` attaches a drag to an existing time surface. Your `timeAt(clientX, bypassSnap)` resolves scrolling, zoom, bounds and snapping. The widget supplies `bypassSnap` while Alt is pressed. It previews an ordered `[start, end]` and calls `onSelect` once when the pointer releases a nonempty range. Clicks and cancelled gestures clear the preview. Call `destroy()` when replacing the borrowed element.
+`attachTimeRangeGesture(element, { timeAt, onPreview, onSelect })` from `@audiorective/widgets/arrangement` attaches a drag to an existing time surface. Your `timeAt(clientX, bypassSnap)` resolves scrolling, zoom, bounds and snapping. The widget supplies `bypassSnap` while Alt is pressed. It previews an ordered `[start, end]` and calls `onSelect` once when the pointer releases a nonempty range. Clicks and cancelled gestures clear the preview. Call `dispose()` when replacing the borrowed element.
 
 Use a dedicated surface with `touch-action: none` when dragging also needs to work on touchscreens. The app decides how to store or use the returned bounds. The DAW demo converts project seconds to beats before setting its loop.
 
@@ -230,7 +230,7 @@ const lane = mountAutomationLane(root, {
   },
 });
 // On hide or teardown:
-lane.destroy();
+lane.dispose();
 ```
 
 The caller owns the envelope, applies undo and redo, and calls `setPoints()` with the accepted points after each edit or external change. Use a positive finite duration and maximum value. Otherwise the mount reports `Automation lane needs a positive duration and maximum value.` A browser without a 2D canvas reports `Automation lane needs a 2D canvas.`.
@@ -241,7 +241,7 @@ The caller owns the envelope, applies undo and redo, and calls `setPoints()` wit
 
 **Scope.** The grid is a plain table of buttons: a scene button per row (`launcher.launchScene(clips)`), a button per clip (`clip.launch()`), Cancel for all queued launches (`launcher.cancelQueued()`), a return-all button (`launcher.stopAll()`) and a `↩` per track (`track.stop()`). `data-clip-state` is its only visual state. It has no playback progress, per-clip colours, one-shot marker, gate or repeat press handling (`release()`), and no keyboard model beyond focusable buttons. For a performance grid that needs any of those, read the same launcher cells (`clip.playing`, `clip.queued`, `clip.position`, `launcher.queued`) and build the grid in your framework; the launcher is the contract, not the widget.
 
-`launch(command)` wraps every command a button issues (an app can start playback first); `cancel()` replaces the Cancel button's `launcher.cancelQueued()`. The widget's `destroy()` removes its own DOM and subscription. See the [DAW example](./daw.md#clip-launcher) for wiring.
+`launch(command)` wraps every command a button issues (an app can start playback first); `cancel()` replaces the Cancel button's `launcher.cancelQueued()`. The widget's `dispose()` removes its own DOM and subscription. See the [DAW example](./daw.md#clip-launcher) for wiring.
 
 ## Plain player controls
 
@@ -260,11 +260,11 @@ const controls = mountPlayer(document.querySelector<HTMLElement>("#player")!, {
 });
 
 // When this view is removed:
-controls.destroy(); // playback continues; the caller still owns player and context
-// At the end of the app's audio lifetime: player.destroy(); await context.close();
+controls.dispose(); // playback continues; the caller still owns player and context
+// At the end of the app's audio lifetime: player.dispose(); await context.close();
 ```
 
-Call `mountPlayer` in a browser, behind a client-only boundary when the app also renders on a server. The caller routes and starts its audio context. A single player can drive several views; each view keeps only its own drag and error display state. `destroy()` is idempotent and removes DOM, effects, subscriptions and animation frames without stopping or destroying the player.
+Call `mountPlayer` in a browser, behind a client-only boundary when the app also renders on a server. The caller routes and starts its audio context. A single player can drive several views; each view keeps only its own drag and error display state. `dispose()` is idempotent and removes DOM, effects, subscriptions and animation frames without stopping or disposing the player.
 
 ### Pick an adapter
 
@@ -306,7 +306,7 @@ interface PlayerLike {
 
 An unknown, zero, negative or non-finite duration displays `--:--` and disables seeking; it re-enables when a finite positive duration arrives. During a drag, incoming time updates do not move the thumb or time text. The player seeks once on release, and the view follows it again. If the duration shrinks during the drag, the committed position is clamped to the latest duration; a track change that makes seeking unavailable cancels the drag. A failed play requested by this view shows a notice; the notice clears when playback starts. `AbortError` from an interrupted request is ignored.
 
-Pass `renderer: PlayerRenderer` to replace the markup while keeping these interaction rules. The factory receives `(container, actions)` and returns `{ render(frame), destroy?() }`. Wire controls to `actions.toggle()`, `hold()`, `scrub(seconds)`, `commit()`, `cancel()`, and `setVolume(value)`. The widget sends one `PlayerFrame` with `isPlaying`, `resumes`, `position`, `duration`, `canSeek`, `scrubbing`, `volume`, and `notice`. `position`, `duration`, `volume` and `notice` can be `null`; numeric fields are finite when present. `render(frame)` runs initially and after state changes. Set an input's `max` before `value`, or the browser can clamp a resumed position to the old maximum. A renderer's `destroy()` releases any resources it created outside its container.
+Pass `renderer: PlayerRenderer` to replace the markup while keeping these interaction rules. The factory receives `(container, actions)` and returns `{ render(frame), dispose?() }`. Wire controls to `actions.toggle()`, `hold()`, `scrub(seconds)`, `commit()`, `cancel()`, and `setVolume(value)`. The widget sends one `PlayerFrame` with `isPlaying`, `resumes`, `position`, `duration`, `canSeek`, `scrubbing`, `volume`, and `notice`. `position`, `duration`, `volume` and `notice` can be `null`; numeric fields are finite when present. `render(frame)` runs initially and after state changes. Set an input's `max` before `value`, or the browser can clamp a resumed position to the old maximum. A renderer's `dispose()` releases any resources it created outside its container.
 
 `PlayerActions`, `PlayerFrame`, `PlayerRenderer`, `PlayerRendererInstance`, `PlayerOptions`, `PlayerHandle`, `PlayerTimeline`, `PlayerLike`, and `WritableValue` are exported types from this entry. `PlayerOptions.label` sets the control group's accessible name; its default is `"Player"`.
 
@@ -321,7 +321,7 @@ import { WavePlayer } from "@audiorective/player";
 const context = new AudioContext(); // or pass your app's existing context
 const root = document.querySelector<HTMLElement>("#waveform")!;
 const selector = mountWaveformSelector(root, {
-  createPlayer: () => new WavePlayer(context), // the selector owns and destroys this player
+  createPlayer: () => new WavePlayer(context), // the selector owns and disposes this player
   source: "/audio/loop.wav", // optional; also accepts a File
   onSelectionChange(selection) {
     console.log(selection); // { start, end } in committed output seconds, or null
@@ -341,14 +341,14 @@ if (selector.getState().duration >= 2) {
 }
 
 // On unmount:
-// selector.destroy();
+// selector.dispose();
 ```
 
 The caller owns the context and routing. The selector resumes the player's context when a user initiates playback; it neither creates nor closes a context, and it does not connect its output to the destination. The widget core imports no capability class at runtime: the app supplies the `WavePlayer`, directly or through `createPlayer`. Connect its output to a destination or your effects chain. Mount in the browser with a DOM, Web Audio, and `ResizeObserver`; keep mounting behind a client-only boundary in a server-rendered app.
 
 ### Interaction
 
-To share audio and selection across views, call `mountWaveformSelector(root, { player })` with a `WavePlayer` from `@audiorective/player`. Supply either `createPlayer` or `player`. `SelectorPlayer` is a structural contract (`getState`, `version`, `isPlaying`, `isLooping`, `load`, `cancelLoad`, `play`, `audition`, `pause`, `stop`, `seek`, `setLooping`, `sourceToOutput`, `output`, `destroy`, plus the selection model's `getSelection`, `setSelection` and `subscribe`); `WavePlayer` satisfies it and so can your own model. The view does not destroy a supplied player or cancel its loads when detached. Route the shared output once. Loading or changing selection through any view updates the player and all its views; renderer, zoom and snap remain local. See [Player](./player.md#share-a-player-between-widgets).
+To share audio and selection across views, call `mountWaveformSelector(root, { player })` with a `WavePlayer` from `@audiorective/player`. Supply either `createPlayer` or `player`. `SelectorPlayer` is a structural contract (`getState`, `version`, `isPlaying`, `isLooping`, `load`, `cancelLoad`, `play`, `audition`, `pause`, `stop`, `seek`, `setLooping`, `sourceToOutput`, `output`, `dispose`, plus the selection model's `getSelection`, `setSelection` and `subscribe`); `WavePlayer` satisfies it and so can your own model. The view does not dispose a supplied player or cancel its loads when detached. Route the shared output once. Loading or changing selection through any view updates the player and all its views; renderer, zoom and snap remain local. See [Player](./player.md#share-a-player-between-widgets).
 
 - Load an audio URL or local file using the built-in controls. Loading does not start playback.
 - Drag in either direction to create a range and start looping its audition. The endpoints are normalized to increasing seconds.
@@ -378,11 +378,11 @@ type WaveformSelectorOptions = {
 | `ready: Promise<void>`                             | Resolves after the initial load, or immediately without `source`; rejects if the current initial load fails.                                                                                                 |
 | `output: AudioNode`                                | Caller-routed audio output of the selector's player.                                                                                                                                                         |
 | `load(source: string \| File): Promise<void>`      | Replaces the audio and clears the selection. The latest request wins, including when earlier decoding finishes later. A failed current request rejects and populates `error`; a subsequent load can recover. |
-| `cancelLoad(): void`                               | Cancels the player's active load. On a shared player this affects all observing selectors; destroying a borrowed view still leaves the caller's load running.                                                |
+| `cancelLoad(): void`                               | Cancels the player's active load. On a shared player this affects all observing selectors; disposing a borrowed view still leaves the caller's load running.                                                 |
 | `setSelection(selection: Selection \| null): void` | Sets metadata and updates the player's range without initiating playback. Endpoints must be finite and satisfy `0 <= start < end <= duration`.                                                               |
 | `getState(): WaveformSelectorState`                | Returns a snapshot; selection boundaries and position use committed output seconds.                                                                                                                          |
 | `attach(plugin: TimeViewPlugin)`                   | Adds an overlay or interaction to the selector's waveform in committed output seconds. Returns a `PluginAttachment`.                                                                                         |
-| `destroy(): void`                                  | Idempotently removes mounted DOM, listeners, observers, animation frames, pending load ownership, plugins, and owned audio nodes. Leaves the caller's context open.                                          |
+| `dispose(): void`                                  | Idempotently removes mounted DOM, listeners, observers, animation frames, pending load ownership, plugins, and owned audio nodes. Leaves the caller's context open.                                          |
 
 `WaveformSelectorState` contains `duration`, `selection`, `position`, `isPlaying`, `isLooping`, `loading`, `loadProgress`, `error: string | null`, `pixelsPerSecond`, `processing`, `stretchRatio`, `revision`, and `sourceDuration`. `duration` is the current output duration; `sourceDuration` belongs to the original source. Loading errors appear in the widget as well as in state. Catch `ready` and `load()` rejections when calling them directly. URL fetches follow the browser's CORS rules; decoding errors keep the browser's message.
 
@@ -421,9 +421,9 @@ view.setPlayhead(1.5); // feed updates from an external player if needed
 view.setZoom(2);
 view.setAmplitudeZoom(4); // visual height only; original peaks and audio stay unchanged
 
-// Optional early detach; view.destroy() also destroys all attachments.
-attachment.destroy();
-view.destroy();
+// Optional early detach; view.dispose() also disposes all attachments.
+attachment.dispose();
+view.dispose();
 ```
 
 Selection plugins only manage metadata and interaction. Even pointer commits do not start sound here; applications explicitly choose how to respond.
@@ -447,20 +447,20 @@ Peak values must be finite, and duration must be finite and positive. The view c
 | `setAmplitudeZoom(factor: number)`     | Scales only the displayed waveform height from `1` to `32`; cached peaks and audio remain unchanged.              |
 | `getAmplitudeZoom()`                   | Returns the current display-only amplitude factor.                                                                |
 | `scrollTo(seconds: number)`            | Scrolls toward a displayed timeline position, clamped to the available range.                                     |
-| `attach(plugin: TimeViewPlugin)`       | Returns a `PluginAttachment` with idempotent `destroy()`.                                                         |
-| `destroy()`                            | Idempotently detaches plugins and removes the view and its resources.                                             |
+| `attach(plugin: TimeViewPlugin)`       | Returns a `PluginAttachment` with idempotent `dispose()`.                                                         |
+| `dispose()`                            | Idempotently detaches plugins and removes the view and its resources.                                             |
 
 ### Selection plugin API
 
 `createSelectionPlugin(options?)` accepts `SelectionPluginOptions`: `grid`, `snap: "off" | "beat" | "downbeat"`, `onChange(selection)`, and `onCommit(event)`. A commit contains `selection`, `kind`, and an optional click `time` in seconds. `kind` is `"pointer"`, `"keyboard"`, `"programmatic"`, or `"click"`; pointer commits include both a newly drawn range and handle resizing.
 
-Attach the plugin before calling `setSelection`. Its methods are `getSelection()`, `setSelection(selection | null)`, `setSnap(mode)`, and `setGrid({ beats, downbeats })`. Pure-plugin grids use **current-view seconds**, matching the displayed data. `setGrid` replaces and copies the arrays; it does not convert original source times. Convert those explicitly when using the pure plugin with edited audio. Each selection plugin attaches to one view at a time; each view has one selection owner. Destroy the attachment before reusing the plugin elsewhere. Without an external model, data replacement and detachment clear its selection.
+Attach the plugin before calling `setSelection`. Its methods are `getSelection()`, `setSelection(selection | null)`, `setSnap(mode)`, and `setGrid({ beats, downbeats })`. Pure-plugin grids use **current-view seconds**, matching the displayed data. `setGrid` replaces and copies the arrays; it does not convert original source times. Convert those explicitly when using the pure plugin with edited audio. Each selection plugin attaches to one view at a time; each view has one selection owner. Dispose the attachment before reusing the plugin elsewhere. Without an external model, data replacement and detachment clear its selection.
 
 Pass `model: SelectionModel` to use an existing headless selection owner. The structural interface is `getSelection(): Selection | null`, `setSelection(selection: Selection | null): void`, and `subscribe(listener: () => void): () => void`. `WavePlayer` implements it. The plugin reads the model directly and writes gesture changes to it; detaching or replacing a view's display data leaves external selection intact. `onChange`/`onCommit` describe this plugin's edits; external model notifications redraw without inventing a gesture commit. Keep the model's timeline and duration consistent with the displayed data.
 
 ## Replace waveform drawing
 
-Pass a `WaveformRenderer` factory as `renderer` to either `mountWaveform` or `mountWaveformSelector`. The factory mounts your SVG, Canvas, or DOM into a dedicated drawing container once and returns `{ render(frame), destroy?() }`. Omitting the option uses the default SVG drawing.
+Pass a `WaveformRenderer` factory as `renderer` to either `mountWaveform` or `mountWaveformSelector`. The factory mounts your SVG, Canvas, or DOM into a dedicated drawing container once and returns `{ render(frame), dispose?() }`. Omitting the option uses the default SVG drawing.
 
 ```typescript
 import { mountWaveform, type WaveformRenderer } from "@audiorective/widgets/waveform";
@@ -486,7 +486,7 @@ const outline: WaveformRenderer = (container) => {
       }
       path.setAttribute("d", commands.join(" "));
     },
-    destroy() {
+    dispose() {
       svg.remove();
     },
   };
@@ -498,14 +498,14 @@ const view = mountWaveform(document.querySelector<HTMLElement>("#waveform")!, {
 });
 view.setAmplitudeZoom(4);
 // Selection plugins and external playheads work with this drawing too.
-// view.destroy() also destroys the renderer.
+// view.dispose() also disposes the renderer.
 ```
 
 `WaveformRenderFrame` contains `peaks: Readonly<WaveformPeaks> | null`, `width`, `height`, `pixelsPerSecond`, and `amplitudeZoom`. Peaks are cached extrema combined across channels; treat their arrays as read-only. A custom renderer applies `amplitudeZoom` to its drawing if it wants the public amplitude control; the default renderer clips enlarged peaks at the view's top and bottom. Width and height describe the **full scrolling content in CSS pixels**, and a displayed timeline time maps to `seconds * pixelsPerSecond`. `null` means clear the drawing. The widget calls `render` initially and on data, zoom, and size changes. Scrolling is native DOM movement; it does not require redrawing the whole content. Playback position is a separate overlay.
 
 The drawing container is decorative and ignores pointer events. Use plugins for interactive overlays; selection, snapping, ruler, playhead, and audio continue to be owned by the widget. The renderer can change the shape within the same linear time axis; a circular or otherwise different time-coordinate system requires a separate interaction design. Canvas renderers own their backing resolution and device-pixel scaling. A live color/theme change inside a custom renderer is the renderer's responsibility.
 
-The widget calls the returned `destroy()` once, including after an initial `render` failure, and removes the drawing container. Release additional listeners, observers, or timers there. A factory that throws before returning must release its own extra resources; the widget still removes its mounted DOM. Renderer exceptions propagate to the caller on synchronous operations. Cleanup exceptions are logged and do not interrupt the widget's remaining cleanup.
+The widget calls the returned `dispose()` once, including after an initial `render` failure, and removes the drawing container. Release additional listeners, observers, or timers there. A factory that throws before returning must release its own extra resources; the widget still removes its mounted DOM. Renderer exceptions propagate to the caller on synchronous operations. Cleanup exceptions are logged and do not interrupt the widget's remaining cleanup.
 
 ## Write a visual plugin
 
@@ -542,7 +542,7 @@ const view = mountWaveform(document.querySelector<HTMLElement>("#markers")!, {
 });
 const attachment = view.attach(marker);
 // Pass marker to a piano roll or selector the same way.
-// attachment.destroy() removes just the marker. view.destroy() removes all attachments.
+// attachment.dispose() removes just the marker. view.dispose() removes all attachments.
 ```
 
 `timeToX()` returns content pixels and `clientXToTime()` converts browser pixels back to the view's time unit. Use these helpers to place overlays independently of zoom and scroll. `mountOverlay()`, `onViewportChange()`, `onDataChange()`, `listen()`, and `onCleanup()` return cleanup functions and are disposed with the attachment. A plugin can also return a disposer from `attach()`. Keep per-attachment DOM and state inside `attach()` if the same plugin object will serve multiple views.
@@ -604,17 +604,17 @@ Messages thrown by the plain player adapters, waveform view, its plugins and the
 | `No audio is loaded.`                                          | A WavePlayer or BufferPlayer adapter has no buffer                                      | Load audio before pressing Play.                                                               |
 | `Audio is still loading.`                                      | The WavePlayer adapter was asked to play before loading finished                        | Await `player.load(...)`.                                                                      |
 | `The audio context is closed.`                                 | The BufferPlayer adapter cannot start a closed context                                  | Create a new context and player.                                                               |
-| `Waveform selector is destroyed.`                              | Calling `load` or `setSelection` after cleanup                                          | Mount a new selector.                                                                          |
-| `Waveform is destroyed.`                                       | Mutating a destroyed waveform or attaching after waveform or selector cleanup           | Mount a new view or selector.                                                                  |
+| `Waveform selector is disposed.`                               | Calling `load` or `setSelection` after cleanup                                          | Mount a new selector.                                                                          |
+| `Waveform is disposed.`                                        | Mutating a disposed waveform or attaching after waveform or selector cleanup            | Mount a new view or selector.                                                                  |
 | `Waveform data needs finite peaks and a positive duration.`    | Invalid peaks or duration                                                               | Supply nonempty finite peaks, matching extrema arrays, and finite positive seconds.            |
 | `Zoom must be finite and at least 1.`                          | Invalid zoom factor                                                                     | Use `1` to fit, or a larger finite factor.                                                     |
 | `Amplitude zoom must be finite and from 1 to 32.`              | Invalid display-only amplitude factor                                                   | Pass a finite factor from `1` through `32`.                                                    |
 | `Playhead must be finite or null.`                             | Invalid playhead                                                                        | Supply finite source seconds or `null` to hide it.                                             |
 | `Plugin is already attached to this waveform.`                 | Duplicate attachment of one instance                                                    | Reuse its attachment or detach it before attaching again.                                      |
 | `Step grid has no parameter "…".`                              | `setActiveParameter` with an id that is not a tab                                       | Use `velocity`, `offset`, `length`, `repeat`, `pitch`, `chance` or a declared custom param id. |
-| `Step grid is destroyed.`                                      | Attaching a plugin to a destroyed step grid                                             | Mount a new grid.                                                                              |
+| `Step grid is disposed.`                                       | Attaching a plugin to a disposed step grid                                              | Mount a new grid.                                                                              |
 | `Plugin is already attached to this step grid.`                | Duplicate attachment of one plugin instance                                             | Detach it first, or create one plugin per grid.                                                |
-| `Plugin attachment is destroyed.`                              | Mounting an overlay from a disposed attachment                                          | Stop asynchronous work during cleanup; use a live attachment context.                          |
+| `Plugin attachment is disposed.`                               | Mounting an overlay from a disposed attachment                                          | Stop asynchronous work during cleanup; use a live attachment context.                          |
 | `Selection plugin is not attached.`                            | Setting metadata before attachment or after detach                                      | Call `view.attach(selection)` before `selection.setSelection`.                                 |
 | `Selection plugin is already attached.`                        | Reusing a selection plugin across live views                                            | Detach first, or create one plugin per view.                                                   |
 | `Waveform already has a Selection owner.`                      | Multiple selection plugins on one view                                                  | Keep one selection plugin per view.                                                            |

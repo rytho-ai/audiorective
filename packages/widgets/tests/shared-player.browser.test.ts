@@ -11,7 +11,7 @@ async function fixture() {
   const context = new AudioContext();
   const player = new WavePlayer(context);
   own(() => context.close());
-  own(() => player.destroy());
+  own(() => player.dispose());
   await player.load(bandsFile());
   return { context, player };
 }
@@ -23,8 +23,8 @@ test("two selectors share one block; headless edits and gestures update both wit
     onB = vi.fn();
   const one = mountWaveformSelector(a, { player, onSelectionChange: onA });
   const two = mountWaveformSelector(b, { player, onSelectionChange: onB });
-  own(() => one.destroy());
-  own(() => two.destroy());
+  own(() => one.dispose());
+  own(() => two.dispose());
   player.setSelection({ start: 1, end: 2 });
   expect(one.getState().selection).toEqual({ start: 1, end: 2 });
   expect(two.getState().selection).toEqual({ start: 1, end: 2 });
@@ -46,17 +46,17 @@ test("removing one shared view preserves loop, peer selection and caller ownersh
   const one = mountWaveformSelector(host(), { player });
   const root = host();
   const two = mountWaveformSelector(root, { player });
-  own(() => one.destroy());
-  own(() => two.destroy());
+  own(() => one.dispose());
+  own(() => two.dispose());
   player.setSelection({ start: 3.4, end: 3.7 });
   await player.audition();
-  one.destroy();
+  one.dispose();
   await delay(400);
   expect(player.isPlaying).toBe(true);
   expect(player.getSelection()).toEqual({ start: 3.4, end: 3.7 });
   expect(two.getState().selection).toEqual(player.getSelection());
   expect(element(root, "selection").hidden).toBe(false);
-  two.destroy();
+  two.dispose();
   expect(player.isPlaying).toBe(true);
   expect(context.state).not.toBe("closed");
   player.pause();
@@ -68,8 +68,8 @@ test("external source replacement resets both views and destruction while loadin
     b = host();
   const one = mountWaveformSelector(a, { player }),
     two = mountWaveformSelector(b, { player });
-  own(() => one.destroy());
-  own(() => two.destroy());
+  own(() => one.dispose());
+  own(() => two.dispose());
   one.setSelection({ start: 1, end: 2 });
   element<HTMLButtonElement>(a, "zoom-in").click();
   await player.load(bandsFile(1));
@@ -77,22 +77,22 @@ test("external source replacement resets both views and destruction while loadin
   expect(element(a, "selection").hidden).toBe(true);
   expect(element(b, "selection").hidden).toBe(true);
   const pending = player.load(bandsFile(2));
-  one.destroy();
+  one.dispose();
   await pending;
   expect(player.duration).toBeCloseTo(2, 3);
   expect(two.getState().duration).toBeCloseTo(2, 3);
 });
-test("pure waveform accepts a structural selection model; destroying or clearing a view leaves it intact", async () => {
+test("pure waveform accepts a structural selection model; disposing or clearing a view leaves it intact", async () => {
   const { player } = await fixture();
   player.setSelection({ start: 1, end: 2 });
   const view = mountWaveform(host(), { data: player.buffer! });
-  own(() => view.destroy());
+  own(() => view.dispose());
   const plugin = createSelectionPlugin({ model: player });
   const attachment = view.attach(plugin);
   expect(plugin.getSelection()).toEqual({ start: 1, end: 2 });
   view.setData(null);
   expect(player.getSelection()).toEqual({ start: 1, end: 2 });
-  attachment.destroy();
+  attachment.dispose();
   expect(player.getSelection()).toEqual({ start: 1, end: 2 });
   await player.audition();
   expect(player.isPlaying).toBe(true);

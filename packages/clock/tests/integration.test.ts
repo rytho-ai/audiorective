@@ -55,7 +55,7 @@ describe("Clock integration (real AudioContext, default WorkerTickSource)", () =
 
     clock.start();
     await waitFor(() => collected.length >= 12);
-    clock.destroy();
+    clock.dispose();
 
     expect(misses).toHaveLength(0);
     expect(collected.length).toBeGreaterThan(0);
@@ -106,7 +106,7 @@ describe("Clock integration (real AudioContext, default WorkerTickSource)", () =
     expect(timeline.generation).toBe(genBeforeSeek + 1);
 
     await waitFor(() => (indicesByGeneration.get(genBeforeSeek + 1)?.length ?? 0) >= 6);
-    clock.destroy();
+    clock.dispose();
 
     const beforeIndices = indicesByGeneration.get(genBeforeSeek) ?? [];
     const afterIndices = indicesByGeneration.get(genBeforeSeek + 1) ?? [];

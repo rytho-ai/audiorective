@@ -91,7 +91,7 @@ export class PadBank extends AudioProcessor<
   }
 
   private assertAlive(): void {
-    if (this.disposed) throw new Error("PadBank is destroyed.");
+    if (this.disposed) throw new Error("PadBank is disposed.");
   }
 
   private publish(): void {
@@ -258,13 +258,13 @@ export class PadBank extends AudioProcessor<
     this.cleanupTimer = undefined;
   }
 
-  override destroy(): void {
+  override dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
     this.stopAll();
     for (const node of this.padNodes.values()) node.disconnect();
     this.padNodes.clear();
     this.outputNode.disconnect();
-    super.destroy();
+    super.dispose();
   }
 }

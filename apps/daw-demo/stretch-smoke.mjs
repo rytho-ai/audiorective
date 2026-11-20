@@ -159,12 +159,12 @@ try {
         original: same(reopened.stretch.source.channels[0], source),
         rendered: same(reopened.channels[0], committed.channels[0]),
       };
-      restored.destroy();
-      restored.project.destroy();
-      workspace.destroy();
-      saved.destroy();
-      project.destroy();
-      engine.destroy();
+      restored.dispose();
+      restored.project.dispose();
+      workspace.dispose();
+      saved.dispose();
+      project.dispose();
+      engine.dispose();
       return answer;
     },
     [...(await readFile(enginePath))],
@@ -235,10 +235,10 @@ try {
       unblock();
       const superseded = borrowedSignal.aborted && (await older);
       const restored = newest.apply();
-      workspace.destroy();
-      project.destroy();
-      reopened.destroy();
-      stretch.destroy();
+      workspace.dispose();
+      project.dispose();
+      reopened.dispose();
+      stretch.dispose();
       return {
         pitch,
         sameSource,

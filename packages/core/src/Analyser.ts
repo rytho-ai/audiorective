@@ -82,8 +82,8 @@ export class Analyser extends AudioProcessor {
     this.node.getByteTimeDomainData(out);
   }
 
-  override destroy(): void {
-    super.destroy();
+  override dispose(): void {
+    super.dispose();
     this.node.disconnect();
   }
 }

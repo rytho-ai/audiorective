@@ -47,7 +47,7 @@ describe("reset reasons", () => {
     expect(s.resets).toEqual(["start", "pause", "seek", "stop"]);
   });
 
-  test("detach and destroy reset with 'detach'", () => {
+  test("detach and dispose reset with 'detach'", () => {
     const { clock } = harness();
     const a = recorder();
     const b = recorder();
@@ -56,7 +56,7 @@ describe("reset reasons", () => {
     detach();
     detach();
     expect(a.resets).toEqual(["detach"]);
-    clock.destroy();
+    clock.dispose();
     expect(b.resets).toEqual(["detach"]);
     expect(a.resets).toEqual(["detach"]);
   });
@@ -180,7 +180,7 @@ describe("transport changes", () => {
     expect(s.changes[1]!.beat).toBeCloseTo(2);
   });
 
-  test("a tempo edit through a shared timeline reaches every clock; destroyed clocks stop listening", () => {
+  test("a tempo edit through a shared timeline reaches every clock; disposed clocks stop listening", () => {
     const { timeline, tickSource } = harness();
     const a = new Clock({ timeline, tickSource: new ManualTickSource() });
     const b = new Clock({ timeline, tickSource });
@@ -189,7 +189,7 @@ describe("transport changes", () => {
     a.attach(sa);
     b.attach(sb);
     timeline.bpm.value = 100;
-    b.destroy();
+    b.dispose();
     timeline.bpm.value = 110;
     expect(sa.changes).toHaveLength(2);
     expect(sb.changes).toHaveLength(1);

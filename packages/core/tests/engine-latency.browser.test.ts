@@ -198,7 +198,7 @@ describe("engine latency queries", () => {
     expect(() => engine.core.getPathLatency(engine.shared)).toThrow(LatencyUnknownError);
   });
 
-  it("destroy() after a graph disposes doesn't double-dispose or throw", () => {
+  it("dispose() after a graph disposes doesn't double-dispose or throw", () => {
     const engine = createEngine((ctx, { defineGraph }) => {
       const slow = new FakeLatent(ctx, 400);
       const handle = defineGraph(() => [[slow, ctx.destination]]);
@@ -206,8 +206,8 @@ describe("engine latency queries", () => {
     });
     engine.handle.dispose();
     // A disposed handle is spliced out of the engine's own graph list, so
-    // destroy() must not try to dispose it again.
-    expect(() => engine.core.destroy()).not.toThrow();
+    // dispose() must not try to dispose it again.
+    expect(() => engine.core.dispose()).not.toThrow();
   });
 
   it("disposing the same graph handle twice is harmless", () => {

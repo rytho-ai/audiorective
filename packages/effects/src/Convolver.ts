@@ -22,7 +22,7 @@ function cacheFor(ctx: BaseAudioContext): AudioBufferCache {
 export class Convolver extends Effect<{}, { isReady: ReadonlyCell<boolean>; buffer: ReadonlyCell<AudioBuffer | null> }> {
   private readonly node: ConvolverNode;
   private loadToken = 0;
-  private destroyed = false;
+  private disposed = false;
   private readonly _buffer: Cell<AudioBuffer | null>;
   /** Resolves once the initial `url` (if any) has loaded. */
   readonly ready: Promise<void>;
@@ -53,12 +53,12 @@ export class Convolver extends Effect<{}, { isReady: ReadonlyCell<boolean>; buff
   async load(url: string): Promise<void> {
     const token = ++this.loadToken;
     const buffer = await cacheFor(this.context).load(url);
-    if (this.destroyed || token !== this.loadToken) return;
+    if (this.disposed || token !== this.loadToken) return;
     this.buffer = buffer;
   }
 
-  override destroy(): void {
-    this.destroyed = true;
-    super.destroy();
+  override dispose(): void {
+    this.disposed = true;
+    super.dispose();
   }
 }

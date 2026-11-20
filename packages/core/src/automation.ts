@@ -133,7 +133,7 @@ function withoutTracking<T>(fn: () => T): T {
 export class AutomationBinding {
   private _anchor?: Anchor;
   private _position = 0;
-  private _destroyed = false;
+  private _disposed = false;
   private readonly _dispose: () => void;
 
   constructor(
@@ -154,7 +154,7 @@ export class AutomationBinding {
   }
 
   start(options: AutomationStartOptions = {}): void {
-    if (this._destroyed) throw new Error("AutomationBinding is destroyed.");
+    if (this._disposed) throw new Error("AutomationBinding is disposed.");
     const now = this.context.currentTime;
     const from = options.from ?? 0;
     const to =
@@ -205,7 +205,7 @@ export class AutomationBinding {
     }
   }
 
-  /** Cancel queued events now, including a not-yet-started run. Does not destroy the target. */
+  /** Cancel queued events now, including a not-yet-started run. Does not dispose the target. */
   stop(): void {
     if (!this._anchor) return;
     this._position = this.position;
@@ -213,10 +213,10 @@ export class AutomationBinding {
     withoutTracking(() => this._target.hold(this.context.currentTime));
   }
 
-  /** Destroy before the borrowed target/processor. Safe to call repeatedly. */
-  destroy(): void {
-    if (this._destroyed) return;
-    this._destroyed = true;
+  /** Dispose before the borrowed target/processor. Safe to call repeatedly. */
+  dispose(): void {
+    if (this._disposed) return;
+    this._disposed = true;
     this._dispose();
     this.stop();
   }

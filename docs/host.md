@@ -22,7 +22,7 @@ host.scheduleMidi([0x80, 60, 0], context.currentTime + 0.5);
 const state = await host.saveState();
 await host.loadState(state);
 const detach = host.hasEditor ? await host.mountEditor(iframe) : undefined;
-// On teardown: detach?.(); host.destroy();
+// On teardown: detach?.(); host.dispose();
 ```
 
 The [DAW demo](../apps/daw-demo/main.ts) uses a relative worklet asset URL. If `workletUrl` is omitted, `WebClapHost.load` resolves it beside its published JS module. Serve the worklet and bundle from the app's origin. `scheduleMidi` takes absolute `AudioContext` seconds and returns a handle for Clock's `window.own(handle, when)`. A host declares plug-in latency through `AudioProcessor.latency`, in samples (the plug-in's reported latency). Applications using raw `.connect()` own any path delay compensation.
@@ -42,7 +42,7 @@ slider.oninput = () => {
 // On teardown: detachControl(); slider.oninput = null;
 ```
 
-`destroy()` and a plug-in `"error"` message clear every pending response timer and reject the callers still waiting on `saveState()`, `loadState()` or `mountEditor()` instead of leaving them to time out. `WebClapEvent` is core's `CancellableEvent`. `saveState()` returns opaque patch bytes. `loadState(bytes)` waits for matching readback and applies reported parameter values to the existing Params so controls reflect the loaded patch.
+`dispose()` and a plug-in `"error"` message clear every pending response timer and reject the callers still waiting on `saveState()`, `loadState()` or `mountEditor()` instead of leaving them to time out. `WebClapEvent` is core's `CancellableEvent`. `saveState()` returns opaque patch bytes. `loadState(bytes)` waits for matching readback and applies reported parameter values to the existing Params so controls reflect the loaded patch.
 
 ## Select a device in a bundle
 
@@ -65,7 +65,7 @@ This first host covers one AudioWorklet instance per plug-in, MIDI note/control 
 | `WebCLAP MIDI needs a finite non-negative audio time.`                                                                                                              | Schedule with an absolute, non-negative `AudioContext` time.                                                                                                                          |
 | `WebCLAP parameter needs a finite value.`                                                                                                                           | `host.params[id].value` was set to NaN or Infinity; the Param reverts to its last good value. Pass a finite number within `min`..`max`.                                               |
 | `WebCLAP plug-in error: …`                                                                                                                                          | The plug-in reported an error while a `saveState()`, `loadState()` or `mountEditor()` call was pending; the message follows the colon. Check the plug-in's console output and bundle. |
-| `WebCLAP host is destroyed.`                                                                                                                                        | Create a new host instance before requesting state or opening an editor. Pending `saveState()`/`loadState()`/`mountEditor()` calls reject with this message when `destroy()` runs.    |
+| `WebCLAP host is disposed.`                                                                                                                                         | Create a new host instance before requesting state or opening an editor. Pending `saveState()`/`loadState()`/`mountEditor()` calls reject with this message when `dispose()` runs.    |
 | `WebCLAP bundle has no plug-in with ID …` / `WebCLAP bundle has no plug-in at index …`                                                                              | Check the bundle's descriptor IDs or the zero-based index.                                                                                                                            |
 | `WebCLAP supports one imported memory alongside function imports.` / `WebCLAP imported memory must use WASM32 limits.` / `WebCLAP memory import could not be read.` | Use a compatible WebCLAP WASM32 build with its supported imports.                                                                                                                     |
 | `WebCLAP returned an invalid string pointer.`                                                                                                                       | The plug-in returned invalid metadata. Check the bundle and try a compatible build.                                                                                                   |

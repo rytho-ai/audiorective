@@ -95,7 +95,7 @@ try {
     const failedLoad = async (selection) => {
       try {
         const invalid = await Host.load(context, { url: bundleUrl, workletUrl, ...selection });
-        invalid.destroy();
+        invalid.dispose();
         return "";
       } catch (error) {
         return String(error);
@@ -106,7 +106,7 @@ try {
       await context.resume();
       const first = await Host.load(context, { url: bundleUrl, workletUrl, pluginIndex: 0 });
       const firstId = first.descriptor.id;
-      first.destroy();
+      first.dispose();
       const missingId = await failedLoad({ pluginId: "missing.descriptor" });
       const missingIndex = await failedLoad({ pluginIndex: 99 });
       workspace = await Workspace.create(context, project, { destination: analyser, workletUrl });
@@ -121,7 +121,7 @@ try {
       const wet = await peak();
       const saved = await window.__daw.api.saveWorkspace(workspace);
       const stateBytes = project.tracks.find(({ id }) => id === result.id).devices[0].state.byteLength;
-      workspace.destroy();
+      workspace.dispose();
       reopened = await window.__daw.api.openWorkspace(context, saved, { destination: analyser, workletUrl });
       await reopened.play();
       const replay = await peak();
@@ -139,10 +139,10 @@ try {
         warnings: reopened.warnings,
       };
     } finally {
-      reopened?.destroy();
-      reopened?.project.destroy();
-      workspace?.destroy();
-      project.destroy();
+      reopened?.dispose();
+      reopened?.project.dispose();
+      workspace?.dispose();
+      project.dispose();
       await context.close();
     }
   });

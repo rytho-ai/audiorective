@@ -198,7 +198,7 @@ export class FilePlayer extends AudioProcessor<
     };
   }
 
-  override destroy(): void {
+  override dispose(): void {
     this.audio.pause();
     for (const d of this._disposers.splice(0)) d();
     this._endedCbs.length = 0;
@@ -207,6 +207,6 @@ export class FilePlayer extends AudioProcessor<
     this.audio.removeAttribute("src");
     this.audio.load();
     this._srcCell.value = null;
-    super.destroy();
+    super.dispose();
   }
 }

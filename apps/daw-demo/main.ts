@@ -325,7 +325,7 @@ function renderTracks(): void {
 }
 
 function bindSession(): void {
-  sessionView?.destroy();
+  sessionView?.dispose();
   detachRangeAuditionView?.();
   const current = workspace;
   detachRangeAuditionView = effect(() => renderRangeAuditionButton(current.auditioningRange.value !== null));
@@ -338,7 +338,7 @@ function bindSession(): void {
     loop: () => $<HTMLSelectElement>("launch-mode").value !== "one-shot",
     report: handleError,
   });
-  rhythmView?.destroy();
+  rhythmView?.dispose();
   const closedHat = hats().slice(0, 2_640);
   const openHat = Float32Array.from({ length: 12_000 }, (_, index) => (closedHat[Math.floor(index / 5)] ?? 0) * Math.exp(-index / 5_000));
   const buffers = [rhythm().slice(0, 5_760), openHat, closedHat].map((pcm) => {
@@ -458,8 +458,8 @@ async function replaceProject(next: Workspace): Promise<void> {
   loopClipId = undefined;
   loopBeats = undefined;
   syncLoopUi();
-  previous.destroy();
-  previous.project.destroy();
+  previous.dispose();
+  previous.project.dispose();
   await Promise.all([...ownedMedia].map((media) => media.dispose()));
   ownedMedia.clear();
   renderTracks();
@@ -469,8 +469,8 @@ async function open(file: File, recovered = false): Promise<void> {
   if (!canReplaceProject()) return;
   const next = await openWorkspaceBlob(context, file, options);
   if (!canReplaceProject()) {
-    next.destroy();
-    next.project.destroy();
+    next.dispose();
+    next.project.dispose();
     return;
   }
   await replaceProject(next);
@@ -497,8 +497,8 @@ async function newProject(): Promise<void> {
   if (!canReplaceProject() || !confirm("建立空白工程？尚未儲存的變更會遺失。")) return;
   const next = await Workspace.create(context, new Project({ title: "Untitled", bpm: 120, signature: [4, 4] }), options);
   if (!canReplaceProject()) {
-    next.destroy();
-    next.project.destroy();
+    next.dispose();
+    next.project.dispose();
     return;
   }
   await replaceProject(next);
@@ -516,7 +516,7 @@ async function recordMidi(): Promise<void> {
     try {
       take = recorder.stop();
     } finally {
-      recorder.destroy();
+      recorder.dispose();
       for (const device of workspace.project.tracks.find((item) => item.id === trackId)?.devices ?? []) workspace.host(device.id)?.panic();
       $("record-midi").textContent = "錄 MIDI";
     }
@@ -560,7 +560,7 @@ async function recordAudio(): Promise<void> {
     try {
       const take = await recorder.stopStream().finally(() => {
         source.disconnect();
-        recorder.destroy();
+        recorder.dispose();
         stream.getTracks().forEach((track) => track.stop());
         $("record-audio").textContent = "錄麥克風";
       });
@@ -619,7 +619,7 @@ async function recordAudio(): Promise<void> {
     recorder?.cancel();
     await writer?.abort().catch(() => undefined);
     source?.disconnect();
-    recorder?.destroy();
+    recorder?.dispose();
     stream.getTracks().forEach((track) => track.stop());
     throw error;
   }
@@ -809,7 +809,7 @@ studio = new StudioView({
   async inspectWebClap(url, pluginId) {
     const candidate = await WebClapHost.load(context, { url, pluginId, workletUrl: options.workletUrl });
     const descriptor = candidate.descriptor;
-    candidate.destroy();
+    candidate.dispose();
     return descriptor;
   },
   addNote,
@@ -894,23 +894,23 @@ window.addEventListener("pagehide", () => {
   if (midiRecording) {
     midiRecording.input.removeEventListener("midimessage", midiRecording.monitor);
     midiRecording.recorder.cancel();
-    midiRecording.recorder.destroy();
+    midiRecording.recorder.dispose();
   }
   if (audioRecording) {
     audioRecording.recorder.cancel();
-    audioRecording.recorder.destroy();
+    audioRecording.recorder.dispose();
     void audioRecording.writer.abort();
     audioRecording.source.disconnect();
     audioRecording.stream.getTracks().forEach((track) => track.stop());
   }
-  sessionView?.destroy();
-  rhythmView?.destroy();
+  sessionView?.dispose();
+  rhythmView?.dispose();
   detachRangeAuditionView?.();
-  sampleBrowser.destroy();
-  samples.destroy();
-  studio.destroy();
-  workspace?.destroy();
-  workspace?.project.destroy();
+  sampleBrowser.dispose();
+  samples.dispose();
+  studio.dispose();
+  workspace?.dispose();
+  workspace?.project.dispose();
   for (const media of ownedMedia) void media.dispose();
   void context.close();
 });

@@ -64,9 +64,9 @@ describe("file-backed audio", () => {
     expect(copiedAudio.channels[0][0]).toBe(0.25);
     expect(copiedMidi.sequence.getState().notes).toHaveLength(1);
     expect([...copy.tracks[1].devices[0].state]).toEqual([3]);
-    project.destroy();
+    project.dispose();
     expect(copiedMidi.sequence.getState().notes).toHaveLength(1);
-    copy.destroy();
+    copy.dispose();
   });
 
   test("recorder chunks become a borrowed asset and edits retain frame windows", async () => {
@@ -88,7 +88,7 @@ describe("file-backed audio", () => {
     expect(copy.kind === "audio" && copy.media === media).toBe(true);
     const trimmed = project.trimClip(right.id, 0.25, 0.5);
     expect(trimmed.kind === "audio" && trimmed.media && [trimmed.startFrame, trimmed.frameCount]).toEqual([3, 1]);
-    project.destroy();
+    project.dispose();
   });
 
   test("streams a portable WAV archive and reopens file-backed audio", async () => {
@@ -122,8 +122,8 @@ describe("file-backed audio", () => {
     expect((await result.media.readFrames(0, 2))[0]).toEqual(new Float32Array([0.2, 0.3]));
     const bytes = new Uint8Array(await blob.arrayBuffer());
     expect(() => openDawProject(bytes)).not.toThrow();
-    opened.project.destroy();
-    project.destroy();
+    opened.project.dispose();
+    project.dispose();
   });
 
   test("rejects missing frames and non-empty unsupported metadata", async () => {
@@ -136,10 +136,10 @@ describe("file-backed audio", () => {
     files["metadata.xml"] = new TextEncoder().encode("<MetaData><Title/><Artist/><Album/></MetaData>");
     const emptyFields = openDawProject(zipSync(files));
     expect(emptyFields.project.title).toBe("Untitled");
-    emptyFields.project.destroy();
+    emptyFields.project.dispose();
     files["metadata.xml"] = new TextEncoder().encode("<MetaData><Title/><Artist>Someone</Artist></MetaData>");
     expect(() => openDawProject(zipSync(files))).toThrow("unsupported Artist metadata");
-    project.destroy();
+    project.dispose();
   });
 
   test("propagates a failed archive destination", async () => {
@@ -150,7 +150,7 @@ describe("file-backed audio", () => {
       },
     });
     await expect(saveDawProjectTo(project, stream)).rejects.toThrow("disk full");
-    project.destroy();
+    project.dispose();
   });
 
   test("rejects non-finite PCM before writing or playback", async () => {

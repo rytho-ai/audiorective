@@ -5,13 +5,13 @@ const fakes = vi.hoisted(() => {
     hosts: [] as Array<{
       loadState: ReturnType<typeof import("vitest").vi.fn>;
       saveState: ReturnType<typeof import("vitest").vi.fn>;
-      destroy: ReturnType<typeof import("vitest").vi.fn>;
+      dispose: ReturnType<typeof import("vitest").vi.fn>;
     }>,
     clocks: [] as Array<{ stop: ReturnType<typeof import("vitest").vi.fn>; seek: ReturnType<typeof import("vitest").vi.fn> }>,
     racks: [] as Array<{ setEffects: ReturnType<typeof import("vitest").vi.fn> }>,
     loadStateImpl: undefined as undefined | ((bytes: Uint8Array) => Promise<void>),
     rackError: undefined as undefined | Error,
-    channels: [] as Array<{ destroy: ReturnType<typeof import("vitest").vi.fn> }>,
+    channels: [] as Array<{ dispose: ReturnType<typeof import("vitest").vi.fn> }>,
     buses: [] as Array<{ define: ReturnType<typeof import("vitest").vi.fn>; undefine: ReturnType<typeof import("vitest").vi.fn> }>,
   };
   return state;
@@ -26,7 +26,7 @@ vi.mock("@audiorective/effects/rack", async (importOriginal) => ({
     setEffects = vi.fn((effects: readonly unknown[]) => {
       this.effects = effects;
     });
-    destroy = vi.fn();
+    dispose = vi.fn();
     constructor(_context: unknown, effects: readonly unknown[]) {
       if (fakes.rackError) throw fakes.rackError;
       this.effects = effects;
@@ -42,7 +42,7 @@ vi.mock("@audiorective/effects", async (importOriginal) => ({
     tap = {};
     params = { gain: { value: 1 }, pan: { value: 0 }, mute: { value: false }, outputEnabled: { value: true } };
     send = vi.fn(() => ({ gain: { value: 1 }, enabled: { value: true }, dispose: vi.fn() }));
-    destroy = vi.fn();
+    dispose = vi.fn();
     constructor() {
       fakes.channels.push(this);
     }
@@ -66,7 +66,7 @@ vi.mock("@audiorective/host/webclap", () => ({
         loadState: vi.fn(async (bytes: Uint8Array) => fakes.loadStateImpl?.(bytes)),
         saveState: vi.fn(async () => new Uint8Array([9, 9])),
         panic: vi.fn(),
-        destroy: vi.fn(),
+        dispose: vi.fn(),
       };
       fakes.hosts.push(host);
       return host;
@@ -89,7 +89,7 @@ vi.mock("@audiorective/clock", async () => {
     start = vi.fn();
     pause = vi.fn();
     refresh = vi.fn();
-    destroy = vi.fn();
+    dispose = vi.fn();
     meter = cell<readonly [number, number]>([4, 4]);
     attach = vi.fn(() => () => undefined);
     constructor() {
@@ -180,8 +180,8 @@ describe("workspace automatic application", () => {
     expect(fakes.racks[0].setEffects).not.toHaveBeenCalled();
     await workspace.flush();
     expect(fakes.racks[0].setEffects).toHaveBeenCalledTimes(1);
-    workspace.destroy();
-    project.destroy();
+    workspace.dispose();
+    project.dispose();
   });
 
   test("serializes applications; edits during an async state restore run exactly one more", async () => {
@@ -213,8 +213,8 @@ describe("workspace automatic application", () => {
     await flushed;
     expect(fakes.hosts[0].loadState.mock.calls.map((call) => [...call[0]])).toEqual([[1], [3]]);
     expect(overlap).toBe(false);
-    workspace.destroy();
-    project.destroy();
+    workspace.dispose();
+    project.dispose();
   });
 
   test("topology change sets needsSync, leaves transport alone and sync clears it", async () => {
@@ -238,8 +238,8 @@ describe("workspace automatic application", () => {
     expect(workspace.cells.needsSync.value).toBe(true);
     await workspace.sync();
     expect(workspace.cells.needsSync.value).toBe(false);
-    workspace.destroy();
-    project.destroy();
+    workspace.dispose();
+    project.dispose();
   });
 
   test("a failed application sets the error cell, rejects flush and clears on success", async () => {
@@ -254,8 +254,8 @@ describe("workspace automatic application", () => {
     project.setDeviceState(device!.id, new Uint8Array([2]));
     await expect(workspace.flush()).resolves.toBeUndefined();
     expect(workspace.cells.error.value).toBeNull();
-    workspace.destroy();
-    project.destroy();
+    workspace.dispose();
+    project.dispose();
   });
 
   test("captureStates during save does not re-apply its own edits", async () => {
@@ -270,8 +270,8 @@ describe("workspace automatic application", () => {
     await tick();
     expect(fakes.hosts[0].loadState.mock.calls.length).toBe(loads);
     expect(clock.seek.mock.calls.length).toBe(seeks);
-    workspace.destroy();
-    project.destroy();
+    workspace.dispose();
+    project.dispose();
   });
 
   test("Workspace mixer writes apply immediately and Project mixer edits apply once without refreshing Arrangement", async () => {
@@ -289,8 +289,8 @@ describe("workspace automatic application", () => {
     await workspace.flush();
     expect(masterGain).toHaveBeenCalledTimes(3);
     expect(clock.refresh.mock.calls.length).toBe(refreshes);
-    workspace.destroy();
-    project.destroy();
+    workspace.dispose();
+    project.dispose();
   });
 
   test("Workspace effect methods do not trigger a second application; a direct Project edit applies once", async () => {
@@ -305,8 +305,8 @@ describe("workspace automatic application", () => {
     project.setTrackEffects(track.id, filter(1200));
     await workspace.flush();
     expect(setEffects.mock.calls.length).toBe(applications + 2);
-    workspace.destroy();
-    project.destroy();
+    workspace.dispose();
+    project.dispose();
   });
 
   test("adding and removing an empty effect bus never replaces a live instrument or stops transport", async () => {
@@ -325,11 +325,11 @@ describe("workspace automatic application", () => {
     expect(workspace.trackMixerOutput(track.id)).toBe(panner);
     expect(workspace.host(device!.id)).toBe(host);
     expect(clock.stop.mock.calls.length).toBe(stops);
-    workspace.destroy();
-    project.destroy();
+    workspace.dispose();
+    project.dispose();
   });
 
-  test("replacing the project reapplies; destroy drops pending work and flush still resolves", async () => {
+  test("replacing the project reapplies; dispose drops pending work and flush still resolves", async () => {
     const { project, workspace, clock } = await setup();
     const other = new Project({ bpm: 90 });
     other.addTrack("Other", "audio");
@@ -339,15 +339,15 @@ describe("workspace automatic application", () => {
     await workspace.sync();
     project.setTempoChanges([{ beat: 1, bpm: 50 }]);
     other.setTempoChanges([{ beat: 1, bpm: 50 }]);
-    workspace.destroy();
+    workspace.dispose();
     const seeks = clock.seek.mock.calls.length;
     await expect(workspace.flush()).resolves.toBeUndefined();
     other.setTempoChanges([{ beat: 2, bpm: 50 }]);
     await tick();
     expect(clock.seek.mock.calls.length).toBe(seeks);
-    await expect(workspace.sync()).rejects.toThrow("Workspace is destroyed.");
-    project.destroy();
-    other.destroy();
+    await expect(workspace.sync()).rejects.toThrow("Workspace is disposed.");
+    project.dispose();
+    other.dispose();
   });
 });
 
@@ -360,10 +360,10 @@ describe("workspace composition", () => {
     const reopened = await openWorkspace(context(), bytes);
     expect(reopened.project.tracks[0].devices[0].pluginId).toBe("fake.synth");
     expect([...reopened.project.tracks[0].devices[0].state]).toEqual([9, 9]);
-    reopened.destroy();
-    reopened.project.destroy();
-    workspace.destroy();
-    project.destroy();
+    reopened.dispose();
+    reopened.project.dispose();
+    workspace.dispose();
+    project.dispose();
   });
 
   test("saveWorkspaceTo streams the checkpointed project", async () => {
@@ -371,16 +371,16 @@ describe("workspace composition", () => {
     const parts: Uint8Array[] = [];
     await saveWorkspaceTo(workspace, new WritableStream({ write: (chunk) => void parts.push(chunk) }));
     expect(parts.reduce((total, part) => total + part.length, 0)).toBeGreaterThan(0);
-    workspace.destroy();
-    project.destroy();
+    workspace.dispose();
+    project.dispose();
   });
 
-  test("checkpoint rejects once the workspace is destroyed", async () => {
+  test("checkpoint rejects once the workspace is disposed", async () => {
     const { project, workspace } = await setup();
-    workspace.destroy();
-    await expect(workspace.checkpoint()).rejects.toThrow("Workspace is destroyed.");
-    await expect(saveWorkspace(workspace)).rejects.toThrow("Workspace is destroyed.");
-    project.destroy();
+    workspace.dispose();
+    await expect(workspace.checkpoint()).rejects.toThrow("Workspace is disposed.");
+    await expect(saveWorkspace(workspace)).rejects.toThrow("Workspace is disposed.");
+    project.dispose();
   });
 
   test("file warnings and options warnings lead the workspace's own warnings", async () => {
@@ -390,11 +390,11 @@ describe("workspace composition", () => {
     const bytes = saveDawProject(source);
     const workspace = await openWorkspace(context(), bytes, { warnings: ["caller note"] });
     expect(workspace.warnings.slice(0, 1)).toEqual(["caller note"]);
-    workspace.destroy();
-    workspace.project.destroy();
+    workspace.dispose();
+    workspace.project.dispose();
   });
 
-  test("a failed open destroys the opened project", async () => {
+  test("a failed open disposes the opened project", async () => {
     const source = new Project();
     source.addTrack("Keys", "midi");
     const bytes = saveDawProject(source);
@@ -404,12 +404,12 @@ describe("workspace composition", () => {
         throw new Error("no audio");
       },
     } as unknown as AudioContext;
-    const destroy = vi.spyOn(Project.prototype, "destroy");
+    const dispose = vi.spyOn(Project.prototype, "dispose");
     try {
       await expect(openWorkspace(broken, bytes)).rejects.toThrow("no audio");
-      expect(destroy).toHaveBeenCalledTimes(1);
+      expect(dispose).toHaveBeenCalledTimes(1);
     } finally {
-      destroy.mockRestore();
+      dispose.mockRestore();
     }
   });
 });
@@ -467,8 +467,8 @@ describe("workspace readers are tracked", () => {
     stop();
     expect(seen.length).toBeGreaterThan(1);
     expect(Object.is(seen[seen.length - 1], first)).toBe(false);
-    workspace.destroy();
-    project.destroy();
+    workspace.dispose();
+    project.dispose();
   });
 
   test("warnings are a frozen snapshot that replaces on every write", async () => {
@@ -481,8 +481,8 @@ describe("workspace readers are tracked", () => {
     expect(workspace.warnings).not.toBe(before);
     expect(workspace.warnings).toEqual(["Device NoBundle has no WebCLAP bundle."]);
     expect(before).toEqual([]);
-    workspace.destroy();
-    project.destroy();
+    workspace.dispose();
+    project.dispose();
   });
 });
 
@@ -525,8 +525,8 @@ describe("workspace commands do not subscribe a calling effect", () => {
     ctx.clock.state.value = "stopped";
     stop();
     expect(runs).toBe(1);
-    ctx.workspace.destroy();
-    ctx.project.destroy();
+    ctx.workspace.dispose();
+    ctx.project.dispose();
   });
 });
 
@@ -543,8 +543,8 @@ describe("workspace.sessionClip is a tracked reader", () => {
     expect(seen.length).toBeGreaterThan(1);
     expect(workspace.sessionClip(track.id, "missing")).toBeNull();
     stop();
-    workspace.destroy();
-    project.destroy();
+    workspace.dispose();
+    project.dispose();
   });
 });
 
@@ -556,8 +556,8 @@ describe("workspace.position is a tracked reader", () => {
     workspace.seek(2);
     stop();
     expect(seen).toEqual([0, 2]);
-    workspace.destroy();
-    project.destroy();
+    workspace.dispose();
+    project.dispose();
   });
 });
 
@@ -569,8 +569,8 @@ describe("workspace observable state lives in cells", () => {
     expect(workspace.cells.auditioningRange).toBe(workspace.auditioningRange);
     expect(workspace.cells.auditioningClip.value).toBeNull();
     expect(workspace.cells.auditioningRange.value).toBeNull();
-    workspace.destroy();
-    project.destroy();
+    workspace.dispose();
+    project.dispose();
   });
 });
 
@@ -591,8 +591,8 @@ describe("layer placement of exports", () => {
     expect(report.standardContent).toContain("DAWproject track layout and fixed tempo");
     expect(report.pluginDependencies[0]).toMatch(/fake\.synth/);
     expect(report.limitations).toContain("note");
-    workspace.destroy();
-    project.destroy();
+    workspace.dispose();
+    project.dispose();
   });
 });
 
@@ -604,51 +604,51 @@ describe("track creation failure", () => {
     await expect(Workspace.create(context(), project)).rejects.toThrow("rack failed");
     const channel = fakes.channels.at(-1)!;
     const bus = fakes.buses.at(-1)!;
-    expect(channel.destroy).toHaveBeenCalledTimes(1);
+    expect(channel.dispose).toHaveBeenCalledTimes(1);
     expect(bus.define).toHaveBeenCalledTimes(1);
     expect(bus.undefine).toHaveBeenCalledWith(bus.define.mock.calls[0][0]);
-    project.destroy();
+    project.dispose();
   });
 });
 
 describe("project ownership", () => {
-  test("a workspace opened from a file destroys the project it created", async () => {
+  test("a workspace opened from a file disposes the project it created", async () => {
     const source = new Project();
     source.addTrack("Keys", "midi");
     const workspace = await openWorkspace(context(), saveDawProject(source));
-    const destroy = vi.spyOn(workspace.project, "destroy");
-    workspace.destroy();
-    expect(destroy).toHaveBeenCalledTimes(1);
-    workspace.destroy();
-    expect(destroy).toHaveBeenCalledTimes(1);
-    source.destroy();
+    const dispose = vi.spyOn(workspace.project, "dispose");
+    workspace.dispose();
+    expect(dispose).toHaveBeenCalledTimes(1);
+    workspace.dispose();
+    expect(dispose).toHaveBeenCalledTimes(1);
+    source.dispose();
   });
 
   test("a project handed to Workspace.create stays with the caller", async () => {
     const { project, workspace } = await setup();
-    const destroy = vi.spyOn(project, "destroy");
-    workspace.destroy();
-    expect(destroy).not.toHaveBeenCalled();
-    project.destroy();
+    const dispose = vi.spyOn(project, "dispose");
+    workspace.dispose();
+    expect(dispose).not.toHaveBeenCalled();
+    project.dispose();
   });
 
   test("ownsProject hands the project over, and replacing it releases the claim", async () => {
     const owned = new Project();
     const first = await Workspace.create(context(), owned, { ownsProject: true });
-    const destroyOwned = vi.spyOn(owned, "destroy");
-    first.destroy();
-    expect(destroyOwned).toHaveBeenCalledTimes(1);
+    const disposeOwned = vi.spyOn(owned, "dispose");
+    first.dispose();
+    expect(disposeOwned).toHaveBeenCalledTimes(1);
     const original = new Project();
     const second = await Workspace.create(context(), original, { ownsProject: true });
     const replacement = new Project();
     second.project = replacement;
-    const destroyOriginal = vi.spyOn(original, "destroy");
-    const destroyReplacement = vi.spyOn(replacement, "destroy");
-    second.destroy();
-    expect(destroyOriginal).not.toHaveBeenCalled();
-    expect(destroyReplacement).not.toHaveBeenCalled();
-    original.destroy();
-    replacement.destroy();
+    const disposeOriginal = vi.spyOn(original, "dispose");
+    const disposeReplacement = vi.spyOn(replacement, "dispose");
+    second.dispose();
+    expect(disposeOriginal).not.toHaveBeenCalled();
+    expect(disposeReplacement).not.toHaveBeenCalled();
+    original.dispose();
+    replacement.dispose();
   });
 });
 
@@ -658,7 +658,7 @@ describe("workspace cell aliases", () => {
     expect(workspace.session).toBe(workspace.cells.session);
     expect(workspace.auditioningClip).toBe(workspace.cells.auditioningClip);
     expect(workspace.auditioningRange).toBe(workspace.cells.auditioningRange);
-    workspace.destroy();
-    project.destroy();
+    workspace.dispose();
+    project.dispose();
   });
 });

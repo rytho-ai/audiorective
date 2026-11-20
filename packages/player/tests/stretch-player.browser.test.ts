@@ -20,7 +20,7 @@ function deferredProcessor() {
         jobs.push({ input, ...options, resolve, reject });
       }),
   );
-  return { jobs, process, destroy: vi.fn() };
+  return { jobs, process, dispose: vi.fn() };
 }
 
 const disposers: Array<() => void | Promise<unknown>> = [];
@@ -29,7 +29,7 @@ function fixture(stretch?: WaveStretchProcessor) {
   const player = new WavePlayer(context, { stretch });
   disposers.push(
     () => context.close(),
-    () => player.destroy(),
+    () => player.dispose(),
   );
   return { context, player };
 }
@@ -226,15 +226,15 @@ test("loading a new source resets editing and cannot be overwritten by a stale r
   expect(player.buffer).toBe(replacement);
 });
 
-test("destroy aborts pending edits, ignores late success, and preserves borrowed processor/context ownership", async () => {
+test("dispose aborts pending edits, ignores late success, and preserves borrowed processor/context ownership", async () => {
   const stretch = deferredProcessor();
   const { context, player } = fixture(stretch);
   await player.load(source(context));
   const pending = player.setStretch(1.5);
-  player.destroy();
-  player.destroy();
+  player.dispose();
+  player.dispose();
   expect(stretch.jobs[0].signal!.aborted).toBe(true);
-  expect(stretch.destroy).not.toHaveBeenCalled();
+  expect(stretch.dispose).not.toHaveBeenCalled();
   stretch.jobs[0].resolve(rendered(stretch.jobs[0]));
   await pending;
   expect(player.version).toBeNull();
@@ -242,7 +242,7 @@ test("destroy aborts pending edits, ignores late success, and preserves borrowed
   expect(player.sourceBuffer).toBeNull();
   expect(player.getState()).toMatchObject({ processing: false, duration: 0, isPlaying: false });
   expect(context.state).not.toBe("closed");
-  await expect(player.setStretch(1)).rejects.toThrow(/destroyed/);
+  await expect(player.setStretch(1)).rejects.toThrow(/disposed/);
 });
 
 test("invalid ratios and incompatible processor PCM retain the complete current revision", async () => {

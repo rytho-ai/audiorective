@@ -27,7 +27,7 @@ async function fixture() {
   disposers.push(
     () => context.close(),
     () => analyser.disconnect(),
-    () => bank.destroy(),
+    () => bank.dispose(),
   );
   const level = () => {
     const samples = new Float32Array(analyser.fftSize);
@@ -86,7 +86,7 @@ test("assign cancels only its pad's events and their future choke; handles end o
   expect(bank.cells.activeEvents.value).toBe(0);
 });
 
-test("invalid inputs preserve state and destroy ends future events", async () => {
+test("invalid inputs preserve state and dispose ends future events", async () => {
   const { context, bank } = await fixture();
   expect(
     () =>
@@ -101,10 +101,10 @@ test("invalid inputs preserve state and destroy ends future events", async () =>
   const future = bank.trigger("closed", 1, context.currentTime + 1)!;
   let ended = 0;
   future.onEnded(() => ended++);
-  bank.destroy();
+  bank.dispose();
   expect(ended).toBe(1);
   expect(bank.cells.activeEvents.value).toBe(0);
-  expect(() => bank.trigger("open")).toThrow("PadBank is destroyed.");
+  expect(() => bank.trigger("open")).toThrow("PadBank is disposed.");
 });
 
 test("offline output follows native choke timing even without cleanup timer ticks", async () => {
@@ -125,7 +125,7 @@ test("offline output follows native choke timing even without cleanup timer tick
     const future = bank.trigger("closed", 1, 0.2)!;
     if (cancelFuture) future.cancel();
     const output = await context.startRendering();
-    bank.destroy();
+    bank.dispose();
     return output.getChannelData(0);
   }
   const cancelled = await render(true);

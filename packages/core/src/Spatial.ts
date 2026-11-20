@@ -83,8 +83,8 @@ export class Spatial extends AudioProcessor<SpatialParams> {
     return this.panner;
   }
 
-  override destroy(): void {
-    super.destroy();
+  override dispose(): void {
+    super.dispose();
     this._input.disconnect();
     this.panner.disconnect();
   }

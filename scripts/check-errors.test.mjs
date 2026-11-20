@@ -67,18 +67,18 @@ test("a leading runtime part is not covered by an unrelated abbreviated row", ()
 test("plugin host messages expand to each widget that creates a host", () => {
   const files = {
     "packages/widgets/src/plugin-host.ts":
-      "export function createPluginHost(name, f) { const title = name; throw new Error(`${title} is destroyed.`); throw new Error(`Plugin is already attached to this ${name}.`); }",
+      "export function createPluginHost(name, f) { const title = name; throw new Error(`${title} is disposed.`); throw new Error(`Plugin is already attached to this ${name}.`); }",
     "packages/widgets/src/grid.ts": `createPluginHost("step grid", f);`,
     "packages/widgets/src/roll.ts": `createPluginHost<Ctx>("piano roll", f);`,
   };
   const { messages: expanded } = collectThrown(files);
   assert.deepEqual(expanded.map((m) => m.message).sort(), [
-    "Piano roll is destroyed.",
+    "Piano roll is disposed.",
     "Plugin is already attached to this piano roll.",
     "Plugin is already attached to this step grid.",
-    "Step grid is destroyed.",
+    "Step grid is disposed.",
   ]);
-  const docs = table("`Step grid is destroyed.`", "`Plugin is already attached to this step grid.`", "`Piano roll is destroyed.`");
+  const docs = table("`Step grid is disposed.`", "`Plugin is already attached to this step grid.`", "`Piano roll is disposed.`");
   assert.deepEqual(
     run(files, docs).uncovered.map((u) => u.message),
     ["Plugin is already attached to this piano roll."],

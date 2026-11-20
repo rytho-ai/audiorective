@@ -55,7 +55,7 @@ export class ClipWaveforms {
     });
   }
 
-  destroy(): void {
+  dispose(): void {
     this.disposed = true;
     if (this.frame !== undefined) cancelAnimationFrame(this.frame);
     this.clear();

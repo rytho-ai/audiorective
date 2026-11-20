@@ -31,7 +31,7 @@ describe("project tempo map", () => {
     expect(project.tracks[0].clips.map((clip) => clip.id)).toEqual([seconds.id, beats.id]);
     project.setTempoChanges([{ beat: 4, bpm: 120 }]);
     expect(project.tracks[0].clips.map((clip) => clip.id)).toEqual([beats.id, seconds.id]);
-    project.destroy();
+    project.dispose();
   });
 
   test("beat MIDI stretches across tempo changes while seconds MIDI stays fixed", () => {
@@ -70,8 +70,8 @@ describe("project tempo map", () => {
     const [left, right] = opened.project.splitClip(roundTrip.id, 1);
     expect([left.time, right.time]).toEqual([3, 4]);
     expect(right.kind === "midi" && right.timeUnit).toBe("beats");
-    opened.project.destroy();
-    project.destroy();
+    opened.project.dispose();
+    project.dispose();
   });
 
   test("a legacy seconds sidecar cannot attach to beat-labelled XML", () => {
@@ -93,7 +93,7 @@ describe("project tempo map", () => {
     files["audiorective/state.json"] = bytes.encode(JSON.stringify(privateState));
     const legacy = openDawProject(zipSync(files));
     expect(legacy.warnings).toEqual([]);
-    legacy.project.destroy();
+    legacy.project.dispose();
     const xml = text
       .decode(files["project.xml"])
       .replaceAll('contentTimeUnit="seconds"', 'contentTimeUnit="beats"')
@@ -101,7 +101,7 @@ describe("project tempo map", () => {
       .replace(/(<(?:Lanes|Notes|Points) id="clip[^"]+" )timeUnit="seconds"/g, '$1timeUnit="beats"');
     files["project.xml"] = bytes.encode(xml);
     expect(openDawProject(zipSync(files)).warnings.some((warning) => warning.includes("no matching Audiorective event details"))).toBe(true);
-    project.destroy();
+    project.dispose();
   });
   test("converts both sides of a step and snaps in musical beats", () => {
     const map = new TempoMap(120, [{ beat: 4, bpm: 60 }]);
@@ -138,9 +138,9 @@ describe("project tempo map", () => {
     expect(snapshot.tempoMap.secondsToBeat(4)).toBe(6);
     const changed = { ...files, "project.xml": bytes.encode(xml.replace('interpolation="hold"', 'interpolation="linear"')) };
     expect(() => openDawProject(zipSync(changed))).toThrow("Project has unsupported tempo interpolation.");
-    snapshot.destroy();
-    opened.project.destroy();
-    project.destroy();
+    snapshot.dispose();
+    opened.project.dispose();
+    project.dispose();
   });
 });
 
@@ -184,8 +184,8 @@ describe("DAWproject native slice", () => {
     expect(opened.project.tracks[0].effects).toEqual(effects);
     delete files["plugins/ar-insert-1.json"];
     expect(() => openDawProject(zipSync(files))).toThrow("Project built-in effect state is missing or reused.");
-    opened.project.destroy();
-    project.destroy();
+    opened.project.dispose();
+    project.dispose();
   });
 
   test("saves macro positions and preserves the rack when private mappings are invalid", () => {
@@ -240,8 +240,8 @@ describe("DAWproject native slice", () => {
     expect(() => project.splitClip(left.id, 0)).toThrow("Project split needs a time inside the clip.");
     expect(() => project.trimClip(left.id, 1, 1)).toThrow("Project trim needs 0 <= start < end <= clip duration.");
     expect(project.tracks[0].clips).toHaveLength(2);
-    opened.project.destroy();
-    project.destroy();
+    opened.project.dispose();
+    project.dispose();
   });
 
   test("splits MIDI crossing notes and keeps controller timing", () => {
@@ -268,8 +268,8 @@ describe("DAWproject native slice", () => {
     expect(trimmed.playbackEvents().find((event) => event.data[0] === 0xb0)?.time).toBe(0);
     const opened = openDawProject(saveDawProject(project));
     expect(opened.project.tracks[0].clips).toHaveLength(2);
-    opened.project.destroy();
-    project.destroy();
+    opened.project.dispose();
+    project.dispose();
   });
 
   test("split MIDI carries sustain into the right clip and releases it at each clip end", () => {
@@ -319,8 +319,8 @@ describe("DAWproject native slice", () => {
     expect(controls(boundaryRight)).toEqual([[0, 0]]);
     const opened = openDawProject(saveDawProject(project));
     expect(opened.warnings).toEqual([]);
-    opened.project.destroy();
-    project.destroy();
+    opened.project.dispose();
+    project.dispose();
   });
 
   test("preserves WebCLAP device identity, bundle location and state in a project round trip", () => {
@@ -356,12 +356,12 @@ describe("DAWproject native slice", () => {
       bundleUrl: "",
       state: new Uint8Array([4, 5, 6]),
     });
-    portable.project.destroy();
+    portable.project.dispose();
     const withoutState = { ...files };
     delete withoutState["plugins/device2.bin"];
     expect(() => openDawProject(zipSync(withoutState))).toThrow("Project device state asset is missing.");
-    opened.project.destroy();
-    project.destroy();
+    opened.project.dispose();
+    project.dispose();
   });
 
   test("saves an audio/MIDI project and reopens its edited playback state", () => {
@@ -408,8 +408,8 @@ describe("DAWproject native slice", () => {
     expect(loadedAudio.sampleRate).toBe(48_000);
     expect(loadedAudio.channels[0]).toEqual(samples);
     expect(openDawProject(saveDawProject(opened.project)).warnings).toEqual([]);
-    opened.project.destroy();
-    project.destroy();
+    opened.project.dispose();
+    project.dispose();
   });
 
   test("the private detail distinguishes equal-time pedal/release order", () => {
@@ -419,7 +419,7 @@ describe("DAWproject native slice", () => {
       const clip = project.addMidiTake(track.id, midiTake(releaseFirst), 0);
       clip.sequence.updateNote("note-1", { pitch: 62 });
       const archive = saveDawProject(project);
-      project.destroy();
+      project.dispose();
       return archive;
     });
     expect(unzipSync(files[0])["project.xml"]).toEqual(unzipSync(files[1])["project.xml"]);
@@ -428,7 +428,7 @@ describe("DAWproject native slice", () => {
       const clip = opened.project.tracks[0].clips[0];
       if (clip.kind !== "midi") throw new Error("Expected MIDI clip");
       const order = midiBytes(clip.playbackEvents());
-      opened.project.destroy();
+      opened.project.dispose();
       return order;
     });
     expect(orders[0]).toEqual([
@@ -472,8 +472,8 @@ describe("DAWproject native slice", () => {
       [0xb0, 64, 0],
       [0x80, 60, 0],
     ]);
-    opened.project.destroy();
-    project.destroy();
+    opened.project.dispose();
+    project.dispose();
   });
 
   test("unsupported MIDI messages fail on save before portable content can be lost", () => {
@@ -482,7 +482,7 @@ describe("DAWproject native slice", () => {
     const take = midiTake(true);
     project.addMidiTake(track.id, { ...take, events: [...take.events, { audioTime: 10.05, data: new Uint8Array([0xc0, 12]) }] }, 0);
     expect(() => saveDawProject(project)).toThrow("Project MIDI has events outside supported portable content.");
-    project.destroy();
+    project.dispose();
   });
 
   test("an externally changed XML clip cannot reuse stale private MIDI events", () => {
@@ -501,8 +501,8 @@ describe("DAWproject native slice", () => {
       [0xb0, 64, 127],
       [0x80, 65, 0],
     ]);
-    opened.project.destroy();
-    project.destroy();
+    opened.project.dispose();
+    project.dispose();
   });
 
   test("missing media and unsupported routing fail instead of dropping content", () => {
@@ -527,7 +527,7 @@ describe("DAWproject native slice", () => {
     expect(() => project.addAudioClip(track.id, { sampleRate: 48_000, channels: [new Float32Array([Number.NaN])] }, 0)).toThrow(
       "Project audio clips need a time, sample rate and equal-length PCM channels.",
     );
-    project.destroy();
+    project.dispose();
   });
 
   test("arrangement edits and mixer state survive a DAWproject round trip", () => {
@@ -579,8 +579,8 @@ describe("DAWproject native slice", () => {
         { time: 1, name: "B" },
       ]),
     ).toThrow("Project markers need unique non-negative times and names.");
-    opened.project.destroy();
-    project.destroy();
+    opened.project.dispose();
+    project.dispose();
   });
 });
 
@@ -606,6 +606,6 @@ describe("project content tracking", () => {
     expect(project.cells.content.value.revision).toBe(project.cells.revision.value);
     stopStructural();
     stopContent();
-    project.destroy();
+    project.dispose();
   });
 });

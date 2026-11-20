@@ -34,4 +34,4 @@ export interface Readable<T> {
   readonly value: T;
 }
 
-export type EngineState = "idle" | "running" | "suspended" | "destroyed";
+export type EngineState = "idle" | "running" | "suspended" | "disposed";

@@ -162,7 +162,7 @@ const volume = new SchedulableParam({
 
 volume.setValueAtTime(0.5, ctx.currentTime);
 volume.linearRampToValueAtTime(0, ctx.currentTime + 1);`}</code></pre>
-          <p>Here, ctx is your AudioContext and gain is a connected GainNode. Read volume.value in your UI; call volume.destroy() when you remove the wrapper.</p>
+          <p>Here, ctx is your AudioContext and gain is a connected GainNode. Read volume.value in your UI; call volume.dispose() when you remove the wrapper.</p>
         </div>
       </div>
       <div class="package-grid">

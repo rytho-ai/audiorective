@@ -68,7 +68,7 @@ describe("FilePlayer", () => {
     expect((p.output as GainNode).gain.value).toBeCloseTo(0.5);
     p.params.volume.value = 0.25;
     expect((p.output as GainNode).gain.value).toBeCloseTo(0.25);
-    p.destroy();
+    p.dispose();
   });
 
   test("loadedmetadata populates the duration cell", async () => {
@@ -76,7 +76,7 @@ describe("FilePlayer", () => {
     await once(p.audio, "loadedmetadata");
     expect(p.cells.duration.value).toBeGreaterThan(0.2);
     expect(p.cells.duration.value).toBeLessThan(0.6);
-    p.destroy();
+    p.dispose();
   });
 
   test("play sets isPlaying; pause clears it", async () => {
@@ -87,7 +87,7 @@ describe("FilePlayer", () => {
     p.pause();
     await delay(30);
     expect(p.cells.isPlaying.value).toBe(false);
-    p.destroy();
+    p.dispose();
   });
 
   test("seek sets currentTime and clamps to duration", async () => {
@@ -97,7 +97,7 @@ describe("FilePlayer", () => {
     expect(p.cells.currentTime.value).toBeCloseTo(1, 1);
     p.seek(99);
     expect(p.cells.currentTime.value).toBeLessThanOrEqual(p.cells.duration.value + 0.01);
-    p.destroy();
+    p.dispose();
   });
 
   test("stop pauses and rewinds to 0", async () => {
@@ -107,7 +107,7 @@ describe("FilePlayer", () => {
     p.stop();
     expect(p.cells.isPlaying.value).toBe(false);
     expect(p.cells.currentTime.value).toBe(0);
-    p.destroy();
+    p.dispose();
   });
 
   test("loop sets audio.loop", () => {
@@ -115,7 +115,7 @@ describe("FilePlayer", () => {
     expect(p.audio.loop).toBe(true);
     p.loop = false;
     expect(p.audio.loop).toBe(false);
-    p.destroy();
+    p.dispose();
   });
 
   test("onEnded fires once when a non-looping clip finishes", async () => {
@@ -129,7 +129,7 @@ describe("FilePlayer", () => {
     await once(p.audio, "ended", 8000);
     expect(ended).toBe(1);
     expect(p.cells.isPlaying.value).toBe(false);
-    p.destroy();
+    p.dispose();
   });
 
   test("setting src resets currentTime and duration", async () => {
@@ -140,26 +140,26 @@ describe("FilePlayer", () => {
     p.src = wavDataUri(0.3);
     expect(p.cells.currentTime.value).toBe(0);
     expect(Number.isNaN(p.cells.duration.value)).toBe(true);
-    p.destroy();
+    p.dispose();
   });
 
-  test("destroy disconnects without throwing", () => {
+  test("dispose disconnects without throwing", () => {
     const p = makePlayer(ctx, { src: wavDataUri(1) });
-    expect(() => p.destroy()).not.toThrow();
+    expect(() => p.dispose()).not.toThrow();
   });
 
   test("play() with no src resolves without throwing and stays stopped", async () => {
     const p = makePlayer(ctx);
     await expect(p.play()).resolves.toBeUndefined();
     expect(p.cells.isPlaying.value).toBe(false);
-    p.destroy();
+    p.dispose();
   });
 
-  test("destroy() while actively playing does not throw", async () => {
+  test("dispose() while actively playing does not throw", async () => {
     const p = makePlayer(ctx, { src: wavDataUri(2) });
     await once(p.audio, "loadedmetadata");
     await p.play();
-    expect(() => p.destroy()).not.toThrow();
+    expect(() => p.dispose()).not.toThrow();
   });
 
   test("src is tracked by effects", () => {
@@ -173,6 +173,6 @@ describe("FilePlayer", () => {
     expect(seen[0]).toBeNull();
     expect(p.src).toBe(seen[1]);
     stop();
-    p.destroy();
+    p.dispose();
   });
 });

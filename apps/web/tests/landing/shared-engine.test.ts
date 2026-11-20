@@ -6,7 +6,7 @@ let engine: LandingEngine | undefined;
 afterEach(async () => {
   if (engine) {
     await engine.stop();
-    engine.core.destroy();
+    engine.core.dispose();
     engine = undefined;
   }
 });

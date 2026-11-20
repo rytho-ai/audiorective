@@ -191,7 +191,7 @@ const ctxRef = useRef<AudioContext | null>(null);
 
 useEffect(() => {
   return () => {
-    machine?.destroy();
+    machine?.dispose();
     void ctxRef.current?.close(); // runs on null -> instance, not just unmount
   };
 }, [machine]);
@@ -203,7 +203,7 @@ function powerOn() {
 }
 ```
 
-When `machine` goes `null → instance`, React runs the _previous_ render's cleanup before the next effect. `machine?.destroy()` is null-safe and no-ops, but `ctxRef.current` is already the live context — so it gets closed immediately.
+When `machine` goes `null → instance`, React runs the _previous_ render's cleanup before the next effect. `machine?.dispose()` is null-safe and no-ops, but `ctxRef.current` is already the live context — so it gets closed immediately.
 
 The symptom is nasty because nothing throws: the clock's ticks keep firing, `state` still reads `"playing"`, and the only tell is that `ctx.currentTime` never advances, so every derived position freezes at its start value.
 
@@ -215,7 +215,7 @@ const [rig, setRig] = useState<{ ctx: AudioContext; machine: DrumMachine } | nul
 useEffect(() => {
   if (!rig) return; // nothing to clean up before power-on
   return () => {
-    rig.machine.destroy();
+    rig.machine.dispose();
     void rig.ctx.close();
   };
 }, [rig]);

@@ -46,7 +46,7 @@ export function mountClipEnvelopeEditor(root: HTMLElement, options: ClipEnvelope
   root.append(element);
   return {
     element,
-    destroy() {
+    dispose() {
       stop();
       element.remove();
     },

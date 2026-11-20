@@ -30,7 +30,7 @@ async function render(releaseFirst: boolean): Promise<number> {
   }));
   await player.play();
   const audio = (await context.startRendering()).getChannelData(0);
-  player.destroy();
+  player.dispose();
   let sum = 0;
   for (let i = 0.45 * 48_000; i < 0.5 * 48_000; i++) sum += audio[i] ** 2;
   return Math.sqrt(sum / (0.05 * 48_000));

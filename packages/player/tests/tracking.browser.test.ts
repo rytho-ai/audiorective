@@ -51,7 +51,7 @@ describe("WavePlayer public getters are tracked", () => {
     const watched = watch(player, touched.wavePlayer);
     disposers.push(
       () => context.close(),
-      () => player.destroy(),
+      () => player.dispose(),
     );
     return { context, player: watched };
   };
@@ -128,14 +128,14 @@ describe("WavePlayer public getters are tracked", () => {
     player.seek(0.2);
     stop();
     expect(runs).toBe(1);
-    binding.destroy();
+    binding.dispose();
   });
-  test("destroy called inside an effect does not subscribe it", async () => {
+  test("dispose called inside an effect does not subscribe it", async () => {
     const { player } = await loaded();
     let runs = 0;
     const stop = effect(() => {
       runs++;
-      player.destroy();
+      player.dispose();
     });
     stop();
     expect(runs).toBe(1);

@@ -6,9 +6,9 @@ export type MixerStrip = StripSettings & Readonly<{ id: string; name: string }>;
 export type MixerState = Readonly<{ tracks: readonly MixerStrip[]; masterVolume: number }>;
 /**
  * A caller-owned level reader for one strip or the master (`null`). The caller creates and wires its analysis node;
- * the view only reads samples and calls `destroy` when the strip goes away so the caller can disconnect.
+ * the view only reads samples and calls `dispose` when the strip goes away so the caller can disconnect.
  */
-export type MixerMeter = Readonly<{ sampleCount?: number; read: LevelMeterOptions["read"]; destroy?(): void }>;
+export type MixerMeter = Readonly<{ sampleCount?: number; read: LevelMeterOptions["read"]; dispose?(): void }>;
 export type MixerOptions = {
   state: Readable<MixerState>;
   editTrack(id: string, patch: Partial<StripSettings>): void;
@@ -47,8 +47,8 @@ export function mountMixer(root: HTMLElement, options: MixerOptions) {
     if (!reader) return;
     const view = mountLevelMeter(root, { sampleCount: reader.sampleCount, label, read: reader.read });
     return () => {
-      view.destroy();
-      reader.destroy?.();
+      view.dispose();
+      reader.dispose?.();
     };
   }
 
@@ -109,7 +109,7 @@ export function mountMixer(root: HTMLElement, options: MixerOptions) {
           button.setAttribute("aria-label", `${strip.name} ${label}`);
         }
       },
-      destroy() {
+      dispose() {
         detachControls?.();
         detachMeter?.();
         element.remove();
@@ -123,7 +123,7 @@ export function mountMixer(root: HTMLElement, options: MixerOptions) {
     const ids = new Set(tracks.map(({ id }) => id));
     for (const [id, strip] of strips)
       if (!ids.has(id)) {
-        untracked(() => strip.destroy());
+        untracked(() => strip.dispose());
         strips.delete(id);
       }
     let next = mixer.firstElementChild;
@@ -140,9 +140,9 @@ export function mountMixer(root: HTMLElement, options: MixerOptions) {
     }
   });
   return {
-    destroy() {
+    dispose() {
       stop();
-      for (const strip of strips.values()) strip.destroy();
+      for (const strip of strips.values()) strip.dispose();
       strips.clear();
       detachMaster?.();
       mixer.remove();

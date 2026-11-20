@@ -32,7 +32,7 @@ export const roundedBars: WaveformRenderer = (container) => {
       }
       path.setAttribute("d", commands.join(" "));
     },
-    destroy() {
+    dispose() {
       svg.remove();
     },
   };

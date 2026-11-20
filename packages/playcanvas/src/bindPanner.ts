@@ -5,7 +5,7 @@ import type { AppBase, Entity } from "playcanvas";
  * transform, once per frame on the app's `update` event. The PlayCanvas
  * counterpart to `@audiorective/threejs`'s `PannerAnchor`.
  *
- * It does **not** own the panner's lifetime — it never disconnects or destroys
+ * It does **not** own the panner's lifetime — it never disconnects or disposes
  * it. The `Spatial` (or whoever created the panner) owns teardown; this only
  * stops syncing when the returned disposer runs.
  *

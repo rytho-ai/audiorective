@@ -36,7 +36,7 @@ describe("SchedulableParam raw $ writes", () => {
     p.syncFromAudio();
     expect(p.value).toBeCloseTo(0.8);
     expect(p.$()).toBeCloseTo(0.8);
-    p.destroy();
+    p.dispose();
   });
 
   test("$ stays tracked for reads", () => {
@@ -48,7 +48,7 @@ describe("SchedulableParam raw $ writes", () => {
     p.value = 2;
     expect(seen).toEqual([0, 1, 2]);
     stop();
-    p.destroy();
+    p.dispose();
   });
 });
 
@@ -61,11 +61,11 @@ describe("ParamBind.get", () => {
     expect(external).toBe("saw");
     const b = new Param<string | undefined>({ default: "sine", bind: { get: () => undefined } });
     expect(b.value).toBe("sine");
-    a.destroy();
+    a.dispose();
   });
 });
 
-describe("AudioProcessor.destroy", () => {
+describe("AudioProcessor.dispose", () => {
   class P extends AudioProcessor<{ s: SchedulableParam }> {
     constructor(c: AudioContext) {
       super(c, ({ schedulableParam }) => ({ params: { s: schedulableParam({ default: 1 }) } }));
@@ -87,7 +87,7 @@ describe("AudioProcessor.destroy", () => {
     const p = new P(ctx);
     const silencer = (p as unknown as { _silencer: GainNode })._silencer;
     const disconnect = vi.spyOn(silencer, "disconnect");
-    p.destroy();
+    p.dispose();
     expect(disconnect).toHaveBeenCalled();
     expect(stops).toHaveLength(1);
     expect(stops[0]).toHaveBeenCalled();
@@ -109,7 +109,7 @@ describe("AudioEngine", () => {
       (engine.latency as unknown as { value: number }).value = 5;
     }).toThrow();
     expect(engine.latency.value).toBe(0);
-    engine.destroy();
+    engine.dispose();
   });
 
   test("start/suspend/resume/untilReady do not subscribe a calling effect", async () => {
@@ -127,16 +127,16 @@ describe("AudioEngine", () => {
     await engine.resume();
     expect(runs).toBe(1);
     stop();
-    engine.destroy();
+    engine.dispose();
   });
 
-  test("destroy rejects a pending untilReady and tears its wait down", async () => {
+  test("dispose rejects a pending untilReady and tears its wait down", async () => {
     const engine = new AudioEngine(ctx);
     await engine.suspend(); // idle stays idle
     const pending = engine.untilReady();
-    engine.destroy();
-    await expect(pending).rejects.toThrow(/destroyed/);
-    await expect(engine.untilReady()).rejects.toThrow(/destroyed/);
+    engine.dispose();
+    await expect(pending).rejects.toThrow(/disposed/);
+    await expect(engine.untilReady()).rejects.toThrow(/disposed/);
   });
 
   test("a borrowed context is neither closed nor stripped of its onstatechange", () => {
@@ -145,7 +145,7 @@ describe("AudioEngine", () => {
     const engine = new AudioEngine(ctx);
     ctx.dispatchEvent(new Event("statechange"));
     expect(owner).toHaveBeenCalledTimes(1); // the owner's handler survives the engine
-    engine.destroy();
+    engine.dispose();
     expect(ctx.state).not.toBe("closed");
     expect(ctx.onstatechange).toBe(owner);
   });
@@ -180,7 +180,7 @@ describe("automation", () => {
     curve.value = [{ time: 0, value: 5, shape: "linear" }];
     expect(runs).toBe(1);
     stop();
-    binding.destroy();
+    binding.dispose();
   });
 });
 
@@ -198,7 +198,7 @@ describe("BufferPlayer", () => {
     }).toThrow();
     p.start();
     expect(p.cells.isPlaying.value).toBe(true);
-    p.destroy();
+    p.dispose();
   });
 
   test("loop controls are observable params that reach the live source", () => {
@@ -218,7 +218,7 @@ describe("BufferPlayer", () => {
     expect(src.loopEnd).toBeCloseTo(1);
     expect(p.loopStart).toBeCloseTo(0.25);
     stop();
-    p.destroy();
+    p.dispose();
   });
 });
 
@@ -230,7 +230,7 @@ describe("Sampler", () => {
     }).toThrow();
     s.trigger();
     expect(s.cells.activeVoices.value).toBe(1);
-    s.destroy();
+    s.dispose();
   });
 
   test("buffer and reverse are observable params", () => {
@@ -249,7 +249,7 @@ describe("Sampler", () => {
     s.buffer = b2;
     expect(s.trigger()).not.toBeNull();
     stop();
-    s.destroy();
+    s.dispose();
   });
 });
 
@@ -267,7 +267,7 @@ describe("FilePlayer", () => {
     f.params.playbackRate.value = 1.5;
     expect(f.audio.playbackRate).toBe(1.5);
     expect(f.playbackRate).toBe(1.5);
-    f.destroy();
+    f.dispose();
   });
 
   test("the element still drives the cells", () => {
@@ -276,7 +276,7 @@ describe("FilePlayer", () => {
     expect(f.cells.isPlaying.value).toBe(true);
     f.audio.dispatchEvent(new Event("pause"));
     expect(f.cells.isPlaying.value).toBe(false);
-    f.destroy();
+    f.dispose();
   });
 
   test("onEnded returns an unsubscribe", () => {
@@ -288,6 +288,6 @@ describe("FilePlayer", () => {
     off();
     f.audio.dispatchEvent(new Event("ended"));
     expect(cb).toHaveBeenCalledTimes(1);
-    f.destroy();
+    f.dispose();
   });
 });

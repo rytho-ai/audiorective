@@ -23,13 +23,13 @@ test("shared views render bytes, indeterminate decode and cancellation from the 
       return result;
     },
   });
-  own(() => player.destroy());
+  own(() => player.dispose());
   const a = host(),
     b = host();
   const first = mountWaveformSelector(a, { player }),
     second = mountWaveformSelector(b, { player });
-  own(() => first.destroy());
-  own(() => second.destroy());
+  own(() => first.dispose());
+  own(() => second.dispose());
   const pending = player.load("/shared.wav");
   report({ phase: "download", loadedBytes: 1048576, totalBytes: 2097152 });
   for (const root of [a, b]) {
@@ -77,7 +77,7 @@ test("owned selector cancellation stops its request and a retry succeeds", async
   );
   const root = host(),
     selector = mountWaveformSelector(root, { createPlayer: () => new WavePlayer(context) });
-  own(() => selector.destroy());
+  own(() => selector.dispose());
   const pending = selector.load("/pending.wav");
   selector.cancelLoad();
   expect(signal.aborted).toBe(true);
@@ -86,6 +86,6 @@ test("owned selector cancellation stops its request and a retry succeeds", async
   expect(selector.getState()).toMatchObject({ duration: 0, loading: false, loadProgress: null, error: null });
   await selector.load(bandsFile(1));
   expect(selector.getState().duration).toBeCloseTo(1, 3);
-  selector.destroy();
-  expect(() => selector.cancelLoad()).toThrow("Waveform selector is destroyed.");
+  selector.dispose();
+  expect(() => selector.cancelLoad()).toThrow("Waveform selector is disposed.");
 });

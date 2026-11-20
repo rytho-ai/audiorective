@@ -94,12 +94,12 @@ class DemoMidiAuditioner extends AudioProcessor<{ volume: SchedulableParam }, {}
     this.held = Math.max(0, Math.min(this.read().duration, seconds));
     if (active) void this.play();
   }
-  override destroy(): void {
+  override dispose(): void {
     if (this.dead) return;
     this.dead = true;
     this.pause();
     this.gain.disconnect();
-    super.destroy();
+    super.dispose();
   }
 }
 export function createAuditioner(context: AudioContext, output: AudioNode, read: () => State): Auditioner {
@@ -113,7 +113,7 @@ export interface Auditioner {
   seek(seconds: number): void;
   readonly position: number;
   readonly isPlaying: boolean;
-  destroy(): void;
+  dispose(): void;
 }
 export type Dependencies = { context: AudioContext; output: AudioNode; makeAuditioner(read: () => State): Auditioner };
 export type MidiApp = {
@@ -127,5 +127,5 @@ export type MidiApp = {
   readonly position: number;
   readonly isPlaying: boolean;
   removeSecondView(): void;
-  destroy(): void;
+  dispose(): void;
 };

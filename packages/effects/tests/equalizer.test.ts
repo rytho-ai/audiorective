@@ -19,7 +19,7 @@ async function render(frequency: number, wet: number) {
   oscillator.start();
   const values = (await context.startRendering()).getChannelData(0).subarray(24_000);
   const heard = Math.sqrt(values.reduce((sum, value) => sum + value * value, 0) / values.length) / Math.SQRT1_2;
-  eq.destroy();
+  eq.dispose();
   return { heard, predicted: mag[0] };
 }
 
@@ -41,7 +41,7 @@ test("prevalidates full band edits and keeps their schedulable Params stable", (
   expect(() => eq.setBands([{ ...settings[0], frequency: 100 }, ...settings.slice(1, 2)])).toThrow(/count/);
   expect(() => eq.setBands([{ ...settings[0], frequency: 100 }, ...settings.slice(1, 2), { ...settings[2], gain: 30 }])).toThrow(/valid bands/);
   expect(initial.value).toBe(500);
-  eq.destroy();
+  eq.dispose();
 });
 
 test("band Params are also registered in params", () => {
@@ -55,5 +55,5 @@ test("band Params are also registered in params", () => {
   eq.setBands(settings.map((band) => ({ ...band, gain: 1 })));
   expect(eq.params.band1Gain.value).toBe(1);
   expect(eq.params.wet.value).toBe(1);
-  eq.destroy();
+  eq.dispose();
 });

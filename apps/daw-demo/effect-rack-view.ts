@@ -34,7 +34,7 @@ export function mountEffectRackView(root: HTMLElement, workspace: Workspace, tra
     macros().find((macro) => macro.targets.some((target) => target.slotId === slotId && target.parameter === parameter));
   const controls: Array<() => void> = [];
   const clearControls = () => {
-    for (const destroy of controls.splice(0)) destroy();
+    for (const dispose of controls.splice(0)) dispose();
   };
   const edit = (next: readonly RackEffect[]) => {
     try {
@@ -159,7 +159,7 @@ export function mountEffectRackView(root: HTMLElement, workspace: Workspace, tra
           },
         },
       });
-      controls.push(() => control.destroy());
+      controls.push(() => control.dispose());
       const changeTargets = (targets: readonly RackMacroMapping[]) =>
         editMacros(macros().map((item) => (item.id === macro.id ? { ...item, targets } : item)));
       for (const target of macro.targets)
@@ -283,7 +283,7 @@ export function mountEffectRackView(root: HTMLElement, workspace: Workspace, tra
       ) => {
         if (owner(slot.id, key)) return;
         const control = mountParameter(values, { ...opts, param: numericPort(read, write) });
-        controls.push(() => control.destroy());
+        controls.push(() => control.dispose());
       };
       const response = (bands: readonly EqBand[], label: string, minDb: number) => {
         const plot = document.createElement("div");
@@ -303,7 +303,7 @@ export function mountEffectRackView(root: HTMLElement, workspace: Workspace, tra
           },
           bands,
         });
-        controls.push(() => editor.destroy());
+        controls.push(() => editor.dispose());
       };
       parameter(
         "wet",
@@ -387,7 +387,7 @@ export function mountEffectRackView(root: HTMLElement, workspace: Workspace, tra
             param: gain,
             format: (value) => `${value.toFixed(1)} dB`,
           });
-          controls.push(() => control.destroy());
+          controls.push(() => control.dispose());
           return { id: `${slot.id}-${index}`, label, frequency: access("frequency"), gain, q: access("q") };
         });
         response(bands, "EQ 頻率響應", -24);
@@ -397,8 +397,8 @@ export function mountEffectRackView(root: HTMLElement, workspace: Workspace, tra
   render();
   return () => {
     clearControls();
-    spectrum?.destroy();
-    meter?.destroy();
+    spectrum?.dispose();
+    meter?.dispose();
     if (tap && analyser) {
       try {
         tap.disconnect(analyser);

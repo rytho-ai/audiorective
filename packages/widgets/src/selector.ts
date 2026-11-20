@@ -27,14 +27,14 @@ export const mountWaveformSelector: MountWaveformSelector = (root, options) => {
     try {
       player = options.player ?? options.createPlayer!();
     } catch (error) {
-      waveform.destroy();
+      waveform.dispose();
       throw error;
     }
   } catch (error) {
     container.remove();
     throw error;
   }
-  let destroyed = false,
+  let disposed = false,
     playbackError: string | null = null,
     animation = 0;
   let displayed: SelectorVersion | null | undefined;
@@ -55,8 +55,8 @@ export const mountWaveformSelector: MountWaveformSelector = (root, options) => {
   try {
     waveform.attach(selection);
   } catch (error) {
-    waveform.destroy();
-    if (ownsPlayer) player.destroy();
+    waveform.dispose();
+    if (ownsPlayer) player.dispose();
     container.remove();
     throw error;
   }
@@ -66,13 +66,13 @@ export const mountWaveformSelector: MountWaveformSelector = (root, options) => {
   }
   function run(action: () => Promise<unknown>): void {
     void action().catch((reason) => {
-      if (destroyed) return;
+      if (disposed) return;
       playbackError = reason instanceof Error ? reason.message : String(reason);
       render();
     });
   }
   function render(): void {
-    if (destroyed) return;
+    if (disposed) return;
     const state = player.getState(),
       range = state.selection;
     query("selection-readout").textContent = range
@@ -107,7 +107,7 @@ export const mountWaveformSelector: MountWaveformSelector = (root, options) => {
     (query("clear") as HTMLButtonElement).disabled = !range && !state.isLooping;
   }
   function sync(): void {
-    if (destroyed) return;
+    if (disposed) return;
     if (player.getState().loading || player.getState().processing) playbackError = null;
     const version = player.version;
     if (displayed !== version) {
@@ -133,7 +133,7 @@ export const mountWaveformSelector: MountWaveformSelector = (root, options) => {
   }
   disposers.push(player.subscribe(sync));
   async function loadSource(source: string | File): Promise<void> {
-    if (destroyed) throw new Error("Waveform selector is destroyed.");
+    if (disposed) throw new Error("Waveform selector is disposed.");
     playbackError = null;
     if (typeof source === "string") url.value = source;
     await player.load(source);
@@ -161,7 +161,7 @@ export const mountWaveformSelector: MountWaveformSelector = (root, options) => {
   });
   if (options.grid) on(query("snap"), "change", () => selection.setSnap(query<HTMLSelectElement>("snap").value as SnapMode));
   function frame(): void {
-    if (destroyed) return;
+    if (disposed) return;
     render();
     animation = requestAnimationFrame(frame);
   }
@@ -174,11 +174,11 @@ export const mountWaveformSelector: MountWaveformSelector = (root, options) => {
     output: player.output,
     load: (source) => loadSource(source),
     cancelLoad() {
-      if (destroyed) throw new Error("Waveform selector is destroyed.");
+      if (disposed) throw new Error("Waveform selector is disposed.");
       player.cancelLoad();
     },
     setSelection(range) {
-      if (destroyed) throw new Error("Waveform selector is destroyed.");
+      if (disposed) throw new Error("Waveform selector is disposed.");
       selection.setSelection(range);
     },
     getState: () => ({
@@ -187,13 +187,13 @@ export const mountWaveformSelector: MountWaveformSelector = (root, options) => {
       pixelsPerSecond: waveform.getViewport().pixelsPerSecond,
     }),
     attach: (plugin) => waveform.attach(plugin),
-    destroy() {
-      if (destroyed) return;
-      destroyed = true;
+    dispose() {
+      if (disposed) return;
+      disposed = true;
       cancelAnimationFrame(animation);
       for (const dispose of disposers.splice(0)) dispose();
-      waveform.destroy();
-      if (ownsPlayer) player.destroy();
+      waveform.dispose();
+      if (ownsPlayer) player.dispose();
       container.remove();
     },
   };

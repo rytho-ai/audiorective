@@ -18,7 +18,7 @@ async function fixture() {
   const context = new AudioContext(),
     player = new WavePlayer(context, { stretch });
   own(() => context.close());
-  own(() => player.destroy());
+  own(() => player.dispose());
   await player.load(bandsFile());
   return { context, player };
 }
@@ -40,8 +40,8 @@ test("shared selectors consume one committed peaks version without rescanning th
     b = host();
   const one = mountWaveformSelector(a, { player }),
     two = mountWaveformSelector(b, { player, renderer });
-  own(() => one.destroy());
-  own(() => two.destroy());
+  own(() => one.dispose());
+  own(() => two.dispose());
   expect(read).not.toHaveBeenCalled();
   one.setSelection({ start: 1, end: 2 });
   await player.audition();
@@ -67,7 +67,7 @@ test("shared selectors consume one committed peaks version without rescanning th
     });
   expect(one.getState().pixelsPerSecond * 9).toBeCloseTo(before, 1);
   expect(element(a, "processing").hidden).toBe(true);
-  one.destroy();
+  one.dispose();
   expect(two.getState().duration).toBe(9);
   expect(player.version!.revision).toBeGreaterThan(revision);
 });
@@ -76,7 +76,7 @@ test("selector maps source beat grid into committed output seconds before native
   const { player } = await fixture();
   const root = host();
   const view = mountWaveformSelector(root, { player, grid: { beats: [0, 1, 2, 3, 4, 5, 6], downbeats: [0, 4] } });
-  own(() => view.destroy());
+  own(() => view.dispose());
   await player.setStretch(1.5);
   const snap = element<HTMLSelectElement>(root, "snap");
   snap.value = "beat";
@@ -97,14 +97,14 @@ test("failed render keeps coherent displayed data and exposes error; a new sourc
       },
     },
   });
-  own(() => player.destroy());
+  own(() => player.dispose());
   await player.load(bandsFile());
   const a = host(),
     b = host();
   const one = mountWaveformSelector(a, { player }),
     two = mountWaveformSelector(b, { player });
-  own(() => one.destroy());
-  own(() => two.destroy());
+  own(() => one.dispose());
+  own(() => two.dispose());
   one.setSelection({ start: 1, end: 2 });
   const revision = player.version!.revision;
   await expect(player.setStretch(1.5)).rejects.toThrow("Render rejected");

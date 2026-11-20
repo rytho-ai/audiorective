@@ -20,7 +20,7 @@ export function mountLevelMeter(root: HTMLElement, options: LevelMeterOptions) {
   element.append(meter, text);
   let level: LevelSnapshot | undefined;
   let frame = 0;
-  let destroyed = false;
+  let disposed = false;
   const db = (amplitude: number) => (amplitude > 0 ? (20 * Math.log10(amplitude)).toFixed(1) : "−∞");
   function update() {
     options.read(samples);
@@ -39,7 +39,7 @@ export function mountLevelMeter(root: HTMLElement, options: LevelMeterOptions) {
     element.dataset.overload = String(peak >= 1);
   }
   function tick() {
-    if (destroyed) return;
+    if (disposed) return;
     update();
     frame = requestAnimationFrame(tick);
   }
@@ -49,9 +49,9 @@ export function mountLevelMeter(root: HTMLElement, options: LevelMeterOptions) {
   return {
     element,
     getLevel: () => level!,
-    destroy() {
-      if (destroyed) return;
-      destroyed = true;
+    dispose() {
+      if (disposed) return;
+      disposed = true;
       cancelAnimationFrame(frame);
       element.remove();
     },

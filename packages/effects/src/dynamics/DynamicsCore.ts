@@ -31,7 +31,7 @@ export class DynamicsCore extends AudioProcessor<P, { reduction: ReadonlyCell<nu
   private readonly _output: GainNode;
   readonly ready: Promise<void>;
   private node: AudioWorkletNode | null = null;
-  private destroyed = false;
+  private disposed = false;
   private readonly _reduction: Cell<number>;
   private readonly _isReady: Cell<boolean>;
 
@@ -59,7 +59,7 @@ export class DynamicsCore extends AudioProcessor<P, { reduction: ReadonlyCell<nu
     this._output = output;
 
     this.ready = registerWorklet(ctx, DYNAMICS_WORKLET_NAME, DYNAMICS_WORKLET).then(() => {
-      if (this.destroyed) return;
+      if (this.disposed) return;
       const node = new AudioWorkletNode(ctx, DYNAMICS_WORKLET_NAME, {
         numberOfInputs: 1,
         numberOfOutputs: 1,
@@ -92,14 +92,14 @@ export class DynamicsCore extends AudioProcessor<P, { reduction: ReadonlyCell<nu
     return this._output;
   }
 
-  override destroy(): void {
-    this.destroyed = true;
+  override dispose(): void {
+    this.disposed = true;
     if (this.node) {
       // The worklet closes its own port once it sees this message and returns `false` from
       // `process()`, which is what actually lets the node be garbage collected.
       this.node.port.postMessage({ dispose: true });
       this.node.disconnect();
     }
-    super.destroy();
+    super.dispose();
   }
 }

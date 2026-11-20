@@ -148,7 +148,7 @@ Nothing audio-related is owned by Pixi, so teardown is symmetric and simple:
 stopGlowEffect(); // stop any alien-signals effects you created
 detachAutoStart(); // disarm the gesture listener
 app.destroy(true); // tears down the ticker + stage (removes your ticker callbacks)
-engine.core.destroy(); // closes the AudioContext, destroys processors (incl. Analyser)
+engine.core.dispose(); // closes the AudioContext, disposes processors (incl. Analyser)
 ```
 
 `app.destroy()` removes `app.ticker` callbacks for you; you only need to stop the

@@ -46,7 +46,7 @@ export const defaultPianoRollLayout: PianoRollLayout = (root, viewport, controls
       }
       keys.replaceChildren(...nodes);
     },
-    destroy() {
+    dispose() {
       zoomIn.onclick = zoomOut.onclick = null;
       toolbar.remove();
       layout.remove();
@@ -87,7 +87,7 @@ export const defaultPianoRollRenderer: PianoRollRenderer = (root) => ({
       }),
     );
   },
-  destroy() {
+  dispose() {
     root.replaceChildren();
   },
 });

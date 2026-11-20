@@ -40,8 +40,8 @@ export class Compressor extends Effect<P, { reduction: ReadonlyCell<number>; isR
     this.core = core;
   }
 
-  override destroy(): void {
-    this.core.destroy();
-    super.destroy();
+  override dispose(): void {
+    this.core.dispose();
+    super.dispose();
   }
 }

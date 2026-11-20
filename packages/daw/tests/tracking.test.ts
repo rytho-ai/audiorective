@@ -144,7 +144,7 @@ describe("Project and MidiClip public readers are tracked", () => {
     stop();
     expect(seen.length).toBeGreaterThan(1);
     expect(Object.is(seen[seen.length - 1], first)).toBe(false);
-    ctx.project.destroy();
+    ctx.project.dispose();
   });
 
   test("mutators called inside an effect do not subscribe it", () => {
@@ -160,7 +160,7 @@ describe("Project and MidiClip public readers are tracked", () => {
     project.setTitle("Outside");
     stop();
     expect(runs).toBe(1);
-    project.destroy();
+    project.dispose();
   });
 });
 
@@ -168,7 +168,7 @@ describe("Project and MidiClip public readers are tracked", () => {
 const commands: Array<{ name: string; run: (ctx: Ctx) => unknown }> = [
   { name: "duplicateClip (audio)", run: (c) => c.project.duplicateClip(c.audioClipId, 2) },
   { name: "duplicateClip (midi)", run: (c) => c.project.duplicateClip(c.clip.id, 5) },
-  { name: "snapshot", run: (c) => c.project.snapshot().destroy() },
+  { name: "snapshot", run: (c) => c.project.snapshot().dispose() },
   { name: "trimClip (midi)", run: (c) => c.project.trimClip(c.clip.id, 0, 0.5) },
   { name: "splitClip (midi)", run: (c) => c.project.splitClip(c.clip.id, 0.5) },
   { name: "trimClip (audio)", run: (c) => c.project.trimClip(c.audioClipId, 0, 0.05) },
@@ -193,12 +193,12 @@ describe("Project commands do not subscribe a calling effect", () => {
       try {
         clip.sequence.setData({ duration: 7, notes: [] });
       } catch {
-        // A command may have replaced and destroyed the clip it read.
+        // A command may have replaced and disposed the clip it read.
       }
     }
     stop();
     expect(runs).toBe(1);
-    ctx.project.destroy();
+    ctx.project.dispose();
   });
 });
 
@@ -211,7 +211,7 @@ describe("Project has one store", () => {
     project.setTempoChanges([{ beat: 4, bpm: 60 }]);
     stop();
     expect(seen).toHaveLength(1);
-    project.destroy();
+    project.dispose();
   });
 
   test("tempo changes re-sort beat clips against the new tempo map", () => {
@@ -222,7 +222,7 @@ describe("Project has one store", () => {
     expect(project.tracks[0].clips.map((clip) => clip.id)).toEqual([beats.id, seconds.id]);
     project.setTempoChanges([{ beat: 1, bpm: 30 }]);
     expect(project.tracks[0].clips.map((clip) => clip.id)).toEqual([seconds.id, beats.id]);
-    project.destroy();
+    project.dispose();
   });
 });
 
@@ -234,7 +234,7 @@ describe("every public Project and MidiClip member is covered", () => {
     expect(
       coverageGaps(MidiClip, modelSourceModule.default, touchedClip, {
         events: "immutable copy of the construction-time source events; nothing changes it",
-        destroy: "teardown owned by Project (removeClip, removeTrack, destroy); a destroyed clip leaves the tracks it was removed from",
+        dispose: "teardown owned by Project (removeClip, removeTrack, dispose); a disposed clip leaves the tracks it was removed from",
       }),
     ).toEqual([]);
   });

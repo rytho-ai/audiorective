@@ -75,7 +75,7 @@ class PannerAnchor extends THREE.Object3D {
 }
 ```
 
-The anchor does **not** own the panner's lifetime — it never disconnects or destroys it. Construct the `Spatial` in your engine, pass `spatial.panner` in here, and let the engine own teardown. Removing the anchor from the scene stops position sync; the audio keeps playing at the last-written position.
+The anchor does **not** own the panner's lifetime — it never disconnects or disposes it. Construct the `Spatial` in your engine, pass `spatial.panner` in here, and let the engine own teardown. Removing the anchor from the scene stops position sync; the audio keeps playing at the last-written position.
 
 ### World transform sync
 

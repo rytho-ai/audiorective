@@ -23,7 +23,7 @@ function processor(wasm = module!): TimeStretch {
   return instance;
 }
 afterEach(() => {
-  for (const instance of processors.splice(0)) instance.destroy();
+  for (const instance of processors.splice(0)) instance.dispose();
   vi.unstubAllGlobals();
 });
 
@@ -220,17 +220,17 @@ describe.skipIf(module === null)("TimeStretch real Rubber Band integration (requ
     expect(Math.abs(carrierHz(result.channels[0]) - 440)).toBeLessThanOrEqual(10);
   }, 20000);
 
-  test("destroy rejects all pending jobs and remains idempotent", async () => {
+  test("dispose rejects all pending jobs and remains idempotent", async () => {
     const stretch = processor();
     const input = { channels: [tone()], sampleRate };
     const pending = Promise.allSettled([stretch.process(input, { ratio: 0.75 }), stretch.process(input, { ratio: 1.5 })]);
-    stretch.destroy();
-    stretch.destroy();
+    stretch.dispose();
+    stretch.dispose();
     for (const result of await pending) {
       expect(result.status).toBe("rejected");
-      if (result.status === "rejected") expect(result.reason.message).toBe("TimeStretch is destroyed.");
+      if (result.status === "rejected") expect(result.reason.message).toBe("TimeStretch is disposed.");
     }
-    await expect(stretch.process(input, { ratio: 1 })).rejects.toThrow("TimeStretch is destroyed.");
+    await expect(stretch.process(input, { ratio: 1 })).rejects.toThrow("TimeStretch is disposed.");
   });
 
   test("concurrent jobs keep ratios, channels, and cancellation independent", async () => {

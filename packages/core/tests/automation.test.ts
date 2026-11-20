@@ -91,8 +91,8 @@ describe("AutomationBinding", () => {
     curve.value = [point(0, 0), point(1, 0.2)];
     expect(r.programs).toHaveLength(2);
     binding.stop();
-    binding.destroy();
-    binding.destroy();
+    binding.dispose();
+    binding.dispose();
     expect(r.holds).toEqual([2.4]);
   });
 
@@ -107,7 +107,7 @@ describe("AutomationBinding", () => {
     expect(binding.position).toBe(1);
     curve.value = [point(0, 0), point(2, 1)];
     expect(r.programs[1].points).toEqual([point(0, 0.5)]);
-    binding.destroy();
+    binding.dispose();
   });
 
   test("constant before first point, hold boundaries and zero-length range", () => {
@@ -118,7 +118,7 @@ describe("AutomationBinding", () => {
     expect(r.programs[0].points).toEqual([point(0, 0.2, "hold"), point(1, 0.2), point(2, 0.8, "hold"), point(3, 0.4), point(4, 0.4, "hold")]);
     binding.start({ from: 2.5, to: 2.5 });
     expect(r.programs[1].points).toEqual([point(0, 0.8, "hold")]);
-    binding.destroy();
+    binding.dispose();
   });
 
   test.each([
@@ -137,8 +137,8 @@ describe("AutomationBinding", () => {
     expect(() => binding.start(options)).toThrow("AutomationBinding needs finite nonnegative times");
     expect(r.programs).toHaveLength(1);
     expect(r.holds).toHaveLength(0);
-    binding.destroy();
-    expect(() => binding.start()).toThrow("AutomationBinding is destroyed.");
+    binding.dispose();
+    expect(() => binding.start()).toThrow("AutomationBinding is disposed.");
   });
 
   test("target reads do not subscribe the binding to native readback or other controls", () => {
@@ -157,10 +157,10 @@ describe("AutomationBinding", () => {
     curve.value = [point(0, 1)];
     other.value = 2;
     expect(r.programs).toHaveLength(2);
-    binding.destroy();
+    binding.dispose();
     curve.value = [point(0, 3)];
     expect(r.programs).toHaveLength(2);
-    other.destroy();
+    other.dispose();
   });
 
   test("target failure cancels a partial schedule and leaves the binding restartable", () => {
@@ -179,7 +179,7 @@ describe("AutomationBinding", () => {
     fail = false;
     binding.start();
     expect(r.programs).toHaveLength(1);
-    binding.destroy();
+    binding.dispose();
   });
 
   test("a live target failure stops the run, and a restart retains reactive editing", () => {
@@ -206,7 +206,7 @@ describe("AutomationBinding", () => {
     curve.value = [point(0, 0.6)];
     expect(r.programs).toHaveLength(3);
     expect(r.programs.at(-1)!.points[0].value).toBe(0.6);
-    binding.destroy();
+    binding.dispose();
   });
 
   test("curve edits before a future start preserve its range and absolute anchor", () => {
@@ -220,7 +220,7 @@ describe("AutomationBinding", () => {
     expect(r.programs[1].points[0].value).toBeCloseTo(0.8);
     expect(r.programs[1].points[1].time).toBeCloseTo(0.6);
     expect(binding.position).toBe(0.2);
-    binding.destroy();
+    binding.dispose();
     expect(r.holds).toEqual([1]);
   });
 });
@@ -250,7 +250,7 @@ describe("native rendered automation", () => {
     expect(at(buffer, 0.1)).toBeCloseTo(0.75, 5);
     expect(at(buffer, 0.25)).toBeCloseTo(1, 5);
     expect(at(buffer, 0.36)).toBeCloseTo(0.4, 5);
-    binding.destroy();
+    binding.dispose();
   });
 
   test("stop before future start removes every queued event", async () => {
@@ -261,7 +261,7 @@ describe("native rendered automation", () => {
     const buffer = await ctx.startRendering();
     expect(at(buffer, 0.2)).toBeCloseTo(0.3, 5);
     expect(at(buffer, 0.35)).toBeCloseTo(0.3, 5);
-    binding.destroy();
+    binding.dispose();
   });
 
   test("live replacement reprograms actual PCM at the current curve position", async () => {
@@ -279,10 +279,10 @@ describe("native rendered automation", () => {
     expect(at(buffer, 0.08)).toBeCloseTo(0.2, 4);
     expect(at(buffer, time + 0.03)).toBeCloseTo(1 - (time + 0.03 - 0.02) / 0.3, 4);
     expect(at(buffer, 0.36)).toBeCloseTo(0, 5);
-    binding.destroy();
+    binding.dispose();
   });
 
-  test.each(["stop", "destroy"] as const)("%s in a ramp holds the native value, not a polled UI snapshot", async (action) => {
+  test.each(["stop", "dispose"] as const)("%s in a ramp holds the native value, not a polled UI snapshot", async (action) => {
     const { ctx, gain } = offline();
     const curve = ramp();
     const param = new SchedulableParam({ default: 0, audioContext: ctx, audioParam: gain.gain });
@@ -300,8 +300,8 @@ describe("native rendered automation", () => {
     const buffer = await rendered;
     expect(at(buffer, 0.25)).toBeCloseTo(held, 4);
     expect(at(buffer, 0.35)).toBeCloseTo(held, 4);
-    binding.destroy();
-    param.destroy();
+    binding.dispose();
+    param.dispose();
     expect(ParamSync.for(ctx).size).toBe(0);
   });
 
@@ -320,6 +320,6 @@ describe("native rendered automation", () => {
     expect(at(buffer, 0.16)).toBeCloseTo(held, 4);
     expect(at(buffer, 0.25)).toBeCloseTo(0.9, 4);
     expect(at(buffer, 0.35)).toBeCloseTo(1, 5);
-    binding.destroy();
+    binding.dispose();
   });
 });

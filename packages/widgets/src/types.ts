@@ -29,17 +29,17 @@ export interface SelectorPlayer extends SelectionModel {
   seek(seconds: number): void;
   setLooping(looping: boolean): void;
   sourceToOutput(seconds: number): number;
-  destroy(): void;
+  dispose(): void;
 }
 
 export type WaveformSelectorOptions = (
   | {
-      /** The selector creates its own player through this factory, owns it and destroys it. */
+      /** The selector creates its own player through this factory, owns it and disposes it. */
       createPlayer: () => SelectorPlayer;
       player?: never;
     }
   | {
-      /** Shared player belongs to the caller; destroying a view leaves it alive. */
+      /** Shared player belongs to the caller; disposing a view leaves it alive. */
       player: SelectorPlayer;
       createPlayer?: never;
     }
@@ -61,7 +61,7 @@ export interface WaveformSelectorHandle extends PluginTarget<TimeViewPluginConte
   cancelLoad(): void;
   setSelection(selection: Selection | null): void;
   getState(): WaveformSelectorState;
-  destroy(): void;
+  dispose(): void;
 }
 
 export type MountWaveformSelector = (root: HTMLElement, options: WaveformSelectorOptions) => WaveformSelectorHandle;
@@ -85,9 +85,9 @@ export type WaveformRenderFrame = Readonly<{
 }>;
 export interface WaveformRendererInstance {
   render(frame: WaveformRenderFrame): void;
-  destroy?(): void;
+  dispose?(): void;
 }
-/** Mount drawing once. The widget owns the container and calls destroy on cleanup. */
+/** Mount drawing once. The widget owns the container and calls dispose on cleanup. */
 export type WaveformRenderer = (container: HTMLElement) => WaveformRendererInstance;
 export type WaveformViewport = Readonly<{
   duration: number;
@@ -98,19 +98,19 @@ export type WaveformViewport = Readonly<{
 }>;
 export type Unsubscribe = () => void;
 
-/** Resources registered by a plugin are released when its attachment is destroyed. */
+/** Resources registered by a plugin are released when its attachment is disposed. */
 export interface WidgetPluginContext {
   /** Registers a listener for the lifetime of the plugin attachment. */
   listen(target: EventTarget, type: string, listener: EventListener): Unsubscribe;
-  /** Runs immediately if its attachment has already been destroyed. */
+  /** Runs immediately if its attachment has already been disposed. */
   onCleanup(dispose: Unsubscribe): Unsubscribe;
 }
 
 export interface WidgetPlugin<Context extends WidgetPluginContext = WidgetPluginContext> {
-  attach: (context: Context) => { destroy(): void } | Unsubscribe | void;
+  attach: (context: Context) => { dispose(): void } | Unsubscribe | void;
 }
 export interface PluginAttachment {
-  destroy(): void;
+  dispose(): void;
 }
 export interface PluginTarget<Context extends WidgetPluginContext> {
   /** Mount an extension and return a handle that can detach it independently. */
@@ -137,7 +137,7 @@ export interface TimeViewPluginContext extends WaveformPluginContext {
 }
 export type TimeViewPlugin = WidgetPlugin<TimeViewPluginContext>;
 export interface WaveformPlugin {
-  attach(context: WaveformPluginContext): { destroy(): void } | Unsubscribe | void;
+  attach(context: WaveformPluginContext): { dispose(): void } | Unsubscribe | void;
 }
 export type WaveformOptions = {
   data?: WaveformData;
@@ -156,7 +156,7 @@ export interface WaveformHandle extends PluginTarget<TimeViewPluginContext> {
   setAmplitudeZoom(factor: number): void;
   getAmplitudeZoom(): number;
   scrollTo(seconds: number): void;
-  destroy(): void;
+  dispose(): void;
 }
 
 export type SnapMode = "off" | "beat" | "downbeat";

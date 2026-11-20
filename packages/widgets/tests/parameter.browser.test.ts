@@ -8,11 +8,11 @@ afterEach(cleanup);
 
 test("a slider, fader and knob edit one Param and follow writes from elsewhere", async () => {
   const param = new Param({ default: 440, min: 20, max: 20_000, step: 10 });
-  own(() => param.destroy());
+  own(() => param.dispose());
   const slider = mountParameter(host(), { param });
   const fader = mountParameter(host(), { param, orientation: "vertical" });
   const knob = mountParameter(host(), { param, orientation: "rotary", scale: "log" });
-  for (const control of [slider, fader, knob]) own(() => control.destroy());
+  for (const control of [slider, fader, knob]) own(() => control.dispose());
   const first = slider.element.querySelector("input")!;
   const second = fader.element.querySelector("input")!;
   const dial = knob.element.querySelector<HTMLElement>("[role=slider]")!;
@@ -42,9 +42,9 @@ test("the mono meter reports float overs and stops reading when detached", async
       samples.set([1.25, 0, -0.5, 0]);
     },
   });
-  own(() => meter.destroy());
+  own(() => meter.dispose());
   expect(meter.getLevel()).toEqual({ peak: 1.25, rms: Math.sqrt((1.25 ** 2 + 0.5 ** 2) / 4) });
-  meter.destroy();
+  meter.dispose();
   const before = reads;
   await new Promise(requestAnimationFrame);
   expect(reads).toBe(before);
@@ -59,7 +59,7 @@ test("widgets create their elements in the mount root's own document", () => {
   const root = doc.createElement("div");
   doc.body.append(root);
   const param = new Param({ default: 0.5, min: 0, max: 1 });
-  own(() => param.destroy());
+  own(() => param.dispose());
   vi.spyOn(document, "createElement").mockImplementation(() => {
     throw new Error("created an element in the global document");
   });
@@ -67,7 +67,7 @@ test("widgets create their elements in the mount root's own document", () => {
   const knob = mountParameter(root, { param, orientation: "rotary" });
   const meter = mountLevelMeter(root, { sampleCount: 4, read: () => undefined });
   vi.restoreAllMocks();
-  for (const handle of [slider, knob, meter]) own(() => handle.destroy());
+  for (const handle of [slider, knob, meter]) own(() => handle.dispose());
   for (const element of [slider.element, knob.element, ...root.querySelectorAll("meter, span, input")]) {
     expect(element.ownerDocument).toBe(doc);
   }

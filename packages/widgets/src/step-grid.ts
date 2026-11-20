@@ -378,7 +378,7 @@ type Drag = { view: LaneView; step: number; def: ParamDef; startY: number; start
 /**
  * A pluggable, lane-aware step editor over a borrowed sequencer.
  * `sequencer` is a structural contract (`lanes`: per lane `length`, `rate`, `swing`, `direction`, `mute`, `solo`, `params`, `playhead` and `steps`),
- * so a `StepSequencer` or your own model fits. Destroying the grid leaves the borrowed sequencer alone.
+ * so a `StepSequencer` or your own model fits. Disposeing the grid leaves the borrowed sequencer alone.
  */
 export function mountStepGrid(root: HTMLElement, options: StepGridOptions): StepGridHandle {
   const { sequencer } = options;
@@ -451,7 +451,7 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
   let tabCell: HTMLElement | undefined;
   let drag: Drag | undefined;
   let suppressClick = false;
-  let destroyed = false;
+  let disposed = false;
   const patternListeners = new Set<(lanes: StepGridSequencer["lanes"]) => void>();
   const disposers: Unsubscribe[] = [];
   const timers = new Set<ReturnType<typeof setTimeout>>();
@@ -919,13 +919,13 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
       return { x: box.left - origin.left, y: box.top - origin.top, width: box.width, height: box.height };
     },
     mountOverlay(element) {
-      if (!isActive()) throw new Error("Plugin attachment is destroyed.");
+      if (!isActive()) throw new Error("Plugin attachment is disposed.");
       Object.assign(element.style, { position: "absolute", inset: "0", pointerEvents: "none" });
       surface.append(element);
       return own(() => element.remove());
     },
     addToolbarItem(element) {
-      if (!isActive()) throw new Error("Plugin attachment is destroyed.");
+      if (!isActive()) throw new Error("Plugin attachment is disposed.");
       toolbar.append(element);
       return own(() => element.remove());
     },
@@ -946,10 +946,10 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
 
   return {
     attach: (plugin) => plugins.attach(plugin),
-    destroy() {
-      if (destroyed) return;
-      destroyed = true;
-      plugins.destroy();
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      plugins.dispose();
       stopActive();
       stopLanes();
       stopHeads();

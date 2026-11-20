@@ -17,7 +17,7 @@ describe("AudioRecorder readers are tracked", () => {
   test("cells.state follows start and cancel", async () => {
     const context = new OfflineAudioContext(1, 48_000, 48_000);
     const recorder = watch(new AudioRecorder(context, { channels: 1 }), touched.audioRecorder);
-    disposers.push(() => recorder.destroy());
+    disposers.push(() => recorder.dispose());
     const states: string[] = [];
     const stop = effect(() => void states.push(recorder.cells.state.value));
     const started = recorder.start({ when: 0.1 });
@@ -37,7 +37,7 @@ describe("AudioRecorder commands drive tracked state", () => {
     const sampleRate = 48_000;
     const context = new OfflineAudioContext(1, sampleRate / 2, sampleRate);
     const recorder = watch(new AudioRecorder(context, { channels: 1 }), touched.audioRecorder);
-    disposers.push(() => recorder.destroy());
+    disposers.push(() => recorder.dispose());
     const states: string[] = [];
     let runs = 0;
     const stopEffect = effect(() => {

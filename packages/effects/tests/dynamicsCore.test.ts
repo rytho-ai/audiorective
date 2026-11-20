@@ -59,14 +59,14 @@ describe("DynamicsCore", () => {
       }
     expect(idx).toBe(Math.round(0.005 * sr));
   });
-  it("destroying before ready resolves leaves isReady false and does not build the worklet node", async () => {
+  it("disposing before ready resolves leaves isReady false and does not build the worklet node", async () => {
     const ctx = new OfflineAudioContext(2, 44100, 44100);
     const core = new DynamicsCore(ctx, { threshold: -24, ratio: 4, knee: 0, attack: 0.001, release: 0.05, makeup: 0, lookahead: 0 });
-    core.destroy();
+    core.dispose();
     await core.ready;
     expect(core.cells.isReady.value).toBe(false);
   });
-  it("destroy() mid-render stops the worklet from producing further output", async () => {
+  it("dispose() mid-render stops the worklet from producing further output", async () => {
     const sr = 44100;
     const ctx = new OfflineAudioContext(2, 4096, sr);
     const core = new DynamicsCore(ctx, { threshold: 0, ratio: 1, knee: 0, attack: 0, release: 0.1, makeup: 0, lookahead: 0 });
@@ -77,7 +77,7 @@ describe("DynamicsCore", () => {
     src.start();
     const suspendFrame = 1024;
     ctx.suspend(suspendFrame / sr).then(() => {
-      core.destroy();
+      core.dispose();
       ctx.resume();
     });
     const buf = await ctx.startRendering();

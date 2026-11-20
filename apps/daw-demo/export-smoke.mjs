@@ -92,11 +92,11 @@ try {
         echo: peakBetween(0.23, 0.4),
       };
     } finally {
-      restored.destroy();
-      restored.project.destroy();
+      restored.dispose();
+      restored.project.dispose();
     }
-    workspace.destroy();
-    project.destroy();
+    workspace.dispose();
+    project.dispose();
     await context.close();
     return { entries, report, cancellation, effectOutput, reopenedMaster };
   });
@@ -154,8 +154,8 @@ try {
     const dataAt = 30 + nameSize;
     let peak = 0;
     for (let at = dataAt + 44; at < dataAt + size; at += 4) peak = Math.max(peak, Math.abs(view.getFloat32(at, true)));
-    workspace.destroy();
-    project.destroy();
+    workspace.dispose();
+    project.dispose();
     await context.close();
     return { peak };
   });
@@ -182,8 +182,8 @@ try {
       if (name === "manifest.json") manifest = JSON.parse(new TextDecoder().decode(bytes.subarray(dataAt, dataAt + size)));
       at = dataAt + size;
     }
-    workspace.destroy();
-    project.destroy();
+    workspace.dispose();
+    project.dispose();
     await context.close();
     return { names, omitted: manifest.stemsOmitted };
   });

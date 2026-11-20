@@ -45,7 +45,7 @@ export class EffectRack extends AudioProcessor<
   private macroSink?: GainNode;
   private nodes = new Map<string, RackNode>();
   private readonly chain = cell<readonly RackNode[]>([]);
-  private destroyed = false;
+  private disposed = false;
 
   constructor(context: BaseAudioContext, effects: readonly RackEffect[] = [], macros: readonly RackMacroSettings[] = noMacros) {
     const settings = cell<readonly RackEffect[]>(Object.freeze([]));
@@ -72,7 +72,7 @@ export class EffectRack extends AudioProcessor<
     try {
       this.setPreset({ effects, macros });
     } catch (error) {
-      this.destroy();
+      this.dispose();
       throw error;
     }
   }
@@ -130,7 +130,7 @@ export class EffectRack extends AudioProcessor<
   }
 
   private assertAlive(): void {
-    if (this.destroyed) throw new Error("EffectRack is destroyed.");
+    if (this.disposed) throw new Error("EffectRack is disposed.");
   }
 
   private apply(settings: readonly RackEffect[], macros: readonly RackMacroSettings[], recall: boolean): void {
@@ -174,8 +174,8 @@ export class EffectRack extends AudioProcessor<
         }
       }
     } catch (error) {
-      for (const node of created) node.processor.destroy();
-      for (const macro of createdMacros) macro.destroy();
+      for (const node of created) node.processor.dispose();
+      for (const macro of createdMacros) macro.dispose();
       newSink?.disconnect();
       throw error;
     }
@@ -226,23 +226,23 @@ export class EffectRack extends AudioProcessor<
       if (previous.length !== controls.length || controls.some((control, i) => control !== previous[i]))
         this.macroCells.value = Object.freeze(controls);
     });
-    for (const [id, macro] of previousMacros) if (macroNodes.get(id) !== macro) macro.destroy();
-    for (const [id, node] of previousNodes) if (next.get(id) !== node) node.processor.destroy();
+    for (const [id, macro] of previousMacros) if (macroNodes.get(id) !== macro) macro.dispose();
+    for (const [id, node] of previousNodes) if (next.get(id) !== node) node.processor.dispose();
     if (!this.macros.size && this.macroSink) {
       this.macroSink.disconnect();
       this.macroSink = undefined;
     }
   }
 
-  override destroy(): void {
-    if (this.destroyed) return;
-    this.destroyed = true;
-    super.destroy();
-    for (const macro of this.macros.values()) macro.destroy();
+  override dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    super.dispose();
+    for (const macro of this.macros.values()) macro.dispose();
     this.macros.clear();
     this.macroCells.value = [];
     this.macroSink?.disconnect();
-    for (const node of this.nodes.values()) node.processor.destroy();
+    for (const node of this.nodes.values()) node.processor.dispose();
     this.nodes.clear();
     this.chain.value = [];
     this.input.disconnect();

@@ -36,8 +36,8 @@ export class SamplerSource {
     return [...this._pads.keys()];
   }
 
-  destroy(): void {
-    for (const sp of this._pads.values()) sp.destroy();
+  dispose(): void {
+    for (const sp of this._pads.values()) sp.dispose();
     this._pads.clear();
     this.output.disconnect();
   }

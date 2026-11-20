@@ -22,14 +22,14 @@ describe("Analyser", () => {
     expect(a).toBeInstanceOf(AudioProcessor);
     expect(a.input).toBe(a.output);
     expect(a.input).toBeInstanceOf(AnalyserNode);
-    a.destroy();
+    a.dispose();
   });
 
   test("constructs on an OfflineAudioContext", async () => {
     const offline = new OfflineAudioContext(1, 128, 44100);
     const a = new Analyser(offline, { fftSize: 256 });
     expect(a.binCount).toBe(128);
-    a.destroy();
+    a.dispose();
   });
 
   test("binCount is fftSize / 2; buffers are sized to match", () => {
@@ -38,14 +38,14 @@ describe("Analyser", () => {
     expect(a.binCount).toBe(256);
     expect(a.createFrequencyBuffer().length).toBe(256);
     expect(a.createWaveformBuffer().length).toBe(512);
-    a.destroy();
+    a.dispose();
   });
 
   test("defaults to fftSize 2048", () => {
     const a = new Analyser(ctx);
     expect(a.fftSize).toBe(2048);
     expect(a.binCount).toBe(1024);
-    a.destroy();
+    a.dispose();
   });
 
   test("reads a live signal: an oscillator produces non-zero frequency magnitude", async () => {
@@ -67,10 +67,10 @@ describe("Analyser", () => {
 
     osc.stop();
     osc.disconnect();
-    a.destroy();
+    a.dispose();
   });
 
-  test("createEngine registers it for teardown (destroyed with the engine)", () => {
+  test("createEngine registers it for teardown (disposed with the engine)", () => {
     const engine = createEngine((c) => ({ analyser: new Analyser(c) }));
     let disconnected = false;
     const node = engine.analyser.output;
@@ -80,7 +80,7 @@ describe("Analyser", () => {
       return (orig as (...a: unknown[]) => void)(...args);
     }) as typeof node.disconnect;
 
-    engine.core.destroy();
+    engine.core.dispose();
     expect(disconnected).toBe(true);
   });
 });

@@ -36,8 +36,8 @@ export class Limiter extends Effect<
     this.core = core;
   }
 
-  override destroy(): void {
-    this.core.destroy();
-    super.destroy();
+  override dispose(): void {
+    this.core.dispose();
+    super.dispose();
   }
 }

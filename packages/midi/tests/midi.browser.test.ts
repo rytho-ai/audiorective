@@ -17,7 +17,7 @@ const complex = () =>
 function owner() {
   const m = new MidiSequence();
   m.load(complex());
-  disposers.push(() => m.destroy());
+  disposers.push(() => m.dispose());
   return m;
 }
 test("format0/1 notes follow source tempo and reference FIFO pairing", () => {

@@ -154,11 +154,11 @@ export class Sampler extends AudioProcessor<
     for (const v of [...this._voices]) v.stop(when);
   }
 
-  override destroy(): void {
+  override dispose(): void {
     this.stopAll();
     this._muteGain.disconnect();
     this._output.disconnect();
-    super.destroy();
+    super.dispose();
   }
 
   /** The buffer a voice plays: the forward buffer, or a reversed copy built once per buffer. */

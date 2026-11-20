@@ -19,7 +19,7 @@ function watch<T>(source: Readable<T>) {
 const note = (id: string, start: number, end: number): MidiNote => ({ id, start, end, pitch: 60, velocity: 90, channel: 0, track: 0 });
 function midi() {
   const m = new MidiSequence({ duration: 4, notes: [note("a", 0, 1), note("b", 1, 2)] });
-  disposers.push(() => m.destroy());
+  disposers.push(() => m.dispose());
   return m;
 }
 
@@ -142,7 +142,7 @@ test("MidiSequence listener reading state is notified once per operation", () =>
   expect(midiListener).toHaveBeenCalledTimes(2);
 });
 
-test("MidiSequence.subscribe is an effect over the state cell: one call per commit, released on destroy and unsubscribe", () => {
+test("MidiSequence.subscribe is an effect over the state cell: one call per commit, released on dispose and unsubscribe", () => {
   const m = midi();
   const a = vi.fn();
   const b = vi.fn();
@@ -155,9 +155,9 @@ test("MidiSequence.subscribe is an effect over the state cell: one call per comm
   m.setSelection({ start: 0, end: 1 });
   expect(a).toHaveBeenCalledTimes(1);
   expect(b).toHaveBeenCalledTimes(2);
-  m.destroy();
+  m.dispose();
   expect(b).toHaveBeenCalledTimes(2);
-  expect(() => m.subscribe(b)).toThrow(/destroyed/);
+  expect(() => m.subscribe(b)).toThrow(/disposed/);
 });
 
 test("MidiSequence.subscribe survives the calling effect re-running", () => {

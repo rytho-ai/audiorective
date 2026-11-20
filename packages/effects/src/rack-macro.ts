@@ -180,12 +180,12 @@ export class LiveRackMacro {
     if (this.disposed) throw new Error("EffectRack macro is disposed.");
   }
 
-  destroy(): void {
+  dispose(): void {
     if (this.disposed) return;
     this.hold(this.context.currentTime);
     this.disposed = true;
-    this.native.destroy();
-    this.control.param.destroy();
+    this.native.dispose();
+    this.control.param.dispose();
     this.source.stop();
     this.source.disconnect();
   }

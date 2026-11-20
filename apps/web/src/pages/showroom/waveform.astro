@@ -58,9 +58,9 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
 
   function disposeStretch() {
     unsubscribeStretch?.(); unsubscribeStretch = undefined;
-    stretchView?.destroy(); stretchView = undefined;
-    stretchPlayer?.destroy(); stretchPlayer = undefined;
-    stretch?.destroy(); stretch = undefined;
+    stretchView?.dispose(); stretchView = undefined;
+    stretchPlayer?.dispose(); stretchPlayer = undefined;
+    stretch?.dispose(); stretch = undefined;
     apply.disabled = true;
   }
   engineFile.addEventListener("change", () => {
@@ -118,13 +118,13 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
   function cleanup() {
     ++stretchGeneration;
     disposeStretch();
-    widget?.destroy();
+    widget?.dispose();
     widget = undefined;
-    shared?.destroy();
+    shared?.dispose();
     shared = undefined;
-    player?.destroy();
+    player?.dispose();
     player = undefined;
-    custom?.destroy();
+    custom?.dispose();
     custom = undefined;
     if (context && context.state !== "closed") void context.close();
     context = undefined;

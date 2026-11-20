@@ -5,7 +5,7 @@ import { cleanup, host, own } from "./helpers";
 function fixture() {
   const root = host();
   const view = mountWaveform(root, { data: { peaks: Float32Array.of(0.1, 0.3, 0.2), duration: 4 } });
-  own(() => view.destroy());
+  own(() => view.dispose());
   let context!: WaveformPluginContext;
   const attachment = view.attach({
     attach(ctx) {
@@ -32,9 +32,9 @@ describe("waveform plugin ownership", () => {
     context.surface.dispatchEvent(new Event("probe"));
     expect(listener).toHaveBeenCalledTimes(1);
 
-    attachment.destroy();
-    attachment.destroy();
-    view.destroy();
+    attachment.dispose();
+    attachment.dispose();
+    view.dispose();
     context.surface.dispatchEvent(new Event("probe"));
     expect(listener).toHaveBeenCalledTimes(1);
     expect(dispose).toHaveBeenCalledTimes(1);
@@ -44,7 +44,7 @@ describe("waveform plugin ownership", () => {
   test("a listener registered by late asynchronous work stays inactive", async () => {
     const { context, attachment } = fixture();
     const listener = vi.fn();
-    attachment.destroy();
+    attachment.dispose();
     await Promise.resolve();
     const off = context.listen(context.surface, "probe", listener);
     context.surface.dispatchEvent(new Event("probe"));
@@ -55,7 +55,7 @@ describe("waveform plugin ownership", () => {
 
   test("late data and viewport subscriptions stay inactive", () => {
     const { context, attachment, view } = fixture();
-    attachment.destroy();
+    attachment.dispose();
     const viewport = vi.fn();
     const data = vi.fn();
     const offViewport = context.onViewportChange(viewport);
@@ -70,13 +70,13 @@ describe("waveform plugin ownership", () => {
 
   test("late cleanup runs immediately and is not repeated", () => {
     const { context, attachment, view } = fixture();
-    attachment.destroy();
+    attachment.dispose();
     const dispose = vi.fn();
     const off = context.onCleanup(dispose);
     expect(dispose).toHaveBeenCalledTimes(1);
     off();
     off();
-    view.destroy();
+    view.dispose();
     expect(dispose).toHaveBeenCalledTimes(1);
   });
 
@@ -94,7 +94,7 @@ describe("waveform plugin ownership", () => {
         });
         ctx.onCleanup(last);
         return () => {
-          throw new Error("expected plugin destroy failure");
+          throw new Error("expected plugin dispose failure");
         };
       },
     });
@@ -103,8 +103,8 @@ describe("waveform plugin ownership", () => {
         ctx.onCleanup(peer);
       },
     });
-    expect(() => view.destroy()).not.toThrow();
-    attachment.destroy();
+    expect(() => view.dispose()).not.toThrow();
+    attachment.dispose();
     expect(first).toHaveBeenCalledTimes(1);
     expect(last).toHaveBeenCalledTimes(1);
     expect(peer).toHaveBeenCalledTimes(1);
@@ -141,30 +141,30 @@ describe("waveform plugin ownership", () => {
     const { context, attachment, view } = fixture();
     const inner = vi.fn();
     const outer = vi.fn(() => {
-      attachment.destroy();
+      attachment.dispose();
       context.onCleanup(inner);
     });
     context.onCleanup(outer);
-    attachment.destroy();
-    attachment.destroy();
-    view.destroy();
+    attachment.dispose();
+    attachment.dispose();
+    view.dispose();
     expect(outer).toHaveBeenCalledTimes(1);
     expect(inner).toHaveBeenCalledTimes(1);
   });
-  test.each(["function", "object"] as const)("destroy during attach disposes a late returned %s exactly once", (kind) => {
+  test.each(["function", "object"] as const)("dispose during attach disposes a late returned %s exactly once", (kind) => {
     const { view, root } = fixture();
     const cleanup = vi.fn();
     const returned = vi.fn();
     const attachment = view.attach({
       attach(ctx) {
         ctx.onCleanup(cleanup);
-        view.destroy();
-        return kind === "function" ? returned : { destroy: returned };
+        view.dispose();
+        return kind === "function" ? returned : { dispose: returned };
       },
     });
-    attachment.destroy();
-    attachment.destroy();
-    view.destroy();
+    attachment.dispose();
+    attachment.dispose();
+    view.dispose();
     expect(cleanup).toHaveBeenCalledTimes(1);
     expect(returned).toHaveBeenCalledTimes(1);
     expect(root.childElementCount).toBe(0);

@@ -26,6 +26,6 @@ test("workspace.transport.attach(sequencer) queues hits on the workspace transpo
   expect(hits).toHaveLength(count);
   expect(workspace.transport.state.value).toBe("playing"); // the shared transport keeps running
   detach();
-  workspace.destroy();
-  project.destroy();
+  workspace.dispose();
+  project.dispose();
 });

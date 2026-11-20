@@ -32,7 +32,7 @@
           "any": [
             "getTracks\\(\\)[^;]{0,60}stop\\(\\)",
             "\\.stop\\(\\)[^;]{0,40}track",
-            "stopMic|releaseMic|stopStream|close\\(\\)|destroy\\(\\)|dispose"
+            "stopMic|releaseMic|stopStream|close\\(\\)|dispose\\(\\)|dispose"
           ]
         }
       ]

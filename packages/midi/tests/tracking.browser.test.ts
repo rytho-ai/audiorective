@@ -49,7 +49,7 @@ describe("MidiSequence readers are tracked", () => {
       () => read(sequence),
       () => mutate(sequence),
     );
-    sequence.destroy();
+    sequence.dispose();
   });
 });
 
@@ -66,12 +66,12 @@ describe("MidiSequence.subscribe", () => {
     stopEffect();
     expect(runs).toBe(1);
     expect(notified).toBeGreaterThan(0);
-    sequence.destroy();
+    sequence.dispose();
   });
 });
 
 describe("MidiRecorder readers are tracked", () => {
-  test("cells.state follows start, stop and destroy", () => {
+  test("cells.state follows start, stop and dispose", () => {
     const input = new EventTarget();
     const clock = { state: "running", currentTime: 10, getOutputTimestamp: () => ({ contextTime: 10, performanceTime: 1000 }) };
     vi.spyOn(performance, "now").mockReturnValue(1000);
@@ -84,9 +84,9 @@ describe("MidiRecorder readers are tracked", () => {
     vi.spyOn(performance, "now").mockReturnValue(1000);
     recorder.start({ when: 10 });
     recorder.cancel();
-    recorder.destroy();
+    recorder.dispose();
     stop();
-    expect(states).toEqual(["idle", "recording", "idle", "recording", "idle", "destroyed"]);
+    expect(states).toEqual(["idle", "recording", "idle", "recording", "idle", "disposed"]);
   });
 });
 

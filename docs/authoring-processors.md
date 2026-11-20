@@ -196,7 +196,7 @@ longest path in samples from `input` to `output` through its own graph. Reserve 
 declaration for processors whose true latency isn't visible in the graph — most commonly one
 wrapping an `AudioWorkletNode`, whose lookahead `defineGraph` can't see.
 
-For the runtime-ownership subtlety with a `param()`-created `latency` (destroy-tracking, the
+For the runtime-ownership subtlety with a `param()`-created `latency` (dispose-tracking, the
 `AudioParam`-sink footgun), see [Latency (PDC) in `core.md`](./core.md#latency-pdc) — this doc
 only covers the authoring decision, not the mechanism.
 
@@ -224,18 +224,18 @@ super(ctx, ({ param }) => ({
 
 ## 5. Lifecycle
 
-`AudioProcessor.destroy()` already disposes every graph created via `defineGraph`, stops every
-effect registered via `effect()`, calls `destroy()` on every param in `params` (unregistering
-bind effects and `ParamSync`), destroys a `latency` param it created itself, and disconnects
+`AudioProcessor.dispose()` already disposes every graph created via `defineGraph`, stops every
+effect registered via `effect()`, calls `dispose()` on every param in `params` (unregistering
+bind effects and `ParamSync`), disposes a `latency` param it created itself, and disconnects
 every internally-created `ConstantSourceNode` (the ones behind `schedulableParam` without a
-real `AudioParam`). Cells are **not** destroyed — they're plain reactive containers with no
+real `AudioParam`). Cells are **not** disposed — they're plain reactive containers with no
 audio-graph resources.
 
-A subclass overriding `destroy()` must call `super.destroy()` and add cleanup for anything the
+A subclass overriding `dispose()` must call `super.dispose()` and add cleanup for anything the
 base class doesn't know about: stopping a source node it started (`OscillatorNode.stop()`,
 `ConstantSourceNode.stop()`), and closing a worklet's `MessagePort`.
 
-### Wrong — override destroy() without cleaning up owned sources
+### Wrong — override dispose() without cleaning up owned sources
 
 ```typescript
 class Drone extends AudioProcessor<{ freq: SchedulableParam }> {
@@ -254,7 +254,7 @@ class Drone extends AudioProcessor<{ freq: SchedulableParam }> {
     return this._osc;
   }
 
-  // no destroy() override — the oscillator keeps running forever
+  // no dispose() override — the oscillator keeps running forever
 }
 ```
 
@@ -277,9 +277,9 @@ class Drone extends AudioProcessor<{ freq: SchedulableParam }> {
     return this._osc;
   }
 
-  override destroy() {
+  override dispose() {
     this._osc.stop();
-    super.destroy();
+    super.dispose();
   }
 }
 ```
@@ -291,7 +291,7 @@ A worklet-backed processor loads its module through `registerWorklet(ctx, name, 
 deduped per context so a second call for the same name and context is a no-op, and it works offline
 against an `OfflineAudioContext`. The processor itself constructs synchronously and exposes a `ready`
 promise that resolves once the module has loaded and the `AudioWorkletNode` is built and wired in; a
-`destroyed` flag set in `destroy()` and checked in the `ready` continuation guards a destroy that
+`disposed` flag set in `dispose()` and checked in the `ready` continuation guards a dispose that
 happens before that promise resolves. The worklet's own `process()` must return `false` after it has
 been told to dispose, so the node can be garbage collected instead of running forever. `DynamicsCore`
 (`packages/effects/src/dynamics/DynamicsCore.ts`) is the reference implementation.
@@ -336,7 +336,7 @@ around.
   a leaf that never joins another path.
 - **Latency** — `latency: 0` for musical delay; a real processing delay declared in samples or
   derived from `ctx.sampleRate`; a worklet-backed processor declares its latency explicitly.
-- **Lifecycle** — an overridden `destroy()` calls `super.destroy()` and stops/cleans up
+- **Lifecycle** — an overridden `dispose()` calls `super.dispose()` and stops/cleans up
   anything the base class doesn't own (started sources, worklet ports).
 - **Testing** — headless vitest browser-mode tests; an `assertLatency` pin test for every
   processor with `input`.

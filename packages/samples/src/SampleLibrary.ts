@@ -34,7 +34,7 @@ export class SampleLibrary {
   private readonly maxDecodedBytes: number;
   private nextId = 0;
   private working = false;
-  private destroyed = false;
+  private disposed = false;
   private previewVoice?: { id: string; player: BufferPlayer; lease: SampleLease; unsubscribe(): void };
 
   private get snapshot(): SampleLibraryState {
@@ -99,7 +99,7 @@ export class SampleLibrary {
     if (this.working) return;
     this.working = true;
     try {
-      while (!this.destroyed && this.queue.length) {
+      while (!this.disposed && this.queue.length) {
         const { id, file } = this.queue.shift()!;
         try {
           const data = await file.arrayBuffer();
@@ -191,7 +191,7 @@ export class SampleLibrary {
       player = untracked(() => new BufferPlayer(this.context, { buffer: lease.buffer }));
       player.output.connect(this.output);
     } catch (error) {
-      player?.destroy();
+      player?.dispose();
       lease.release();
       throw error;
     }
@@ -223,7 +223,7 @@ export class SampleLibrary {
     this.previewVoice = undefined;
     batch(() => {
       voice.unsubscribe();
-      voice.player.destroy();
+      voice.player.dispose();
       voice.lease.release();
       this.patch({ previewId: null, previewPlaying: false });
     });
@@ -236,12 +236,12 @@ export class SampleLibrary {
   }
 
   private assertAlive(): void {
-    if (this.destroyed) throw new Error("Sample Library is destroyed.");
+    if (this.disposed) throw new Error("Sample Library is disposed.");
   }
 
-  destroy(): void {
-    if (this.destroyed) return;
-    this.destroyed = true;
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
     batch(() => {
       this.stopPreview();
       for (const id of [...this.jobs.keys()]) this.remove(id);

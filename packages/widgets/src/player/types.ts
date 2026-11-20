@@ -80,7 +80,7 @@ export interface PlayerActions {
 export interface PlayerRendererInstance {
   /** Called once after mounting and again whenever the frame changes. */
   render(frame: PlayerFrame): void;
-  destroy?(): void;
+  dispose?(): void;
 }
 
 /** Mounts markup into `container` once, wires its input to `actions`, and returns how to draw a frame. */
@@ -95,5 +95,5 @@ export interface PlayerOptions {
 
 export interface PlayerHandle {
   /** Idempotent. Removes DOM, effects, subscriptions and animation frames. Never touches playback. */
-  destroy(): void;
+  dispose(): void;
 }

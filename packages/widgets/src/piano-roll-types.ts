@@ -27,7 +27,7 @@ export type PianoRollRenderFrame = Readonly<{
   onNotePointerDown(note: MidiNote, event: PointerEvent, kind?: PianoRollEditKind): void;
   onNoteClick(note: MidiNote): void;
 }>;
-export type PianoRollRenderer = (root: HTMLElement) => { render(frame: PianoRollRenderFrame): void; destroy?(): void };
+export type PianoRollRenderer = (root: HTMLElement) => { render(frame: PianoRollRenderFrame): void; dispose?(): void };
 export type PianoRollLayoutFrame = Readonly<
   Pick<PianoRollRenderFrame, "duration" | "height" | "pitches" | "viewport" | "pitchToY"> & { zoom: number; snap: SnapMode }
 >;
@@ -39,7 +39,7 @@ export type PianoRollLayout = (
   controls: PianoRollControls,
 ) => {
   render(frame: PianoRollLayoutFrame): void;
-  destroy?(): void;
+  dispose?(): void;
 };
 export type PianoRollOptions = {
   model: PianoRollModel;
@@ -64,5 +64,5 @@ export interface PianoRollHandle extends PluginTarget<TimeViewPluginContext> {
   getViewport(): PianoRollViewport;
   setSnap(mode: SnapMode): void;
   setGrid(grid: Readonly<{ beats: readonly number[]; downbeats: readonly number[] }>): void;
-  destroy(): void;
+  dispose(): void;
 }

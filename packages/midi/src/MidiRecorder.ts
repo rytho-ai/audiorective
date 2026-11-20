@@ -3,7 +3,7 @@ import type { MidiNote, RecordedMidi, RecordedMidiEvent } from "./midi-data";
 
 export type { RecordedMidi, RecordedMidiEvent } from "./midi-data";
 
-export type MidiRecorderState = "idle" | "recording" | "destroyed";
+export type MidiRecorderState = "idle" | "recording" | "disposed";
 
 type ActiveNote = { start: number; pitch: number; velocity: number; channel: number; id: string };
 type Session = {
@@ -76,7 +76,7 @@ export class MidiRecorder {
 
   /** Arm one take. `when` is an absolute AudioContext time; omitted means the current audible output position. */
   start(options: { when?: number } = {}): number {
-    if (this.disposed) throw new Error("MidiRecorder is destroyed.");
+    if (this.disposed) throw new Error("MidiRecorder is disposed.");
     if (this.active) throw new Error("MidiRecorder already has an active take.");
     if (this.context.state !== "running") throw new Error("MidiRecorder needs a running AudioContext.");
     const when = options.when ?? this.audioTime(performance.now());
@@ -91,7 +91,7 @@ export class MidiRecorder {
 
   /** Finish now; notes use seconds relative to the take start and may be handed to MidiSequence. */
   stop(): RecordedMidi {
-    if (this.disposed) throw new Error("MidiRecorder is destroyed.");
+    if (this.disposed) throw new Error("MidiRecorder is disposed.");
     const session = this.active;
     if (!session) throw new Error("MidiRecorder has no active take to stop.");
     let endTime = Math.max(session.startTime, this.audioTime(performance.now()));
@@ -124,10 +124,10 @@ export class MidiRecorder {
     if (!this.disposed) this.stateStore.value = "idle";
   }
 
-  destroy(): void {
+  dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
     if (this.active) this.release();
-    this.stateStore.value = "destroyed";
+    this.stateStore.value = "disposed";
   }
 }

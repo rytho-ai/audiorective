@@ -24,7 +24,7 @@ export type ClipGestureOptions = Readonly<{
 }>;
 
 export interface ClipGestureHandle {
-  destroy(): void;
+  dispose(): void;
 }
 
 export type TimelineZoomOptions = Readonly<{
@@ -44,7 +44,7 @@ export interface TimelineZoomHandle {
   zoomTo(pixelsPerSecond: number, clientX?: number): void;
   zoomBy(factor: number, clientX?: number): void;
   cancel(): void;
-  destroy(): void;
+  dispose(): void;
 }
 
 export type TimelineRange = readonly [start: number, end: number];
@@ -96,7 +96,7 @@ export function attachTimeRangeGesture(element: HTMLElement, options: TimeRangeG
   element.addEventListener("pointercancel", cancel);
   element.addEventListener("lostpointercapture", cancel);
   return {
-    destroy() {
+    dispose() {
       clear();
       element.removeEventListener("pointerdown", down);
       element.removeEventListener("pointermove", move);
@@ -116,7 +116,7 @@ export function attachTimelineZoom(options: TimelineZoomOptions): TimelineZoomHa
     throw new RangeError("Timeline zoom needs a positive increasing scale range.");
   let pending: { scale: number; time: number; x: number } | undefined;
   let frame: number | undefined;
-  let destroyed = false;
+  let disposed = false;
   const clamp = (value: number) => Math.max(minimum, Math.min(maximum, value));
   const sync = () => {
     if (!slider) return;
@@ -129,7 +129,7 @@ export function attachTimelineZoom(options: TimelineZoomOptions): TimelineZoomHa
     pending = undefined;
   };
   const zoomTo = (scale: number, clientX?: number) => {
-    if (destroyed || !Number.isFinite(scale)) return;
+    if (disposed || !Number.isFinite(scale)) return;
     const ruler = options.ruler();
     if (!ruler) return;
     const x = clientX ?? viewport.getBoundingClientRect().left + viewport.clientWidth / 2;
@@ -140,7 +140,7 @@ export function attachTimelineZoom(options: TimelineZoomOptions): TimelineZoomHa
       frame = undefined;
       const zoom = pending;
       pending = undefined;
-      if (!zoom || destroyed) return;
+      if (!zoom || disposed) return;
       options.onScale(zoom.scale);
       const nextRuler = options.ruler();
       if (nextRuler) viewport.scrollLeft += nextRuler.getBoundingClientRect().left + zoom.time * zoom.scale - zoom.x;
@@ -165,9 +165,9 @@ export function attachTimelineZoom(options: TimelineZoomOptions): TimelineZoomHa
     zoomTo,
     zoomBy,
     cancel,
-    destroy() {
-      if (destroyed) return;
-      destroyed = true;
+    dispose() {
+      if (disposed) return;
+      disposed = true;
       cancel();
       slider?.removeEventListener("input", onSlider);
       viewport.removeEventListener("wheel", onWheel);
@@ -178,7 +178,7 @@ export function attachTimelineZoom(options: TimelineZoomOptions): TimelineZoomHa
 /** Attach move/open behavior while the caller retains rendering and Project ownership. */
 export function attachClipGesture(element: HTMLElement, options: ClipGestureOptions): ClipGestureHandle {
   let drag: { pointerId: number; startX: number; x: number; y: number; moved: boolean; time: number; left: string } | undefined;
-  let destroyed = false;
+  let disposed = false;
   const toSeconds = (time: number) => (options.timeUnit === "beats" ? options.timeMap.beatToSeconds(time) : time);
   const fromSeconds = (seconds: number) => (options.timeUnit === "beats" ? options.timeMap.secondsToBeat(seconds) : seconds);
   const startSeconds = toSeconds(options.time);
@@ -196,7 +196,7 @@ export function attachClipGesture(element: HTMLElement, options: ClipGestureOpti
     return alt ? seconds : options.timeMap.snapSeconds(seconds);
   };
   const down = (event: PointerEvent) => {
-    if (destroyed || event.button !== 0 || drag) return;
+    if (disposed || event.button !== 0 || drag) return;
     event.stopPropagation();
     options.onSelect();
     element.setPointerCapture(event.pointerId);
@@ -234,7 +234,7 @@ export function attachClipGesture(element: HTMLElement, options: ClipGestureOpti
     if (drag?.pointerId === event.pointerId) cleanup();
   };
   const keydown = (event: KeyboardEvent) => {
-    if (destroyed) return;
+    if (disposed) return;
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       event.stopPropagation();
@@ -258,9 +258,9 @@ export function attachClipGesture(element: HTMLElement, options: ClipGestureOpti
   element.addEventListener("pointercancel", cancel);
   element.addEventListener("keydown", keydown);
   return {
-    destroy() {
-      if (destroyed) return;
-      destroyed = true;
+    dispose() {
+      if (disposed) return;
+      disposed = true;
       cleanup();
       element.removeEventListener("pointerdown", down);
       element.removeEventListener("pointermove", move);

@@ -88,7 +88,7 @@ export class StudioView {
   private readonly waveformResize: ResizeObserver;
   private readonly scheduleWaveforms = () => this.clipWaveforms.schedule();
   private clipView?: {
-    destroy(): void;
+    dispose(): void;
     setPlayhead(time: number | null): void;
     getViewport(): { duration: number; pixelsPerSecond: number; scrollLeft: number; width: number };
     setZoom(factor: number): void;
@@ -411,7 +411,7 @@ export class StudioView {
   private delete(): void {
     if (!this.selectedClipId) return;
     try {
-      this.clipView?.destroy();
+      this.clipView?.dispose();
       this.clipView = undefined;
       this.history.record("刪除片段", () => this.workspace.project.removeClip(this.selectedClipId!));
       this.editorViewStates.delete(this.selectedClipId);
@@ -672,7 +672,7 @@ export class StudioView {
     const root = $("tracks");
     const scrollLeft = root.scrollLeft,
       scrollTop = root.scrollTop;
-    for (const gesture of this.clipGestures.splice(0)) gesture.destroy();
+    for (const gesture of this.clipGestures.splice(0)) gesture.dispose();
     this.clipWaveforms.clear();
     root.replaceChildren();
     this.playheads = [];
@@ -1063,9 +1063,9 @@ export class StudioView {
     this.stopGainView = undefined;
     this.stopAuditionView?.();
     this.stopAuditionView = undefined;
-    this.stretchView?.destroy();
+    this.stretchView?.dispose();
     this.stretchView = undefined;
-    this.envelopeView?.destroy();
+    this.envelopeView?.dispose();
     this.envelopeView = undefined;
     if (this.clipView && this.editorClipId) {
       const view = this.clipView.getViewport();
@@ -1078,7 +1078,7 @@ export class StudioView {
     }
     this.noteHighlightObserver?.disconnect();
     this.noteHighlightObserver = undefined;
-    this.clipView?.destroy();
+    this.clipView?.dispose();
     this.clipView = undefined;
     this.editorClipId = undefined;
     const root = $("editor-panel");
@@ -1273,7 +1273,7 @@ export class StudioView {
               }),
             );
           } else if (!active && attachment) {
-            attachment.destroy();
+            attachment.dispose();
             attachment = undefined;
           }
         });
@@ -1359,7 +1359,7 @@ export class StudioView {
   }
 
   private renderMixer(): void {
-    this.mixerView?.destroy();
+    this.mixerView?.dispose();
     this.mixerView = undefined;
     const root = $("mixer-panel");
     root.replaceChildren();
@@ -1404,7 +1404,7 @@ export class StudioView {
         return {
           sampleCount: analyser.fftSize,
           read: (samples) => analyser.getFloatTimeDomainData(samples),
-          destroy() {
+          dispose() {
             try {
               node.disconnect(analyser);
             } catch (error) {
@@ -1505,7 +1505,7 @@ export class StudioView {
   }
 
   private renderAutomation(): void {
-    this.automationView?.destroy();
+    this.automationView?.dispose();
     this.automationView = undefined;
     const root = $("automation-panel");
     root.replaceChildren();
@@ -1558,7 +1558,7 @@ export class StudioView {
     const title = document.createElement("strong");
     title.textContent = track.name;
     const remove = button("刪除軌道", async () => {
-      this.clipView?.destroy();
+      this.clipView?.dispose();
       this.clipView = undefined;
       this.workspace.project.removeTrack(track.id);
       this.history.clear();
@@ -1629,7 +1629,7 @@ export class StudioView {
               return [mountParameter(panel, { param, min: info.min, max: info.max, label: info.name, step })];
             });
             const cleanup = () => {
-              for (const handle of handles) handle.destroy();
+              for (const handle of handles) handle.dispose();
               this.editorDetachers.delete(cleanup);
               dispose = undefined;
             };
@@ -1708,25 +1708,25 @@ export class StudioView {
   resetProject(): void {
     this.stopAuditionView?.();
     this.stopAuditionView = undefined;
-    this.stretchView?.destroy();
+    this.stretchView?.dispose();
     this.stretchView = undefined;
-    this.envelopeView?.destroy();
+    this.envelopeView?.dispose();
     this.envelopeView = undefined;
     this.timelineZoom.cancel();
     this.history.clear();
-    this.automationView?.destroy();
+    this.automationView?.dispose();
     this.automationView = undefined;
-    this.mixerView?.destroy();
+    this.mixerView?.dispose();
     this.mixerView = undefined;
     this.selectedTrackId = undefined;
     this.selectedClipId = undefined;
     this.selectedNote = undefined;
-    for (const gesture of this.clipGestures.splice(0)) gesture.destroy();
+    for (const gesture of this.clipGestures.splice(0)) gesture.dispose();
     this.loopPreview = undefined;
     this.playheads = [];
     this.noteHighlightObserver?.disconnect();
     this.noteHighlightObserver = undefined;
-    this.clipView?.destroy();
+    this.clipView?.dispose();
     this.clipView = undefined;
     this.editorClipId = undefined;
     this.editorViewStates.clear();
@@ -1737,13 +1737,13 @@ export class StudioView {
     this.editorDetachers.clear();
   }
 
-  destroy(): void {
-    this.stretchEngine.destroy();
+  dispose(): void {
+    this.stretchEngine.dispose();
     this.disposed = true;
     this.resetProject();
-    this.timelineZoom.destroy();
-    this.overview.destroy();
-    this.clipWaveforms.destroy();
+    this.timelineZoom.dispose();
+    this.overview.dispose();
+    this.clipWaveforms.dispose();
     this.waveformResize.disconnect();
     $("tracks").removeEventListener("scroll", this.scheduleWaveforms);
     $("skin").removeEventListener("change", this.scheduleWaveforms);

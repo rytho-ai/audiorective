@@ -80,7 +80,7 @@ If you see `Equalizer frequency response arrays must have the same length.`, all
 - **PingPongDelay.** Input is summed to mono and enters on the left delay line, then bounces through the cross-feedback path to the right and back. Echoes that have crossed that feedback path arrive one render quantum (128 samples) later than `delayTime`, since a cycle in a Web Audio graph always delays one of its nodes by a quantum.
 - **Compressor / Limiter.** See [Compressor and Limiter](#compressor-and-limiter) below.
 - **PitchShift.** See [PitchShift engines](#pitchshift-engines) below.
-- **Convolver.load().** The latest call to `load(url)` wins — an in-flight load that's superseded by a newer one is discarded silently. `ready` resolves once the constructor's initial `url` option (if given) has loaded; it is not re-armed by a later `load()` call. `isReady` is derived from the buffer (`true` while a buffer is set), and `cells.buffer` is the read-only cell behind the `buffer` accessor. A `load()` that settles after `destroy()` is ignored. The `buffer` accessor is a tracked read: an effect that reads `convolver.buffer` re-runs when the buffer changes (assignment or `load`).
+- **Convolver.load().** The latest call to `load(url)` wins — an in-flight load that's superseded by a newer one is discarded silently. `ready` resolves once the constructor's initial `url` option (if given) has loaded; it is not re-armed by a later `load()` call. `isReady` is derived from the buffer (`true` while a buffer is set), and `cells.buffer` is the read-only cell behind the `buffer` accessor. A `load()` that settles after `dispose()` is ignored. The `buffer` accessor is a tracked read: an effect that reads `convolver.buffer` re-runs when the buffer changes (assignment or `load`).
 
 ## PitchShift engines
 
@@ -118,7 +118,7 @@ async function stretchPCM(pcm: PCMData, compiledModule: WebAssembly.Module) {
   try {
     return await processor.process(pcm, { ratio: 1.5 });
   } finally {
-    processor.destroy();
+    processor.dispose();
   }
 }
 ```
@@ -129,7 +129,7 @@ Pass interior `{ sourceFrame, outputFrame }` pairs to move transients locally. B
 
 Input requires at least one nonempty `Float32Array` channel, equal channel lengths, finite samples, and an integer sample rate from 8000 through 192000. The ratio must be finite and positive and yield a positive safe-integer frame count. Private source copies are transferred to each job; caller buffers stay attached and unchanged. Output includes `channels`, unchanged `sampleRate`, `inputFrames`, `outputFrames`, and the requested `ratio`.
 
-Each call owns a Worker, so concurrent calls remain independent. An already-aborted or subsequently aborted `AbortSignal` rejects that job with `AbortError`. `destroy()` idempotently cancels all pending jobs and prevents further processing; it owns no application audio context. Failure or cancellation of one job does not prevent another valid call on a live processor.
+Each call owns a Worker, so concurrent calls remain independent. An already-aborted or subsequently aborted `AbortSignal` rejects that job with `AbortError`. `dispose()` idempotently cancels all pending jobs and prevents further processing; it owns no application audio context. Failure or cancellation of one job does not prevent another valid call on a live processor.
 
 | Error                                                                                               | Cause and fix                                                                                                |
 | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
@@ -141,7 +141,7 @@ Each call owns a Worker, so concurrent calls remain independent. An already-abor
 | `TimeStretch anchors need strictly increasing interior source and output frames.`                   | Supply integer interior frame pairs in increasing order on both axes.                                        |
 | `TimeStretch: Rubber Band WASM does not support warp anchors.`                                      | Supply a compatible module that exports `rb_set_key_frame_map`.                                              |
 | `TimeStretch processing was aborted.` (`AbortError`)                                                | The caller cancelled the job; create a fresh signal to retry.                                                |
-| `TimeStretch is destroyed.`                                                                         | Construct another processor for further jobs.                                                                |
+| `TimeStretch is disposed.`                                                                          | Construct another processor for further jobs.                                                                |
 | `TimeStretch produced an unexpected frame count.` / `TimeStretch produced nonfinite PCM.`           | The supplied module did not produce the required finite output; check module compatibility and input.        |
 | `TimeStretch allocation failed.` / `TimeStretch could not create a Rubber Band state.`              | The supplied module could not allocate its processing resources.                                             |
 | `TimeStretch worker failed.` / `Rubber Band exited: <code>`                                         | Worker execution or the supplied module failed; inspect the browser's worker error and module compatibility. |
@@ -174,7 +174,7 @@ meterEl.textContent = `${limiter.cells.reduction.value.toFixed(1)} dB`;
 
 ## Channel and SendBus
 
-`Channel` is a gain → pan → mute → output-gate strip: `gain` and `pan` are `SchedulableParam`s (`gain` is linear, not dB — convert with `dbToGain`/`gainToDb` from this package), `mute` is a boolean `Param`. `channel.send(bus, name, gain?)` taps the channel's post-mute `tap` node into a named receive point on a `SendBus` and returns a `Send` (`{ gain: SchedulableParam, enabled: Param<boolean>, dispose() }`); `send.gain` is also linear, and `send.enabled` (default `true`) gates that one send without touching its gain. A `SendBus` is instance-scoped — define receive points with `bus.define(name)`, read them back with `bus.receive(name)` (throws if undefined) — not a global registry. `SendBus.destroy()` disconnects every receive node; it cannot see the sends still feeding them, so call it only after every dependent `Send` has been disposed. `channel.params.outputEnabled` (default `true`) gates only the main `output`; sends tap `channel.tap` ahead of that gate, so each edge is controllable on its own. The input is `channelCount` channels in `"explicit"` mode, so a mono source is upmixed before the panner. Pass `channelCountMode: "max"` to follow the connected sources: a mono source reaches the panner as mono and gets its equal-power law (about -3 dB per side at centre), while a stereo source is unchanged. `bus.undefine(name)` disconnects and forgets one receive point.
+`Channel` is a gain → pan → mute → output-gate strip: `gain` and `pan` are `SchedulableParam`s (`gain` is linear, not dB — convert with `dbToGain`/`gainToDb` from this package), `mute` is a boolean `Param`. `channel.send(bus, name, gain?)` taps the channel's post-mute `tap` node into a named receive point on a `SendBus` and returns a `Send` (`{ gain: SchedulableParam, enabled: Param<boolean>, dispose() }`); `send.gain` is also linear, and `send.enabled` (default `true`) gates that one send without touching its gain. A `SendBus` is instance-scoped — define receive points with `bus.define(name)`, read them back with `bus.receive(name)` (throws if undefined) — not a global registry. `SendBus.dispose()` disconnects every receive node; it cannot see the sends still feeding them, so call it only after every dependent `Send` has been disposed. `channel.params.outputEnabled` (default `true`) gates only the main `output`; sends tap `channel.tap` ahead of that gate, so each edge is controllable on its own. The input is `channelCount` channels in `"explicit"` mode, so a mono source is upmixed before the panner. Pass `channelCountMode: "max"` to follow the connected sources: a mono source reaches the panner as mono and gets its equal-power law (about -3 dB per side at centre), while a stereo source is unchanged. `bus.undefine(name)` disconnects and forgets one receive point.
 
 An FX rack — five inserts in series, two sends to shared buses, a master limiter — fits inside one `defineGraph` in an `AudioProcessor`:
 
@@ -248,7 +248,7 @@ const rack = new EffectRack(context, [
 source.connect(rack.input);
 rack.output.connect(context.destination);
 rack.setEffects(rack.effects.map((slot) => (slot.id === "delay" ? { ...slot, enabled: false } : slot)));
-// On teardown, disconnect your source from rack.input and call rack.destroy().
+// On teardown, disconnect your source from rack.input and call rack.dispose().
 ```
 
 `setEffects()` takes a complete ordered snapshot, validates it, and preserves processors with the same slot ID and type. An empty chain passes audio through. Bypass sets the effective mix to dry while preserving the configured mix. Filter accepts lowpass or highpass, 20–20,000 Hz and Q 0.1–20. Delay accepts 0.01–1 second and feedback 0–0.95. Both accept a mix from 0–1. `rack.effects` and `rack.cells.effects` are the tracked, frozen settings snapshot; an effect or `useValue` that reads either re-runs after `setEffects()`, the only writer. [the DAW runtime](./daw.md#effect-rack) connects these settings to a project and playback.
@@ -344,7 +344,7 @@ const wav = await renderOffline({ seconds: 8, channels: 2, sampleRate: 44100 }, 
 | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
 | `EffectRack needs unique slot IDs and valid Filter, Delay or EQ settings.`           | Use distinct nonempty slot IDs and settings inside the ranges above.                  |
 | `Equalizer needs valid bands with frequency 20–20000 Hz, gain ±24 dB, and Q 0.1–20.` | Supply one or more bands with values in the supported ranges.                         |
-| `EffectRack is destroyed.`                                                           | Construct a new rack before applying settings.                                        |
+| `EffectRack is disposed.`                                                            | Construct a new rack before applying settings.                                        |
 | `EffectRack preset version must be 1.`                                               | Pass a version 1 snapshot or omit the version when authoring a preset.                |
 | `EffectRack macros need unique IDs, normalized values, and distinct valid targets.`  | Use positions from 0 to 1 and assign a supported slot parameter to at most one macro. |
 | `EffectRack macro target is unavailable.`                                            | Rebuild the preset against the current rack slots and supported ranges.               |

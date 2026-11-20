@@ -58,8 +58,8 @@ async function render(solo: string | null): Promise<Float32Array[]> {
   feed("stereo", 2, [330, 550], 0.4);
   feed("muted", 1, [990], 0.5);
   const rendered = await context.startRendering();
-  workspace.destroy();
-  model.destroy();
+  workspace.dispose();
+  model.dispose();
   return [rendered.getChannelData(0).slice(), rendered.getChannelData(1).slice()];
 }
 

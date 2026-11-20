@@ -7,7 +7,7 @@ type PluginScope = { isActive(): boolean; own(dispose: Unsubscribe): Unsubscribe
 export function createPluginHost<Context extends WidgetPluginContext>(name: string, contextFor: (scope: PluginScope) => Context) {
   const attachments = new Map<WidgetPlugin<Context>, PluginAttachment>();
   const title = name[0].toUpperCase() + name.slice(1);
-  let destroyed = false;
+  let disposed = false;
   const runCleanup = (dispose: Unsubscribe) => {
     try {
       dispose();
@@ -17,7 +17,7 @@ export function createPluginHost<Context extends WidgetPluginContext>(name: stri
   };
   return {
     attach(plugin: WidgetPlugin<Context>): PluginAttachment {
-      if (destroyed) throw new Error(`${title} is destroyed.`);
+      if (disposed) throw new Error(`${title} is disposed.`);
       if (attachments.has(plugin)) throw new Error(`Plugin is already attached to this ${name}.`);
       let active = true;
       const cleanups = new Set<Unsubscribe>();
@@ -38,7 +38,7 @@ export function createPluginHost<Context extends WidgetPluginContext>(name: stri
       };
       let pluginDispose: Unsubscribe | undefined;
       const attachment: PluginAttachment = {
-        destroy() {
+        dispose() {
           if (!active) return;
           active = false;
           attachments.delete(plugin);
@@ -49,20 +49,20 @@ export function createPluginHost<Context extends WidgetPluginContext>(name: stri
       attachments.set(plugin, attachment);
       try {
         const result = plugin.attach(contextFor({ isActive: () => active, own }));
-        const dispose = typeof result === "function" ? result : result ? () => result.destroy() : undefined;
-        // attach() can synchronously destroy the widget before returning a disposer.
+        const dispose = typeof result === "function" ? result : result ? () => result.dispose() : undefined;
+        // attach() can synchronously dispose the widget before returning a disposer.
         if (active) pluginDispose = dispose;
         else if (dispose) runCleanup(dispose);
       } catch (error) {
-        attachment.destroy();
+        attachment.dispose();
         throw error;
       }
       return attachment;
     },
-    destroy() {
-      if (destroyed) return;
-      destroyed = true;
-      for (const attachment of [...attachments.values()]) attachment.destroy();
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      for (const attachment of [...attachments.values()]) attachment.dispose();
     },
   };
 }

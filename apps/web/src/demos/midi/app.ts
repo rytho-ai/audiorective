@@ -51,7 +51,7 @@ const ribbonRenderer: PianoRollRenderer = (root) => {
       });
       svg.replaceChildren(...elements);
     },
-    destroy() {
+    dispose() {
       svg.remove();
     },
   };
@@ -137,7 +137,7 @@ export function mountMidiApp(root: HTMLElement, deps: Dependencies): MidiApp {
   const unsubscribe = model.subscribe(updateSummary);
   updateSummary();
   function alive() {
-    if (dead) throw new Error("MIDI app is destroyed");
+    if (dead) throw new Error("MIDI app is disposed");
   }
   function editNote(id: string, patch: Partial<Pick<Note, "pitch" | "velocity" | "start" | "end">>) {
     alive();
@@ -230,7 +230,7 @@ export function mountMidiApp(root: HTMLElement, deps: Dependencies): MidiApp {
     ++recordRequest;
     if (!recorder) return;
     recorder.cancel();
-    recorder.destroy();
+    recorder.dispose();
     recorder = null;
     refreshInputs();
   }
@@ -257,7 +257,7 @@ export function mountMidiApp(root: HTMLElement, deps: Dependencies): MidiApp {
         next.start();
         recorder = next;
       } catch (error) {
-        next.destroy();
+        next.dispose();
         throw error;
       }
       status.textContent = "Recording MIDI take…";
@@ -270,7 +270,7 @@ export function mountMidiApp(root: HTMLElement, deps: Dependencies): MidiApp {
     alive();
     if (!recorder) return;
     const take = recorder.stop();
-    recorder.destroy();
+    recorder.dispose();
     recorder = null;
     sound.pause();
     recordedSource = take;
@@ -354,7 +354,7 @@ export function mountMidiApp(root: HTMLElement, deps: Dependencies): MidiApp {
   });
   function removeSecondView() {
     if (dead || !second) return;
-    second.destroy();
+    second.dispose();
     second = null;
     secondRoot.remove();
     control<HTMLButtonElement>("remove").disabled = true;
@@ -392,7 +392,7 @@ export function mountMidiApp(root: HTMLElement, deps: Dependencies): MidiApp {
       return sound.isPlaying;
     },
     removeSecondView,
-    destroy() {
+    dispose() {
       if (dead) return;
       dead = true;
       fileRequest++;
@@ -401,12 +401,12 @@ export function mountMidiApp(root: HTMLElement, deps: Dependencies): MidiApp {
       cancelRecording();
       for (const input of openedInputs) void input.close().catch(() => {});
       openedInputs.clear();
-      sound.destroy();
-      first.destroy();
-      second?.destroy();
+      sound.dispose();
+      first.dispose();
+      second?.dispose();
       second = null;
       unsubscribe();
-      model.destroy();
+      model.dispose();
       host.remove();
     },
   };

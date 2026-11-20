@@ -896,7 +896,7 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
     if (Object.keys(entries).some((path) => !usedPaths.has(path))) throw new Error("Project archive has unsupported files.");
     return { project, warnings: Object.freeze(warnings) };
   } catch (error) {
-    project.destroy();
+    project.dispose();
     throw error;
   }
 }

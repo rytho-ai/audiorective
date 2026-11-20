@@ -16,7 +16,7 @@ import { bandsFile, cleanup, delay, drag, element, host, own, pointer } from "./
 function svgRenderer() {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   const frames: WaveformRenderFrame[] = [];
-  const destroy = vi.fn(() => svg.remove());
+  const dispose = vi.fn(() => svg.remove());
   const mount = vi.fn((container: HTMLElement): WaveformRendererInstance => {
     container.append(svg);
     return {
@@ -36,11 +36,11 @@ function svgRenderer() {
           svg.append(bar);
         }
       },
-      destroy,
+      dispose,
     };
   });
   const renderer: WaveformRenderer = mount;
-  return { renderer, svg, frames, mount, destroy };
+  return { renderer, svg, frames, mount, dispose };
 }
 
 /** Consumer implementation: CSS-pixel bitmap drawing from the same public frame. */
@@ -48,7 +48,7 @@ function canvasRenderer() {
   const canvas = document.createElement("canvas");
   const context = canvas.getContext("2d")!;
   const frames: WaveformRenderFrame[] = [];
-  const destroy = vi.fn(() => canvas.remove());
+  const dispose = vi.fn(() => canvas.remove());
   const renderer: SelectorRenderer = (container) => {
     container.append(canvas);
     return {
@@ -70,11 +70,11 @@ function canvasRenderer() {
           );
         }
       },
-      destroy,
+      dispose,
     };
   };
   const pixel = (x: number, y: number) => Array.from(context.getImageData(Math.floor(x), Math.floor(y), 1, 1).data);
-  return { renderer, canvas, frames, destroy, pixel };
+  return { renderer, canvas, frames, dispose, pixel };
 }
 
 function audioPeak(analyser: AnalyserNode): number {
@@ -96,7 +96,7 @@ describe("public custom waveform renderers", () => {
     const min = Float32Array.of(-0.25, -0.5);
     const max = Float32Array.of(0.5, 1);
     const view = mountWaveform(root, { renderer: custom.renderer, data: { min, max, duration: 4 } });
-    own(() => view.destroy());
+    own(() => view.dispose());
     await expect.poll(() => custom.frames.length).toBeGreaterThan(1); // Initial ResizeObserver delivery.
     const first = custom.frames.at(-1)!;
     const bars = () => Array.from(custom.svg.querySelectorAll("rect"));
@@ -149,9 +149,9 @@ describe("public custom waveform renderers", () => {
     expect(custom.frames.at(-1)!.peaks).toBeNull();
     expect(bars()).toHaveLength(0);
     expect(custom.mount).toHaveBeenCalledTimes(1);
-    view.destroy();
-    view.destroy();
-    expect(custom.destroy).toHaveBeenCalledTimes(1);
+    view.dispose();
+    view.dispose();
+    expect(custom.dispose).toHaveBeenCalledTimes(1);
     expect(root.childElementCount).toBe(0);
   });
 
@@ -164,7 +164,7 @@ describe("public custom waveform renderers", () => {
     const root = host();
     const custom = canvasRenderer();
     const view = mountWaveform(root, { renderer: custom.renderer });
-    own(() => view.destroy());
+    own(() => view.dispose());
     expect(custom.frames[0].peaks).toBeNull();
     expect(custom.pixel(10, 10)[3]).toBe(0);
     view.setData({ min: Float32Array.of(-0.5, -0.25), max: Float32Array.of(0.5, 0.75), duration: 4 });
@@ -193,7 +193,7 @@ describe("public custom waveform renderers", () => {
     buffer.getChannelData(1).fill(0.5);
     const reads = vi.spyOn(buffer, "getChannelData");
     const view = mountWaveform(root, { renderer: custom.renderer, data: buffer });
-    own(() => view.destroy());
+    own(() => view.dispose());
     await expect.poll(() => custom.frames.length).toBeGreaterThan(1);
     const cached = custom.frames.at(-1)!.peaks!;
     expect(cached.duration).toBe(buffer.duration);
@@ -220,7 +220,7 @@ describe("public custom waveform renderers", () => {
     const root = host();
     const custom = svgRenderer();
     const view = mountWaveform(root, { renderer: custom.renderer, data: { peaks: Float32Array.of(0.3, 0.8, 0.5, 0.4), duration: 8 } });
-    own(() => view.destroy());
+    own(() => view.dispose());
     const commits = vi.fn();
     const selection = createSelectionPlugin({ grid: { beats: [0, 1, 2, 3, 4, 5, 6, 7, 8], downbeats: [0, 4, 8] }, snap: "beat", onCommit: commits });
     view.attach(selection);
@@ -297,7 +297,7 @@ describe("public custom waveform renderers", () => {
       renderer: custom.renderer,
       onSelectionChange,
     });
-    own(() => selector.destroy());
+    own(() => selector.dispose());
     await selector.ready;
     const frame = custom.frames.at(-1)!;
     expect(frame.peaks!.duration).toBeCloseTo(6);
@@ -336,11 +336,11 @@ describe("public custom waveform renderers", () => {
       peerAnalyser.disconnect();
     });
     await expect.poll(() => audioPeak(peerAnalyser)).toBeGreaterThan(0.05);
-    selector.destroy();
-    selector.destroy();
+    selector.dispose();
+    selector.dispose();
     await expect.poll(() => audioPeak(analyser)).toBeLessThan(0.001);
     expect(audioPeak(peerAnalyser)).toBeGreaterThan(0.05);
-    expect(custom.destroy).toHaveBeenCalledTimes(1);
+    expect(custom.dispose).toHaveBeenCalledTimes(1);
     expect(context.state).toBe("running");
     expect(root.childElementCount).toBe(0);
   });
@@ -353,7 +353,7 @@ describe("public custom waveform renderers", () => {
     root.append(sentinel);
     const disconnect = vi.spyOn(ResizeObserver.prototype, "disconnect");
     const observe = vi.spyOn(ResizeObserver.prototype, "observe");
-    const destroy = vi.fn();
+    const dispose = vi.fn();
     const error = new Error(`custom ${failure} failed`);
     const renderer: WaveformRenderer = (container) => {
       container.append(document.createElement("canvas"));
@@ -362,7 +362,7 @@ describe("public custom waveform renderers", () => {
         render() {
           throw error;
         },
-        destroy,
+        dispose,
       };
     };
     expect(() => mountWaveform(root, { renderer })).toThrow(error);
@@ -371,21 +371,21 @@ describe("public custom waveform renderers", () => {
     expect(Array.from(root.children)).toEqual([sentinel]);
     expect(disconnect).toHaveBeenCalledTimes(2);
     for (const observer of observe.mock.contexts) expect(disconnect.mock.contexts).toContain(observer);
-    expect(destroy).toHaveBeenCalledTimes(failure === "factory" ? 0 : 2);
+    expect(dispose).toHaveBeenCalledTimes(failure === "factory" ? 0 : 2);
     expect(context.state).not.toBe("closed");
   });
 
-  test("a throwing renderer destroy still disposes plugins, observers and listeners exactly once", async () => {
+  test("a throwing renderer dispose still disposes plugins, observers and listeners exactly once", async () => {
     const root = host();
-    const destroyError = new Error("custom drawing teardown failed");
-    const destroy = vi.fn(() => {
-      throw destroyError;
+    const disposeError = new Error("custom drawing teardown failed");
+    const dispose = vi.fn(() => {
+      throw disposeError;
     });
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
     const disconnect = vi.spyOn(ResizeObserver.prototype, "disconnect");
     const render = vi.fn();
-    const view = mountWaveform(root, { renderer: () => ({ render, destroy }), data: { peaks: Float32Array.of(1), duration: 4 } });
-    own(() => view.destroy());
+    const view = mountWaveform(root, { renderer: () => ({ render, dispose }), data: { peaks: Float32Array.of(1), duration: 4 } });
+    own(() => view.dispose());
     const marker = document.createElement("div");
     const cleanupPlugin = vi.fn();
     const input = vi.fn();
@@ -415,8 +415,8 @@ describe("public custom waveform renderers", () => {
     await pointer({ action: "down", x: rect.x + rect.width * 0.25, y: rect.y + rect.height / 2 });
     await pointer({ action: "move", x: rect.x + rect.width * 0.5, y: rect.y + rect.height / 2 });
     expect(surface.hasPointerCapture(pointerId)).toBe(true);
-    view.destroy();
-    view.destroy();
+    view.dispose();
+    view.dispose();
     expect(surface.hasPointerCapture(pointerId)).toBe(false);
     const draws = render.mock.calls.length;
     const changes = viewportChange.mock.calls.length;
@@ -431,9 +431,9 @@ describe("public custom waveform renderers", () => {
     expect(selection.getSelection()).toBeNull();
     expect(marker.isConnected).toBe(false);
     expect(cleanupPlugin).toHaveBeenCalledTimes(1);
-    expect(destroy).toHaveBeenCalledTimes(1);
+    expect(dispose).toHaveBeenCalledTimes(1);
     expect(disconnect).toHaveBeenCalledTimes(1);
-    expect(errorLog).toHaveBeenCalledWith("Waveform renderer cleanup failed:", destroyError);
+    expect(errorLog).toHaveBeenCalledWith("Waveform renderer cleanup failed:", disposeError);
     expect(root.childElementCount).toBe(0);
   });
 
@@ -443,12 +443,12 @@ describe("public custom waveform renderers", () => {
     const root = host();
     const custom = canvasRenderer();
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
-    const destroyError = new Error("failed canvas disposal");
-    custom.destroy.mockImplementation(() => {
-      throw destroyError;
+    const disposeError = new Error("failed canvas disposal");
+    custom.dispose.mockImplementation(() => {
+      throw disposeError;
     });
     const selector = mountWaveformSelector(root, { createPlayer: () => new WavePlayer(context), source: bandsFile(), renderer: custom.renderer });
-    own(() => selector.destroy());
+    own(() => selector.dispose());
     await selector.ready;
     const analyser = context.createAnalyser();
     selector.output.connect(analyser);
@@ -457,10 +457,10 @@ describe("public custom waveform renderers", () => {
     element<HTMLButtonElement>(root, "play-pause").click();
     await expect.poll(() => audioPeak(analyser)).toBeGreaterThan(0.1);
     const cancelAnimation = vi.spyOn(window, "cancelAnimationFrame");
-    selector.destroy();
+    selector.dispose();
     const canceled = cancelAnimation.mock.calls.length;
     expect(canceled).toBeGreaterThan(0);
-    selector.destroy();
+    selector.dispose();
     expect(cancelAnimation).toHaveBeenCalledTimes(canceled);
     await expect.poll(() => audioPeak(analyser)).toBeLessThan(0.001);
     const draws = custom.frames.length;
@@ -468,8 +468,8 @@ describe("public custom waveform renderers", () => {
     await delay(30);
     expect(custom.frames).toHaveLength(draws);
     expect(selector.getState().isPlaying).toBe(false);
-    expect(custom.destroy).toHaveBeenCalledTimes(1);
-    expect(errorLog).toHaveBeenCalledWith("Waveform renderer cleanup failed:", destroyError);
+    expect(custom.dispose).toHaveBeenCalledTimes(1);
+    expect(errorLog).toHaveBeenCalledWith("Waveform renderer cleanup failed:", disposeError);
     expect(context.state).toBe("running");
     expect(root.childElementCount).toBe(0);
   });

@@ -80,22 +80,22 @@ describe("measureLatency", () => {
     expect(report.runs[0].peak).toBeGreaterThanOrEqual(report.runs[0].firstArrival);
   });
 
-  it("destroys each processor it builds", async () => {
-    const destroyed: number[] = [];
+  it("disposes each processor it builds", async () => {
+    const disposed: number[] = [];
     await measureLatency((ctx) => {
       const p = latent(64, 64)(ctx);
-      const original = p.destroy.bind(p);
-      p.destroy = () => {
-        destroyed.push(ctx.sampleRate);
+      const original = p.dispose.bind(p);
+      p.dispose = () => {
+        disposed.push(ctx.sampleRate);
         original();
       };
       return p;
     });
-    expect(destroyed).toEqual([44100, 48000]);
+    expect(disposed).toEqual([44100, 48000]);
   });
 
-  it("destroys a processor that fails the input/output guard", async () => {
-    const destroyed: boolean[] = [];
+  it("disposes a processor that fails the input/output guard", async () => {
+    const disposed: boolean[] = [];
     class OutputOnly extends AudioProcessor {
       readonly n: GainNode;
       constructor(ctx: BaseAudioContext) {
@@ -110,15 +110,15 @@ describe("measureLatency", () => {
     await expect(
       measureLatency((ctx) => {
         const p = new OutputOnly(ctx);
-        const original = p.destroy.bind(p);
-        p.destroy = () => {
-          destroyed.push(true);
+        const original = p.dispose.bind(p);
+        p.dispose = () => {
+          disposed.push(true);
           original();
         };
         return p;
       }),
     ).rejects.toThrow("measureLatency: processor must expose input and output");
-    expect(destroyed).toEqual([true]);
+    expect(disposed).toEqual([true]);
   });
 
   it("a waveshaper measures 0", async () => {

@@ -9,7 +9,7 @@ function fixture(options: Partial<Omit<WaveformSelectorOptions, "player" | "crea
   own(() => context.close());
   const root = host();
   const handle = mountWaveformSelector(root, { createPlayer: () => new WavePlayer(context), ...options });
-  own(() => handle.destroy());
+  own(() => handle.dispose());
   const click = (id: string) => element<HTMLButtonElement>(root, id).click();
   return { root, context, handle, click };
 }
@@ -131,7 +131,7 @@ describe("complete waveform selector source lifecycle", () => {
     expect(handle.getState()).toMatchObject({ loading: false, error: null });
   });
 
-  test("a stale decode cannot overwrite newer data or resurrect a destroyed selector", async () => {
+  test("a stale decode cannot overwrite newer data or resurrect a disposed selector", async () => {
     const { root, context, handle } = fixture();
     const decode = deferred<AudioBuffer>();
     const spy = vi.spyOn(context, "decodeAudioData").mockImplementationOnce(() => decode.promise);
@@ -146,12 +146,12 @@ describe("complete waveform selector source lifecycle", () => {
     spy.mockImplementationOnce(() => late.promise);
     const pending = handle.load(bandsFile());
     await expect.poll(() => spy.mock.calls.length).toBe(3);
-    handle.destroy();
+    handle.dispose();
     late.resolve(context.createBuffer(1, context.sampleRate * 6, context.sampleRate));
     await pending;
     expect(root.childElementCount).toBe(0);
     expect(context.state).not.toBe("closed");
-    await expect(handle.load(bandsFile())).rejects.toThrow(/destroyed/);
+    await expect(handle.load(bandsFile())).rejects.toThrow(/disposed/);
   });
 
   test("programmatic and keyboard edits stay stopped, while pointer creation and resizing audition", async () => {
@@ -259,7 +259,7 @@ describe("selector audible output", () => {
     expect(frequency(analyser, context)).toBeGreaterThan(860);
   });
 
-  test("destroy silences its own output while caller context and an independently routed peer survive", async () => {
+  test("dispose silences its own output while caller context and an independently routed peer survive", async () => {
     const { root, handle, click, context, analyser } = await audioFixture();
     const peer = context.createOscillator();
     const gain = context.createGain();
@@ -277,8 +277,8 @@ describe("selector audible output", () => {
     });
     click("play-pause");
     await expect.poll(() => peak(analyser)).toBeGreaterThan(0.1);
-    handle.destroy();
-    handle.destroy();
+    handle.dispose();
+    handle.dispose();
     await expect.poll(() => peak(analyser)).toBeLessThan(0.001);
     expect(peak(peerAnalyser)).toBeGreaterThan(0.05);
     expect(context.state).toBe("running");

@@ -22,7 +22,7 @@ export type ParameterOptions = {
 
 export interface ParameterHandle {
   readonly element: HTMLElement;
-  destroy(): void;
+  dispose(): void;
 }
 
 const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
@@ -158,7 +158,7 @@ export function mountParameter(root: HTMLElement, options: ParameterOptions): Pa
   const stop = effect(() => refresh(param.value));
   return {
     element,
-    destroy() {
+    dispose() {
       if (abort.signal.aborted) return;
       abort.abort();
       stop();

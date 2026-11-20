@@ -16,17 +16,17 @@ function mounted(extra: Partial<Parameters<typeof mountMixer>[1]> = {}) {
     editMaster: () => {},
     ...extra,
   });
-  own(() => mixer.destroy());
+  own(() => mixer.dispose());
   return { source, root, mixer };
 }
 
 test("a reactive widget mounted by appendControls survives later mixer state changes", () => {
   const param = new Param({ default: 0, min: 0, max: 10 });
-  own(() => param.destroy());
+  own(() => param.dispose());
   const { source, root } = mounted({
     appendControls(_id, strip) {
       const view = mountParameter(strip, { param });
-      return () => view.destroy();
+      return () => view.dispose();
     },
   });
   const input = () => root.querySelector<HTMLInputElement>(".mixer-strip:not(.master) .ar-parameter input")!;
@@ -39,14 +39,14 @@ test("a reactive widget mounted by appendControls survives later mixer state cha
 });
 
 test("meters are caller-owned readers, read through the level meter and released with the strip", () => {
-  const destroyed: Array<string | null> = [];
+  const disposed: Array<string | null> = [];
   const read = vi.fn();
   const { source, root } = mounted({
-    meter: (id) => ({ sampleCount: 8, read, destroy: () => destroyed.push(id) }),
+    meter: (id) => ({ sampleCount: 8, read, dispose: () => disposed.push(id) }),
   });
   expect(root.querySelectorAll(".ar-level-meter")).toHaveLength(2);
   expect(read).toHaveBeenCalled();
   source.value = { tracks: [], masterVolume: 1 };
-  expect(destroyed).toEqual(["a"]);
+  expect(disposed).toEqual(["a"]);
   expect(root.querySelectorAll(".ar-level-meter")).toHaveLength(1);
 });

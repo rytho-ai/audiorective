@@ -36,7 +36,7 @@ test("the showroom records, edits and auditions one take with its pedal messages
       get isPlaying() {
         return false;
       },
-      destroy() {},
+      dispose() {},
     }),
   });
   try {
@@ -64,7 +64,7 @@ test("the showroom records, edits and auditions one take with its pedal messages
     expect(heard).toMatchObject([{ pitch: 62, start: 0, end: 0.06, velocity: 90 }]);
     expect(root.querySelector('[data-control="status"]')?.textContent).toContain("Edit, then Play");
   } finally {
-    app.destroy();
+    app.dispose();
     expect(input.close).toHaveBeenCalled();
     root.remove();
     if (previous) Object.defineProperty(navigator, "requestMIDIAccess", previous);

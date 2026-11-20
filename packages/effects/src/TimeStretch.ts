@@ -18,7 +18,7 @@ export interface TimeStretchResult extends PCMData {
 /** Data-only, pitch-preserving offline processor. No input/output nodes or wet/dry mix.
  * The caller supplies a compiled module with the rubberband-wasm3.3 C ABI. */
 export class TimeStretch {
-  private destroyed = false;
+  private disposed = false;
   private readonly jobs = new Set<() => void>();
   constructor(private readonly module: WebAssembly.Module) {
     if (!(module instanceof WebAssembly.Module)) throw new TypeError("TimeStretch requires a compiled WebAssembly.Module.");
@@ -26,7 +26,7 @@ export class TimeStretch {
   async process(input: PCMData, options: TimeStretchOptions): Promise<TimeStretchResult> {
     const { ratio, anchors = [], signal } = options;
     const sampleRate = input.sampleRate;
-    if (this.destroyed) throw new Error("TimeStretch is destroyed.");
+    if (this.disposed) throw new Error("TimeStretch is disposed.");
     if (signal?.aborted) throw new DOMException("TimeStretch processing was aborted.", "AbortError");
     const frames = input.channels[0]?.length ?? 0;
     const outputFrames = Math.round(frames * ratio);
@@ -78,7 +78,7 @@ export class TimeStretch {
       }
       let settled = false;
       const abort = () => finish(new DOMException("TimeStretch processing was aborted.", "AbortError"));
-      const dispose = () => finish(new Error("TimeStretch is destroyed."));
+      const dispose = () => finish(new Error("TimeStretch is disposed."));
       const finish = (error?: unknown, result?: TimeStretchResult) => {
         if (settled) return;
         settled = true;
@@ -113,9 +113,9 @@ export class TimeStretch {
       }
     });
   }
-  destroy(): void {
-    if (this.destroyed) return;
-    this.destroyed = true;
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
     for (const cancel of [...this.jobs]) cancel();
   }
 }

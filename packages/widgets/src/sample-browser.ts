@@ -90,7 +90,7 @@ export function mountSampleBrowser(root: HTMLElement, options: SampleBrowserOpti
     }
   });
   return {
-    destroy() {
+    dispose() {
       unsubscribe();
       rows.clear();
       list.remove();

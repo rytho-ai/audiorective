@@ -21,7 +21,7 @@ function record(messages: readonly { data: number[]; at: number }[]) {
   pair.performanceTime = 1100;
   vi.spyOn(performance, "now").mockReturnValue(1100);
   const take = recorder.stop();
-  recorder.destroy();
+  recorder.dispose();
   return take;
 }
 
@@ -65,7 +65,7 @@ test("edited overlapping notes retain distinct IDs and recorded sustain controls
     take.notes[0].id,
     take.notes[1].id,
   ]);
-  sequence.destroy();
+  sequence.dispose();
 });
 
 test("equal-time note release and pedal down keep their recorded delivery order", () => {
@@ -96,7 +96,7 @@ test("equal-time note release and pedal down keep their recorded delivery order"
             [0x80, 62, 0],
           ],
     );
-    sequence.destroy();
+    sequence.dispose();
   }
 });
 
@@ -112,7 +112,7 @@ test("an edit-created tie follows the original event order", () => {
     [0xb0, 64, 127],
     [0x80, 60, 0],
   ]);
-  sequence.destroy();
+  sequence.dispose();
 });
 
 test("floating-point subtraction does not break a recorded tie", () => {
@@ -149,7 +149,7 @@ test("deleted notes stay deleted; new notes follow surviving source events at an
   ]);
   expect(events.some((event) => event.data[1] === 60)).toBe(false);
   expect(events.at(-1)?.data).toEqual(new Uint8Array([0x82, 65, 0]));
-  sequence.destroy();
+  sequence.dispose();
 });
 
 test("untagged recorded note-ons fail instead of silently losing their order", () => {

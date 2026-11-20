@@ -16,10 +16,10 @@ export class ClipStretch {
 
   constructor(
     private readonly project: () => Project,
-    private readonly isDestroyed: () => boolean,
+    private readonly isDisposed: () => boolean,
   ) {}
 
-  /** Abort every running job, such as when the workspace is destroyed. */
+  /** Abort every running job, such as when the workspace is disposed. */
   abortAll(): void {
     for (const job of this.jobs.values()) job.abort();
   }
@@ -31,7 +31,7 @@ export class ClipStretch {
     processor?: WaveStretchProcessor,
     options: { signal?: AbortSignal; anchors?: readonly WaveStretchAnchor[] } = {},
   ): Promise<PreparedClipStretch> {
-    if (this.isDestroyed()) throw new Error("Workspace is destroyed.");
+    if (this.isDisposed()) throw new Error("Workspace is disposed.");
     options.signal?.throwIfAborted();
     const clip = findAudioClip(this.project(), clipId);
     if (!clip) throw new Error("Workspace clip stretch needs an audio clip.");
@@ -54,7 +54,7 @@ export class ClipStretch {
     };
     const check = () => {
       signal.throwIfAborted();
-      if (this.jobs.get(clipId) !== job || this.isDestroyed()) throw new DOMException("Audio clip stretch was cancelled.", "AbortError");
+      if (this.jobs.get(clipId) !== job || this.isDisposed()) throw new DOMException("Audio clip stretch was cancelled.", "AbortError");
     };
     signal.addEventListener("abort", release, { once: true });
     try {

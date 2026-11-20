@@ -81,7 +81,7 @@ describe("ReadonlyCell", () => {
     owner.cells.note.value = "x";
     expect(seen).toEqual([false, true]);
     stop();
-    owner.destroy();
+    owner.dispose();
     void ctx.close();
   });
 });

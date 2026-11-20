@@ -153,7 +153,7 @@ export function mountSpectrum(root: HTMLElement, options: SpectrumOptions) {
   }
   return {
     element: plot.element,
-    destroy() {
+    dispose() {
       win.cancelAnimationFrame(frame);
       plot.element.remove();
     },
@@ -294,7 +294,7 @@ export function mountEqEditor(root: HTMLElement, options: EqEditorOptions) {
 
   return {
     element: plot.element,
-    destroy() {
+    dispose() {
       unsubscribe();
       plot.element.remove();
     },

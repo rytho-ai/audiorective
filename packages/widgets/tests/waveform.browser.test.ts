@@ -8,7 +8,7 @@ function fixture(options: SelectionPluginOptions = {}) {
   const view = mountWaveform(root, {
     data: { peaks: Float32Array.from({ length: 240 }, (_, i) => Math.abs(Math.sin(i * 0.3))), duration: 6 },
   });
-  own(() => view.destroy());
+  own(() => view.dispose());
   const selection = createSelectionPlugin(options);
   const attachment = view.attach(selection);
   return { root, view, selection, attachment, surface: element(root, "waveform") };
@@ -26,7 +26,7 @@ describe("audio independent waveform and selection", () => {
     const peaks = Float32Array.of(0.01, 0.02, 0.015, 0.005);
     const source = [...peaks];
     const view = mountWaveform(root, { data: { peaks, duration: 2 } });
-    own(() => view.destroy());
+    own(() => view.dispose());
     const path = root.querySelector<SVGPathElement>('[data-testid="wave-path"]')!;
     const before = path.getBBox().height;
     const viewport = view.getViewport();
@@ -50,7 +50,7 @@ describe("audio independent waveform and selection", () => {
     const play = vi.spyOn(HTMLMediaElement.prototype, "play");
     const root = host();
     const view = mountWaveform(root, { data: { peaks: Float32Array.of(0.1, 0.4, 0.8, 0.2), duration: 6 } });
-    own(() => view.destroy());
+    own(() => view.dispose());
     expect(element(root, "wave-path").getAttribute("d")!.length).toBeGreaterThan(100);
     expect(element(root, "ruler").childElementCount).toBeGreaterThan(1);
     expect(root.querySelector("[data-testid=selection]")).toBeNull();
@@ -60,7 +60,7 @@ describe("audio independent waveform and selection", () => {
     plugin.setSelection({ start: 1, end: 2 });
     view.setZoom(2);
     view.scrollTo(1);
-    view.destroy();
+    view.dispose();
     expect(forbidden).not.toHaveBeenCalled();
     expect(play).not.toHaveBeenCalled();
   });
@@ -177,7 +177,7 @@ describe("audio independent waveform and selection", () => {
     const y = rect.y + rect.height * 0.6;
     await pointer({ action: "down", x: rect.x + rect.width * 0.3, y });
     await pointer({ action: "move", x: rect.x + rect.width * 0.5, y });
-    attachment.destroy();
+    attachment.dispose();
     const changes = onChange.mock.calls.length;
     await pointer({ action: "move", x: rect.x + rect.width * 0.7, y });
     await pointer({ action: "up" });
@@ -186,7 +186,7 @@ describe("audio independent waveform and selection", () => {
     expect(root.querySelector("[data-testid=selection]")).toBeNull();
     expect(marker.isConnected).toBe(true);
     expect(peerCleanup).not.toHaveBeenCalled();
-    for (let i = 0; i < 3; i++) view.attach(selection).destroy();
+    for (let i = 0; i < 3; i++) view.attach(selection).dispose();
     view.attach(selection);
     await drag(surface, 6, 1, 2);
     expect(onCommit).toHaveBeenCalledTimes(1);
@@ -198,7 +198,7 @@ describe("audio independent waveform and selection", () => {
     expect(() => view.attach(selection)).toThrow(/already attached/);
     const second = createSelectionPlugin();
     expect(() => view.attach(second)).toThrow(/Selection owner/);
-    attachment.destroy();
+    attachment.dispose();
     expect(() => selection.setSelection({ start: 1, end: 2 })).toThrow(/not attached/);
     expect(() => view.attach(second)).not.toThrow();
   });

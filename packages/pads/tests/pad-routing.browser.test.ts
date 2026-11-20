@@ -43,7 +43,7 @@ test("two pads in one choke group go to different destinations and the choke sti
   expect(level(out, 0, 0.21, 0.45)).toBeLessThan(1e-4); // choked by the closed hat, though routed apart
   expect(level(out, 1, 0.21, 0.29)).toBeCloseTo(0.1, 3); // closed hat reaches the other destination
   expect(level(out, 2, 0, 0.5)).toBeLessThan(1e-4); // nothing falls through to the bank output
-  bank.destroy();
+  bank.dispose();
 });
 
 test("routePad(id, null) restores the bank output", async () => {
@@ -56,7 +56,7 @@ test("routePad(id, null) restores the bank output", async () => {
   const out = await context.startRendering();
   expect(level(out, 2, 0.05, 0.3)).toBeCloseTo(0.3, 3);
   expect(level(out, 0, 0, 0.5)).toBeLessThan(1e-4);
-  bank.destroy();
+  bank.dispose();
 });
 
 test("a routed pad bypasses the bank volume; the other pads keep it", async () => {
@@ -73,15 +73,15 @@ test("a routed pad bypasses the bank volume; the other pads keep it", async () =
   const out = await context.startRendering();
   expect(level(out, 0, 0.05, 0.3)).toBeCloseTo(0.4, 3); // routed away from the bank volume
   expect(level(out, 2, 0.05, 0.3)).toBeCloseTo(0.2, 3);
-  bank.destroy();
+  bank.dispose();
 });
 
-test("destroy disconnects only bank-owned edges and leaves the destinations working", async () => {
+test("dispose disconnects only bank-owned edges and leaves the destinations working", async () => {
   const { context, sample, merger, left } = rig();
   const bank = new PadBank(context, [{ id: "kick", buffer: sample(0.4, 0.3) }]);
   bank.routePad("kick", left);
   bank.trigger("kick", 1, 0);
-  bank.destroy();
+  bank.dispose();
   // `left` is still wired into the caller's graph: a caller-owned source passes through it.
   const tone = new ConstantSourceNode(context, { offset: 0.5 });
   tone.connect(left);
@@ -89,14 +89,14 @@ test("destroy disconnects only bank-owned edges and leaves the destinations work
   const out = await context.startRendering();
   expect(level(out, 0, 0.05, 0.3)).toBeCloseTo(0.5, 3);
   expect(merger.numberOfInputs).toBe(3);
-  expect(() => bank.routePad("kick", null)).toThrow("PadBank is destroyed.");
+  expect(() => bank.routePad("kick", null)).toThrow("PadBank is disposed.");
 });
 
 test("routePad rejects an unknown pad", () => {
   const { context, sample, left } = rig();
   const bank = new PadBank(context, [{ id: "kick", buffer: sample(0.1, 0.3) }]);
   expect(() => bank.routePad("snare", left)).toThrow("Unknown pad.");
-  bank.destroy();
+  bank.dispose();
 });
 
 test("a one-shot (gate: false) open hat is choked by a later closed hat in its group", async () => {
@@ -112,7 +112,7 @@ test("a one-shot (gate: false) open hat is choked by a later closed hat in its g
   expect(level(out, 2, 0.05, 0.19)).toBeCloseTo(0.3, 3);
   expect(level(out, 2, 0.21, 0.29)).toBeCloseTo(0.1, 3); // only the closed hat; the open hat is gone
   expect(level(out, 2, 0.31, 0.5)).toBeLessThan(1e-4);
-  bank.destroy();
+  bank.dispose();
 });
 
 test("gate: true loops past the buffer end; gate: false stops at it; duration closes the gate", async () => {
@@ -132,5 +132,5 @@ test("gate: true loops past the buffer end; gate: false stops at it; duration cl
   expect(level(out, 2, 0.15, 0.24)).toBeCloseTo(0.6, 3);
   expect(level(out, 2, 0.3, 0.9)).toBeCloseTo(0.3, 3);
   looping.cancel();
-  bank.destroy();
+  bank.dispose();
 });

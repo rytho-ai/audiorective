@@ -28,7 +28,7 @@ function mount(sequencer: StepGridSequencer = real()) {
   const root = host();
   root.style.height = "auto";
   const grid = mountStepGrid(root, { sequencer, laneLabel: capitalize });
-  own(() => grid.destroy());
+  own(() => grid.dispose());
   return { root, grid, sequencer };
 }
 
@@ -531,7 +531,7 @@ describe("per-lane lengths and params", () => {
   test("lane names are the labels unless laneLabel renames them", () => {
     const root = host();
     const grid = mountStepGrid(root, { sequencer: real() });
-    own(() => grid.destroy());
+    own(() => grid.dispose());
     expect(laneAt(root, "kick").querySelector(".ar-sg-name")!.textContent).toBe("kick");
     expect(cellAt(root, "kick", 0).getAttribute("aria-label")).toBe("kick step 1, Velocity 40%");
     const named = mount();
@@ -654,12 +654,12 @@ describe("plugin host", () => {
     expect(context.surface.contains(overlay)).toBe(true);
     expect(overlay.style.pointerEvents).toBe("none");
     expect(root.querySelector(".ar-sg-footer")!.contains(item)).toBe(true);
-    attachment.destroy();
+    attachment.dispose();
     expect(overlay.isConnected).toBe(false);
     expect(item.isConnected).toBe(false);
   });
 
-  test("overlays, toolbar items and listeners are removed when the grid is destroyed", () => {
+  test("overlays, toolbar items and listeners are removed when the grid is disposed", () => {
     const { grid, context } = plugged();
     const overlay = document.createElement("div");
     const item = document.createElement("span");
@@ -670,13 +670,13 @@ describe("plugin host", () => {
     context.listen(context.surface, "probe", listener);
     context.onCleanup(cleanupSpy);
     const surface = context.surface;
-    grid.destroy();
+    grid.dispose();
     surface.dispatchEvent(new Event("probe"));
     expect(listener).not.toHaveBeenCalled();
     expect(cleanupSpy).toHaveBeenCalledTimes(1);
     expect(overlay.isConnected).toBe(false);
     expect(item.isConnected).toBe(false);
-    expect(() => grid.attach({ attach() {} })).toThrow("Step grid is destroyed.");
+    expect(() => grid.attach({ attach() {} })).toThrow("Step grid is disposed.");
   });
 
   test("onPatternChange fires after the grid updates, and stops on detach", () => {
@@ -693,7 +693,7 @@ describe("plugin host", () => {
     sequencer.lanes.hat.mute = true;
     expect(seen).toEqual([1, 0, 0]);
     seen.length = 0;
-    attachment.destroy();
+    attachment.dispose();
     toggle(sequencer, "hat", 1);
     expect(seen).toEqual([]);
   });
@@ -754,7 +754,7 @@ describe("plugin host", () => {
       throw new Error("cleanup failed");
     });
     context.mountOverlay(overlay);
-    attachment.destroy();
+    attachment.dispose();
     expect(error).toHaveBeenCalled();
     expect(overlay.isConnected).toBe(false);
   });
@@ -764,23 +764,23 @@ describe("plugin host", () => {
     const plugin = { attach() {} };
     const first = grid.attach(plugin);
     expect(() => grid.attach(plugin)).toThrow("Plugin is already attached to this step grid.");
-    first.destroy();
+    first.dispose();
     expect(() => context.mountOverlay(document.createElement("div"))).not.toThrow();
-    attachment.destroy();
-    expect(() => context.mountOverlay(document.createElement("div"))).toThrow("destroyed");
+    attachment.dispose();
+    expect(() => context.mountOverlay(document.createElement("div"))).toThrow("disposed");
   });
 });
 
 describe("lifecycle and contract", () => {
-  test("destroy removes the view and releases effects and listeners", () => {
+  test("dispose removes the view and releases effects and listeners", () => {
     const source = new StepSequencer({ a: velocities(8, { 1: 0.8 }) });
     const model = withPlayback(source);
     const root = host();
     const grid = mountStepGrid(root, { sequencer: model.sequencer });
     const element = cellAt(root, "a", 1);
     const lanes = element.closest(".ar-sg-lanes")!;
-    grid.destroy();
-    grid.destroy();
+    grid.dispose();
+    grid.dispose();
     expect(root.querySelector(".ar-step-grid")).toBeNull();
     source.lanes.a.steps[1].velocity = 0;
     source.lanes.a.length = 12;
@@ -861,7 +861,7 @@ describe("lifecycle and contract", () => {
       formatStep: (label, step) => `${label} 第 ${step + 1} 格`,
       labels: { velocity: "力度", fold: "收合" },
     });
-    own(() => grid.destroy());
+    own(() => grid.dispose());
     expect(tab(root, "velocity").textContent).toBe("力度");
     expect(root.querySelector(".ar-sg-fold")!.textContent).toBe("收合");
     expect(cellAt(root, "a", 0).getAttribute("aria-label")).toBe("A 第 1 格, 力度 80%");

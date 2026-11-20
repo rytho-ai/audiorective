@@ -10,7 +10,7 @@ async function start(context: AudioContext, opened: OpenDawProjectResult, option
       warnings: [...opened.warnings, ...(options.warnings ?? [])],
     });
   } catch (error) {
-    opened.project.destroy();
+    opened.project.dispose();
     throw error;
   }
 }

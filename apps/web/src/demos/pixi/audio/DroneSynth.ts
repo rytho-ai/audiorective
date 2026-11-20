@@ -63,8 +63,8 @@ export class DroneSynth extends AudioProcessor<DroneParams> {
     this.params.gate.linearRampToValueAtTime(on ? 1 : 0, now + seconds);
   }
 
-  override destroy(): void {
-    super.destroy();
+  override dispose(): void {
+    super.dispose();
     this.osc.stop();
   }
 }

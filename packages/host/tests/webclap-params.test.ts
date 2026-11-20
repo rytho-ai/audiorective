@@ -118,7 +118,7 @@ describe("WebClapHost params", () => {
     ]);
   });
 
-  it("destroy() clears the response timers and rejects pending saveState/loadState/mountEditor", async () => {
+  it("dispose() clears the response timers and rejects pending saveState/loadState/mountEditor", async () => {
     vi.useFakeTimers();
     try {
       const { host } = await load();
@@ -126,12 +126,12 @@ describe("WebClapHost params", () => {
       const loadState = host.loadState(new Uint8Array([1]));
       const results = Promise.allSettled([save, loadState]);
       expect(vi.getTimerCount()).toBe(2);
-      host.destroy();
+      host.dispose();
       expect(vi.getTimerCount()).toBe(0);
       const settled = await results;
       for (const r of settled) {
         expect(r.status).toBe("rejected");
-        expect((r as PromiseRejectedResult).reason.message).toBe("WebCLAP host is destroyed.");
+        expect((r as PromiseRejectedResult).reason.message).toBe("WebCLAP host is disposed.");
       }
     } finally {
       vi.useRealTimers();

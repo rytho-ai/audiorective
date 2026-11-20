@@ -151,7 +151,7 @@ All processors extend `AudioProcessor<P, C>` with explicit registry generics:
 - Constructor passes a build callback to `super()` that returns `{ params, cells? }`
 - Exposes typed `processor.params` (frozen) and `processor.cells` (frozen) registries; `cells` entries are `Cell` or `ReadonlyCell`
 - Instance methods `computed()` and `effect()` for derived values declared after `super()`
-- `destroy()` cleans up effects, params, and ConstantSources
+- `dispose()` cleans up effects, params, and ConstantSources
 
 ## Package Dependencies
 

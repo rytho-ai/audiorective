@@ -64,7 +64,7 @@ export function mountPadGrid(root: HTMLElement, { pads, press }: PadGridOptions)
   });
   root.append(view);
   return {
-    destroy() {
+    dispose() {
       releaseAll();
       view.remove();
     },

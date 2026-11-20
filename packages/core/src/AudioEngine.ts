@@ -80,16 +80,16 @@ export class AudioEngine {
   private _processors: AudioProcessor[] = [];
   private readonly _stateCell = cell<EngineState>("idle");
   private readonly _stateView: EngineStateView;
-  // Pending untilReady() callers; settled when the state reaches "running" or the engine is destroyed.
+  // Pending untilReady() callers; settled when the state reaches "running" or the engine is disposed.
   private _waiters: Array<{ resolve: () => void; reject: (error: unknown) => void }> = [];
-  // A borrowed context is the caller's to close; only a context this engine created is closed on destroy.
+  // A borrowed context is the caller's to close; only a context this engine created is closed on dispose.
   private readonly _ownsContext: boolean;
   private readonly _onStateChange: () => void;
   private _cachedPromise: Promise<void> | null = null;
-  // Set only by destroy() — separate from the "destroyed" state, which an external
-  // context closure can also reach, so cleanup still runs if destroy() is called
-  // after that (rather than being skipped because the mirror already reads "destroyed").
-  private _destroyed = false;
+  // Set only by dispose() — separate from the "disposed" state, which an external
+  // context closure can also reach, so cleanup still runs if dispose() is called
+  // after that (rather than being skipped because the mirror already reads "disposed").
+  private _disposed = false;
   private _graphs: GraphHandle[] = [];
   // Each engine-owned graph's most recent destination arrival, keyed by an identity
   // token private to that graph — not the graph itself, so a graph whose own last
@@ -112,11 +112,11 @@ export class AudioEngine {
     this._stateView = view;
     // A listener, not `onstatechange`: a borrowed context keeps whatever handler its owner installed.
     this._onStateChange = () => {
-      if (this._destroyed) return;
+      if (this._disposed) return;
       // Safari reports "interrupted" (phone call, Siri); it is not in lib.dom's union.
       const s = this._context.state as string;
       if (s === "closed") {
-        this._setState("destroyed");
+        this._setState("disposed");
       } else if (s === "running") {
         this._setState("running");
       } else if (this._peek() !== "idle") {
@@ -134,13 +134,13 @@ export class AudioEngine {
     this._cachedPromise = null;
     const waiters = this._waiters;
     this._waiters = [];
-    const error = new Error("AudioEngine destroyed before it became ready");
+    const error = new Error("AudioEngine disposed before it became ready");
     for (const w of waiters) w.reject(error);
   }
 
   private _setState(next: EngineState): void {
     this._stateCell.value = next;
-    if (next === "destroyed") this._rejectWaiters();
+    if (next === "disposed") this._rejectWaiters();
     if (next === "running") {
       this._cachedPromise = null;
       const waiters = this._waiters;
@@ -223,7 +223,7 @@ export class AudioEngine {
   untilReady(): Promise<void> {
     const state = this._peek();
     if (state === "running") return Promise.resolve();
-    if (state === "destroyed") return Promise.reject(new Error("AudioEngine destroyed before it became ready"));
+    if (state === "disposed") return Promise.reject(new Error("AudioEngine disposed before it became ready"));
     this._cachedPromise ??= new Promise<void>((resolve, reject) => {
       this._waiters.push({ resolve, reject });
     });
@@ -231,30 +231,30 @@ export class AudioEngine {
   }
 
   async start(): Promise<void> {
-    if (this._peek() === "destroyed") throw new Error("Cannot start a destroyed engine");
+    if (this._peek() === "disposed") throw new Error("Cannot start a disposed engine");
     if (this._context.state !== "running") await this._context.resume();
-    if (this._destroyed || this._peek() === "destroyed") return;
+    if (this._disposed || this._peek() === "disposed") return;
     this._setState("running");
   }
 
   async suspend(): Promise<void> {
-    if (this._peek() === "destroyed") {
-      console.warn("AudioEngine: suspend() called on a destroyed engine");
+    if (this._peek() === "disposed") {
+      console.warn("AudioEngine: suspend() called on a disposed engine");
       return;
     }
     if (this._peek() === "idle") return;
     if (this._context.state === "running") await this._context.suspend();
-    if (this._destroyed || this._peek() === "destroyed") return;
+    if (this._disposed || this._peek() === "disposed") return;
     this._setState("suspended");
   }
 
   async resume(): Promise<void> {
-    if (this._peek() === "destroyed") {
-      console.warn("AudioEngine: resume() called on a destroyed engine");
+    if (this._peek() === "disposed") {
+      console.warn("AudioEngine: resume() called on a disposed engine");
       return;
     }
     if (this._context.state !== "running") await this._context.resume();
-    if (this._destroyed || this._peek() === "destroyed") return;
+    if (this._disposed || this._peek() === "disposed") return;
     this._setState("running");
   }
 
@@ -286,7 +286,7 @@ export class AudioEngine {
 
     const stop = effect(() => {
       const s = this._stateCell.value;
-      if (s === "destroyed") {
+      if (s === "disposed") {
         disarm();
         return;
       }
@@ -300,21 +300,21 @@ export class AudioEngine {
     };
   }
 
-  destroy(): void {
-    if (this._destroyed) return;
-    this._destroyed = true;
+  dispose(): void {
+    if (this._disposed) return;
+    this._disposed = true;
     // Copy first: each `dispose()` splices itself out of `_graphs`, which
     // would skip entries if this loop iterated the live array directly.
     for (const graph of [...this._graphs]) graph.dispose();
     this._graphs = [];
     this._graphLatency.clear();
-    for (const p of this._processors) p.destroy();
+    for (const p of this._processors) p.dispose();
     this._processors = [];
     this._context.removeEventListener("statechange", this._onStateChange);
     // Only a context this engine created is closed. It may already be closed (an external
     // close, or the browser tearing it down), and closing it again would reject.
     if (this._ownsContext && this._context.state !== "closed") void this._context.close();
-    this._stateCell.value = "destroyed";
+    this._stateCell.value = "disposed";
     this._rejectWaiters();
   }
 }

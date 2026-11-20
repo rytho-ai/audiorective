@@ -176,7 +176,7 @@ export function mountClipGrid(root: HTMLElement, options: ClipGridOptions) {
   const stop = effect(() => renderState());
   return {
     setLayout,
-    destroy() {
+    dispose() {
       stop();
       element.remove();
     },

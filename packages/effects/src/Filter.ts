@@ -79,11 +79,11 @@ export class Filter extends Effect<{ frequency: SchedulableParam; Q: Schedulable
     mixFrequencyResponse(magnitudes, phases, wet.value, this.stageCount);
   }
 
-  override destroy(): void {
+  override dispose(): void {
     for (const s of this.sources) {
       s.stop();
       s.disconnect();
     }
-    super.destroy();
+    super.dispose();
   }
 }

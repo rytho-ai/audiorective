@@ -85,7 +85,7 @@ export type StepGridOptions = {
 /** The built-in cell values the tabs edit. Custom params use their declared `id`. */
 export type StepGridBuiltInParameter = "velocity" | "offset" | "length" | "repeat" | "pitch" | "chance";
 
-/** Resources registered by a step grid plugin are released when its attachment is destroyed. */
+/** Resources registered by a step grid plugin are released when its attachment is disposed. */
 export interface StepGridPluginContext extends WidgetPluginContext {
   /** The positioned element holding the lanes. Overlays are mounted inside it. */
   readonly surface: HTMLElement;
@@ -110,5 +110,5 @@ export interface StepGridPluginContext extends WidgetPluginContext {
 export type StepGridPlugin = WidgetPlugin<StepGridPluginContext>;
 
 export interface StepGridHandle extends PluginTarget<StepGridPluginContext> {
-  destroy(): void;
+  dispose(): void;
 }

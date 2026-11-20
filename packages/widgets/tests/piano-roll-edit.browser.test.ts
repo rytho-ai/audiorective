@@ -29,7 +29,7 @@ const alternateLayout: PianoRollLayout = (root, viewport, controls) => {
       keys.textContent = `${f.pitches.high}–${f.pitches.low}`;
       keys.style.height = `${f.height}px`;
     },
-    destroy() {
+    dispose() {
       zoom.onclick = null;
       root.replaceChildren();
     },
@@ -58,14 +58,14 @@ const svgRenderer: PianoRollRenderer = (root) => {
         }),
       );
     },
-    destroy() {
+    dispose() {
       svg.remove();
     },
   };
 };
 function model() {
   const m = new MidiSequence({ duration: 8, notes: [{ id: "n", start: 1, end: 2, pitch: 60, velocity: 100, channel: 0, track: 0 }] });
-  own(() => m.destroy());
+  own(() => m.dispose());
   return m;
 }
 function mount(m = model(), extra: Partial<PianoRollOptions> = {}) {
@@ -73,7 +73,7 @@ function mount(m = model(), extra: Partial<PianoRollOptions> = {}) {
   const commit = vi.fn((e: any) => m.updateNote(e.note.id, { start: e.note.start, end: e.note.end, pitch: e.note.pitch }));
   const inspect = vi.fn();
   const roll = mountPianoRoll(root, { model: m, pitches: { low: 48, high: 72 }, onNoteEdit: commit, onNoteClick: inspect, ...extra });
-  own(() => roll.destroy());
+  own(() => roll.dispose());
   let ctx!: WaveformPluginContext;
   roll.attach({
     attach(c) {
@@ -178,7 +178,7 @@ test("resize cannot invert a note or leave source bounds", async () => {
   await pointer({ action: "up" });
   expect(state(a).end).toBe(8);
 });
-test.each(["Escape", "source", "zoom", "resize", "destroy", "blur", "pointercancel"] as const)(
+test.each(["Escape", "source", "zoom", "resize", "dispose", "blur", "pointercancel"] as const)(
   "%s cancels preview without stale commit",
   async (kind) => {
     const a = mount(),
@@ -191,7 +191,7 @@ test.each(["Escape", "source", "zoom", "resize", "destroy", "blur", "pointercanc
       a.root.style.width = "320px";
       await expect.poll(() => a.ctx.getViewport().width).toBeLessThan(320);
     }
-    if (kind === "destroy") a.roll.destroy();
+    if (kind === "dispose") a.roll.dispose();
     if (kind === "blur") window.dispatchEvent(new Event("blur"));
     if (kind === "pointercancel") {
       let id = 0;
@@ -233,7 +233,7 @@ test("custom layout and SVG rendering keep widget-owned move and native range se
   expect(a.m.getSelection()!.start).toBeCloseTo(0.2, 1);
   expect(a.m.getSelection()!.end).toBeCloseTo(1, 1);
 });
-test("missing layout viewport rejects cleanly and destroys renderer/layout resources", () => {
+test("missing layout viewport rejects cleanly and disposes renderer/layout resources", () => {
   const root = host(),
     m = model(),
     rendererDead = vi.fn(),
@@ -241,8 +241,8 @@ test("missing layout viewport rejects cleanly and destroys renderer/layout resou
   expect(() =>
     mountPianoRoll(root, {
       model: m,
-      renderer: () => ({ render() {}, destroy: rendererDead }),
-      layout: () => ({ render() {}, destroy: layoutDead }),
+      renderer: () => ({ render() {}, dispose: rendererDead }),
+      layout: () => ({ render() {}, dispose: layoutDead }),
     }),
   ).toThrow("Piano roll layout must mount its viewport inside the supplied root.");
   expect(root.childElementCount).toBe(0);
@@ -253,19 +253,19 @@ test("throwing custom layout cleanup preserves renderer cleanup and borrowed mod
   vi.spyOn(console, "error").mockImplementation(() => {});
   const dead = vi.fn();
   const a = mount(undefined, {
-    renderer: () => ({ render() {}, destroy: dead }),
+    renderer: () => ({ render() {}, dispose: dead }),
     layout: (root, viewport) => {
       root.append(viewport);
       return {
         render() {},
-        destroy() {
+        dispose() {
           throw Error("layout cleanup");
         },
       };
     },
   });
-  a.roll.destroy();
-  a.roll.destroy();
+  a.roll.dispose();
+  a.roll.dispose();
   expect(dead).toHaveBeenCalledTimes(1);
   expect(a.root.childElementCount).toBe(0);
   a.m.updateNote("n", { pitch: 70 });
@@ -328,7 +328,7 @@ test("a custom application model needs no MidiSequence inheritance or mirrored U
     renderer: svgRenderer,
     onNoteEdit: command,
   });
-  own(() => roll.destroy());
+  own(() => roll.dispose());
   let context!: WaveformPluginContext;
   roll.attach({
     attach(ctx) {
@@ -343,7 +343,7 @@ test("a custom application model needs no MidiSequence inheritance or mirrored U
   await pointer({ action: "up" });
   expect(command).toHaveBeenCalledTimes(1);
   expect(state.notes[0].start).toBeCloseTo(2, 3);
-  roll.destroy();
+  roll.dispose();
   expect(listeners.size).toBe(0);
 });
 

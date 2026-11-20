@@ -15,7 +15,7 @@ test("standalone frequency widgets work with caller-owned controls and FFT bins"
       for (let index = 0; index < hz.length; index++) magnitude[index] = hz[index] > frequency.value ? 0.125 : 1;
     },
   });
-  own(() => eq.destroy());
+  own(() => eq.dispose());
   const curve = eq.element.querySelector(".ar-frequency-curve")!;
   const initial = curve.getAttribute("d");
   eq.element.querySelector("button")!.focus();
@@ -33,9 +33,9 @@ test("standalone frequency widgets work with caller-owned controls and FFT bins"
       bins[4] = NaN;
     },
   });
-  own(() => spectrum.destroy());
+  own(() => spectrum.dispose());
   expect(spectrum.element.querySelector(".ar-frequency-curve")?.getAttribute("d")).toContain(" 6.0");
-  spectrum.destroy();
+  spectrum.dispose();
   const last = reads;
   await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
   expect(reads).toBe(last);

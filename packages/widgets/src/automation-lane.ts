@@ -23,7 +23,7 @@ export interface AutomationLaneOptions {
 
 export interface AutomationLaneHandle {
   setPoints(points: readonly AutomationPoint[]): void;
-  destroy(): void;
+  dispose(): void;
 }
 
 const clamp = (value: number, max: number) => Math.max(0, Math.min(value, max));
@@ -257,7 +257,7 @@ export function mountAutomationLane(root: HTMLElement, options: AutomationLaneOp
   setPoints(points);
   return {
     setPoints,
-    destroy() {
+    dispose() {
       resize.disconnect();
       view.remove();
     },

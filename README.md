@@ -51,7 +51,7 @@ audiorective ships agent skills that follow the [Agent Skills specification](htt
 | Skill                                                             | Use it for                                                                                                                                         |
 | ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`audiorective`](./skills/audiorective)                           | Building audio apps with the packages — quick start, package selection, audio/UI separation, client-only boundaries, common errors, API references |
-| [`audio-processor-authoring`](./skills/audio-processor-authoring) | Writing or reviewing an `AudioProcessor` subclass — skeleton, params and cells, `defineGraph`, latency, `destroy`, headless tests                  |
+| [`audio-processor-authoring`](./skills/audio-processor-authoring) | Writing or reviewing an `AudioProcessor` subclass — skeleton, params and cells, `defineGraph`, latency, `dispose`, headless tests                  |
 
 Each skill's `references/` folder mirrors [`docs/`](./docs), so the skill and the site never disagree. Trigger and functional test sets live in [`evals/`](./evals).
 

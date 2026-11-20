@@ -126,7 +126,7 @@ export abstract class AudioProcessor<P extends ParamRegistry = ParamRegistry, C 
     return handle;
   }
 
-  destroy(): void {
+  dispose(): void {
     for (const graph of this._graphs) {
       graph.dispose();
     }
@@ -138,13 +138,13 @@ export abstract class AudioProcessor<P extends ParamRegistry = ParamRegistry, C 
     this._effects = [];
 
     for (const param of Object.values(this.params)) {
-      param.destroy();
+      param.dispose();
     }
 
     // A caller-supplied Param belongs to their own params registry (or their own
-    // ownership) and is destroyed there; only the one we created ourselves is ours to stop.
+    // ownership) and is disposed there; only the one we created ourselves is ours to stop.
     if (this._ownsLatency) {
-      this.latency.destroy();
+      this.latency.dispose();
     }
 
     for (const source of this._constantSources) {

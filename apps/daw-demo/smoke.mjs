@@ -165,10 +165,10 @@ try {
         stoppedAgain: seek.valueAsNumber,
       };
     } finally {
-      view.destroy();
+      view.dispose();
       container.remove();
-      workspace.destroy();
-      project.destroy();
+      workspace.dispose();
+      project.dispose();
     }
   });
   assert.deepEqual(workspacePlayer, {
@@ -604,8 +604,8 @@ try {
       warnings: reopened.warnings,
       archiveSize: bytes.length,
     };
-    reopened.destroy();
-    reopened.project.destroy();
+    reopened.dispose();
+    reopened.project.dispose();
     return result;
   });
   assert.ok(state.changed && state.saved && state.restored);
@@ -675,7 +675,7 @@ try {
     stop();
     unmount();
     frame.remove();
-    host.destroy();
+    host.dispose();
     delete window.__editorReadback;
     return result;
   });
@@ -721,8 +721,8 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 40));
     analyser.getFloatTimeDomainData(frame);
     const resumed = Math.max(...frame.map(Math.abs));
-    workspace.destroy();
-    project.destroy();
+    workspace.dispose();
+    project.dispose();
     analyser.disconnect();
     return { before, muted, unmuted, after, resumed };
   });
@@ -739,7 +739,7 @@ try {
     project.addAudioClip(track.id, { sampleRate: 48000, channels: [new Float32Array(48000).fill(0.25)] }, 0);
     const source = await window.__daw.workspace.constructor.create(context, project);
     const archive = await window.__daw.api.saveWorkspace(source);
-    source.destroy();
+    source.dispose();
     const opened = await window.__daw.api.openWorkspaceBlob(context, new Blob([archive]), { destination: context.destination });
     const clip = opened.project.tracks[0].clips[0];
     const analyser = context.createAnalyser();
@@ -751,9 +751,9 @@ try {
     const frame = new Float32Array(2048);
     analyser.getFloatTimeDomainData(frame);
     const peak = Math.max(...frame.map(Math.abs));
-    opened.destroy();
-    opened.project.destroy();
-    project.destroy();
+    opened.dispose();
+    opened.project.dispose();
+    project.dispose();
     analyser.disconnect();
     return { fileBacked: !!clip.media, peak };
   });

@@ -18,11 +18,11 @@ export function createClipStretchEngine() {
       if (generation !== next) return;
       const previous = source.value;
       source.value = { name: file.name, processor: new TimeStretch(module) };
-      previous?.processor.destroy();
+      previous?.processor.dispose();
     },
-    destroy() {
+    dispose() {
       next++;
-      source.value?.processor.destroy();
+      source.value?.processor.dispose();
       source.value = undefined;
     },
   };
@@ -76,7 +76,7 @@ export function mountClipStretchView(root: HTMLElement, { clip, workspace, engin
   cancel.textContent = "取消";
   cancel.hidden = true;
   let job: AbortController | undefined;
-  let destroyed = false;
+  let disposed = false;
   const busy = cell(false);
   const map = audioClipTimeMap(clip);
   const anchors = clip.stretch?.anchors ?? [];
@@ -105,7 +105,7 @@ export function mountClipStretchView(root: HTMLElement, { clip, workspace, engin
           }),
         );
       } else if (!visible && attachment) {
-        attachment.destroy();
+        attachment.dispose();
         attachment = undefined;
       }
     });
@@ -142,7 +142,7 @@ export function mountClipStretchView(root: HTMLElement, { clip, workspace, engin
         signal: request.signal,
         anchors: points,
       });
-      if (!destroyed && !request.signal.aborted) {
+      if (!disposed && !request.signal.aborted) {
         commit(prepared);
         if (focusedMarker !== undefined)
           editor
@@ -150,7 +150,7 @@ export function mountClipStretchView(root: HTMLElement, { clip, workspace, engin
             ?.focus({ preventScroll: true });
       }
     } catch (error) {
-      if (!destroyed && !request.signal.aborted) report(error);
+      if (!disposed && !request.signal.aborted) report(error);
     } finally {
       job = undefined;
       busy.value = false;
@@ -173,11 +173,11 @@ export function mountClipStretchView(root: HTMLElement, { clip, workspace, engin
   row.append(button, engineFile, label, apply, warp, restore, cancel);
   root.append(row);
   return {
-    destroy() {
-      destroyed = true;
+    dispose() {
+      disposed = true;
       job?.abort();
       stopWarp();
-      attachment?.destroy();
+      attachment?.dispose();
       stop();
       row.remove();
     },

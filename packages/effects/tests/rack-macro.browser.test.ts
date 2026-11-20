@@ -64,11 +64,11 @@ test("two independent macros fan out to native ramps and hold steps on the audio
     expect(peak(0.8, 0.95)).toBeLessThan(0.55);
     expect(actual.reduce((error, value, i) => Math.max(error, Math.abs(value - reference[i])), 0)).toBeLessThan(0.0001);
   } finally {
-    toneBinding.destroy();
-    spaceBinding.destroy();
-    rack.destroy();
-    lowReference.destroy();
-    highReference.destroy();
+    toneBinding.dispose();
+    spaceBinding.dispose();
+    rack.dispose();
+    lowReference.dispose();
+    highReference.dispose();
   }
 });
 
@@ -131,7 +131,7 @@ test("a failed whole-rack recall preserves both macros, their observers and queu
     expect(control.param.value).toBe(0.25);
   } finally {
     stop();
-    rack.destroy();
+    rack.dispose();
   }
   expect(ParamSync.for(context).size).toBe(0);
 });
@@ -172,7 +172,7 @@ test("a wet macro continues in time across bypass and resumes at its live phase"
     expect(peak(0.63, 0.65)).toBeGreaterThan(0.78);
     expect(peak(0.63, 0.65)).toBeLessThan(0.84);
   } finally {
-    rack.destroy();
+    rack.dispose();
   }
 });
 
@@ -191,6 +191,6 @@ test("a macro write survives setEffects: the control, the snapshot and the retai
     expect(rack.macro("tone")!.param.value).toBeCloseTo(0.7);
     expect(rack.capturePreset().macros.find(({ id }) => id === "tone")!.value).toBeCloseTo(0.7);
   } finally {
-    rack.destroy();
+    rack.dispose();
   }
 });

@@ -21,11 +21,11 @@ describe("PitchShift (granular)", () => {
     expect(Math.abs(dominantHz(f, 44100) - 440)).toBeLessThanOrEqual(10);
   });
 
-  it("destroy() tears down the granular wet arm", () => {
+  it("dispose() tears down the granular wet arm", () => {
     const ctx = new OfflineAudioContext(1, 128, 44100);
-    const spy = vi.spyOn(GranularShifter.prototype, "destroy");
+    const spy = vi.spyOn(GranularShifter.prototype, "dispose");
     const fx = new PitchShift(ctx);
-    fx.destroy();
+    fx.dispose();
     expect(spy).toHaveBeenCalledOnce();
     spy.mockRestore();
   });

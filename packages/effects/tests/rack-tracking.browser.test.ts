@@ -32,7 +32,7 @@ describe("EffectRack readers are tracked", () => {
     const rack = new EffectRack(context, [filter(1)]);
     disposers.push(
       () => context.close(),
-      () => rack.destroy(),
+      () => rack.dispose(),
     );
     return rack;
   };

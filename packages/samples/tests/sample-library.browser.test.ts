@@ -34,7 +34,7 @@ test("preview publishes playing state and returns to idle when a short sample en
   await context.resume();
   const library = new SampleLibrary(context);
   disposers.push(
-    () => library.destroy(),
+    () => library.dispose(),
     () => context.close(),
   );
   const [id] = await library.importFiles([wav(0.15)]);
@@ -65,7 +65,7 @@ async function readyLibrary(seconds = 0.15) {
   await context.resume();
   const library = new SampleLibrary(context);
   disposers.push(
-    () => library.destroy(),
+    () => library.dispose(),
     () => context.close(),
   );
   const [id] = await library.importFiles([wav(seconds)]);
@@ -126,7 +126,7 @@ test("a BufferPlayer built inside an effect keeps its bound params after the eff
   player.start();
   player.params.loop.value = true;
   expect((player as unknown as { _source: AudioBufferSourceNode })._source.loop).toBe(true);
-  player.destroy();
+  player.dispose();
 });
 
 test("a library preview started inside an effect keeps loop binding on the preview player", async () => {

@@ -24,7 +24,7 @@ export class Audition {
     private readonly output: AudioNode,
     private readonly project: () => Project,
     private readonly scheduler: ClipScheduler,
-    private readonly isDestroyed: () => boolean,
+    private readonly isDisposed: () => boolean,
   ) {
     const source = this.source;
     this.cells = Object.freeze({
@@ -46,7 +46,7 @@ export class Audition {
 
   /** Audition the current audio clip through master output independently of Arrangement. */
   async auditionClip(clipId: string): Promise<void> {
-    if (this.isDestroyed()) throw new Error("Workspace is destroyed.");
+    if (this.isDisposed()) throw new Error("Workspace is disposed.");
     const clip = findAudioClip(this.project(), clipId);
     if (!clip) throw new Error("Workspace audition needs an audio clip.");
 
@@ -84,7 +84,7 @@ export class Audition {
             }
           },
         });
-        audition.cancel = () => clock.destroy();
+        audition.cancel = () => clock.dispose();
         clock.start();
         // The initial chunk is already preloaded. Let later ticks stream the clip.
         clock.refresh();
@@ -120,13 +120,13 @@ export class Audition {
     batch(() => {
       this.source.value = null;
       if ("clip" in audition) audition.cancel?.();
-      else audition.clock?.destroy();
+      else audition.clock?.dispose();
     });
   }
 
   /** Repeat one project-second range over a group of audio tracks, independently of Arrangement. */
   async auditionRange(range: LoopRange, options: { trackIds?: readonly string[] } = {}): Promise<void> {
-    if (this.isDestroyed()) throw new Error("Workspace is destroyed.");
+    if (this.isDisposed()) throw new Error("Workspace is disposed.");
     const { start, end } = range;
     if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end - start < 1 / this.context.sampleRate)
       throw new RangeError("Workspace range audition needs a non-negative range at least one audio frame long.");

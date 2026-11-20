@@ -9,7 +9,7 @@ effects, a DOM, or create an AudioContext. Curve data and sampling work in Node.
 ## Automate a native parameter
 
 An audio owner creates the curve and binding, starts them from its playback
-methods, and destroys the binding before its target processor. UI edits the
+methods, and disposes the binding before its target processor. UI edits the
 same curve through `.value`; it does not run a scheduling loop.
 
 ```typescript
@@ -42,9 +42,9 @@ class AutomatedGain extends AudioProcessor<{ gain: SchedulableParam }> {
   stopAutomation() {
     this.automation.stop();
   }
-  override destroy() {
-    this.automation.destroy();
-    super.destroy();
+  override dispose() {
+    this.automation.dispose();
+    super.dispose();
   }
 }
 ```
@@ -83,7 +83,7 @@ Each `AutomationPoint` contains `{ time, value, shape }`:
 
 Read `curve.value`/`curve.$()` inside an `alien-signals` effect or a framework
 binding to redraw editors and previews. An editor can attach its own stable IDs
-outside this numeric schedule. The curve has no audio resources or destroy
+outside this numeric schedule. The curve has no audio resources or dispose
 method. Each binding owns and disposes its own reactive subscription.
 
 ## Binding contract
@@ -93,7 +93,7 @@ const binding = new AutomationBinding(context, curve, target);
 binding.start({ when, from, to, secondsPerUnit });
 binding.position;
 binding.stop();
-binding.destroy();
+binding.dispose();
 ```
 
 The context needs only a `currentTime` getter; native targets must belong to that
@@ -112,7 +112,7 @@ range sets a constant. `to` is captured at start; extending a curve does not
 extend an existing run. Call `start` again to change the range or scale.
 
 `position` follows the audio clock and clamps to the range. After the endpoint,
-the final value holds and the binding remains subscribed until stop/destroy;
+the final value holds and the binding remains subscribed until stop/dispose;
 edits then update that endpoint. Future starts retain their `from` position
 until `when`. `stop()` cancels events now, also before a future start, and retains
 the stopped position. A later start replaces the old run.
@@ -138,7 +138,7 @@ native backing here would bypass those semantics. Use a domain adapter instead.
 The binding exclusively owns its target's scheduled events from its start time
 onward. Coordinate other writers yourself: stop the binding before a manual
 `.value` write, target rebind, preset restore, bypass/reconnection, or processor
-destruction. Bindings borrow targets and contexts; they destroy neither. Dispose
+destruction. Bindings borrow targets and contexts; they dispose neither. Dispose
 the binding before the processor and create/restart bindings for replaced nodes.
 
 A curve describes the intended schedule. Existing SchedulableParam/ParamSync
@@ -193,7 +193,7 @@ the effective start time with the source:
 const detach = player.attachSourceAutomation(binding);
 await player.play({ when: context.currentTime + 0.1 });
 // Manual target takeover: detach(); gain.gain.value = manualValue;
-// Cleanup: detach(); binding.destroy(); player.destroy();
+// Cleanup: detach(); binding.dispose(); player.dispose();
 ```
 
 The attachment replaces the caller's operation token and mapping for this
@@ -204,7 +204,7 @@ resolves with the effective start time, or `null` when nothing started. Schedule
 with enough lookahead for `resume()` to settle; when a requested start has passed,
 source and envelope can only align at the next render quantum. Detach before
 direct writes to the target or replacing it. The player borrows the binding, so
-destroy the binding separately. Looping requires a different, repeating
+dispose the binding separately. Looping requires a different, repeating
 automation owner; this attachment rejects it. For custom players or multiple
 clip timelines, the app still owns their transport and coordinate conversion.
 
@@ -219,4 +219,4 @@ presets and mappings stay there. The private Rack probe is not a published packa
 | `AutomationCurve needs nonempty finite points with nonnegative unique times and linear/hold shapes.` | Invalid curve replacement             | Supply finite `{ time, value, shape }` points with unique times >= 0; replace `.value` instead of mutating frozen snapshots. |
 | `AutomationCurve sample time must be finite.`                                                        | Nonfinite query                       | Pass finite curve coordinates to `valueAt`.                                                                                  |
 | `AutomationBinding needs finite nonnegative times, to >= from, and positive secondsPerUnit.`         | Invalid start/range/scale or overflow | Correct start options; current run is preserved.                                                                             |
-| `AutomationBinding is destroyed.`                                                                    | Reusing disposed binding              | Create a new binding; destroy bindings before their borrowed targets.                                                        |
+| `AutomationBinding is disposed.`                                                                     | Reusing disposed binding              | Create a new binding; dispose bindings before their borrowed targets.                                                        |

@@ -125,7 +125,7 @@ export class ArrangementOverview {
     this.overview.setAttribute("aria-valuetext", `${toSeconds(left)}–${Math.min(this.duration, toSeconds(left + this.visibleWidth()))} 秒`);
   }
 
-  destroy(): void {
+  dispose(): void {
     this.listeners.abort();
     this.resize.disconnect();
     this.artwork.remove();

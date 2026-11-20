@@ -16,7 +16,7 @@ player.output.connect(context.destination);
 const controls = mountPlayer(document.querySelector<HTMLElement>("#player")!, {
   player: fromFilePlayer(player),
 });
-// controls.destroy() removes this view; playback and the caller-owned player continue.
+// controls.dispose() removes this view; playback and the caller-owned player continue.
 ```
 
 Adapters also support `WavePlayer` and `BufferPlayer`. A custom renderer replaces the markup while keeping playback, drag, unknown-duration and cleanup behavior. See the [plain player reference](../../docs/widgets.md#plain-player-controls).
@@ -38,20 +38,20 @@ try {
 } catch (error) {
   console.error(selector.getState().error, error);
 }
-// selector.destroy() on unmount also destroys the player created above; the caller still owns the context.
+// selector.dispose() on unmount also disposes the player created above; the caller still owns the context.
 ```
 
 The selector includes URL/File loading with shared phase/byte progress and cancellation, zoom, scrolling, range handles, keyboard adjustment, optional beat snapping, and playback controls. Drag a new range to audition it; programmatic selection updates do not initiate playback. The caller supplies the `AudioContext` and routes `output`.
 
 `getState().loadProgress` comes from the player. `selector.cancelLoad()` or Cancel loading stops the current load; retry with `load()`. Known byte totals support a fraction; decode, peaks and unknown totals stay indeterminate.
 
-For headless control or multiple views, create a `WavePlayer` from `@audiorective/player` and pass `{ player }` instead of `{ createPlayer }`. Selectors read the same audio and selection owner; each retains its own renderer, zoom and snap settings. Route the shared output once. Destroying a view leaves a supplied player alive; the caller destroys it after all views are finished.
+For headless control or multiple views, create a `WavePlayer` from `@audiorective/player` and pass `{ player }` instead of `{ createPlayer }`. Selectors read the same audio and selection owner; each retains its own renderer, zoom and snap settings. Route the shared output once. Disposeing a view leaves a supplied player alive; the caller disposes it after all views are finished.
 
 Selectors display the shared player's committed `version.peaks`, without scanning PCM for each view. A pending stretch keeps the previous waveform visible; successful edits preserve same-source zoom and map scrolling. `getState()` includes `processing`, `stretchRatio`, `revision`, and `sourceDuration`. Selection, position and renderer coordinates use committed output seconds. Selector beat grids are supplied in original source seconds and mapped to output after edits.
 
 For peaks, an external playhead, metadata-only selection, or custom visual plugins, import `mountWaveform` and `createSelectionPlugin` from `@audiorective/widgets/waveform`. That entry creates no audio context or nodes. It may use the pure `@audiorective/core/peaks` helper, while importing no audio-runtime or audio-player implementation. The pure selection plugin's `setGrid({ beats, downbeats })` uses current-view seconds; applications map original source times explicitly.
 
-Both mount functions accept a `renderer` factory to replace waveform drawing with your own SVG, Canvas, or DOM. It receives a drawing container and returns `render(frame)` plus optional `destroy()`. The widget keeps zoom, coordinates, selection, and playback; the renderer owns only its drawing.
+Both mount functions accept a `renderer` factory to replace waveform drawing with your own SVG, Canvas, or DOM. It receives a drawing container and returns `render(frame)` plus optional `dispose()`. The widget keeps zoom, coordinates, selection, and playback; the renderer owns only its drawing.
 
 See the [widget reference](../../docs/widgets.md) for public types, loading and cleanup behavior, plugin examples, and styling.
 

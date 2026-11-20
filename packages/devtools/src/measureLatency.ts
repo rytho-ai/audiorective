@@ -86,7 +86,7 @@ async function measureLatencyDetailed(build: (ctx: BaseAudioContext) => AudioPro
 
       runs.push({ sampleRate, firstArrival, peak, declaredAtRate: declared });
     } finally {
-      proc.destroy();
+      proc.dispose();
     }
   }
 

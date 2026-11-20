@@ -56,7 +56,7 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
     width = 1,
     height = 240,
     position: number | null = null,
-    destroyed = false;
+    disposed = false;
   let grid = { beats: [...(options.grid?.beats ?? [])], downbeats: [...(options.grid?.downbeats ?? [])] };
   let snap = options.snap ?? "off",
     snapGrid = prepareGrid(grid);
@@ -78,7 +78,7 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
       cleanups.delete(off);
       dispose();
     };
-    if (destroyed) off();
+    if (disposed) off();
     else cleanups.add(off);
     return off;
   };
@@ -119,7 +119,7 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
     if (position !== null) playhead.style.left = `${timeToX(position)}px`;
   }
   function render() {
-    if (destroyed) return;
+    if (disposed) return;
     const range = { start: scale ? viewport.scrollLeft / scale : 0, end: scale ? (viewport.scrollLeft + viewport.clientWidth) / scale : 0 };
     renderer?.render(
       Object.freeze({
@@ -144,7 +144,7 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
     for (const fn of [...viewListeners]) fn();
   }
   function layout() {
-    if (destroyed) return;
+    if (disposed) return;
     width = Math.max(1, viewport.clientWidth) * zoom;
     scale = state.duration ? width / state.duration : 0;
     surface.style.width = `${width}px`;
@@ -184,7 +184,7 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
     },
     getViewportRect: () => viewport.getBoundingClientRect(),
     mountOverlay(el) {
-      if (!isActive()) throw new Error("Plugin attachment is destroyed.");
+      if (!isActive()) throw new Error("Plugin attachment is disposed.");
       Object.assign(el.style, { position: "absolute", inset: "0", pointerEvents: "none" });
       surface.append(el);
       return own(() => el.remove());
@@ -234,7 +234,7 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
     getViewport: snapshot,
     attach: (extension) => plugins.attach(extension),
     setSnap(mode) {
-      if (destroyed) return;
+      if (disposed) return;
       editor.cancel();
       snap = mode;
       plugin.setSnap(mode);
@@ -247,11 +247,11 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
       plugin.setGrid({ beats: [...next.beats], downbeats: [...next.downbeats] });
       layout();
     },
-    destroy() {
-      if (destroyed) return;
-      destroyed = true;
+    dispose() {
+      if (disposed) return;
+      disposed = true;
       observer.disconnect();
-      plugins.destroy();
+      plugins.dispose();
       for (const fn of [...cleanups]) {
         try {
           fn();
@@ -261,7 +261,7 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
       }
       for (const part of [renderer, presentation]) {
         try {
-          part?.destroy?.();
+          part?.dispose?.();
         } catch (error) {
           console.error("Piano roll view cleanup failed:", error);
         }
@@ -303,7 +303,7 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
     layout();
     return handle;
   } catch (error) {
-    handle.destroy();
+    handle.dispose();
     throw error;
   }
 }

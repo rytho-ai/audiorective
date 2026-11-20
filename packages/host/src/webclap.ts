@@ -235,7 +235,7 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
   }
 
   private wait<T>(register: (waiter: Waiter<T>) => void): Promise<T> {
-    if (this.disposed) return Promise.reject(new Error("WebCLAP host is destroyed."));
+    if (this.disposed) return Promise.reject(new Error("WebCLAP host is disposed."));
     return new Promise<T>((resolve, reject) => {
       const waiter: Waiter<T> = {
         resolve,
@@ -327,15 +327,15 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
     }
   }
 
-  override destroy(): void {
+  override dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    this.rejectWaiters(new Error("WebCLAP host is destroyed."));
+    this.rejectWaiters(new Error("WebCLAP host is disposed."));
     if (this.editor) this.unmountEditor();
     this.panic();
     this.node.port.postMessage({ type: "dispose" });
     this.node.disconnect();
     this.node.port.close();
-    super.destroy();
+    super.dispose();
   }
 }

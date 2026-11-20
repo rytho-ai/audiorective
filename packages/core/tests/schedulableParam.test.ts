@@ -29,7 +29,7 @@ describe("SchedulableParam — rebind", () => {
     expect(a.gain.value).toBeCloseTo(1); // A is left untouched
     expect(p.read()).toBeCloseTo(0.5); // read() reads B
 
-    p.destroy();
+    p.dispose();
   });
 
   test("rebind with reassert:false leaves the new param's value intact", () => {
@@ -38,7 +38,7 @@ describe("SchedulableParam — rebind", () => {
     const p = new SchedulableParam({ default: 1, audioContext: ctx, audioParam: a.gain });
     p.rebind(b.gain, { reassert: false });
     expect(b.gain.value).toBeCloseTo(0.3);
-    p.destroy();
+    p.dispose();
   });
 
   test("scheduling after rebind automates the new param, not the old", async () => {
@@ -52,7 +52,7 @@ describe("SchedulableParam — rebind", () => {
     await delay(120);
     expect(b.gain.value).toBeGreaterThan(0.5); // B ramped
     expect(a.gain.value).toBeCloseTo(0); // A never moved
-    p.destroy();
+    p.dispose();
   });
 
   test("stays a SchedulableParam — scheduling methods remain callable after rebind", () => {
@@ -63,6 +63,6 @@ describe("SchedulableParam — rebind", () => {
     expect(typeof p.setValueAtTime).toBe("function");
     expect(typeof p.exponentialRampToValueAtTime).toBe("function");
     expect(p.exponentialRampToValueAtTime(0.5, ctx.currentTime + 0.01)).toBe(p); // chainable
-    p.destroy();
+    p.dispose();
   });
 });

@@ -45,7 +45,7 @@
       "prompt": "A page creates its audio when the user opens a 'tuner' panel: one synth-like source, a reverb-like effect chain, a requestAnimationFrame loop that draws the spectrum, a window resize listener and a periodic timer that updates a label. When the user closes the panel, or the framework aborts an AbortController the panel was given, everything must stop: no sound, no listeners, no frame loop, no timer, and the audio resources and (if the panel created it) the audio context released. Write the open-panel function and make the close path safe to call twice.",
       "expectations": [
         "Has one teardown path that both a close button and an AbortSignal abort lead to (the signal is listened to, or an API that takes a signal is used).",
-        "Stops the audio source and releases the audio objects the panel created (disconnects or destroys them).",
+        "Stops the audio source and releases the audio objects the panel created (disconnects or disposes them).",
         "Cancels the animation-frame loop, removes the resize listener and clears the timer.",
         "Closes or releases the audio context if and only if the panel created it.",
         "Calling the close path twice does not throw and does not double-release.",
@@ -60,7 +60,7 @@
         "Starts or resumes audio inside the click handler's call stack (or via an API documented to do so).",
         "Handles an already-running context without error or double start.",
         "The button label reflects the real running/suspended state, including changes the page did not cause, by reacting to state changes rather than only flipping a boolean on click.",
-        "Pausing suspends audio rather than destroying anything, and resuming continues.",
+        "Pausing suspends audio rather than disposing anything, and resuming continues.",
         "Uses a single audio context for the whole page."
       ],
       "checks": [

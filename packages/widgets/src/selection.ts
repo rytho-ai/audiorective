@@ -238,7 +238,7 @@ export function createSelectionPlugin(options: SelectionPluginOptions = {}): Sel
       }
       range = null;
       redraw();
-      const destroy: Unsubscribe = () => {
+      const dispose: Unsubscribe = () => {
         if (disposed) return;
         disposed = true;
         cancel(false);
@@ -248,8 +248,8 @@ export function createSelectionPlugin(options: SelectionPluginOptions = {}): Sel
         context = null;
         if (surface[ownerKey] === plugin) delete surface[ownerKey];
       };
-      ctx.onCleanup(destroy);
-      return { destroy };
+      ctx.onCleanup(dispose);
+      return { dispose };
     },
   };
   return plugin;

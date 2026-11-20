@@ -22,7 +22,7 @@ export function mountPlayer(root: HTMLElement, options: PlayerOptions): PlayerHa
   root.append(container);
 
   let renderer: PlayerRendererInstance | undefined;
-  let destroyed = false;
+  let disposed = false;
   // Interaction state. Not reactive: every change to it calls draw() itself.
   let held: number | null = null; // shown position while the user scrubs
   let target: number | null = null; // where to seek on commit; null until the control actually moved
@@ -61,18 +61,18 @@ export function mountPlayer(root: HTMLElement, options: PlayerOptions): PlayerHa
   }
   /** Redraw outside the effect (interaction state or an untracked player change). Subscribes nothing. */
   function draw(): void {
-    if (destroyed || !renderer) return;
+    if (disposed || !renderer) return;
     const instance = renderer;
     untracked(() => instance.render(read()));
   }
   function tick(): void {
     frameRequest = 0;
-    if (destroyed) return;
+    if (disposed) return;
     draw();
     if (untracked(() => player.isPlaying.value)) frameRequest = requestAnimationFrame(tick);
   }
   function fail(id: number, reason: unknown): void {
-    if (destroyed || id !== attempt) return;
+    if (disposed || id !== attempt) return;
     if ((reason instanceof Error || reason instanceof DOMException) && reason.name === "AbortError") return;
     // Another view may have started playback before this attempt settled.
     if (untracked(() => player.isPlaying.value)) return;
@@ -82,7 +82,7 @@ export function mountPlayer(root: HTMLElement, options: PlayerOptions): PlayerHa
 
   const actions: PlayerActions = {
     toggle() {
-      if (destroyed) return;
+      if (disposed) return;
       const id = ++attempt;
       if (untracked(() => player.isPlaying.value)) {
         player.pause();
@@ -98,7 +98,7 @@ export function mountPlayer(root: HTMLElement, options: PlayerOptions): PlayerHa
       }
     },
     hold() {
-      if (destroyed || held !== null) return;
+      if (disposed || held !== null) return;
       const frame = untracked(read);
       if (!frame.canSeek) return;
       held = frame.position;
@@ -106,14 +106,14 @@ export function mountPlayer(root: HTMLElement, options: PlayerOptions): PlayerHa
       draw();
     },
     scrub(seconds) {
-      if (destroyed || !Number.isFinite(seconds)) return;
+      if (disposed || !Number.isFinite(seconds)) return;
       const frame = untracked(read);
       if (!frame.canSeek || frame.duration === null) return;
       held = target = clamp(seconds, 0, frame.duration);
       draw();
     },
     commit() {
-      if (destroyed || held === null) return;
+      if (disposed || held === null) return;
       const to = target;
       const frame = untracked(read); // also drops the gesture if seeking stopped being possible
       held = target = null;
@@ -121,12 +121,12 @@ export function mountPlayer(root: HTMLElement, options: PlayerOptions): PlayerHa
       draw();
     },
     cancel() {
-      if (destroyed || held === null) return;
+      if (disposed || held === null) return;
       held = target = null;
       draw();
     },
     setVolume(value) {
-      if (destroyed || !player.volume || !Number.isFinite(value)) return;
+      if (disposed || !player.volume || !Number.isFinite(value)) return;
       player.volume.value = clamp(value, 0, 1);
     },
   };
@@ -134,15 +134,15 @@ export function mountPlayer(root: HTMLElement, options: PlayerOptions): PlayerHa
   let stopEffect: (() => void) | undefined;
   let unsubscribe: (() => void) | undefined;
   const handle: PlayerHandle = {
-    destroy() {
-      if (destroyed) return;
-      destroyed = true;
+    dispose() {
+      if (disposed) return;
+      disposed = true;
       stopEffect?.();
       unsubscribe?.();
       if (frameRequest) cancelAnimationFrame(frameRequest);
       frameRequest = 0;
       try {
-        renderer?.destroy?.();
+        renderer?.dispose?.();
       } catch (error) {
         console.error("Player renderer cleanup failed:", error);
       }
@@ -170,7 +170,7 @@ export function mountPlayer(root: HTMLElement, options: PlayerOptions): PlayerHa
     if (initialError) throw initialError.reason;
     unsubscribe = player.subscribe?.(draw);
   } catch (error) {
-    handle.destroy();
+    handle.dispose();
     throw error;
   }
   return handle;

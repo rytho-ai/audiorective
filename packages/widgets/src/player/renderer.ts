@@ -26,7 +26,7 @@ export const defaultRenderer: PlayerRenderer = (container, actions) => {
   const volume = query<HTMLInputElement>(".ar-player-volume");
   const notice = query<HTMLElement>(".ar-player-notice");
 
-  // Listeners live on elements this renderer owns; removing the elements in destroy() releases them.
+  // Listeners live on elements this renderer owns; removing the elements in dispose() releases them.
   toggle.addEventListener("click", () => actions.toggle());
   seek.addEventListener("pointerdown", () => actions.hold());
   seek.addEventListener("input", () => actions.scrub(seek.valueAsNumber));
@@ -56,7 +56,7 @@ export const defaultRenderer: PlayerRenderer = (container, actions) => {
       notice.hidden = frame.notice === null;
       notice.textContent = frame.notice ?? "";
     },
-    destroy() {
+    dispose() {
       container.replaceChildren();
     },
   };

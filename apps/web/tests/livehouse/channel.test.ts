@@ -29,14 +29,14 @@ describe("Channel", () => {
     ch.params.volume.value = 0.3;
     // fader gain is internal; assert via the public param (bound 1:1)
     expect(ch.params.volume.value).toBeCloseTo(0.3);
-    ch.destroy();
+    ch.dispose();
   });
 
   test("exposes EQ bands via channel.eq.params", () => {
     const ch = new Channel(ctx, { id: "g1", label: "Guitar 1", color: "#16a34a", source: makeSource(ctx), position: { x: 0, y: 1, z: -3 } });
     ch.eq.params.eqLow.value = 6;
     expect(ch.eq.params.eqLow.value).toBeCloseTo(6);
-    ch.destroy();
+    ch.dispose();
   });
 
   test("roomOut and phonesOut are distinct AudioNodes", () => {
@@ -44,14 +44,14 @@ describe("Channel", () => {
     expect(ch.roomOut).toBeInstanceOf(AudioNode);
     expect(ch.phonesOut).toBeInstanceOf(AudioNode);
     expect(ch.roomOut).not.toBe(ch.phonesOut);
-    ch.destroy();
+    ch.dispose();
   });
 
   test("auxOut is the pre-panner tap (distinct from the post-panner roomOut)", () => {
     const ch = new Channel(ctx, { id: "g1", label: "Guitar 1", color: "#16a34a", source: makeSource(ctx), position: { x: 0, y: 1, z: -3 } });
     expect(ch.auxOut).toBeInstanceOf(AnalyserNode); // pre-distance send point
     expect(ch.auxOut).not.toBe(ch.roomOut); // roomOut is post-panner (distance-attenuated)
-    ch.destroy();
+    ch.dispose();
   });
 
   test("headphone pan tracks the position cell (right = positive)", () => {
@@ -59,7 +59,7 @@ describe("Channel", () => {
     expect((ch.phonesOut as StereoPannerNode).pan.value).toBeCloseTo(0);
     ch.cells.position.value = { x: 5, y: 1, z: -3 };
     expect((ch.phonesOut as StereoPannerNode).pan.value).toBeGreaterThan(0.5);
-    ch.destroy();
+    ch.dispose();
   });
 
   test("applyMix(false) ramps the mute gain toward 0", async () => {
@@ -74,19 +74,19 @@ describe("Channel", () => {
     ch.applyMix(true);
     await waitFor(() => ch.muteGainValue > 0.95);
     expect(ch.muteGainValue).toBeGreaterThan(0.95);
-    ch.destroy();
+    ch.dispose();
   });
 
-  test("destroy() also destroys a source that has a destroy method", () => {
-    let destroyed = false;
+  test("dispose() also disposes a source that has a dispose method", () => {
+    let disposed = false;
     const source = {
       output: new GainNode(ctx),
-      destroy: () => {
-        destroyed = true;
+      dispose: () => {
+        disposed = true;
       },
     };
     const ch = new Channel(ctx, { id: "g1", label: "Guitar 1", color: "#16a34a", source, position: { x: 0, y: 1, z: -3 } });
-    ch.destroy();
-    expect(destroyed).toBe(true);
+    ch.dispose();
+    expect(disposed).toBe(true);
   });
 });

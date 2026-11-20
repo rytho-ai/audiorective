@@ -57,11 +57,11 @@ test("captures raw MIDI and projects paired notes into a MidiSequence-compatible
   });
   const sequence = new MidiSequence({ notes: take.notes, duration: take.duration });
   expect(sequence.getState().notes).toHaveLength(3);
-  sequence.destroy();
+  sequence.dispose();
   expect(recorder.cells.state.value).toBe("idle");
   emit([0x90, 61, 80], 1210);
   expect(otherListener).toHaveBeenCalledTimes(8);
-  recorder.destroy();
+  recorder.dispose();
 });
 
 test("future start filters early messages; cancellation discards and a later take closes held notes", () => {
@@ -86,10 +86,10 @@ test("future start filters early messages; cancellation discards and a later tak
   expect(take.notes).toHaveLength(1);
   expect(take.notes[0]).toMatchObject({ pitch: 64, velocity: 100, end: take.duration });
   expect(take.events).toHaveLength(2);
-  recorder.destroy();
+  recorder.dispose();
 });
 
-test("lifecycle errors leave the input borrowed and destroy is final", () => {
+test("lifecycle errors leave the input borrowed and dispose is final", () => {
   const { clock, input, recorder, emit } = setup();
   const other = vi.fn();
   input.addEventListener("midimessage", other);
@@ -100,12 +100,12 @@ test("lifecycle errors leave the input borrowed and destroy is final", () => {
   expect(() => recorder.start({ when: NaN })).toThrow("MidiRecorder time must be finite, non-negative seconds.");
   recorder.start();
   expect(() => recorder.start()).toThrow("MidiRecorder already has an active take.");
-  recorder.destroy();
-  expect(recorder.cells.state.value).toBe("destroyed");
+  recorder.dispose();
+  expect(recorder.cells.state.value).toBe("disposed");
   emit([0x90, 60, 90], 1100);
   expect(other).toHaveBeenCalledTimes(1);
-  expect(() => recorder.start()).toThrow("MidiRecorder is destroyed.");
-  expect(() => recorder.stop()).toThrow("MidiRecorder is destroyed.");
+  expect(() => recorder.start()).toThrow("MidiRecorder is disposed.");
+  expect(() => recorder.stop()).toThrow("MidiRecorder is disposed.");
 });
 
 test("before an output timestamp exists, event times use a sampled performance/audio pair", () => {
@@ -121,5 +121,5 @@ test("before an output timestamp exists, event times use a sampled performance/a
   expect(take.startTime).toBe(2);
   expect(take.notes[0].start).toBeCloseTo(0.05, 6);
   expect(take.notes[0].end).toBeCloseTo(0.1, 6);
-  recorder.destroy();
+  recorder.dispose();
 });

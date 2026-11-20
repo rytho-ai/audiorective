@@ -12,7 +12,7 @@ function fixture(options: WavePlayerOptions = {}) {
   const player = new WavePlayer(context, options);
   cleanups.push(
     () => context.close(),
-    () => player.destroy(),
+    () => player.dispose(),
   );
   const states: ReturnType<WavePlayer["getState"]>[] = [];
   player.subscribe(() => states.push(player.getState()));
@@ -160,7 +160,7 @@ test("cancel releases the stream, clears progress without an error, and permits 
   expect(context.state).not.toBe("closed");
 });
 
-for (const action of ["cancel", "replace", "destroy"] as const) {
+for (const action of ["cancel", "replace", "dispose"] as const) {
   test(`late decode after ${action} cannot publish`, async () => {
     const { context, player } = fixture();
     const decoded = deferred<AudioBuffer>();
@@ -169,7 +169,7 @@ for (const action of ["cancel", "replace", "destroy"] as const) {
     await expect.poll(() => player.getState().loadProgress?.phase).toBe("decode");
     if (action === "replace") await player.load(context.createBuffer(1, 1600, 8000));
     else if (action === "cancel") player.cancelLoad();
-    else player.destroy();
+    else player.dispose();
     decoded.resolve(context.createBuffer(1, 800, 8000));
     await pending;
     expect(player.getState()).toMatchObject({ duration: action === "replace" ? 0.2 : 0, loading: false, loadProgress: null, error: null });
@@ -227,6 +227,6 @@ test("cancel in the peaks notification prevents publication", async () => {
   });
   await player.load(context.createBuffer(1, 800, 8000));
   expect(player.getState()).toMatchObject({ duration: 0, loading: false, loadProgress: null, error: null });
-  player.destroy();
-  expect(() => player.cancelLoad()).toThrow("WavePlayer is destroyed.");
+  player.dispose();
+  expect(() => player.cancelLoad()).toThrow("WavePlayer is disposed.");
 });

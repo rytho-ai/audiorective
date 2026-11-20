@@ -82,7 +82,7 @@ Always renders children immediately. Safe because `createEngine` wires all proce
 
 Components use `useValue(engine.core.state)` to know whether audio is running and show UI accordingly.
 
-The provider does NOT destroy the engine on unmount — engines are module-level singletons that outlive the component tree.
+The provider does NOT dispose the engine on unmount — engines are module-level singletons that outlive the component tree.
 
 ## Full Example
 

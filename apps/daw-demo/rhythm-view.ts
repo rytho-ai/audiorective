@@ -91,7 +91,7 @@ export function mountRhythmView(
   });
 
   let detach: (() => void) | undefined;
-  let destroyed = false;
+  let disposed = false;
   play.addEventListener("click", () => {
     if (detach) {
       detach();
@@ -104,7 +104,7 @@ export function mountRhythmView(
     play.textContent = "停止鼓機";
     play.setAttribute("aria-pressed", "true");
     void workspace.play().catch((error) => {
-      if (!destroyed) onError(error);
+      if (!disposed) onError(error);
     });
   });
   toolbar.append(play);
@@ -115,7 +115,7 @@ export function mountRhythmView(
       void context
         .resume()
         .then(() => {
-          if (!destroyed) bank.trigger(id);
+          if (!disposed) bank.trigger(id);
         })
         .catch(onError);
     },
@@ -147,14 +147,14 @@ export function mountRhythmView(
     get enabled() {
       return detach !== undefined;
     },
-    destroy() {
-      destroyed = true;
+    dispose() {
+      disposed = true;
       detach?.();
       sequence.dispose();
       stopChoices();
-      grid.destroy();
-      pads.destroy();
-      bank.destroy();
+      grid.dispose();
+      pads.dispose();
+      bank.dispose();
       for (const { lease } of leases.values()) lease.release();
       element.remove();
     },

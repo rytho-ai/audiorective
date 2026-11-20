@@ -41,16 +41,16 @@ describe("Clock({ context, bpm })", () => {
     expect(clock.timeline.state).toBe(clock.state);
   });
 
-  test("destroy stops the tick loop and leaves nothing to tear down on the timeline", () => {
+  test("dispose stops the tick loop and leaves nothing to tear down on the timeline", () => {
     const tickSource = new ManualTickSource();
     const clock = new Clock({ context: { currentTime: 0 }, tickSource });
-    clock.destroy();
-    expect(() => clock.attach({ schedule() {} })).toThrow("Clock is destroyed.");
+    clock.dispose();
+    expect(() => clock.attach({ schedule() {} })).toThrow("Clock is disposed.");
   });
 
-  test("a borrowed timeline stays usable after the clock is destroyed", () => {
+  test("a borrowed timeline stays usable after the clock is disposed", () => {
     const timeline = new Timeline({ audioContext: { currentTime: 0 }, bpm: 100 });
-    new Clock({ timeline, tickSource: new ManualTickSource() }).destroy();
+    new Clock({ timeline, tickSource: new ManualTickSource() }).dispose();
     expect(timeline.bpm.value).toBe(100);
   });
 

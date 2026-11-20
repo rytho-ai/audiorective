@@ -207,10 +207,10 @@ export class DrumMachine extends AudioProcessor<{}, {}> {
     for (const track of this.tracks) track.sampler.stopAll();
   }
 
-  destroy(): void {
-    this._clock.destroy();
-    for (const track of this.tracks) track.sampler.destroy();
+  dispose(): void {
+    this._clock.dispose();
+    for (const track of this.tracks) track.sampler.dispose();
     this._master.disconnect();
-    super.destroy();
+    super.dispose();
   }
 }

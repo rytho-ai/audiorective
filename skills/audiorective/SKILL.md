@@ -132,7 +132,7 @@ The complete task-to-reference table, with sections, is in `references/rules-in-
 
 - **Audio logic lives in audio-layer objects** (`AudioProcessor` subclasses, headless capability classes). UI components call their methods and read state; they never orchestrate audio. State the UI toggles (a step pattern, a preset) lives in a `cell` or a lane step on the audio-layer object, never a module array or React `useState`; the clock reads it in `onTick`. With only `core` + `clock` installed, keep the pattern in a `cell<boolean[][]>` on a class that owns the `Clock`, or add `@audiorective/sequencer` for `StepSequencer`.
 - **Read-only cells change through the owner's methods** (`player.setSelection(range)`), never by assignment.
-- **Views borrow.** The caller destroys what it created; destroying a widget leaves a supplied player alive.
+- **Views borrow.** The caller disposes what it created; disposing a widget leaves a supplied player alive.
 - **Autoplay:** the context starts suspended; call `engine.core.start()` from a user gesture or `engine.core.autoStart(document)`.
 - **Client-only:** `createEngine` needs a real `AudioContext`. In SSR frameworks mount audio behind a client-only boundary (`'use client'` is not one). On `EngineEnvironmentError` move the import inside the island; no `typeof window` guards. `references/client-boundary.md`.
 - **API surprise** (`X is not a function`, missing export): the installed package may predate the docs. Check `references/changelog.md` and upgrade all `@audiorective/*` together; procedure in `references/rules-in-depth.md`.
@@ -152,7 +152,7 @@ Detail for all of these: `references/rules-in-depth.md`.
 | `defineGraph: X is a bare AudioWorkletNode`                             | A worklet node used directly as an edge endpoint                 | Wrap it in an `AudioProcessor` that declares `latency` — `audio-processor-authoring` skill    |
 | `defineGraph: X used as sink has no input`                              | Routing audio into an instrument or player                       | Only effects have `input`; instruments are sources. Check the edge direction                  |
 | `WorkletUnavailableError` from `@audiorective/effects`                  | Context without `audioWorklet` (old browser, some test contexts) | Use a browser with AudioWorklet, or the `granular` `PitchShift` engine which needs no worklet |
-| `Cannot start a destroyed engine`                                       | Reusing an engine after `destroy()`                              | Create a new engine; `destroy()` is final                                                     |
+| `Cannot start a disposed engine`                                        | Reusing an engine after `dispose()`                              | Create a new engine; `dispose()` is final                                                     |
 
 ### Errors by area
 
@@ -172,7 +172,7 @@ Every other thrown message is listed, with cause and fix, in its area's referenc
 | `Project…`, `AudioMedia…`, `Workspace …`, `Clip gain…`                                            | `daw.md`                                   |
 | `Clip Launcher…`                                                                                  | `launcher.md`                              |
 | `WebCLAP…`                                                                                        | `host.md`                                  |
-| `summarizePeaks:…`, `createEngine:…`, `AudioEngine destroyed…`, `registerWorklet:…`               | `core.md`                                  |
+| `summarizePeaks:…`, `createEngine:…`, `AudioEngine disposed…`, `registerWorklet:…`                | `core.md`                                  |
 | `measureLatency:…`, `useEngine…`, `attach:…`                                                      | `devtools.md`, `react.md`, `playcanvas.md` |
 | `AutomationCurve…`, `AutomationBinding…`                                                          | `automation.md`                            |
 

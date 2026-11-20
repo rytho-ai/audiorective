@@ -18,7 +18,7 @@ function event() {
   return { value, cancel, end: () => listeners.splice(0).forEach((listener) => listener()) };
 }
 
-test("owned events cancel on pause, seek, stop, restart and destroy; unowned events keep the old tail", () => {
+test("owned events cancel on pause, seek, stop, restart and dispose; unowned events keep the old tail", () => {
   let now = 0;
   const timeline = new Timeline({
     audioContext: {
@@ -60,7 +60,7 @@ test("owned events cancel on pause, seek, stop, restart and destroy; unowned eve
   clock.start();
   expect(owned[3]!.cancel).toHaveBeenCalledTimes(1);
   ticks.tick();
-  clock.destroy();
+  clock.dispose();
   expect(owned[4]!.cancel).toHaveBeenCalledTimes(1);
   expect(unowned.every((item) => item.cancel.mock.calls.length === 0)).toBe(true);
 });
@@ -109,7 +109,7 @@ test("refresh cancels and refills the present horizon without moving transport p
   clock.stop();
   expect(owned[1]!.cancel).not.toHaveBeenCalled();
   expect(owned[2]!.cancel).toHaveBeenCalledTimes(1);
-  clock.destroy();
+  clock.dispose();
 });
 
 test("refresh gives a hit exactly at now to the refill instead of keeping both copies", async () => {
@@ -132,7 +132,7 @@ test("refresh gives a hit exactly at now to the refill instead of keeping both c
   expect(hits).toHaveLength(2);
   expect(hits[0]!.cancel).toHaveBeenCalledTimes(1);
   expect(hits[1]!.cancel).not.toHaveBeenCalled();
-  clock.destroy();
+  clock.dispose();
 });
 
 test("refresh uses one captured boundary even if cancellation advances the audio clock", async () => {
@@ -167,7 +167,7 @@ test("refresh uses one captured boundary even if cancellation advances the audio
   await flushRefill();
   expect(starts[1]).toBe(0); // the cancelled interval remains in the refill window
   expect(timeline.position).toBeCloseTo(0.02, 9);
-  clock.destroy();
+  clock.dispose();
 });
 
 test("a late registration from an invalidated window is cancelled instead of escaping ownership", () => {
@@ -185,7 +185,7 @@ test("a late registration from an invalidated window is cancelled instead of esc
   clock.start();
   ticks.tick();
   expect(stale.cancel).toHaveBeenCalledTimes(1);
-  clock.destroy();
+  clock.dispose();
 });
 
 test("an end listener cannot register a replacement while Clock cancels its owned events", () => {
@@ -206,7 +206,7 @@ test("an end listener cannot register a replacement while Clock cancels its owne
   clock.pause();
   expect(first.cancel).toHaveBeenCalledTimes(1);
   expect(replacement.cancel).toHaveBeenCalledTimes(1);
-  clock.destroy();
+  clock.dispose();
 });
 
 test("refresh called during onTick does not re-enter it; the refill runs once after the callback returns", async () => {
@@ -234,7 +234,7 @@ test("refresh called during onTick does not re-enter it; the refill runs once af
   expect(reentered).toBe(false);
   ticks.tick();
   expect(windows).toBe(2);
-  clock.destroy();
+  clock.dispose();
 });
 
 test("refresh from a plain synchronous caller does not run onTick before it returns", async () => {
@@ -248,7 +248,7 @@ test("refresh from a plain synchronous caller does not run onTick before it retu
   expect(windows).toBe(1);
   await flushRefill();
   expect(windows).toBe(2);
-  clock.destroy();
+  clock.dispose();
 });
 
 test("N refreshes in one task coalesce into one refill; retraction is still immediate", async () => {
@@ -290,11 +290,11 @@ test("N refreshes in one task coalesce into one refill; retraction is still imme
   expect(hits[1]!.cancel).not.toHaveBeenCalled();
   await flushRefill();
   expect(hits).toHaveLength(2);
-  clock.destroy();
+  clock.dispose();
 });
 
-test("stop, pause, seek, start or destroy before the microtask: no refill from the stale refresh", async () => {
-  for (const act of ["stop", "pause", "destroy"] as const) {
+test("stop, pause, seek, start or dispose before the microtask: no refill from the stale refresh", async () => {
+  for (const act of ["stop", "pause", "dispose"] as const) {
     const timeline = new Timeline({ audioContext: { currentTime: 0 } });
     const ticks = new ManualTickSource();
     let windows = 0;
@@ -305,7 +305,7 @@ test("stop, pause, seek, start or destroy before the microtask: no refill from t
     clock[act]();
     await flushRefill();
     expect(windows, act).toBe(1);
-    clock.destroy();
+    clock.dispose();
   }
 });
 
@@ -322,7 +322,7 @@ test("a seek between refresh and its microtask wins: the refill starts at the se
   expect(starts).toEqual([0]); // the stale refill never ran
   ticks.tick();
   expect(starts[1]).toBe(32); // the regular tick starts exactly at the seek target
-  clock.destroy();
+  clock.dispose();
 });
 
 test("a tick that runs before the microtask performs the refill; the microtask does nothing more", async () => {
@@ -337,7 +337,7 @@ test("a tick that runs before the microtask performs the refill; the microtask d
   expect(windows).toBe(2);
   await flushRefill();
   expect(windows).toBe(2);
-  clock.destroy();
+  clock.dispose();
 });
 
 test("restart then refresh before the old microtask runs refills once", async () => {
@@ -352,7 +352,7 @@ test("restart then refresh before the old microtask runs refills once", async ()
   clock.refresh();
   await flushRefill();
   expect(windows).toBe(1);
-  clock.destroy();
+  clock.dispose();
 });
 
 test("invalid owned-event time cancels the event before rejecting registration", () => {
@@ -369,5 +369,5 @@ test("invalid owned-event time cancels the event before rejecting registration",
   clock.start();
   ticks.tick();
   expect(bad.cancel).toHaveBeenCalledTimes(1);
-  clock.destroy();
+  clock.dispose();
 });

@@ -216,14 +216,14 @@ describe("Clock — tempo changes mid-run", () => {
   });
 });
 
-describe("Clock — destroy", () => {
-  test("destroy stops the tick source", () => {
+describe("Clock — dispose", () => {
+  test("dispose stops the tick source", () => {
     const stop = vi.fn();
     const tickSource = { start: vi.fn(), stop };
     const ctx = makeContext(0);
     const timeline = new Timeline({ audioContext: ctx, bpm: 120 });
     const clock = new Clock({ timeline, onTick: () => {}, tickSource });
-    clock.destroy();
+    clock.dispose();
     expect(stop).toHaveBeenCalledOnce();
   });
 });
@@ -315,6 +315,6 @@ describe("Clock — over a tempo ramp", () => {
       expect(timeline.timeToBeat(point.time)).toBeCloseTo(point.beat, 9);
       if (i > 0) expect(point.time).toBeGreaterThan(grid[i - 1]!.time);
     });
-    clock.destroy();
+    clock.dispose();
   });
 });

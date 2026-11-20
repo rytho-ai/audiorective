@@ -105,9 +105,9 @@ try {
       if (sequencer.lanes.closed.playhead !== null) throw new Error("Detached sequencer retained its playhead");
       const frames = rendered.getChannelData(0);
       const result = [frames[9600], frames[16800]];
-      workspace.destroy();
-      kit.destroy();
-      project.destroy();
+      workspace.dispose();
+      kit.dispose();
+      project.dispose();
       sequencer.dispose();
       return result;
     }

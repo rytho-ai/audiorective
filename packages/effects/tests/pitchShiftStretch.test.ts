@@ -16,19 +16,19 @@ describe("PitchShift (stretch)", () => {
     expect(fx.latency.value).toBeGreaterThan(0);
     expect(fx.latency.value).toBeLessThan(0.2 * 44100);
   });
-  it("destroying before ready resolves leaves isReady false", async () => {
+  it("disposing before ready resolves leaves isReady false", async () => {
     const ctx = new OfflineAudioContext(2, 4096, 44100);
     const fx = new PitchShift(ctx, { engine: "stretch", stretch: { blockMs: 40 } });
-    fx.destroy();
+    fx.dispose();
     await fx.ready;
     expect(fx.cells.isReady.value).toBe(false);
   });
-  it("destroy() disconnects the input and output gains", () => {
+  it("dispose() disconnects the input and output gains", () => {
     const ctx = new OfflineAudioContext(2, 4096, 44100);
     const fx = new PitchShift(ctx, { engine: "stretch", stretch: { blockMs: 40 } });
     const core = (fx as unknown as { core: { input: GainNode; output: GainNode } }).core;
     const spies = [vi.spyOn(core.input, "disconnect"), vi.spyOn(core.output, "disconnect")];
-    fx.destroy();
+    fx.dispose();
     for (const s of spies) expect(s).toHaveBeenCalled();
   });
 });

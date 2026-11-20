@@ -19,7 +19,7 @@ export const defaultRenderer: WaveformRenderer = (container) => {
       path.setAttribute("d", peaks ? peakPath(peaks, width, height, amplitudeZoom) : "");
       center.setAttribute("d", `M0,${height / 2}H${width}`);
     },
-    destroy() {
+    dispose() {
       svg.remove();
     },
   };

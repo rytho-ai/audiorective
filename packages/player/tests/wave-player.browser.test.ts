@@ -8,7 +8,7 @@ function fixture() {
   const player = new WavePlayer(context);
   disposers.push(
     () => context.close(),
-    () => player.destroy(),
+    () => player.dispose(),
   );
   return { context, player };
 }
@@ -125,18 +125,18 @@ test("stale decode and destruction cannot resurrect a source", async () => {
   spy.mockReturnValue(late.promise);
   const pending = player.load(new File(["x"], "late.wav"));
   await expect.poll(() => spy.mock.calls.length).toBe(2);
-  player.destroy();
+  player.dispose();
   late.resolve(current);
   await pending;
   expect(player.buffer).toBeNull();
   expect(player.getState().isPlaying).toBe(false);
   expect(context.state).not.toBe("closed");
-  await expect(player.load(current)).rejects.toThrow(/destroyed/);
-  expect(() => player.seek(0)).toThrow(/destroyed/);
-  player.destroy();
+  await expect(player.load(current)).rejects.toThrow(/disposed/);
+  expect(() => player.seek(0)).toThrow(/disposed/);
+  player.dispose();
 });
 
-for (const command of ["pause", "stop", "seek", "load", "destroy"] as const) {
+for (const command of ["pause", "stop", "seek", "load", "dispose"] as const) {
   test(`pending resume cannot start after ${command}`, async () => {
     const { context, player } = fixture();
     const buffer = bands(context);
@@ -212,7 +212,7 @@ test("audition, live disjoint range and obsolete one-shot stop agree with actual
   await expect.poll(() => peak(analyser)).toBeLessThan(0.001);
 });
 
-test("destroy silences owned audio but leaves caller context and peer running", async () => {
+test("dispose silences owned audio but leaves caller context and peer running", async () => {
   const { context, player } = fixture();
   await player.load(bands(context));
   player.setSelection({ start: 1, end: 1.2 });
@@ -232,20 +232,20 @@ test("destroy silences owned audio but leaves caller context and peer running", 
   });
   await player.audition();
   await expect.poll(() => peak(analyser)).toBeGreaterThan(0.1);
-  player.destroy();
-  player.destroy();
+  player.dispose();
+  player.dispose();
   await delay(160);
   expect(peak(analyser)).toBeLessThan(0.001);
   expect(peak(peerAnalyser)).toBeGreaterThan(0.1);
   expect(context.state).toBe("running");
 });
 
-test("destroy does not notify subscribers after the player is disposed", async () => {
+test("dispose does not notify subscribers after the player is disposed", async () => {
   const { context, player } = fixture();
   await player.load(bands(context, 1));
   await player.play();
   const seen: unknown[] = [];
   player.subscribe(() => seen.push(1));
-  player.destroy();
+  player.dispose();
   expect(seen).toEqual([]);
 });

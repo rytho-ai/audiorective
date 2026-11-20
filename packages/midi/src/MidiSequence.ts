@@ -34,7 +34,7 @@ export class MidiSequence {
     if (data) this.setData(data);
   }
   private alive() {
-    if (this.disposed) throw new Error("MidiSequence is destroyed.");
+    if (this.disposed) throw new Error("MidiSequence is disposed.");
   }
   getState(): MidiSequenceState {
     return this.cells.state.value;
@@ -119,7 +119,7 @@ export class MidiSequence {
   query(range: MidiRange, pitches?: Readonly<{ low: number; high: number }>): readonly MidiNote[] {
     return visibleMidiNotes(this.cells.notes.value, range, pitches);
   }
-  destroy(): void {
+  dispose(): void {
     this.disposed = true;
     for (const unsubscribe of [...this.subscriptions]) unsubscribe();
   }

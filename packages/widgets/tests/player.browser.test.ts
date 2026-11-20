@@ -50,7 +50,7 @@ async function track(seconds = 200) {
   player.output.connect(ctx.destination);
   const url = silentWavUrl(seconds);
   disposers.push(
-    () => player.destroy(),
+    () => player.dispose(),
     () => URL.revokeObjectURL(url),
   );
   player.src = url;
@@ -67,12 +67,12 @@ function blockPlay(player: FilePlayer, name: string): () => void {
 function recorder() {
   const seen: PlayerFrame[] = [];
   let actions!: PlayerActions;
-  const destroy = vi.fn();
+  const dispose = vi.fn();
   const renderer: PlayerRenderer = (_container, given) => {
     actions = given;
-    return { render: (frame) => void seen.push(frame), destroy };
+    return { render: (frame) => void seen.push(frame), dispose };
   };
-  return { seen, renderer, destroy, last: () => seen[seen.length - 1], actions: () => actions };
+  return { seen, renderer, dispose, last: () => seen[seen.length - 1], actions: () => actions };
 }
 /** A player made of plain cells, for logic tests that need no audio. */
 function fake(overrides: Partial<PlayerLike> = {}) {
@@ -99,7 +99,7 @@ test("FilePlayer: shows state, follows changes made elsewhere, toggles and sets 
   const { player } = await track(200);
   const root = host();
   const view = mountPlayer(root, { player: fromFilePlayer(player) });
-  disposers.push(() => view.destroy());
+  disposers.push(() => view.dispose());
   const ui = parts(root);
 
   expect(ui.toggle.textContent).toBe("Play");
@@ -133,7 +133,7 @@ test("(a) a drag is not yanked by time updates and seeks once, on release", asyn
   const { player } = await track(200);
   const root = host();
   const view = mountPlayer(root, { player: fromFilePlayer(player) });
-  disposers.push(() => view.destroy());
+  disposers.push(() => view.dispose());
   const ui = parts(root);
   const seek = vi.spyOn(player, "seek");
   await player.play();
@@ -161,7 +161,7 @@ test("(a) logic: hold freezes, scrub previews, commit seeks, cancel and a press 
   const f = fake();
   const r = recorder();
   const view = mountPlayer(host(), { player: f.player, renderer: r.renderer });
-  disposers.push(() => view.destroy());
+  disposers.push(() => view.dispose());
   f.position.value = 10;
   expect(r.last().position).toBe(10);
 
@@ -201,7 +201,7 @@ test("a drag commits within the latest duration when the track becomes shorter",
   const f = fake();
   const r = recorder();
   const view = mountPlayer(host(), { player: f.player, renderer: r.renderer });
-  disposers.push(() => view.destroy());
+  disposers.push(() => view.dispose());
 
   r.actions().scrub(90);
   f.duration.value = 10;
@@ -217,7 +217,7 @@ test("(b) unknown length: before metadata, live stream, track switch; never rend
   duration.value = NaN;
   const root = host();
   const view = mountPlayer(root, { player });
-  disposers.push(() => view.destroy());
+  disposers.push(() => view.dispose());
   const ui = parts(root);
   const clean = () => !/NaN|Infinity/.test(root.textContent ?? "") && !/NaN|Infinity/.test(ui.seek.max + ui.seek.value);
 
@@ -263,7 +263,7 @@ test("(b) unknown length: before metadata, live stream, track switch; never rend
 test("(b) unknown length through the real FilePlayer adapter: element events drive duration and position", async () => {
   const ctx = context();
   const player = new FilePlayer(ctx);
-  disposers.push(() => player.destroy());
+  disposers.push(() => player.dispose());
   // The element reports whatever the test defines; FilePlayer reads it on loadedmetadata / timeupdate / seeking.
   const report = (duration: number, currentTime: number) => {
     Object.defineProperty(player.audio, "duration", { configurable: true, get: () => duration });
@@ -273,7 +273,7 @@ test("(b) unknown length through the real FilePlayer adapter: element events dri
   };
   const root = host();
   const view = mountPlayer(root, { player: fromFilePlayer(player) });
-  disposers.push(() => view.destroy());
+  disposers.push(() => view.dispose());
   const ui = parts(root);
   const clean = () => !/NaN|Infinity/.test(root.textContent ?? "") && !/NaN|Infinity/.test(ui.seek.max + ui.seek.value);
 
@@ -311,7 +311,7 @@ test("(b) mounted mid-track, the slider is at the real position (max is set befo
   player.seek(150);
   const root = host();
   const view = mountPlayer(root, { player: fromFilePlayer(player) });
-  disposers.push(() => view.destroy());
+  disposers.push(() => view.dispose());
   expect(parts(root).seek.valueAsNumber).toBe(150);
   expect(parts(root).time.textContent).toBe("2:30 / 3:20");
 });
@@ -320,7 +320,7 @@ test("(c) a blocked play from the widget is shown, and cleared when playback nex
   const { player } = await track(30);
   const root = host();
   const view = mountPlayer(root, { player: fromFilePlayer(player) });
-  disposers.push(() => view.destroy());
+  disposers.push(() => view.dispose());
   const ui = parts(root);
   const unblock = blockPlay(player, "NotAllowedError");
 
@@ -341,7 +341,7 @@ test("(c) an interrupted play (AbortError) is not reported; other failures and a
   const { player } = await track(30);
   const root = host();
   const view = mountPlayer(root, { player: fromFilePlayer(player) });
-  disposers.push(() => view.destroy());
+  disposers.push(() => view.dispose());
   const ui = parts(root);
 
   let restore = blockPlay(player, "AbortError");
@@ -372,7 +372,7 @@ test("(c) a superseded attempt cannot raise a stale notice", async () => {
   const f = fake({ play: () => new Promise<void>((_resolve, fail) => (reject = fail)) });
   const r = recorder();
   const view = mountPlayer(host(), { player: f.player, renderer: r.renderer });
-  disposers.push(() => view.destroy());
+  disposers.push(() => view.dispose());
   r.actions().toggle();
   const first = reject;
   r.actions().toggle(); // a second attempt supersedes the first
@@ -388,7 +388,7 @@ test("a late rejection does not restore a notice after another view starts playb
   const f = fake({ play: () => new Promise<void>((_resolve, fail) => (reject = fail)) });
   const r = recorder();
   const view = mountPlayer(host(), { player: f.player, renderer: r.renderer });
-  disposers.push(() => view.destroy());
+  disposers.push(() => view.dispose());
 
   r.actions().toggle();
   f.isPlaying.value = true;
@@ -401,7 +401,7 @@ test("(c) limitation: a blocked FilePlayer.play() made elsewhere leaves nothing 
   const { player } = await track(30);
   const root = host();
   const view = mountPlayer(root, { player: fromFilePlayer(player) });
-  disposers.push(() => view.destroy());
+  disposers.push(() => view.dispose());
   const r = { events: [] as string[] };
   for (const type of ["play", "playing", "pause", "error", "abort", "stalled", "suspend", "waiting"]) {
     player.audio.addEventListener(type, () => r.events.push(type));
@@ -434,18 +434,18 @@ test("(d) unmount leaves audio and the player untouched and releases everything"
   await until(() => player.cells.currentTime.value > 0.2, "playing");
   const pause = vi.spyOn(player, "pause");
   const stop = vi.spyOn(player, "stop");
-  const destroy = vi.spyOn(player, "destroy");
+  const dispose = vi.spyOn(player, "dispose");
   const elementPause = vi.spyOn(player.audio, "pause");
 
-  view.destroy();
-  plain.destroy();
-  view.destroy(); // idempotent
+  view.dispose();
+  plain.dispose();
+  view.dispose(); // idempotent
   expect(root.childElementCount).toBe(0);
   expect(second.childElementCount).toBe(0);
-  expect(r.destroy).toHaveBeenCalledTimes(1);
+  expect(r.dispose).toHaveBeenCalledTimes(1);
   expect(pause).not.toHaveBeenCalled();
   expect(stop).not.toHaveBeenCalled();
-  expect(destroy).not.toHaveBeenCalled();
+  expect(dispose).not.toHaveBeenCalled();
   expect(elementPause).not.toHaveBeenCalled();
   expect(player.audio.paused).toBe(false);
   expect(player.cells.isPlaying.value).toBe(true);
@@ -504,7 +504,7 @@ test("(d) unmount stops the subscription and the animation frames of a clock pla
 
   f.isPlaying.value = true;
   await frames(2);
-  view.destroy();
+  view.dispose();
   expect(listeners.size).toBe(0);
   const drawn = r.seen.length;
   clock = 9;
@@ -517,10 +517,10 @@ test("(d) unmount stops the subscription and the animation frames of a clock pla
 test("WavePlayer: unknown until loaded, clock position, paused seek via subscribe, slider seek", async () => {
   const ctx = context();
   const player = new WavePlayer(ctx);
-  disposers.push(() => player.destroy());
+  disposers.push(() => player.dispose());
   const root = host();
   const view = mountPlayer(root, { player: fromWavePlayer(player) });
-  disposers.push(() => view.destroy());
+  disposers.push(() => view.dispose());
   const ui = parts(root);
 
   expect(ui.time.textContent).toBe("0:00 / --:--");
@@ -556,7 +556,7 @@ test("WavePlayer: unknown until loaded, clock position, paused seek via subscrib
   await until(() => ui.toggle.textContent === "Play", "paused");
   expect(player.cells.isPlaying.value).toBe(false);
 
-  view.destroy();
+  view.dispose();
   await player.play();
   expect(player.cells.isPlaying.value).toBe(true); // borrowed: still the owner's
 });
@@ -566,10 +566,10 @@ test("WavePlayer: unknown until loaded, clock position, paused seek via subscrib
 test("BufferPlayer: start/stop and volume only; no seek bar, no time, control reads Stop", async () => {
   const ctx = context();
   const player = new BufferPlayer(ctx);
-  disposers.push(() => player.destroy());
+  disposers.push(() => player.dispose());
   const root = host();
   const view = mountPlayer(root, { player: fromBufferPlayer(player) });
-  disposers.push(() => view.destroy());
+  disposers.push(() => view.dispose());
   const ui = parts(root);
 
   expect(ui.seek.hidden).toBe(true);
@@ -595,7 +595,7 @@ test("BufferPlayer: start/stop and volume only; no seek bar, no time, control re
   ui.volume.dispatchEvent(new Event("input", { bubbles: true }));
   expect(player.params.volume.value).toBeCloseTo(0.25);
 
-  view.destroy();
+  view.dispose();
   expect(player.cells.isPlaying.value).toBe(true);
 });
 
@@ -618,7 +618,7 @@ test("renderer seam: a custom renderer gets frames and actions; the logic is not
       };
     },
   });
-  disposers.push(() => view.destroy());
+  disposers.push(() => view.dispose());
   const button = root.querySelector("button")!;
   expect(root.querySelector("[role=group]")!.getAttribute("aria-label")).toBe("Deck A");
   expect(button.textContent).toBe("off 0/100 v0.5");
@@ -627,7 +627,7 @@ test("renderer seam: a custom renderer gets frames and actions; the logic is not
   expect(button.textContent).toBe("on 0/100 v0.5");
   button.click();
   expect(f.pause).toHaveBeenCalledTimes(1);
-  view.destroy();
+  view.dispose();
   expect(root.childElementCount).toBe(0);
 });
 
@@ -638,7 +638,7 @@ test("a player with only isPlaying/play/pause mounts; a throwing renderer leaves
     player: { isPlaying, play: () => void (isPlaying.value = true), pause: () => void (isPlaying.value = false) },
     renderer: r.renderer,
   });
-  disposers.push(() => view.destroy());
+  disposers.push(() => view.dispose());
   expect(r.last()).toEqual({
     isPlaying: false,
     resumes: true,
@@ -672,16 +672,16 @@ test("an initial render failure releases its observer and the borrowed player", 
   const render = vi.fn(() => {
     throw new Error("first render failed");
   });
-  const destroy = vi.fn();
+  const dispose = vi.fn();
 
   expect(() =>
     mountPlayer(root, {
       player: { isPlaying, play() {}, pause() {} },
-      renderer: () => ({ render, destroy }),
+      renderer: () => ({ render, dispose }),
     }),
   ).toThrow("first render failed");
   expect(root.childElementCount).toBe(0);
-  expect(destroy).toHaveBeenCalledTimes(1);
+  expect(dispose).toHaveBeenCalledTimes(1);
 
   isPlaying.value = true;
   expect(render).toHaveBeenCalledTimes(1);

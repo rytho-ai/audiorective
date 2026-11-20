@@ -93,8 +93,8 @@ try {
         ...snapshot,
       };
     } finally {
-      reopened.destroy();
-      reopened.project.destroy();
+      reopened.dispose();
+      reopened.project.dispose();
     }
   }, busId);
   assert.deepEqual(macroRoundTrip, { same: true, value: 1, magnitude: opened, generation: clockGeneration, playing: true });
@@ -121,7 +121,7 @@ try {
     project.setTrackEffects(wet.id, [{ id: "filter", type: "filter", mode: "lowpass", frequency: 1800, q: 0.7, wet: 1, enabled: true }]);
     const originalWorkspace = await Workspace.create(context, project);
     const saved = await window.__daw.api.saveWorkspace(originalWorkspace);
-    originalWorkspace.destroy();
+    originalWorkspace.dispose();
     const render = await window.__daw.api.openWorkspace(context, saved, { destination: context.destination });
     const active = render.project;
     await render.play();
@@ -150,9 +150,9 @@ try {
     const output = await context.startRendering();
     await Promise.all(steps);
     const samples = [0.3, 0.65, 1.05, 1.5].map((time) => [0, 1].map((channel) => output.getChannelData(channel)[Math.round(time * rate)]));
-    render.destroy();
-    active.destroy();
-    project.destroy();
+    render.dispose();
+    active.dispose();
+    project.dispose();
     return { samples, generation, checkpoints };
   });
   const expected = [

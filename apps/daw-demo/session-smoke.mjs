@@ -137,8 +137,8 @@ try {
     await Promise.all(steps);
     const sample = (time) => [0, 1].map((channel) => rendered.getChannelData(channel)[Math.round(time * sampleRate)]);
     const evidence = [0.4999, 0.5001, 1.1, 1.4999, 1.5001, 1.9999, 2.0001, 3.6].map(sample);
-    workspace.destroy();
-    project.destroy();
+    workspace.dispose();
+    project.dispose();
     return { evidence, deadlines, cancelled, queuedAfterSeek, becameActive, clips: [drumsLoop.id, bassA.id, bassB.id] };
   });
   const {
@@ -224,8 +224,8 @@ try {
       onlyLoopLeft: active.length === 1 && active[0] === right.id,
       audio: [0.4999, 0.5001, 0.9999, 1.0001, 1.1249, 1.1251, 1.49].map(frame),
     };
-    workspace.destroy();
-    project.destroy();
+    workspace.dispose();
+    project.dispose();
     return result;
   });
   assert.equal(oneShot.overlap, 1);
@@ -288,8 +288,8 @@ try {
     const at = (time, ch) => output.getChannelData(ch)[Math.round(time * rate)];
     const launched = await immediate;
     const { both, withdrew, remaining } = await queue;
-    workspace.destroy();
-    project.destroy();
+    workspace.dispose();
+    project.dispose();
     return {
       both,
       withdrew,

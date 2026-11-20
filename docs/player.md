@@ -6,7 +6,7 @@ Range playback, selection, loading and offline stretch from `@audiorective/playe
 
 ## WavePlayer
 
-`WavePlayer` loads audio, selects a range in the committed output timeline, and auditions it. Pass an optional borrowed offline stretch processor to render another duration while preserving pitch. It extends `AudioProcessor`, reuses core's `BufferPlayer`, and exposes `params.volume` with the standard `.value`, `$`, and scheduling methods. The caller supplies an `AudioContext`, routes its output, and destroys it when finished.
+`WavePlayer` loads audio, selects a range in the committed output timeline, and auditions it. Pass an optional borrowed offline stretch processor to render another duration while preserving pitch. It extends `AudioProcessor`, reuses core's `BufferPlayer`, and exposes `params.volume` with the standard `.value`, `$`, and scheduling methods. The caller supplies an `AudioContext`, routes its output, and disposes it when finished.
 
 ```typescript
 import { WavePlayer } from "@audiorective/player";
@@ -25,7 +25,7 @@ try {
 // From a user gesture:
 // await player.audition(); // loop the selection
 // player.pause();
-// player.destroy(); // leaves context open
+// player.dispose(); // leaves context open
 ```
 
 | Member                                                       | Behavior                                                                                                                                                                                                                                                                                                                                                                                                       |
@@ -35,7 +35,7 @@ try {
 | `setSelection(range: AudioRange \| null)`                    | Sets a defensive copy. Finite endpoints must satisfy `0 <= start < end <= duration`. Invalid edits leave state unchanged. Clearing disables looping. A stopped player stays stopped; a playing session follows the new bounds.                                                                                                                                                                                 |
 | `getSelection(): AudioRange \| null`                         | Returns a copy of the authoritative selection.                                                                                                                                                                                                                                                                                                                                                                 |
 | `play(options?: { when?: number }): Promise<number \| null>` | Resumes the supplied context, then starts or resumes within the current range (whole source without a range). At the end, the next play starts at the range start. `when` schedules the first sound; see [Scheduled start](#scheduled-start). Resolves with the effective start time, or `null` when the call started nothing. Context resume errors reject.                                                   |
-| `attachSourceAutomation(binding): () => void`                | Borrows a core `AutomationBinding` in source seconds for non-looping playback. Starts, re-anchors and stops it with the player; the returned function detaches and stops it without destroying the binding or player. See [Source-time automation](#source-time-automation-on-a-selection).                                                                                                                    |
+| `attachSourceAutomation(binding): () => void`                | Borrows a core `AutomationBinding` in source seconds for non-looping playback. Starts, re-anchors and stops it with the player; the returned function detaches and stops it without disposing the binding or player. See [Source-time automation](#source-time-automation-on-a-selection).                                                                                                                     |
 | `audition(): Promise<void>`                                  | Enables looping, seeks to the selected start and plays. No selection means no action.                                                                                                                                                                                                                                                                                                                          |
 | `pause()` / `stop()`                                         | Pause holds position; stop resets to the selection start, or zero. Both cancel pending play requests.                                                                                                                                                                                                                                                                                                          |
 | `seek(seconds)`                                              | Clamps finite seconds to the committed output duration. A playing session restarts within its bounds; a stopped session remains stopped.                                                                                                                                                                                                                                                                       |
@@ -44,7 +44,7 @@ try {
 | `cancelLoad(): void`                                         | Cancels the active load, clears progress without an error, and ignores late results. Idle calls preserve the committed version.                                                                                                                                                                                                                                                                                |
 | `getState()`                                                 | Snapshot containing `duration`, copied `selection`, `position`, `isPlaying`, `isLooping`, `loading`, `loadProgress`, `error: string \| null`, `processing`, `stretchRatio`, `sourceDuration`, and `revision`.                                                                                                                                                                                                  |
 | `subscribe(listener: () => void): () => void`                | Change notifications for source, selection, loading and playback, one per committed change; an effect over the cells, so it is also a thin wrapper over them. Returns unsubscribe. Does not call immediately or tick for clock-only position movement. Render once, subscribe for changes, and read `position` per animation frame when needed. A failing listener is logged without preventing other updates. |
-| `destroy()`                                                  | Idempotently cancels loads, edits and play requests, stops/disconnects owned audio and releases buffers/listeners. It never destroys the borrowed stretch processor. Leaves the caller context open. Mutating a destroyed player throws `WavePlayer is destroyed.`                                                                                                                                             |
+| `dispose()`                                                  | Idempotently cancels loads, edits and play requests, stops/disconnects owned audio and releases buffers/listeners. It never disposes the borrowed stretch processor. Leaves the caller context open. Mutating a disposed player throws `WavePlayer is disposed.`                                                                                                                                               |
 
 `AudioRange` is `{ start: number; end: number }`. `WavePlayerSource`, `WavePlayerState`, `WavePlayerOptions`, `WavePlayOptions`, `WaveStretchProcessor`, and `PlaybackVersion` are exported. Playback, selection, seek, and position use **committed output seconds**. Original source seconds remain available through `sourceDuration` and the mapping helpers below. With ratio 1 the timelines coincide.
 
@@ -66,7 +66,7 @@ const started = await player.play({ when });
 | Resolved `null`                                           | This call started nothing: no source, already playing or queued, or superseded before it resolved by any call that cancels or re-issues the start. Schedule nothing against it.                                                               |
 | Before `when`                                             | The start is queued. `isPlaying`, `cells.isPlaying` and `getState().isPlaying` are already true, the output is silent, and `position` holds the start offset. It advances from `when`.                                                        |
 | `play()` while queued                                     | No-op that resolves `null`. Pause or stop first to schedule a different time.                                                                                                                                                                 |
-| `pause`, `stop`, `load`, a `setStretch` commit, `destroy` | Cancel the queued start; nothing sounds. Pause holds the start offset.                                                                                                                                                                        |
+| `pause`, `stop`, `load`, a `setStretch` commit, `dispose` | Cancel the queued start; nothing sounds. Pause holds the start offset.                                                                                                                                                                        |
 | `seek`, `setSelection`, `setLooping` while queued         | Keep the session and the same `when`. The start is re-issued from the new position and bounds, and a one-shot's end is measured from `when`. Only the re-issued start sounds.                                                                 |
 | `when` is not a finite, non-negative number               | Rejects with `Start time must be finite, non-negative seconds.`                                                                                                                                                                               |
 
@@ -92,10 +92,10 @@ player.setSelection({ start: 1, end: 2 }); // output seconds
 await player.play({ when: context.currentTime + 0.1 });
 // curve.value = updatedPoints; // reprograms the remaining native automation
 // Manual takeover: detach(); envelope.gain.value = 0.5;
-// Cleanup: detach(); binding.destroy(); player.destroy(); envelope.disconnect();
+// Cleanup: detach(); binding.dispose(); player.dispose(); envelope.disconnect();
 ```
 
-The binding must use the player's exact `AudioContext`; the player borrows and stops it but never destroys it. Detaching stops automation and leaves playback running. Attach before playback or during a non-looping run; `setLooping(true)` and `audition()` are unavailable while a source binding is attached because a finite binding does not repeat over loops. Detach before manual target writes or changing the target. Curve edits remain live through `AutomationBinding` itself.
+The binding must use the player's exact `AudioContext`; the player borrows and stops it but never disposes it. Detaching stops automation and leaves playback running. Attach before playback or during a non-looping run; `setLooping(true)` and `audition()` are unavailable while a source binding is attached because a finite binding does not repeat over loops. Detach before manual target writes or changing the target. Curve edits remain live through `AutomationBinding` itself.
 
 If selection changes while `play()` is still awaiting `context.resume()`, that play resolves `null` and starts neither sound nor automation. A selection edit after a future start has been queued reissues both at the same `when` with the new range. Starting a stretch edit cancels a queued start; an already-sounding run continues on its committed version until the stretch commits, then stops with its binding. Unattached WavePlayer playback keeps its normal behavior. See [Automation](./automation.md#domain-adapters-and-waveform-composition) for target adapters and manual control.
 
@@ -170,7 +170,7 @@ interface PlaybackVersion {
 
 The metadata object is frozen. Its borrowed buffer and peak arrays are read-only by contract, rather than deeply frozen. `revision` increases on every committed load or edit; `sourceRevision` identifies the source across its edits. `ratio` is the requested duration ratio; actual output duration uses a whole-frame `Math.round(sourceBuffer.length * ratio)` target. Read `version.buffer` and `version.peaks` together for matching audio and display data.
 
-`await player.setStretch(ratio)` always processes the original source, so successive ratios do not compound. While it runs, `processing` is true and the old version remains playable and visible. A current failure rejects, sets `error`, and preserves the version, selection, position and playback. A newer edit cancels the older signal; stale results or failures settle without publication. Loading another source or destroying the player also cancels pending edits.
+`await player.setStretch(ratio)` always processes the original source, so successive ratios do not compound. While it runs, `processing` is true and the old version remains playable and visible. A current failure rejects, sets `error`, and preserves the version, selection, position and playback. A newer edit cancels the older signal; stale results or failures settle without publication. Loading another source or disposing the player also cancels pending edits.
 
 A successful edit commits audio and peaks together, stops playback, and scales selection and held position by the new duration divided by the previous duration. Loop mode is retained. Call `play()` or `audition()` from a user gesture to start the committed version. `setStretch(1)` restores the original buffer without invoking a processor. Ratios must be finite and positive; edits require a loaded source, and ratios other than 1 require a processor.
 
@@ -206,8 +206,8 @@ async function createEditor(context: AudioContext, root: HTMLElement, wasmURL: s
   try {
     selector = mountWaveformSelector(root, { player });
   } catch (error) {
-    player.destroy();
-    stretch.destroy();
+    player.dispose();
+    stretch.dispose();
     gain.disconnect();
     throw error;
   }
@@ -225,10 +225,10 @@ async function createEditor(context: AudioContext, root: HTMLElement, wasmURL: s
     async setStretch(ratio: number) {
       await player.setStretch(ratio); // returns after the coherent commit
     },
-    destroy() {
-      selector.destroy(); // detach every view before its shared owner
-      player.destroy();
-      stretch.destroy(); // player does not destroy this borrowed processor
+    dispose() {
+      selector.dispose(); // detach every view before its shared owner
+      player.dispose();
+      stretch.dispose(); // player does not dispose this borrowed processor
       gain.disconnect();
       // context remains open for the application
     },
@@ -246,7 +246,7 @@ try {
 }
 // From a file-input handler: await editor?.load(input.files![0]);
 // From a play-button handler: await editor?.player.play();
-// On unmount: editor?.destroy();
+// On unmount: editor?.dispose();
 ```
 
 URL loading follows browser CORS rules; URL fetch and File decode failures reject and appear in player/selector error state. Catch module-fetch and compilation errors when calling `createEditor`; module hosting is separate from loading the audio source.
@@ -266,8 +266,8 @@ const first = mountWaveformSelector(document.querySelector<HTMLElement>("#first"
 const second = mountWaveformSelector(document.querySelector<HTMLElement>("#second")!, { player });
 if (player.duration >= 1) player.setSelection({ start: 0.1, end: 1 });
 
-first.destroy(); // player and second view remain usable
-// Later: second.destroy(); player.destroy();
+first.dispose(); // player and second view remain usable
+// Later: second.dispose(); player.dispose();
 ```
 
 Loading through either view replaces the shared source. Each view keeps its own zoom, scroll, renderer, snap policy and plugin resources; audio and selection have one owner. Shared outputs are identical: route `player.output` once to avoid doubling the signal.
@@ -282,7 +282,7 @@ Loading, selection and playback messages from `WavePlayer`. Stretch and time-map
 
 | Message                                                                                                       | Cause                                            | Fix                                                                             |
 | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------- |
-| `WavePlayer is destroyed.`                                                                                    | Mutating or subscribing after player cleanup     | Create a new WavePlayer; shared views must not destroy their caller's player.   |
+| `WavePlayer is disposed.`                                                                                     | Mutating or subscribing after player cleanup     | Create a new WavePlayer; shared views must not dispose their caller's player.   |
 | `Position must be finite seconds.` / `Start time must be finite, non-negative seconds.`                       | Invalid `seek` position or `play({ when })` time | Pass finite seconds; `when` is an absolute `AudioContext` time, clamped to now. |
 | `Enter an audio URL.`                                                                                         | Empty URL passed to `load`                       | Supply a URL or File.                                                           |
 | `Audio request failed: HTTP 404.` (status varies)                                                             | URL response is unsuccessful                     | Check the URL, access, and server response; call `load` again to recover.       |

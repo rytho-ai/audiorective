@@ -10,7 +10,7 @@ describe("PA engine assembly", () => {
 
   test("builds five channels + sampler, a mixer, and shared state", async () => {
     const engine = createPaEngine();
-    teardown = () => engine.core.destroy();
+    teardown = () => engine.core.dispose();
     await engine.core.start();
 
     expect(engine.channels).toHaveLength(5);
@@ -22,7 +22,7 @@ describe("PA engine assembly", () => {
 
   test("the FX sampler feeds a real channel (shares Vox's chain), not its own", async () => {
     const engine = createPaEngine();
-    teardown = () => engine.core.destroy();
+    teardown = () => engine.core.dispose();
     await engine.core.start();
 
     // FX is not a channel; the sampler exists and triggers are no-ops without buffers (no throw).
@@ -32,7 +32,7 @@ describe("PA engine assembly", () => {
 
   test("start() and stop() run without throwing", async () => {
     const engine = createPaEngine();
-    teardown = () => engine.core.destroy();
+    teardown = () => engine.core.dispose();
     await engine.core.start();
 
     expect(() => {
@@ -43,7 +43,7 @@ describe("PA engine assembly", () => {
 
   test("headphone toggle is reachable via the mixer", async () => {
     const engine = createPaEngine();
-    teardown = () => engine.core.destroy();
+    teardown = () => engine.core.dispose();
     await engine.core.start();
 
     engine.mixer.params.headphone.value = true;

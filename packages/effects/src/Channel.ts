@@ -119,8 +119,8 @@ export class Channel extends AudioProcessor<
       enabled,
       dispose: () => {
         if (!this.sends.delete(entry)) return;
-        param.destroy();
-        enabled.destroy();
+        param.dispose();
+        enabled.dispose();
         this.tap.disconnect(node);
         node.disconnect();
         gate.disconnect();
@@ -128,10 +128,10 @@ export class Channel extends AudioProcessor<
     };
   }
 
-  override destroy(): void {
+  override dispose(): void {
     for (const { node, gate, param, enabled } of this.sends) {
-      param.destroy();
-      enabled.destroy();
+      param.dispose();
+      enabled.dispose();
       try {
         this.tap.disconnect(node);
       } catch {
@@ -141,6 +141,6 @@ export class Channel extends AudioProcessor<
       gate.disconnect();
     }
     this.sends.clear();
-    super.destroy();
+    super.dispose();
   }
 }

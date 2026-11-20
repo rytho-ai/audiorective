@@ -22,7 +22,7 @@ test("retains the original PCM, carries its window through a split and reopens t
   if (snapshotClip.kind !== "audio") throw new Error("Expected an audio clip.");
   expect(snapshotClip.stretch?.source.channels?.[0]).toEqual(original);
   expect(snapshotClip.stretch?.source.channels?.[0]).not.toBe(stretched.stretch?.source.channels?.[0]);
-  snapshot.destroy();
+  snapshot.dispose();
   expect(() => project.applyAudioClipStretch(clip, 3, frames(120))).toThrow(/changed/);
   const [, tail] = project.splitClip(clip.id, 0.3);
   expect(tail).toMatchObject({ kind: "audio", time: 1.3, duration: 0.5 });

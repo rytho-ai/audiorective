@@ -31,7 +31,7 @@ describe("Mixer", () => {
     mixer = new Mixer(ctx, channels);
   });
   afterEach(() => {
-    mixer.destroy();
+    mixer.dispose();
     void ctx.close();
   });
 

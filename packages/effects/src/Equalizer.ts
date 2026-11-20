@@ -77,8 +77,8 @@ export class Equalizer extends Effect<Record<string, SchedulableParam>> {
     mixFrequencyResponse(magnitudes, phases, this.params.wet.value);
   }
 
-  override destroy(): void {
-    super.destroy();
-    for (const filter of this.filters) filter.destroy();
+  override dispose(): void {
+    super.dispose();
+    for (const filter of this.filters) filter.dispose();
   }
 }

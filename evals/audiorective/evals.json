@@ -68,7 +68,7 @@
         "Awaits or catches handle.ready and uses handle.load(file) for replacement; catches loading failures or reads getState().error",
         "Calls setSelection({ start: 1, end: 2 }) only after confirming at least 2 seconds of loaded duration",
         "Uses getState() fields including loading or error rather than inventing a subscribe/onStateChange API",
-        "Destroys the selector on unmount and leaves the caller context open",
+        "Disposes the selector on unmount and leaves the caller context open",
         "Explains that pointer selection creation and pointer handle resize audition/loop, clicking seeks/plays, and keyboard or programmatic metadata changes do not start a stopped player",
         "Does not introduce WaveSurfer, React bindings, or a generic preset/plugin framework",
         "Identifies that Unreleased APIs need a repository build or packed artifact instead of claiming npm @latest includes them"
@@ -86,22 +86,22 @@
         "Creates no AudioContext, audio nodes, engine, or audio player and never starts audio in selection callbacks",
         "Implements the marker as attach(context), mounts its overlay with context.mountOverlay, and positions it with context.timeToX(2)",
         "Subscribes through context.onViewportChange and context.onDataChange so marker position tracks geometry and data changes",
-        "Uses attachment-owned resource helpers or context.onCleanup for added resources; calls attachment.destroy or view.destroy to clean up",
+        "Uses attachment-owned resource helpers or context.onCleanup for added resources; calls attachment.dispose or view.dispose to clean up",
         "Uses no private DOM queries, ar- class selectors, test ids, deep imports, or patching of widget internals"
       ]
     },
     {
       "id": 7,
       "prompt": "Use @audiorective/widgets/waveform to display a six-second clip with a custom SVG or Canvas waveform drawing, not a plugin overlay on the default waveform. Retain metadata selection, beat snapping, zoom, and an external playhead. Use the public renderer option, handle data clearing and resize, and clean up resources. Also show how the same renderer is passed to the complete mountWaveformSelector with a caller-owned AudioContext. Use the repository build for this Unreleased API. Do not run anything.",
-      "expected_output": "A WaveformRenderer factory passed to the renderer option, with actual custom drawing and an instance render/destroy lifecycle; widget owns timeline and selection.",
+      "expected_output": "A WaveformRenderer factory passed to the renderer option, with actual custom drawing and an instance render/dispose lifecycle; widget owns timeline and selection.",
       "files": [],
       "expectations": [
         "Uses public WaveformRenderer and passes renderer to mountWaveform, without hiding/querying the default drawing or using a plugin to cover it",
-        "Mounts custom SVG, Canvas, or DOM once in the supplied container and returns an object with render(frame) and optional destroy()",
+        "Mounts custom SVG, Canvas, or DOM once in the supplied container and returns an object with render(frame) and optional dispose()",
         "Draws from frame.peaks.min/max and width/height, handles null peaks by clearing, and treats peak arrays as read-only",
         "Uses full content CSS-pixel dimensions and preserves the linear time axis; Canvas examples manage their own backing resolution",
         "Attaches createSelectionPlugin with a supplied beat grid and snap mode; feeds external position through setPlayhead without creating audio in the pure view",
-        "Releases additional resources in destroy and lets the widget handle redraws for zoom, resize, and source replacement",
+        "Releases additional resources in dispose and lets the widget handle redraws for zoom, resize, and source replacement",
         "Passes the same factory via renderer to mountWaveformSelector, with the caller supplying the AudioContext and routing output",
         "Introduces no new renderer package, React binding, WaveSurfer dependency, or audio editing state in the renderer"
       ]
@@ -117,7 +117,7 @@
         "Passes the same player to both mountWaveformSelector calls, without createPlayer or a second player",
         "Uses player.setSelection and player.audition for headless operation instead of synthesizing DOM gestures",
         "Uses renderer and grid options per view without mirroring selection into a separate store",
-        "Destroying one view leaves player and peer usable; final cleanup destroys both views then player",
+        "Disposeing one view leaves player and peer usable; final cleanup disposes both views then player",
         "Uses documented subscribe for non-clock changes and reads position on animation frames if a custom playhead is needed",
         "Does not invent destructive PCM editing; optional stretch requires an injected processor; APIs under Unreleased require a repository build"
       ]
@@ -136,7 +136,7 @@
         "Treats successful stretch as a stopped commit with selection/position mapped into output seconds; sourceToOutput/outputToSource can convert coordinates",
         "Uses player.version.peaks as the committed summary and lets the selector share it; standalone PCM summaries use core/peaks and have no display normalization",
         "Handles newer edit/source load replacing older work without publishing stale results; does not mirror buffers/selection into UI stores",
-        "Destroys views then player then borrowed TimeStretch, leaving context and caller gain chain alive",
+        "Disposes views then player then borrowed TimeStretch, leaving context and caller gain chain alive",
         "Uses repository/packed artifacts for Unreleased APIs and does not claim seamless live warp or sample-accurate dynamic stretch"
       ]
     },
@@ -152,8 +152,8 @@
         "Calls cancelLoad() and retries with load(); treats current errors separately from superseded/cancelled loads.",
         "Provides a loadSource URL adapter using context, signal and onProgress with Promise<AudioBuffer>; reuses the decoded cache instead of decoding a second time.",
         "The cache adapter removes progress/abort listeners when cancelled or settled while protecting other readers.",
-        "Loading another source or destroying the block cannot publish stale progress or decoded results.",
-        "Cleans up observers and views before destroying the app-owned player, and leaves the caller-owned context open."
+        "Loading another source or disposing the block cannot publish stale progress or decoded results.",
+        "Cleans up observers and views before disposing the app-owned player, and leaves the caller-owned context open."
       ]
     },
     {
@@ -168,8 +168,8 @@
         "Both views borrow one sequence; note edits go through updateNote and selection through the shared model without mirrored audio/UI state.",
         "Renderer uses frame timeToX/pitchToY and visible spanning notes; view has no AudioContext, synth or device permissions.",
         "Note inspection calls caller controls; read-only inspection omits onNoteEdit and does not promise lossless SMF export, pedal/controller rendering or Web MIDI I/O.",
-        "Caller clips sustained notes to audition bounds, schedules its instrument and cancels active/future voices on pause/seek/source replacement/edit/destroy.",
-        "Removing one view preserves peer/model/audio; final cleanup destroys views, caller audio and sequence independently."
+        "Caller clips sustained notes to audition bounds, schedules its instrument and cancels active/future voices on pause/seek/source replacement/edit/dispose.",
+        "Removing one view preserves peer/model/audio; final cleanup disposes views, caller audio and sequence independently."
       ]
     },
     {
@@ -185,7 +185,7 @@
         "An interactive overlay child opts into pointer-events and stops pointerdown propagation when appropriate to preserve native selection ownership.",
         "Uses ctx.listen/onCleanup for owned resources; detaching one plugin removes its overlay/listeners/subscriptions while peer/model/audio remain alive.",
         "Reuses a plugin factory for waveform and piano-roll without pretending the time context exposes pitch editing or a second selection owner.",
-        "Final cleanup destroys view attachments without destroying a borrowed model or caller audio; no extra AudioContext, player or mirrored note store."
+        "Final cleanup disposes view attachments without disposing a borrowed model or caller audio; no extra AudioContext, player or mirrored note store."
       ]
     },
     {
@@ -196,7 +196,7 @@
       "expectations": [
         "Uses layout(root, viewport, controls) and mounts the supplied viewport unchanged inside root, with public frame geometry and control methods.",
         "Reads layout frame.snap to initialize and refresh the custom snap control, writes changes through controls.setSnap, and relies on synchronous layout updates for external handle.setSnap calls without another snap store.",
-        "Layouts/renderers return render and optional destroy, manage owned listeners/resources and responsive controls, without private DOM selectors.",
+        "Layouts/renderers return render and optional dispose, manage owned listeners/resources and responsive controls, without private DOM selectors.",
         "Enables onNoteEdit and updates the borrowed sequence with edited note start/end/pitch; leaves audio scheduling/routing with the caller.",
         "Custom note renderer forwards onNotePointerDown(note,event,optionalKind), retains onNoteClick/keyboard inspection, and does not implement capture/delta/snap itself.",
         "Uses widget snap/grid controls and Alt bypass, retains local-only preview plus single synchronous pointer-release command, and does not mirror durable notes.",
@@ -206,7 +206,7 @@
     },
     {
       "id": 14,
-      "prompt": "Use the repository build of @audiorective to add a source-time gain envelope to a non-looping waveform selection. The audio owner already has a WavePlayer, whose output is time-stretched to twice its source duration. Another view may change selection or stretch while play() awaits AudioContext.resume(). Use the optional core automation entry, schedule the selected range and allow live curve replacement. Show stop, manual control takeover and destroy. Also explain how a multi-target Rack macro would adapt without putting Rack knowledge in core. Do not run anything.",
+      "prompt": "Use the repository build of @audiorective to add a source-time gain envelope to a non-looping waveform selection. The audio owner already has a WavePlayer, whose output is time-stretched to twice its source duration. Another view may change selection or stretch while play() awaits AudioContext.resume(). Use the optional core automation entry, schedule the selected range and allow live curve replacement. Show stop, manual control takeover and dispose. Also explain how a multi-target Rack macro would adapt without putting Rack knowledge in core. Do not run anything.",
       "expected_output": "An audio owner borrows WavePlayer and owns a curve and finite AutomationBinding through an explicit native target; WavePlayer attaches the binding and handles source/output mapping, shared start, and pending edits.",
       "files": [],
       "expectations": [
@@ -331,7 +331,7 @@
         "Does not use WavePlayer, mountWaveformSelector or BufferPlayer for a 60–90 minute file, and if it mentions them says they decode the entire file into memory",
         "Mounts the plain player widget from @audiorective/widgets/player with fromFilePlayer(player) for play/pause, seek and time, rather than rebuilding those controls",
         "Relies on the widget to handle unknown duration and hold the seek slider against incoming time updates during a drag",
-        "Keeps the FilePlayer caller-owned: routes its output once and destroys the view separately from the player",
+        "Keeps the FilePlayer caller-owned: routes its output once and disposes the view separately from the player",
         "Speed changes go through the player's playbackRate; play is started from a user gesture"
       ]
     },
@@ -346,8 +346,8 @@
         "Schedules a hit in a Clock tick window using absolute point.time and registers its returned handle with window.own(hit, point.time)",
         "Leaves a manually triggered pad event unregistered with Clock so sequencer transport changes do not cancel it",
         "After a pattern edit, calls clock.refresh() to retract owned hits at or after the captured audio time and refill the horizon; explains that a hit exactly at now is reissued once while earlier hits remain active",
-        "Explains that pause, stop, seek, start and destroy cancel owned events, while unowned events retain Clock's prior tail behavior",
-        "Destroys Clock and PadBank separately; the caller closes its AudioContext"
+        "Explains that pause, stop, seek, start and dispose cancel owned events, while unowned events retain Clock's prior tail behavior",
+        "Disposes Clock and PadBank separately; the caller closes its AudioContext"
       ]
     },
     {
@@ -373,7 +373,7 @@
         "Awaits recorder.ready before a precise scheduled start, then awaits recorder.start({ when }) with absolute AudioContext seconds",
         "Uses recorder.stop() to obtain channels, sampleRate, startFrame/endFrame or startTime/endTime; the stop button handles rejection",
         "Treats returned frame positions as actual raw capture times and leaves latency calibration and take placement to the future clip/track owner",
-        "Uses recorder.cancel() for discard and destroys the recorder separately from the borrowed stream and AudioContext",
+        "Uses recorder.cancel() for discard and disposes the recorder separately from the borrowed stream and AudioContext",
         "Does not use MediaRecorder timeslice count as a sample-accurate timeline or invent a project-wide recording/track model"
       ]
     },
@@ -388,7 +388,7 @@
         "Uses take.notes and take.duration with MidiSequence or a compatible piano-roll model, and passes absolute take.startTime/endTime to the future clip owner",
         "Understands take.events preserves controllers including sustain while note projection ends at key release; does not claim sustain automatically extends notes",
         "Keeps keyboard-to-synth noteOn/noteOff and sustain playback in the app's audio owner, separate from the recorder and piano-roll view",
-        "Uses recorder.cancel() to discard, recorder.destroy() for listener cleanup, and leaves the borrowed MIDI input and AudioContext owned by the app",
+        "Uses recorder.cancel() to discard, recorder.dispose() for listener cleanup, and leaves the borrowed MIDI input and AudioContext owned by the app",
         "Does not invent a Track/Clip owner, apply unmeasured latency correction, or treat mapped MIDI event times as sample accurate"
       ]
     },
@@ -431,7 +431,7 @@
         "Passes the MidiClip.sequence to a piano-roll widget and keeps the view separate from the audio runtime",
         "Mounts the loaded host's editor in an iframe or reads and writes host.params[String(id)].value, while preserving state through saveWorkspace and openWorkspace from @audiorective/daw",
         "Inspects reopen warnings and explains that DAWProject stores CLAP identity/state while Audiorective's private host manifest locates the WebCLAP bundle",
-        "Destroys the view, Workspace and Project while leaving the borrowed AudioContext to the app",
+        "Disposes the view, Workspace and Project while leaving the borrowed AudioContext to the app",
         "Does not claim that a WebCLAP bundle is embedded in the archive or that another DAW can load the browser bundle directly"
       ]
     },
@@ -447,7 +447,7 @@
         "Uses Workspace.setTrackMuted, setTrackSolo and setTrackPan for live changes and saves via saveWorkspace",
         "Renders one shared time axis with per-track lanes and keeps selection and zoom in the UI rather than duplicating clip or mixer state",
         "Explains that DAWproject standard Channel fields carry mute, normalized pan and solo, while WebCLAP bundle lookup remains private",
-        "Destroys borrowed editor views and the Workspace and Project on teardown"
+        "Disposes borrowed editor views and the Workspace and Project on teardown"
       ]
     },
     {
@@ -475,7 +475,7 @@
         "Reads getAmplitudeZoom for the displayed factor and does not imply it changes audio gain",
         "Custom renderer reads frame.amplitudeZoom and draws from read-only frame.peaks without modifying the arrays",
         "Creates no AudioContext or audio playback merely to inspect the waveform",
-        "Calls destroy when the view is removed"
+        "Calls dispose when the view is removed"
       ]
     },
     {
@@ -529,7 +529,7 @@
         "Imports attachClipGesture from @audiorective/widgets/arrangement and passes project.tempoMap as timeMap",
         "Uses attachTimelineZoom from the arrangement entry for continuous anchored slider and Ctrl/Meta+wheel zoom, with the app providing redraw in onScale",
         "Lets the widget own pointer preview, cancellation and keyboard nudge but applies Project.moveClip and undo history in onMove",
-        "Applies the Project clip move without a commit call (the Workspace applies it) and destroys the gesture before removing its clip element",
+        "Applies the Project clip move without a commit call (the Workspace applies it) and disposes the gesture before removing its clip element",
         "Keeps zoom as a view scale in pixels per second and anchors the visible time while it changes",
         "Distinguishes legacy seconds clips from new beat-locked MIDI clips; only beat MIDI placement, notes and controls stretch after tempo edits"
       ]
@@ -579,7 +579,7 @@
       "expectations": [
         "Uses mountPlayer(root, { player: workspace.player }) without adapting Clock state, polling the playhead or copying duration into a new cell",
         "Routes Workspace output to the caller's AudioContext destination on both Workspace.create and openWorkspaceBlob or openWorkspace",
-        "Destroys the old controls before remounting for the reopened Workspace and tears down the old Workspace and Project separately"
+        "Disposes the old controls before remounting for the reopened Workspace and tears down the old Workspace and Project separately"
       ]
     },
     {
@@ -589,7 +589,7 @@
       "files": [],
       "expectations": [
         "Mounts mountAutomationLane over the track volumeAutomation points and commits a final drag with Project.setVolumeAutomation and uses workspace.flush when a follow-up depends on runtime application",
-        "Calls the lane's setPoints with accepted or externally changed points and destroys the view on teardown",
+        "Calls the lane's setPoints with accepted or externally changed points and disposes the view on teardown",
         "Uses Workspace.setMasterVolume instead of setting output.gain directly and explains that the mixed WAV includes master gain while per-track stems are tapped earlier"
       ]
     },
@@ -600,7 +600,7 @@
       "files": [],
       "expectations": [
         "Uses attachTimeRangeGesture from @audiorective/widgets/arrangement on a separate borrowed element with pointer coordinates resolved through a time map",
-        "Renders onPreview and commits only onSelect, including Alt snap bypass; destroys the interaction when replacing the element",
+        "Renders onPreview and commits only onSelect, including Alt snap bypass; disposes the interaction when replacing the element",
         "Converts selected project seconds to beats and uses the current tempo map to resolve them for playback"
       ]
     },
@@ -636,7 +636,7 @@
       "expectations": [
         "Imports local Files through SampleLibrary, connects its output to a caller-owned audition route and uses mountSampleBrowser",
         "Acquires the selected decoded buffer, places it through Project.addAudioClip and releases the lease after copying",
-        "Applies Project edits and lets the running Workspace apply them, then destroys the view and library when their owners are done",
+        "Applies Project edits and lets the running Workspace apply them, then disposes the view and library when their owners are done",
         "Explains that the retained PCM budget includes outstanding leases and that the placed Project clip survives library removal"
       ]
     },
@@ -661,7 +661,7 @@
         "Uses one borrowed analyser with mountSpectrum and documents caller cleanup",
         "Passes actual linear magnitudes from Filter.getFrequencyResponse into mountEqEditor with no magnitude-only wet/dry interpolation",
         "Binds Workspace rendering to trackFilterResponse and edits to setTrackEffects, so settings remain project-owned",
-        "Keeps the standalone UI independent of Workspace and destroys both mounted views"
+        "Keeps the standalone UI independent of Workspace and disposes both mounted views"
       ]
     },
     {
@@ -729,7 +729,7 @@
       "files": [],
       "expectations": [
         "Reads and writes the same host.params entry through .value and renders changes in an effect or a framework binding",
-        "Uses host.parameterInfo metadata and disposes the observer without destroying the borrowed host",
+        "Uses host.parameterInfo metadata and disposes the observer without disposing the borrowed host",
         "Uses host.saveState and host.loadState and explains that editor and patch updates feed back into the same Param"
       ]
     },
@@ -862,7 +862,7 @@
         "Imports openDawProject and saveDawProject from @audiorective/daw/dawproject (and, if it names the Project type, from @audiorective/daw/project) and no other @audiorective entry",
         "Does not import the @audiorective/daw root, @audiorective/daw/runtime, Workspace, @audiorective/clock, @audiorective/host, @audiorective/widgets or any capability package (@audiorective/player, recorder, samples, pads, sequencer or launcher), and constructs no AudioContext",
         "Reads warnings from the open result and calls moveClip(clipId, trackId, time) and setTitle on the reopened project, then saves with saveDawProject",
-        "Calls project.destroy() on the opened project when finished",
+        "Calls project.dispose() on the opened project when finished",
         "Uses openDawProjectBlob and saveDawProjectTo only if it addresses file-backed media; does not use openWorkspace or saveWorkspace, which need a browser AudioContext"
       ]
     },
@@ -877,7 +877,7 @@
         "Does not import @audiorective/daw, @audiorective/host, @audiorective/effects, @audiorective/midi, @audiorective/samples or @audiorective/player, and creates no Project or Workspace",
         "Drives the sequencer with `clock.attach(sequencer)`, which re-queues automatically after every pattern edit, instead of a private scheduling loop",
         "Uses @audiorective/widgets mountStepGrid for the grid or names it as an option; a hand-written grid is acceptable when it edits the sequencer through `lanes.<name>.steps[i]` writes",
-        "Provides a teardown that calls `clock.destroy()` and `bank.destroy()` (and `sequencer.dispose()` / `grid.destroy()` if used) and never calls `close()` on the AudioContext the caller supplied"
+        "Provides a teardown that calls `clock.dispose()` and `bank.dispose()` (and `sequencer.dispose()` / `grid.dispose()` if used) and never calls `close()` on the AudioContext the caller supplied"
       ]
     },
     {

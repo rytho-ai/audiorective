@@ -197,10 +197,10 @@ export class BufferPlayer extends AudioProcessor<
     if (this._source) this._source.loopEnd = v || untracked(() => this.params.buffer.value)?.duration || 0;
   }
 
-  override destroy(): void {
+  override dispose(): void {
     this.stop();
     this._output.disconnect();
-    super.destroy();
+    super.dispose();
   }
 
   private _finish(): void {

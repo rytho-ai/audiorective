@@ -10,7 +10,7 @@ test("captures a scheduled live source at exact audio frames without duplicating
   const sampleRate = 48_000;
   const context = new OfflineAudioContext(1, sampleRate / 2, sampleRate);
   const recorder = new AudioRecorder(context, { channels: 1 });
-  disposers.push(() => recorder.destroy());
+  disposers.push(() => recorder.dispose());
 
   const source = new ConstantSourceNode(context, { offset: 0.3 });
   source.connect(recorder.input);
@@ -42,7 +42,7 @@ test("streams ordered PCM chunks without returning a full in-memory take", async
   const sampleRate = 48_000;
   const context = new OfflineAudioContext(1, sampleRate / 2, sampleRate);
   const recorder = new AudioRecorder(context, { channels: 1 });
-  disposers.push(() => recorder.destroy());
+  disposers.push(() => recorder.dispose());
   const source = new ConstantSourceNode(context, { offset: 0.25 });
   source.connect(recorder.input);
   source.start(0);
@@ -78,7 +78,7 @@ test("streams ordered PCM chunks without returning a full in-memory take", async
 test("a stalled chunk writer fails instead of retaining an unbounded take", async () => {
   const context = new OfflineAudioContext(1, 48_000 * 8, 48_000);
   const recorder = new AudioRecorder(context, { channels: 1 });
-  disposers.push(() => recorder.destroy());
+  disposers.push(() => recorder.dispose());
   const source = new ConstantSourceNode(context, { offset: 0.2 });
   source.connect(recorder.input);
   source.start(0);
@@ -93,7 +93,7 @@ test("a stalled chunk writer fails instead of retaining an unbounded take", asyn
 test("a failed chunk writer rejects the streamed take and releases capture", async () => {
   const context = new OfflineAudioContext(1, 48_000, 48_000);
   const recorder = new AudioRecorder(context, { channels: 1 });
-  disposers.push(() => recorder.destroy());
+  disposers.push(() => recorder.dispose());
   const source = new ConstantSourceNode(context, { offset: 0.2 });
   source.connect(recorder.input);
   source.start(0);
@@ -109,7 +109,7 @@ test("cancel discards a stopped take, then a second take reuses the borrowed inp
   const sampleRate = 48_000;
   const context = new OfflineAudioContext(1, sampleRate / 2, sampleRate);
   const recorder = new AudioRecorder(context, { channels: 1 });
-  disposers.push(() => recorder.destroy());
+  disposers.push(() => recorder.dispose());
   const source = new ConstantSourceNode(context, { offset: 0.2 });
   source.connect(recorder.input);
   source.connect(context.destination);
@@ -131,11 +131,11 @@ test("cancel discards a stopped take, then a second take reuses the borrowed inp
   expect(output.getChannelData(0)[sampleRate * 0.2]).toBeCloseTo(0.2, 6);
 });
 
-test("invalid commands preserve the current take and destroy is final", async () => {
+test("invalid commands preserve the current take and dispose is final", async () => {
   const context = new OfflineAudioContext(1, 48_000, 48_000);
   expect(() => new AudioRecorder(context, { channels: 0 })).toThrow("AudioRecorder channels must be an integer from 1 to 32.");
   const recorder = new AudioRecorder(context, { channels: 1 });
-  disposers.push(() => recorder.destroy());
+  disposers.push(() => recorder.dispose());
   await expect(recorder.start({ when: NaN })).rejects.toThrow("AudioRecorder time must be finite, non-negative seconds.");
   expect(recorder.cells.state.value).toBe("idle");
   expect(() => recorder.stop()).toThrow("AudioRecorder has no started take to stop.");
@@ -143,10 +143,10 @@ test("invalid commands preserve the current take and destroy is final", async ()
   await expect(recorder.start()).rejects.toThrow("AudioRecorder already has an active take.");
   expect(() => recorder.stop({ when: 0.1 })).toThrow("AudioRecorder stop must follow its start time.");
   expect(recorder.cells.state.value).toBe("armed");
-  recorder.destroy();
-  expect(recorder.cells.state.value).toBe("destroyed");
-  await expect(recorder.start()).rejects.toThrow("AudioRecorder is destroyed.");
-  await expect(recorder.ready).rejects.toThrow("AudioRecorder is destroyed.");
+  recorder.dispose();
+  expect(recorder.cells.state.value).toBe("disposed");
+  await expect(recorder.start()).rejects.toThrow("AudioRecorder is disposed.");
+  await expect(recorder.ready).rejects.toThrow("AudioRecorder is disposed.");
 });
 
 test("real-time scheduled capture shares the playback clock to one frame", async () => {
@@ -154,7 +154,7 @@ test("real-time scheduled capture shares the playback clock to one frame", async
   const recorder = new AudioRecorder(context, { channels: 1 });
   disposers.push(
     () => context.close(),
-    () => recorder.destroy(),
+    () => recorder.dispose(),
   );
   const source = new ConstantSourceNode(context, { offset: 0.4 });
   source.connect(recorder.input);
@@ -175,7 +175,7 @@ test("real-time scheduled capture shares the playback clock to one frame", async
 test("closing the caller's live context fails a pending take visibly", async () => {
   const context = new AudioContext();
   const recorder = new AudioRecorder(context, { channels: 1 });
-  disposers.push(() => recorder.destroy());
+  disposers.push(() => recorder.dispose());
   await context.resume();
   await recorder.start({ when: context.currentTime + 0.1 });
   const pending = recorder.stop({ when: context.currentTime + 0.5 });

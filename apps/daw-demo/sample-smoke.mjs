@@ -100,7 +100,7 @@ try {
       const handle = library.acquire(id);
       library.remove(id);
       const retained = library.state.value.decodedBytes;
-      library.destroy();
+      library.dispose();
       const sample = handle.buffer.getChannelData(0)[400];
       handle.release();
       return { retained, sample, after: library.state.value.decodedBytes };

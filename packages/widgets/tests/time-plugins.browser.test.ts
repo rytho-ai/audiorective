@@ -21,9 +21,9 @@ test("an automation overlay edits a shared curve with output-to-source time proj
   const model = new MidiSequence({ notes: [], duration: 2 });
   const waveform = mountWaveform(root, { data: { peaks: Float32Array.of(0.2, 0.8), duration: 2 } });
   const notes = mountPianoRoll(peer, { model });
-  own(() => model.destroy());
-  own(() => waveform.destroy());
-  own(() => notes.destroy());
+  own(() => model.dispose());
+  own(() => waveform.dispose());
+  own(() => notes.dispose());
   const points = cell<readonly AutomationPoint[]>([
     { time: 0, value: 0.2, shape: "hold" },
     { time: 3, value: 1, shape: "linear" },
@@ -51,11 +51,11 @@ test("an automation overlay edits a shared curve with output-to-source time proj
   handle.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
   expect(commit).toHaveBeenCalledTimes(1);
   expect(peer.querySelector(".ar-automation-point[data-index='1']")?.getAttribute("title")).toBe("hold");
-  detach.destroy();
+  detach.dispose();
   expect(root.querySelector(".ar-automation-overlay")).toBeNull();
   points.value = points.value.slice(0, 2);
   expect(peer.querySelectorAll(".ar-automation-point:not([hidden])")).toHaveLength(1);
-  notes.destroy();
+  notes.dispose();
   fromView.mockClear();
   points.value = [];
   expect(fromView).not.toHaveBeenCalled();
@@ -65,17 +65,17 @@ test("one time plugin mounts on all three views, follows units and cleans up eac
   const context = new AudioContext();
   own(() => context.close());
   const player = new WavePlayer(context);
-  own(() => player.destroy());
+  own(() => player.dispose());
   const model = new MidiSequence({ duration: 8, notes: [] });
-  own(() => model.destroy());
+  own(() => model.dispose());
 
   const wave = mountWaveform(host(), { data: { peaks: Float32Array.of(0.5), duration: 4 } });
   const piano = mountPianoRoll(host(), { model, timeUnit: "beats" });
   const selectorRoot = host();
   const selector = mountWaveformSelector(selectorRoot, { player });
-  own(() => wave.destroy());
-  own(() => piano.destroy());
-  own(() => selector.destroy());
+  own(() => wave.dispose());
+  own(() => piano.dispose());
+  own(() => selector.dispose());
 
   const layers: HTMLElement[] = [];
   const lines: HTMLElement[] = [];
@@ -111,10 +111,10 @@ test("one time plugin mounts on all three views, follows units and cleans up eac
   element<HTMLButtonElement>(selectorRoot, "zoom-in").click();
   expect(parseFloat(lines[2].style.left)).toBeCloseTo(2 * leftBeforeZoom);
 
-  waveformMarker.destroy();
+  waveformMarker.dispose();
   expect(layers.map((layer) => layer.isConnected)).toEqual([false, true, true]);
-  selector.destroy();
-  selectorMarker.destroy();
+  selector.dispose();
+  selectorMarker.dispose();
   expect(layers.map((layer) => layer.isConnected)).toEqual([false, true, false]);
   expect(cleanups).toHaveBeenCalledTimes(2);
   expect(player.buffer?.duration).toBe(4);
@@ -125,10 +125,10 @@ for (const kind of ["waveform", "piano roll"] as const) {
   function fixture() {
     const root = host();
     const model = new MidiSequence({ duration: 6, notes: [] });
-    own(() => model.destroy());
+    own(() => model.dispose());
     const wave = kind === "waveform" ? mountWaveform(root, { data: { peaks: Float32Array.of(0.2, 0.8), duration: 6 } }) : undefined;
     const view = wave ?? mountPianoRoll(root, { model });
-    own(() => view.destroy());
+    own(() => view.dispose());
     return {
       root,
       view,
@@ -216,8 +216,8 @@ for (const kind of ["waveform", "piano roll"] as const) {
       },
     });
     expect(() => view.attach(plugin)).toThrow("already attached");
-    a.destroy();
-    a.destroy();
+    a.dispose();
+    a.dispose();
     expect(dead).toHaveBeenCalledTimes(1);
     expect(layer.isConnected).toBe(false);
     ctx.onCleanup(dead);
@@ -227,7 +227,7 @@ for (const kind of ["waveform", "piano roll"] as const) {
     const position = view.getViewport().scrollLeft;
     ctx.scrollBy(40);
     expect(view.getViewport().scrollLeft).toBe(position);
-    expect(() => ctx.mountOverlay(layer)).toThrow("Plugin attachment is destroyed.");
+    expect(() => ctx.mountOverlay(layer)).toThrow("Plugin attachment is disposed.");
     document.dispatchEvent(new Event("probe-marker"));
     replace();
     expect(listener).not.toHaveBeenCalled();
@@ -262,27 +262,27 @@ for (const kind of ["waveform", "piano roll"] as const) {
     expect(layer.isConnected).toBe(true);
   });
 
-  test(`${kind}: destroy during attach disposes returned resource and subsequent registrations`, () => {
+  test(`${kind}: dispose during attach disposes returned resource and subsequent registrations`, () => {
     const { root, view } = fixture();
     const dead = vi.fn(),
       late = vi.fn(),
       listener = vi.fn();
     const attachment = view.attach({
       attach(ctx) {
-        view.destroy();
+        view.dispose();
         ctx.onCleanup(late);
         ctx.listen(document, "probe-marker", listener);
-        return { destroy: dead };
+        return { dispose: dead };
       },
     });
-    attachment.destroy();
-    view.destroy();
+    attachment.dispose();
+    view.dispose();
     expect(root.childElementCount).toBe(0);
     expect(dead).toHaveBeenCalledTimes(1);
     expect(late).toHaveBeenCalledTimes(1);
     document.dispatchEvent(new Event("probe-marker"));
     expect(listener).not.toHaveBeenCalled();
-    expect(() => view.attach({ attach() {} })).toThrow("is destroyed.");
+    expect(() => view.attach({ attach() {} })).toThrow("is disposed.");
   });
 
   test(`${kind}: throwing plugin cleanup preserves peer cleanup and widget removal`, () => {
@@ -305,8 +305,8 @@ for (const kind of ["waveform", "piano roll"] as const) {
         return peer;
       },
     });
-    view.destroy();
-    view.destroy();
+    view.dispose();
+    view.dispose();
     expect(log).toHaveBeenCalledTimes(1);
     expect(owned).toHaveBeenCalledTimes(1);
     expect(peer).toHaveBeenCalledTimes(1);
