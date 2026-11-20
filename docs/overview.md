@@ -29,7 +29,7 @@ The audio engine owns its state. Your interfaces observe parameters, change valu
 
 Choose a source for the job:
 
-- **Sampler** plays polyphonic one-shots, with per-voice fades, reverse playback, and mute controls.
+- **Sampler** plays polyphonic one-shots and keyboards of one sound (a buffer or a sound factory), with velocity, pitch, `noteOn`/`noteOff` and a release fade.
 - **BufferPlayer** plays in-memory loops and stems with sample-accurate scheduling and a schedulable playback rate.
 - **FilePlayer** streams longer tracks with play, pause, and seek.
 - **AudioProcessor** is the base for your own instruments and effects.
