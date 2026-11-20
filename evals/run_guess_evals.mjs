@@ -108,7 +108,7 @@ if (tasks.length === 0) usage("no matching tasks");
 // TypeScript from the repo (any workspace package, or the pnpm store).
 function findTsc() {
   const candidates = [
-    ...["core", "clock", "effects", "blocks", "midi", "workspace"].map((p) => join(repoRoot, "packages", p, "node_modules/typescript/bin/tsc")),
+    ...["core", "clock", "effects", "player", "midi", "workspace"].map((p) => join(repoRoot, "packages", p, "node_modules/typescript/bin/tsc")),
     join(repoRoot, "node_modules/typescript/bin/tsc"),
     join(repoRoot, "node_modules/.pnpm/typescript@5.9.3/node_modules/typescript/bin/tsc"),
   ];
