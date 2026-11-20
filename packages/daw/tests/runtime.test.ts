@@ -139,6 +139,7 @@ const context = () =>
     currentTime: 0,
     createGain: node,
     createStereoPanner: node,
+    createBuffer: (channels: number) => ({ getChannelData: () => new Float32Array(100), numberOfChannels: channels }),
     resume: async () => undefined,
   }) as unknown as AudioContext;
 

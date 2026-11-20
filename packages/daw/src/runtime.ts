@@ -65,7 +65,7 @@ export class Workspace {
    * clip of that Project track, `null` when it is not an in-memory audio clip, so a grid reads a Project clip's state from its cells and launches
    * it with `clip.launch()`. A launched clip plays through the track's devices, effects and mixer strip and takes the track away from Arrangement
    * until it is stopped or a one-shot ends. The launcher follows `workspace.transport` (a launch made while stopped waits for `play()`; stop and
-   * seek clear it) and is replaced by `sync()`, so read `session.value` inside the effect that uses it. See `sessionClip`.
+   * seek clear it) and is replaced by `sync()`, so read `session.value` inside the effect that uses it. It is built (the clips' audio copied into buffers) the first time it is read. See `sessionClip`.
    */
   readonly session: ReadonlyCell<ClipLauncher>;
   /** Mirrors `cells.auditioningClip`. */
@@ -85,7 +85,10 @@ export class Workspace {
     auditioningRange: ReadonlyCell<RangeAuditionState | null>;
   }>;
   private readonly stretch: ClipStretch;
-  private readonly sessionSource: Cell<ClipLauncher>;
+  /** Built on first read of `session`, so an app that never launches clips never copies their audio into buffers. */
+  private sessionLauncher?: ClipLauncher;
+  /** Bumped when `sync()` replaces the launcher, so `session` readers re-run. */
+  private readonly sessionRevision = cell(0);
   private readonly sessionSources = new WeakMap<SessionClip, PcmAudioClip>();
   /** Bumped when `reconcileSession` replaces a session clip, so `sessionClip` readers re-run. */
   private readonly sessionClipEdits = cell(0);
@@ -137,8 +140,10 @@ export class Workspace {
     if (options.destination) this.output.connect(options.destination);
     this.timeline = new Timeline({ audioContext: context, bpm: project.bpm });
     this.clock = new Clock({ timeline: this.timeline, lookAhead: 0.15, tickInterval: 0.025, onTick: (window) => this.schedule(window) });
-    this.sessionSource = cell(this.buildSession());
-    this.session = readonlyCell(this.sessionSource);
+    this.session = readonlyCell(() => {
+      this.sessionRevision.$();
+      return untracked(() => (this.sessionLauncher ??= this.buildSession()));
+    });
     this.auditioningClip = this.audition.cells.clip;
     this.auditioningRange = this.audition.cells.range;
     this.cells = Object.freeze({
@@ -341,7 +346,7 @@ export class Workspace {
       if (this.project.tracks !== tracks) return await this.rebuildTracks(position);
       this.mixer.applyRouting(tracks);
       this.mixer.applyMixer();
-      this.sessionSource.value = this.buildSession();
+      this.sessionRevision.value++;
       this.bindSequences();
       this.seek(position);
       this.topologyPending.value = false;
@@ -551,7 +556,7 @@ export class Workspace {
     this.sessionClipEdits.$();
     this.project.cells.revision.$();
     const index = this.project.tracks.find((track) => track.id === trackId)?.clips.findIndex((clip) => clip.id === clipId) ?? -1;
-    return index < 0 ? null : (this.sessionSource.value.tracks[trackId]?.clips[index] ?? null);
+    return index < 0 ? null : (this.session.value.tracks[trackId]?.clips[index] ?? null);
   }
 
   /** A launcher over the audio tracks built so far; session clips play through each track's input and take it away from Arrangement while they sound. */
@@ -583,7 +588,8 @@ export class Workspace {
 
   /** Bring the session clips in line with the Project's clips: a clip that changed or went away is replaced or removed (stopped at once if it was playing). */
   private reconcileSession(): void {
-    const launcher = this.sessionSource.value;
+    const launcher = this.sessionLauncher;
+    if (!launcher) return;
     let replaced = false;
     for (const track of this.project.tracks) {
       const sessionTrack = launcher.tracks[track.id];
@@ -883,7 +889,8 @@ export class Workspace {
 
   private disposeTracks(): void {
     for (const off of this.sequenceOff.splice(0)) off();
-    this.sessionSource.value.dispose();
+    this.sessionLauncher?.dispose();
+    this.sessionLauncher = undefined;
     for (const runtime of this.tracks.values()) this.disposeTrack(runtime);
     this.tracks.clear();
     this.scheduler.forget();
