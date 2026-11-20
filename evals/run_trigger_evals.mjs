@@ -118,6 +118,8 @@ function runOnce(query) {
       if (triggered) return done({ hit: true });
       if (spawnError) return done({ error: `could not start claude: ${spawnError.message}` });
       if (timedOut) return done({ error: `timed out after ${timeoutSeconds}s` });
+      // Newer CLIs mark the one-turn cutoff as is_error with terminal_reason "max_turns"; it is the same non-trigger.
+      if (result && (result.subtype === "error_max_turns" || result.terminal_reason === "max_turns")) return done({ hit: false });
       if (result?.is_error || result?.terminal_reason === "api_error" || result?.api_error)
         return done({ error: `claude reported ${result.api_error ?? result.terminal_reason ?? "an error"}` });
       // A completed run ends in a `result` event. `error_max_turns` is still a completed
