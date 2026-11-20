@@ -59,7 +59,7 @@ What agents do not guess: invented concepts (`start({ atBeat })`, tick windows w
 
 Shape: `new StepSequencer({ kick: "X...X..." }, { context, onHit, transform, seed })`; `clock.attach(seq)` (or `workspace.transport.attach`); `new Clock({ context, bpm })`; `clock.start(when, offsetBeats)`; `lanes.<name>.steps[i]` (0-based, JSDoc states it); `onHit` returns a cleanup run when a hit is retracted; `transform` moves `hit.beat` (tempo-locked) or `hit.when` (ms); one constructor form; its own package.
 
-### Clip launcher (in progress)
+### Clip launcher (done)
 
 Desire round: `Transport → Track → Clip` objects, `clip.launch({ quantize: "bar" })`, `clip.state` with `"queued" | "playing" | "stopped"`, `clip.cancelQueued()`, `track.stop({ at: "nextBar" })`, `transport.stopAll`, `launchScene`, change events. Control (current `ClipLauncher` + caller-written driver): see conclusion 8.
 
@@ -86,3 +86,13 @@ All three were timing-correct, so "the toolkit owns playback" is settled. They d
 Contextual desire (agents shown the current `Clock` and `StepSequencer` types): 18/18 reused `Clock` with `clock.attach(launcher)` and 0/18 invented a transport, versus a separate `Transport` in the blind round. Names both rounds agreed on: `ClipLauncher`, `launch({ quantize })`, `cancelQueued()`, `launchScene`, `stop` / `stopAll`, `{ buffer, loop }`; the contextual round switched quantize to the sequencer's `"1m"` and state to cells.
 
 VL4 (decision log + both desire rounds + the step-sequencer conventions: `Clock` + `attach`, state in cells with `startsAt` / `startedAt`, cancellable queued stops, `clips[0]` hint, defined stopped-clock behaviour): guess run 100%, 0 launcher bugs, "clip 2" → `clips[1]` 3/3.
+
+Final shape (evolved in place, old driver API removed): `new ClipLauncher({ bass: [clip | null, …] }, { context, quantize, seed, scenes, transform, onSchedule })`; `clock.attach(launcher)` (or `workspace.transport.attach`); clips from `{ buffer }`, a `sound` factory returning an unconnected voice, or `{ scheduler: seq }` (pattern clips routed into the track); `clip.launch({ quantize, legato })`, `cancelQueued()`, `configure(patch: ClipPatch)`, `release()`; options `quantize`, `offsetBeats`, `loop`, `gainDb`, `pitch`, `mode`, `chance`, `follow: { after, next: [{ clip | "stay", weight }] }`, `bpm` + `warp` (default follows the song tempo; `warp: false` opts out); state in read-only cells (`playing`, `queued`, `startsAt`, `startedAt`, `options`); `launchScene(i | clips)`, `stopAll()`; `onSchedule` for hosts such as the DAW Session. Clock gained reset reasons, an attach handle with timeline/state/meter, transport notifications and `handle.cancelFrom(time)`.
+
+Verified on the real package: hidden render suites 48/48 (base) and 83/83 (expressive, 12 features: 0 workaround, 0 impossible); guess runs on the real types 100% base and 96% expressive, at least as guessable as the winning design, no old API or hand-wired driver in any sample. The one type miss — `configure` taking a readonly patch, so step-by-step patches failed to compile — was fixed with a writable `ClipPatch`.
+
+Process lessons from this component:
+
+- The default for a behaviour agents never think to enable must match the musical expectation of the real workflow, not a guess task. The guess suite favoured `warp: false`; a full session view with scene tempo drifted out of time until it followed tempo by default.
+- Six rounds were needed because each real build exposed the next layer (missing data → clock/scheduler contract → expressive extension points → defaults). Run the real build early, after the first contextual desire round, not after several guess-only iterations.
+- Expressive briefs (features deliberately not designed in advance, each classified built-in / extension / workaround / impossible) are the flexibility test; a hidden render suite whose material encodes position (frequency per beat) checks offsets, legato and loop regions mechanically.
