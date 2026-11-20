@@ -11,7 +11,7 @@ title: DAW project, runtime and DAWproject
 | `@audiorective/daw/runtime`    | `Workspace`, `scheduleClipEnvelope`; borrows a caller-owned `AudioContext`, schedules the project through Clock and hosts WebCLAP devices. It does not import the codec | Browser                                |
 | `@audiorective/daw`            | Re-exports all three and adds `openWorkspace`, `openWorkspaceBlob`, `saveWorkspace`, `saveWorkspaceTo`                                                                  | Browser                                |
 
-A project-file tool imports only `daw/project` and `daw/dawproject`; it loads no runtime, clock or host. Headless playback of a `Project` the caller already holds imports `daw/runtime` and never loads the codec. The root entry joins the two for apps that open and save files around a running `Workspace`. Widgets render the project and recording blocks capture takes; `daw` and `widgets` never import each other, so the app wires them.
+A project-file tool imports only `daw/project` and `daw/dawproject`; it loads no runtime, clock or host. Headless playback of a `Project` the caller already holds imports `daw/runtime` and never loads the codec. The root entry joins the two for apps that open and save files around a running `Workspace`. Widgets render the project and recorders capture takes; `daw` and `widgets` never import each other, so the app wires them.
 
 ## Save and reopen a project
 
@@ -24,7 +24,7 @@ const keys = project.addTrack("Keys", "midi");
 const mic = project.addTrack("Mic", "audio");
 
 // `take` comes from @audiorective/midi/web MidiRecorder.stop().
-// `audioTake` comes from @audiorective/blocks/recorder AudioRecorder.stop().
+// `audioTake` comes from @audiorective/recorder AudioRecorder.stop().
 const midiClip = project.addMidiTake(keys.id, take, 0.5);
 project.addAudioClip(mic.id, audioTake, 1);
 midiClip.sequence.updateNote(take.notes[0].id, { pitch: 65 });

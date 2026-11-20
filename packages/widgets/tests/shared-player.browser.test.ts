@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { WavePlayer } from "@audiorective/blocks/player";
+import { WavePlayer } from "@audiorective/player";
 import { mountWaveformSelector } from "../src";
 import { mountWaveform, createSelectionPlugin } from "../src/waveform";
 import { bandsFile, cleanup, host, own, element, drag, delay } from "./helpers";

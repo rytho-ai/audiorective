@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { userEvent } from "vitest/browser";
 import { cell } from "@audiorective/core";
-import { StepSequencer, type ParamRange } from "@audiorective/blocks/sequencer";
+import { StepSequencer, type ParamRange } from "@audiorective/sequencer";
 import { mountStepGrid, type StepGridLane, type StepGridPluginContext, type StepGridSequencer, type StepGridStep } from "../src";
 import { cleanup, host, own, pointer } from "./helpers";
 

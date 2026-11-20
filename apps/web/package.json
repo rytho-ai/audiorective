@@ -37,7 +37,8 @@
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "three": "^0.182.0",
-    "@audiorective/blocks": "workspace:*"
+    "@audiorective/pads": "workspace:*",
+    "@audiorective/player": "workspace:*"
   },
   "devDependencies": {
     "@types/three": "^0.182.0",

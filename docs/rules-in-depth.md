@@ -6,7 +6,7 @@ Detail behind the always-on rules and routing tables of the `audiorective` skill
 
 ## Audio and UI separation
 
-**Audio graphs and playback live as methods on audio-layer objects** — `AudioProcessor` subclasses and blocks. UI components call those methods and read state; they never orchestrate audio logic themselves.
+**Audio graphs and playback live as methods on audio-layer objects** — `AudioProcessor` subclasses and headless capability classes. UI components call those methods and read state; they never orchestrate audio logic themselves.
 
 - **Audio layer owns:** graph construction, envelope shaping, parameter automation, transport logic, anything touching `AudioContext.currentTime`.
 - **UI layer does:** read state (`useValue(processor.params.foo)`, `useValue(player.cells.isPlaying)`), set params (`processor.params.foo.value = x`), call audio methods (`synth.filterSweep()`).
@@ -68,17 +68,17 @@ The skill and the npm packages install through different channels, so a project 
 
 ## Choosing a capability: full notes
 
-Blocks and widgets cover specific workflows. When a request does not match one, build on core with your own `AudioProcessor`; that is the intended path, not a fallback. Import the narrowest subpath: capability modules import only core, `blocks/sequencer` and `blocks/launcher` borrow a transport you supply, and `widgets` and `daw` never import each other (the app wires them).
+Capability packages and widgets cover specific workflows. When a request does not match one, build on core with your own `AudioProcessor`; that is the intended path, not a fallback. Import the narrowest subpath: capability modules import only core, `sequencer` and `launcher` borrow a transport you supply, and `widgets` and `daw` never import each other (the app wires them).
 
 Full text of the table cells that the skill abbreviates:
 
-- **Editable sequenced hits with future choke groups:** `blocks/pads` `PadBank` + clock window `own(hit, when)`; `routePad(id, node)` gives a pad its own effect. Not an irreversible future `Voice.stop(when)`.
+- **Editable sequenced hits with future choke groups:** `pads` `PadBank` + clock window `own(hit, when)`; `routePad(id, node)` gives a pad its own effect. Not an irreversible future `Voice.stop(when)`.
 - **Audition an audio clip or shared range already placed in a Project:** `workspace.auditionAudioClip(clipId)` or `workspace.auditionRange(range, { trackIds })`; see [DAW](./daw.md). Not seeking and starting the arrangement.
 - **Automate a non-looping waveform selection in source seconds:** `WavePlayer.attachSourceAutomation(binding)` with core automation. Not an app-owned play token and duplicated time mapping.
 - **Play, edit and save a DAWproject with WebCLAP devices:** `@audiorective/daw` + `@audiorective/host/webclap`; pass `workspace.player` to `mountPlayer`. Not separate project or player state.
 - **Read, edit or write `.dawproject` files in Node (no audio):** `@audiorective/daw/project` + `@audiorective/daw/dawproject` only (`portabilityReport(project)` lives there). Not the `@audiorective/daw` root or `daw/runtime`.
-- **Step patterns, a drum machine, humanize, ratchets, per-step values:** `clock` + `blocks/sequencer` (+ `blocks/pads` for choke groups); `new StepSequencer({ kick: "X...", hat: { pattern, rate, swing, sound } }, { context, onHit, transform })` then `clock.attach(seq)` (or `workspace.transport.attach(seq)`), add `widgets` `mountStepGrid`; [Sequencer](./sequencer.md) (includes the runnable drum machine), and [Sequencer advanced](./sequencer-advanced.md) only for a custom `transform`, per-step field semantics or shared transports. No `daw`. If the pattern is not a lane/step grid, skip `StepSequencer`: schedule `window.rulers.<r>.grid(n)` points in `onTick` with `window.own`, [Clock](./clock.md#typing-the-window). Not a private scheduling loop, forking the block, or pulling in a Project.
-- **Session view, clip launcher, scene launching:** standalone `blocks/launcher` `ClipLauncher` with your own audio driver: [Launcher](./launcher.md#clip-launcher). The DAW Session launches only in-memory PCM clips on Project tracks; pattern clips go standalone. Not the `daw` Session for step-pattern clips.
+- **Step patterns, a drum machine, humanize, ratchets, per-step values:** `clock` + `sequencer` (+ `pads` for choke groups); `new StepSequencer({ kick: "X...", hat: { pattern, rate, swing, sound } }, { context, onHit, transform })` then `clock.attach(seq)` (or `workspace.transport.attach(seq)`), add `widgets` `mountStepGrid`; [Sequencer](./sequencer.md) (includes the runnable drum machine), and [Sequencer advanced](./sequencer-advanced.md) only for a custom `transform`, per-step field semantics or shared transports. No `daw`. If the pattern is not a lane/step grid, skip `StepSequencer`: schedule `window.rulers.<r>.grid(n)` points in `onTick` with `window.own`, [Clock](./clock.md#typing-the-window). Not a private scheduling loop, forking the sequencer, or pulling in a Project.
+- **Session view, clip launcher, scene launching:** standalone `launcher` `ClipLauncher` with your own audio driver: [Launcher](./launcher.md#clip-launcher). The DAW Session launches only in-memory PCM clips on Project tracks; pattern clips go standalone. Not the `daw` Session for step-pattern clips.
 - **An editable curve driving a parameter, rack macro, or clip gain:** `core/automation` for parameters or `macro.automation`. For clips use `Project.setAudioClipGainAutomation` and `createAutomationOverlay`. Not hand-scheduled ramps.
 
 For a short audio take, the app owns microphone permission and monitoring: connect its source to `new AudioRecorder(context).input`, await `recorder.ready`, start with absolute AudioContext seconds, then await `recorder.stop()`; the clip owner keeps the PCM. See [Recorder](./recorder.md).
@@ -118,7 +118,7 @@ For a MIDI take, the app obtains `MIDIInput` and resumes its AudioContext. Use `
 | Takes, tempo, beat MIDI, clip editing/stretch/warp, Session launch, step sequencing, bus routing and DAWproject save/open | `references/daw.md`                                         |
 | Edit a running Project, wait with `flush()`, or rebuild with `sync()`                                                     | `references/daw.md` → Apply Project edits to the live graph |
 | Host a WebCLAP device, choose a CLAP ID from a bundle, bind a Param or save a patch                                       | `references/host.md` + `references/daw.md`                  |
-| Observing block state (`cells`), loading phases, cancel, cached sources, audition                                         | `references/player.md` + `references/widgets.md`            |
+| Observing player state (`cells`), loading phases, cancel, cached sources, audition                                        | `references/player.md` + `references/widgets.md`            |
 | React UI bound to an engine                                                                                               | `references/react.md`                                       |
 | Next.js / Remix / Astro / any app that renders on a server                                                                | `references/client-boundary.md`                             |
 | 3D scene with spatial audio (three.js)                                                                                    | `references/threejs.md` + `architecture.md`                 |

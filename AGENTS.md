@@ -17,7 +17,12 @@ Modular toolkit for web audio development. Independent, composable packages that
 ├── clock        # Timing and scheduling: transport, tempo, look-ahead tick windows, rulers
 ├── effects      # DSP effects: filter, delay, dynamics, pitch shift, channel strip, send bus; effect rack (`/rack`, pure data `/rack-preset`)
 ├── devtools     # Dev-time validators, e.g. impulse-based latency measurement
-├── blocks       # Headless capabilities by subpath, no root entry: player, recorder, samples, pads, sequencer, launcher
+├── player       # Headless range playback: WavePlayer (selection, loading, offline stretch)
+├── recorder     # Headless AudioWorklet PCM take capture: AudioRecorder
+├── samples      # Headless sample import, storage and previews: SampleLibrary
+├── pads         # Headless choke-group sample hits: PadBank
+├── sequencer    # Headless lane-based step sequencer: StepSequencer (notation and sounds)
+├── launcher     # Headless quantized clip launching: ClipLauncher
 ├── midi         # MIDI note data and event projection (root); browser take recording (`/web`)
 ├── host         # Browser WebCLAP plug-in host (`/webclap`)
 ├── widgets      # Browser waveform, player, piano-roll and arrangement views
@@ -36,13 +41,13 @@ Four layers; an import points down, never up, and never sideways inside layer 2 
 ```
 4  apps          apps/web, apps/daw-demo, a drum machine, a project-file tool
 3  widgets ∥ daw (daw/runtime, daw/dawproject, daw/project)
-2  capabilities  clock, midi, effects, host, blocks/{player,recorder,samples,pads,sequencer,launcher}
+2  capabilities  clock, midi, effects, host, player, recorder, samples, pads, sequencer, launcher
 1  core
    side          react, threejs, playcanvas, devtools: import core only
 ```
 
-- `widgets` and `daw` are parallel and never import each other; the app wires them. `widgets` takes local structural contracts, the pure `midi` root and type-only `blocks/player` imports, not capability runtime classes.
-- A capability module imports only `core`, never another capability module or layer 3. `blocks` has no root entry: each capability is a subpath. A module is _standalone_ (works given an `AudioContext`) or _borrowing_ (`blocks/sequencer`, `blocks/launcher` need a `BeatTiming` or transport from the caller). Cross-module contracts such as `CancellableEvent` and `BeatTiming` live in `core`. Importing a sibling capability module is an exception that needs a written reason.
+- `widgets` and `daw` are parallel and never import each other; the app wires them. `widgets` takes local structural contracts, the pure `midi` root and type-only `player` imports, not capability runtime classes.
+- A capability module imports only `core`, never another capability module or layer 3. Each capability is its own package with a root entry. A module is _standalone_ (works given an `AudioContext`) or _borrowing_ (`sequencer`, `launcher` need a `BeatTiming` or transport from the caller). Cross-module contracts such as `CancellableEvent` and `BeatTiming` live in `core`. Importing a sibling capability module is an exception that needs a written reason.
 - `daw/project` imports `core`, the `midi` root and `effects/rack-preset`; it takes PCM as core `PCMData`, not recorder types. `daw/dawproject` imports `daw/project` and `core`. `daw/runtime` imports `daw/project`, `core` and the capability modules it needs, and does not import `daw/dawproject` or `widgets`. Browser-storage helpers (`createOpfsAudioMediaWriter`) and the audio-fallback export (`exportAudioFallbackTo(workspace, …)`) live in `daw/runtime`; `portabilityReport(project)` lives in `daw/dawproject`. The `daw` root re-exports the three entries and adds `openWorkspace`, `openWorkspaceBlob`, `saveWorkspace` and `saveWorkspaceTo`.
 - `pnpm check:layers` enforces these edges over the import graph; run it after adding an import between packages or entries.
 
@@ -134,7 +139,7 @@ The `schedulableParam` helper (without `bind`) creates a `SchedulableParam` back
 7. **Framework agnostic** — core works in Node.js, React, Vue, Svelte, vanilla
 8. **No state duplication** — AudioProcessor owns all state. UI frameworks observe/mutate directly. No separate store.
 9. **Unified SchedulableParam** — one type regardless of backing. `bind` with AudioParam is an internal optimization, not a type distinction.
-10. **Observable state lives in `cells` or `params`** — for blocks as for core processors. A cell is the only store: no private field mirrored by `subscribe`. State whose change involves validation, playback or cancellation is registered as `readonlyCell(...)` over a private `Cell` and written only through the owner's methods; multi-field operations commit in one `batch`. Public readers are tracked, the owner's internal reads are `untracked`. Clock-derived values such as `position` stay plain getters. `getState()`/`subscribe()`, where a block has them, are thin wrappers over the cells. The tracking tests (`packages/{blocks,midi,daw}/tests/tracking*.test.ts`) enforce this: each tracked class is wrapped in `watch(...)`, and a completeness check fails when a public method or getter is neither exercised by a row nor excluded with a reason, so a new command or reader needs a row.
+10. **Observable state lives in `cells` or `params`** — for the capability packages as for core processors. A cell is the only store: no private field mirrored by `subscribe`. State whose change involves validation, playback or cancellation is registered as `readonlyCell(...)` over a private `Cell` and written only through the owner's methods; multi-field operations commit in one `batch`. Public readers are tracked, the owner's internal reads are `untracked`. Clock-derived values such as `position` stay plain getters. `getState()`/`subscribe()`, where a capability class has them, are thin wrappers over the cells. The tracking tests (`packages/{player,recorder,pads,sequencer,launcher,midi,daw}/tests/tracking*.test.ts`) enforce this: each tracked class is wrapped in `watch(...)`, and a completeness check fails when a public method or getter is neither exercised by a row nor excluded with a reason, so a new command or reader needs a row.
 11. **Light edits propagate; interrupting rebuilds are explicit** — a running `Workspace` (`daw/runtime`) applies light `Project` edits automatically (coalesced, serialized, errors in `cells.error`). A structural rebuild that stops audio and reloads hosts never runs by itself: topology changes set `cells.needsSync` and the caller runs `sync()`. See [Project edits](docs/daw.md#apply-project-edits-to-the-live-graph) for the waiting and error contract.
 
 ## AudioProcessor Base Class
@@ -155,11 +160,11 @@ Runtime `dependencies` from each `package.json`:
 - `clock`: `core`, `alien-signals`
 - `effects`: `core`; optional peer `signalsmith-stretch` (stretch pitch engine only; dev: `devtools`)
 - `devtools`: `core`
-- `blocks`: `core`
+- `player`, `recorder`, `samples`, `pads`, `sequencer`, `launcher`: `core` each
 - `midi`: `core`
 - `host`: `core`
-- `widgets`: `core`, `blocks`, `midi`
-- `daw`: `core`, `blocks`, `clock`, `effects`, `host`, `midi`, `@xmldom/xmldom`, `fflate`
+- `widgets`: `core`, `player`, `midi`
+- `daw`: `core`, `launcher`, `player`, `recorder`, `clock`, `effects`, `host`, `midi`, `@xmldom/xmldom`, `fflate`
 - `react`: `core`, `alien-signals`; peer-depends on `react`
 - `threejs`: `core`; peer-depends on `three`
 - `playcanvas`: `core`; peer-depends on `playcanvas`
@@ -170,7 +175,7 @@ The skills are the product's front door for agents, so they're maintained like p
 
 **Layout.** Each skill is `skills/<name>/SKILL.md` plus `references/`. Reference files are **symlinks into `docs/`** (and `CHANGELOG.md`), never copies — a doc change is a skill change with no second edit. To give a skill a new reference: write `docs/<topic>.md` with a `title` frontmatter, add it to the sidebar in `apps/web/astro.config.mjs`, then `ln -s ../../../docs/<topic>.md skills/<skill>/references/<topic>.md` and route to it from the skill's "What to read next" table.
 
-**SKILL.md shape.** Frontmatter has `name`, `description`, `license`, `compatibility`. The body is task-oriented and loads whole when the skill triggers, so it has a budget: keep `SKILL.md` under 300 lines, and keep each section to what fits on one screen — a setup pointer, a runnable quick start, a capability-selection table (what to use for a job, and what not to), the routing tables, the rules that always apply, the cross-cutting errors plus an errors-by-area routing table, and a references list. Rules and details that belong to one block, widget or effect go in that reference, not in the always-on rules. Anything deeper (full API surface, long walkthroughs, rationale) belongs in a reference doc that is loaded only when a task needs it. The `description` is the only thing an agent sees before deciding to open the skill — state what it does and the concrete situations that should trigger it, including ones where the user never names audiorective.
+**SKILL.md shape.** Frontmatter has `name`, `description`, `license`, `compatibility`. The body is task-oriented and loads whole when the skill triggers, so it has a budget: keep `SKILL.md` under 300 lines, and keep each section to what fits on one screen — a setup pointer, a runnable quick start, a capability-selection table (what to use for a job, and what not to), the routing tables, the rules that always apply, the cross-cutting errors plus an errors-by-area routing table, and a references list. Rules and details that belong to one capability package, widget or effect go in that reference, not in the always-on rules. Anything deeper (full API surface, long walkthroughs, rationale) belongs in a reference doc that is loaded only when a task needs it. The `description` is the only thing an agent sees before deciding to open the skill — state what it does and the concrete situations that should trigger it, including ones where the user never names audiorective.
 
 **Evergreen.** Docs and skills describe current behaviour in the present tense. Release history — "added in", "now supports", "previously", version numbers — goes in `CHANGELOG.md`, which the skill reads only to diagnose version drift. When a public API changes: update the doc, add the changelog entry, and update or add the eval in `evals/` that exercises it, in the same PR.
 
@@ -180,7 +185,7 @@ The skills are the product's front door for agents, so they're maintained like p
 
 ## Showroom demos
 
-A demo is an Astro page in `apps/web/src/pages/showroom/<slug>.astro` plus one entry in the `demos` array of `apps/web/src/data/demos.ts` (`slug`, `title`, `blurb`, `thumb`, `route`, `source`, `packages`). `DemoCard.astro` renders each entry on the showroom index, so a page without an entry is unreachable from it. Put the card thumbnail in `apps/web/public/showroom/` (an `.svg` or `.jpg`; `thumb` is its path under `public`). Demo-only code imports packages by their public entries, and a doc example that a demo exercises is mirrored by a test next to its block.
+A demo is an Astro page in `apps/web/src/pages/showroom/<slug>.astro` plus one entry in the `demos` array of `apps/web/src/data/demos.ts` (`slug`, `title`, `blurb`, `thumb`, `route`, `source`, `packages`). `DemoCard.astro` renders each entry on the showroom index, so a page without an entry is unreachable from it. Put the card thumbnail in `apps/web/public/showroom/` (an `.svg` or `.jpg`; `thumb` is its path under `public`). Demo-only code imports packages by their public entries, and a doc example that a demo exercises is mirrored by a test next to its package.
 
 ## Releasing
 

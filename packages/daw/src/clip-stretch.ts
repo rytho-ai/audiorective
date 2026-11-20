@@ -1,4 +1,4 @@
-import type { WaveStretchAnchor, WaveStretchProcessor } from "@audiorective/blocks/player";
+import type { WaveStretchAnchor, WaveStretchProcessor } from "@audiorective/player";
 import { normalizeClipAnchors } from "./clip-time-map";
 import { audioFrameCount } from "./model";
 import type { AudioClip, Project } from "./model";

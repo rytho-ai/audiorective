@@ -2,7 +2,7 @@
 title: "Step Sequencer: advanced"
 ---
 
-Deep topics for the lane-record `StepSequencer` from `@audiorective/blocks/sequencer`: custom `transform`, per-step field semantics, stable randomness, sharing a transport, the step grid. Start with [Step Sequencer](./sequencer.md) (layers 1-4 and the errors table).
+Deep topics for the lane-record `StepSequencer` from `@audiorective/sequencer`: custom `transform`, per-step field semantics, stable randomness, sharing a transport, the step grid. Start with [Step Sequencer](./sequencer.md) (layers 1-4 and the errors table).
 
 ## Custom transform
 

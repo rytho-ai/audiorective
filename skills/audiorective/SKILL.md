@@ -64,7 +64,12 @@ The UI reads and writes params directly (`useValue(synth.params.volume)`, `synth
 | `@audiorective/clock`        | Timing/scheduling engine — transport, tempo, look-ahead tick windows, rulers (bars, cycles/loops, seconds).                                     | `references/clock.md`      |
 | `@audiorective/effects`      | DSP effects, Channel strip + SendBus; `/rack` `EffectRack`, `/rack-preset` pure rack data, `/time-stretch`.                                     | `references/effects.md`    |
 | `@audiorective/widgets`      | Player, waveform, piano-roll and caller-owned arrangement clip gestures.                                                                        | `references/widgets.md`    |
-| `@audiorective/blocks`       | Headless capabilities, imported by subpath with no root entry: `/player`, `/recorder`, `/samples`, `/pads`, `/sequencer`, `/launcher`.          | `references/blocks.md`     |
+| `@audiorective/player`       | `WavePlayer`: range playback, selection, loading, offline stretch.                                                                              | `references/player.md`     |
+| `@audiorective/recorder`     | `AudioRecorder`: AudioWorklet PCM take capture.                                                                                                 | `references/recorder.md`   |
+| `@audiorective/samples`      | `SampleLibrary`: imported sample storage and previews.                                                                                          | `references/samples.md`    |
+| `@audiorective/pads`         | `PadBank`: sample hits with choke groups.                                                                                                       | `references/pads.md`       |
+| `@audiorective/sequencer`    | `StepSequencer`: lanes of steps from one-line patterns; borrows a clock or transport.                                                           | `references/sequencer.md`  |
+| `@audiorective/launcher`     | `ClipLauncher`: quantized clip launching; borrows a transport.                                                                                  | `references/launcher.md`   |
 | `@audiorective/midi`         | Pure MIDI notes, sequence and playback projection; `/web` records a selected input.                                                             | `references/midi.md`       |
 | `@audiorective/daw`          | `/project` model and `/dawproject` codec (Node-safe); `/runtime` `Workspace` (browser); root joins them with `openWorkspace` / `saveWorkspace`. | `references/daw.md`        |
 | `@audiorective/host/webclap` | Browser WebCLAP instrument/effect host: reactive `params` per CLAP parameter, MIDI scheduling, `saveState`/`loadState`, editor bridge.          | `references/host.md`       |
@@ -75,28 +80,27 @@ The UI reads and writes params directly (`useValue(synth.params.volume)`, `synth
 
 ## Choosing a capability
 
-When no block or widget matches, build on core with your own `AudioProcessor`; that is the intended path. Import the narrowest subpath. Full cell text: `references/rules-in-depth.md`.
+When no capability package or widget matches, build on core with your own `AudioProcessor`; that is the intended path. Import only the packages and subpaths you need. Full cell text: `references/rules-in-depth.md`.
 
 <!-- prettier-ignore -->
 | You are building… | Use | Not |
 | --- | --- | --- |
 | One-shot hits, pads, SFX; overlapping voices | core `Sampler` / `Voice` | `WavePlayer` (one playhead) |
-| Editable sequenced hits with future choke groups | `blocks/sequencer` `StepSequencer` whose `onHit` calls `bank.trigger(hit.lane, hit.velocity, hit.when, ...)` and returns `() => pad?.cancel()`, over a `blocks/pads` `PadBank` (choke `group`); runnable code in `references/sequencer.md#standalone-drum-machine` | a hand-rolled `window.own` loop for a lane/step grid; irreversible `Voice.stop(when)` |
-| Record a short audio take | `blocks/recorder` `AudioRecorder`, caller-connected input | `MediaRecorder` chunk intervals |
+| Step patterns, drum machine, humanize, ratchets, editable sequenced hits (with choke groups) | `clock` + `@audiorective/sequencer` `StepSequencer`; for choke groups `onHit` calls `bank.trigger(hit.lane, hit.velocity, hit.when, ...)` and returns `() => pad?.cancel()`, over a `@audiorective/pads` `PadBank` (choke `group`); runnable code in `references/sequencer.md#standalone-drum-machine` (no `daw`) | a hand-rolled `window.own` loop for a lane/step grid; a private scheduling loop, forking the sequencer; irreversible `Voice.stop(when)` |
+| Record a short audio take | `@audiorective/recorder` `AudioRecorder`, caller-connected input | `MediaRecorder` chunk intervals |
 | Record MIDI notes from a keyboard | `midi/web` `MidiRecorder`, caller-owned input/context | `MidiSequence` as a live listener |
 | A tempo-locked loop or stem | core `BufferPlayer` + `clock` | `FilePlayer` (media clock) |
 | A long track, podcast or stream | core `FilePlayer`; `widgets/player` for a control bar | `WavePlayer` / waveform selector |
-| Load a clip, select a range, audition, loop or stretch | `blocks/player` `WavePlayer`; widgets waveform selector for UI | a hand-drawn canvas and range logic |
+| Load a clip, select a range, audition, loop or stretch | `@audiorective/player` `WavePlayer`; widgets waveform selector for UI | a hand-drawn canvas and range logic |
 | Audition a clip or range already in a Project | `workspace.auditionAudioClip` / `auditionRange`; `references/daw.md` | seeking and starting the arrangement |
 | Automate a waveform selection in source seconds | `WavePlayer.attachSourceAutomation(binding)` | app-owned play token and time mapping |
 | A waveform picture from peaks, no audio | `widgets/waveform` | the complete selector |
 | MIDI file notes: parse, edit, select, piano roll | `@audiorective/midi` + `widgets/piano-roll` | live MIDI input |
 | Play, edit and save a DAWproject with WebCLAP devices | `daw` + `host/webclap`; `workspace.player` to `mountPlayer` | separate project or player state |
 | Read, edit or write `.dawproject` in Node (no audio) | `daw/project` + `daw/dawproject` only | `daw` root or `daw/runtime` |
-| Step patterns, drum machine, humanize, ratchets | `clock` + `blocks/sequencer`; `references/sequencer.md` (no `daw`) | a private scheduling loop, forking the block |
-| Session view, clip launcher, scene launching | standalone `blocks/launcher` `ClipLauncher`; `references/launcher.md` | `daw` Session for step-pattern clips |
+| Session view, clip launcher, scene launching | standalone `@audiorective/launcher` `ClipLauncher`; `references/launcher.md` | `daw` Session for step-pattern clips |
 | An editable curve driving a parameter, macro, or clip gain | `core/automation`; clips: `Project.setAudioClipGainAutomation` | hand-scheduled ramps |
-| A synth, custom effect, grains, anything else | your own `AudioProcessor` on core | forcing a block to fit |
+| A synth, custom effect, grains, anything else | your own `AudioProcessor` on core | forcing a capability to fit |
 
 ## What to read next
 
@@ -115,7 +119,7 @@ Open the one page the task needs; read the section, not the whole file.
 | MIDI files, piano roll, recording a MIDI take                       | `midi.md`                                              |
 | Project, takes, clips, Session, DAWproject, live edits (`sync()`)   | `daw.md`                                               |
 | WebCLAP device, CLAP ID, patch save                                 | `host.md` + `daw.md`                                   |
-| Block state (`cells`), loading, cancel, audition                    | `player.md` + `widgets.md`                             |
+| Player state (`cells`), loading, cancel, audition                   | `player.md` + `widgets.md`                             |
 | React, three.js, PlayCanvas, PixiJS                                 | `react.md`, `threejs.md`, `playcanvas.md`, `pixijs.md` |
 | Next.js / Remix / Astro / any server-rendered app                   | `client-boundary.md`                                   |
 | Effects, FX rack, replacing Tone.js effects, offline export         | `effects.md`                                           |
@@ -125,7 +129,7 @@ The complete task-to-reference table, with sections, is in `references/rules-in-
 
 ## Rules that always apply
 
-- **Audio logic lives in audio-layer objects** (`AudioProcessor` subclasses, blocks). UI components call their methods and read state; they never orchestrate audio. State the UI toggles (a step pattern, a preset) lives in a `cell` or a lane step on the audio-layer object, never a module array or React `useState`; the clock reads it in `onTick`. With only `core` + `clock` installed, keep the pattern in a `cell<boolean[][]>` on a class that owns the `Clock`, or add `@audiorective/blocks` (`blocks/sequencer`) for `StepSequencer`.
+- **Audio logic lives in audio-layer objects** (`AudioProcessor` subclasses, headless capability classes). UI components call their methods and read state; they never orchestrate audio. State the UI toggles (a step pattern, a preset) lives in a `cell` or a lane step on the audio-layer object, never a module array or React `useState`; the clock reads it in `onTick`. With only `core` + `clock` installed, keep the pattern in a `cell<boolean[][]>` on a class that owns the `Clock`, or add `@audiorective/sequencer` for `StepSequencer`.
 - **Read-only cells change through the owner's methods** (`player.setSelection(range)`), never by assignment.
 - **Views borrow.** The caller destroys what it created; destroying a widget leaves a supplied player alive.
 - **Autoplay:** the context starts suspended; call `engine.core.start()` from a user gesture or `engine.core.autoStart(document)`.
@@ -174,4 +178,4 @@ All under `references/`; each in its "Common errors" section (TimeStretch: `effe
 
 ## References
 
-[Installation](references/installation.md) · [Blocks](references/blocks.md) · [WavePlayer](references/player.md) · [Recorder](references/recorder.md) · [Pads](references/pads.md) · [Sequencer](references/sequencer.md) · [Samples](references/samples.md) · [Launcher](references/launcher.md) · [Widgets](references/widgets.md) · [MIDI/Piano Roll](references/midi.md) · [DAW/DAWproject](references/daw.md) · [WebCLAP host](references/host.md) · [Core](references/core.md) · [Automation](references/automation.md) · [Architecture](references/architecture.md) · [Designing Audio Apps](references/designing-audio-apps.md) · [Choosing Playback](references/choosing-playback.md) · [Clock](references/clock.md) · [Effects](references/effects.md) · [Devtools](references/devtools.md) · [React](references/react.md) · [three.js](references/threejs.md) · [PlayCanvas](references/playcanvas.md) · [PixiJS](references/pixijs.md) · [Server-rendered frameworks](references/client-boundary.md) · [Overview](references/overview.md) · [Rules in depth](references/rules-in-depth.md) · [Changelog](references/changelog.md)
+[Installation](references/installation.md) · [WavePlayer](references/player.md) · [Recorder](references/recorder.md) · [Pads](references/pads.md) · [Sequencer](references/sequencer.md) · [Samples](references/samples.md) · [Launcher](references/launcher.md) · [Widgets](references/widgets.md) · [MIDI/Piano Roll](references/midi.md) · [DAW/DAWproject](references/daw.md) · [WebCLAP host](references/host.md) · [Core](references/core.md) · [Automation](references/automation.md) · [Architecture](references/architecture.md) · [Designing Audio Apps](references/designing-audio-apps.md) · [Choosing Playback](references/choosing-playback.md) · [Clock](references/clock.md) · [Effects](references/effects.md) · [Devtools](references/devtools.md) · [React](references/react.md) · [three.js](references/threejs.md) · [PlayCanvas](references/playcanvas.md) · [PixiJS](references/pixijs.md) · [Server-rendered frameworks](references/client-boundary.md) · [Overview](references/overview.md) · [Rules in depth](references/rules-in-depth.md) · [Changelog](references/changelog.md)

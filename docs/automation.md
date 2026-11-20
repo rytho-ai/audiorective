@@ -3,7 +3,7 @@ title: Automation
 ---
 
 `@audiorective/core/automation` provides reactive finite curves and audio-clock
-scheduling. Import this optional entry explicitly. It does not import blocks,
+scheduling. Import this optional entry explicitly. It does not import the capability packages,
 effects, a DOM, or create an AudioContext. Curve data and sampling work in Node.
 
 ## Automate a native parameter
@@ -170,7 +170,7 @@ dependencies.
 
 For a waveform selection, an audio owner combines:
 
-- `WavePlayer` (block): decoded audio, selection, audition and stretch mapping.
+- `WavePlayer` (`@audiorective/player`): decoded audio, selection, audition and stretch mapping.
 - waveform widget: drawing, selection gestures and external playhead.
 - core curve/binding: source-time envelope and native gain schedule.
 - a GainNode or effect's native parameter: the actual processing.
@@ -208,9 +208,9 @@ destroy the binding separately. Looping requires a different, repeating
 automation owner; this attachment rejects it. For custom players or multiple
 clip timelines, the app still owns their transport and coordinate conversion.
 
-For a Rack, keep the adapter in the block/app: resolve macro targets and program
+For a Rack, keep the adapter in the app: resolve macro targets and program
 each native timeline in `program`, and hold all of them in `hold`. Rack lifetime,
-presets and mappings stay there. The private Rack probe is not a published block.
+presets and mappings stay there. The private Rack probe is not a published package.
 
 ## Common errors
 

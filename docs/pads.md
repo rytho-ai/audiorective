@@ -2,14 +2,14 @@
 title: Pad Bank
 ---
 
-Sample hits with choke groups from `@audiorective/blocks/pads`. Part of [Blocks](./blocks.md).
+Sample hits with choke groups from `@audiorective/pads`.
 
 ## Pad Bank
 
 `PadBank` plays sample hits and owns reversible same-group choke policy. Use it when a sequencer can edit or cancel a hit after the Clock has scheduled it, or when a future closed-hat hit must choke an open-hat hit only if that closed hit still exists. Ordinary one-shot pads without choke can keep using core `Sampler` and `Voice`.
 
 ```typescript
-import { PadBank } from "@audiorective/blocks/pads";
+import { PadBank } from "@audiorective/pads";
 
 const instruments = new PadBank(context, [
   { id: "open-hat", buffer: openHat, group: "hat", gate: true },
@@ -40,7 +40,7 @@ Choke is carried by a per-event gain gate, so cancelling an unstarted hit retrac
 
 **Per-pad routing.** Each pad owns a gain node that feeds the bank `output`. `routePad(id, destination: AudioNode | null)` sends that pad to a node you own instead (a filter, a send), and `routePad(id, null)` sends it back to `output`. Choke acts before the routing, so two pads in one `group` can feed different effects and still cut each other. A routed pad bypasses `params.volume`, which scales only the bank `output`. The bank owns its pad nodes and edges; you own every destination. `destroy()` disconnects only the bank's own nodes and leaves a destination connected to the rest of your graph. An unknown pad ID throws `Unknown pad.`
 
-`assign(id, buffer)` replaces that pad's buffer, cancels its current and future hits, and retracts their future choke. `stopAll()` cancels every hit. `cells.activeEvents` is a read-only reactive count and `cells.pads` is the read-only list of current pad specs, which changes on `assign`; `params.volume` follows the normal schedulable `.value` / `$` contract. The block owns its nodes and event handles, while the caller owns output routing and the `AudioContext`. It has no polyphony cap or voice-stealing policy. For Clock-owned sequenced hits, pass the handle to `window.own(hit, when)` and call `clock.refresh()` after pattern edits (a `StepSequencer` attached with `clock.attach` re-queues itself, see [Step Sequencer](./sequencer.md#layer-4-hooks)); manual hits remain unregistered. See [Clock](./clock.md#own-cancellable-events-when-transport-edits-must-cut-queued-sound).
+`assign(id, buffer)` replaces that pad's buffer, cancels its current and future hits, and retracts their future choke. `stopAll()` cancels every hit. `cells.activeEvents` is a read-only reactive count and `cells.pads` is the read-only list of current pad specs, which changes on `assign`; `params.volume` follows the normal schedulable `.value` / `$` contract. `PadBank` owns its nodes and event handles, while the caller owns output routing and the `AudioContext`. It has no polyphony cap or voice-stealing policy. For Clock-owned sequenced hits, pass the handle to `window.own(hit, when)` and call `clock.refresh()` after pattern edits (a `StepSequencer` attached with `clock.attach` re-queues itself, see [Step Sequencer](./sequencer.md#layer-4-hooks)); manual hits remain unregistered. See [Clock](./clock.md#own-cancellable-events-when-transport-edits-must-cut-queued-sound).
 
 ## Common errors
 
@@ -50,4 +50,4 @@ Choke is carried by a per-event gain gate, so cancelling an unstarted hit retrac
 | `Pad hit time must be finite, non-negative seconds.` / `Pad hit velocity must be finite.`        | Invalid hit time or velocity                              | Use absolute audio seconds and a finite velocity. |
 | `Pad hit pitch must be finite semitones.` / `Pad hit duration must be finite, positive seconds.` | Invalid `options.pitch` or `options.duration`             | Pass finite semitones and a duration above zero.  |
 | `Unknown pad.`                                                                                   | `assign()` or `routePad()` received an ID not in the bank | Use a declared pad ID.                            |
-| `PadBank is destroyed.`                                                                          | Trigger, assign or routePad after cleanup                 | Create a new block; `destroy()` is final.         |
+| `PadBank is destroyed.`                                                                          | Trigger, assign or routePad after cleanup                 | Create a new PadBank; `destroy()` is final.       |

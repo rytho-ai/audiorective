@@ -34,7 +34,7 @@ The caller renders lanes and clip appearance, supplies compatible track hit test
 
 `attachTimelineZoom` from the same entry owns continuous zoom gestures over a caller-rendered time axis. It connects an optional range input and Ctrl/⌘+wheel, keeps the project time under the pointer (or viewport center for the slider), and batches redraws to animation frames. The caller supplies `getScale()` in pixels per project second and `onScale(next)` to redraw its arrangement; `ruler()` returns the current time-axis element after that redraw. Buttons can call `zoom.zoomBy(1.45)` and fit-to-project can call `zoom.zoomTo(scale, leftEdgeX)`. Call `zoom.cancel()` when switching projects and `zoom.destroy()` when removing the view. The default range is 2–2000 pixels per second; `minScale` and `maxScale` can change it. The slider's `aria-valuetext` reads "<n> px/s"; pass `labels: { scale(pixelsPerSecond) }` to localize it.
 
-The widgets implement their own waveform display and interaction. They require no UI framework or WaveSurfer dependency. The selector uses [WavePlayer](./blocks.md) for audio and selection. Pass a shared `player`, or supply `createPlayer` to let the selector construct, own and destroy one. Its public audio connection is `handle.output`.
+The widgets implement their own waveform display and interaction. They require no UI framework or WaveSurfer dependency. The selector uses [WavePlayer](./player.md) for audio and selection. Pass a shared `player`, or supply `createPlayer` to let the selector construct, own and destroy one. Its public audio connection is `handle.output`.
 
 ## Parameter controls and metering
 
@@ -74,7 +74,7 @@ The attachment owns its gesture and drawing. The caller owns the points and play
 
 ## Warp markers
 
-`view.attach(createWarpMarkers({ anchors, sampleRate, sourceFrames, sourceFrameAt, onCommit }))` mounts a seconds-view marker editor. `anchors` is a reactive reader of source/output frame pairs. Supply a conversion from waveform seconds to source frames for new markers. Double-click to add a marker, drag it to change its output position, or move a focused marker with the arrow keys. Shift increases the keyboard step. Delete removes a marker and Escape cancels a drag. The view commits on release and renders neighboring markers in order. It borrows the anchors and leaves audio processing and undo to the caller. An anchor is a local `{ sourceFrame, outputFrame }` pair, the same shape as `ClipStretchAnchor` in `@audiorective/daw/project` and `WaveStretchAnchor` in `@audiorective/blocks/player`.
+`view.attach(createWarpMarkers({ anchors, sampleRate, sourceFrames, sourceFrameAt, onCommit }))` mounts a seconds-view marker editor. `anchors` is a reactive reader of source/output frame pairs. Supply a conversion from waveform seconds to source frames for new markers. Double-click to add a marker, drag it to change its output position, or move a focused marker with the arrow keys. Shift increases the keyboard step. Delete removes a marker and Escape cancels a drag. The view commits on release and renders neighboring markers in order. It borrows the anchors and leaves audio processing and undo to the caller. An anchor is a local `{ sourceFrame, outputFrame }` pair, the same shape as `ClipStretchAnchor` in `@audiorective/daw/project` and `WaveStretchAnchor` in `@audiorective/player`.
 
 ## Spectrum and EQ editor
 
@@ -84,7 +84,7 @@ The attachment owns its gesture and drawing. The caller owns the points and play
 
 ## Step grid and pads
 
-`mountStepGrid(root, { sequencer, formatStep?, labels?, laneLabel? })` is a lane-aware, pluggable step editor. `sequencer` is a local structural contract, `StepGridSequencer = { lanes: Record<string, StepGridLane> }` (a lane carries `pattern`, `length`, `rate`, `swing`, `direction`, `mute`, `solo`, `params`, `playhead`, `progress` and `steps`); a `StepSequencer` from [Step Sequencer](./sequencer.md) satisfies it directly, as can your own model with the same lane shape (the widget imports no block values). Destroying the view leaves the borrowed sequencer available.
+`mountStepGrid(root, { sequencer, formatStep?, labels?, laneLabel? })` is a lane-aware, pluggable step editor. `sequencer` is a local structural contract, `StepGridSequencer = { lanes: Record<string, StepGridLane> }` (a lane carries `pattern`, `length`, `rate`, `swing`, `direction`, `mute`, `solo`, `params`, `playhead`, `progress` and `steps`); a `StepSequencer` from [Step Sequencer](./sequencer.md) satisfies it directly, as can your own model with the same lane shape (the widget imports no capability-class values). Destroying the view leaves the borrowed sequencer available.
 
 The grid reads each lane's length, rate, direction, swing, mute, solo, `steps`, `playhead` and `progress` and writes through the lane's setters and `steps[i]` fields. The column count is the longest lane length seen. `laneLabel(name)` names a lane for display (default: the lane name).
 
@@ -316,7 +316,7 @@ Pass `renderer: PlayerRenderer` to replace the markup while keeping these intera
 
 ```typescript
 import { mountWaveformSelector } from "@audiorective/widgets";
-import { WavePlayer } from "@audiorective/blocks/player";
+import { WavePlayer } from "@audiorective/player";
 
 const context = new AudioContext(); // or pass your app's existing context
 const root = document.querySelector<HTMLElement>("#waveform")!;
@@ -344,11 +344,11 @@ if (selector.getState().duration >= 2) {
 // selector.destroy();
 ```
 
-The caller owns the context and routing. The selector resumes the player's context when a user initiates playback; it neither creates nor closes a context, and it does not connect its output to the destination. The widget core imports no block at runtime: the app supplies the `WavePlayer`, directly or through `createPlayer`. Connect its output to a destination or your effects chain. Mount in the browser with a DOM, Web Audio, and `ResizeObserver`; keep mounting behind a client-only boundary in a server-rendered app.
+The caller owns the context and routing. The selector resumes the player's context when a user initiates playback; it neither creates nor closes a context, and it does not connect its output to the destination. The widget core imports no capability class at runtime: the app supplies the `WavePlayer`, directly or through `createPlayer`. Connect its output to a destination or your effects chain. Mount in the browser with a DOM, Web Audio, and `ResizeObserver`; keep mounting behind a client-only boundary in a server-rendered app.
 
 ### Interaction
 
-To share audio and selection across views, call `mountWaveformSelector(root, { player })` with a `WavePlayer` from `@audiorective/blocks/player`. Supply either `createPlayer` or `player`. `SelectorPlayer` is a structural contract (`getState`, `version`, `isPlaying`, `isLooping`, `load`, `cancelLoad`, `play`, `audition`, `pause`, `stop`, `seek`, `setLooping`, `sourceToOutput`, `output`, `destroy`, plus the selection model's `getSelection`, `setSelection` and `subscribe`); `WavePlayer` satisfies it and so can your own model. The view does not destroy a supplied player or cancel its loads when detached. Route the shared output once. Loading or changing selection through any view updates the player and all its views; renderer, zoom and snap remain local. See [Blocks](./player.md#share-a-block-between-widgets).
+To share audio and selection across views, call `mountWaveformSelector(root, { player })` with a `WavePlayer` from `@audiorective/player`. Supply either `createPlayer` or `player`. `SelectorPlayer` is a structural contract (`getState`, `version`, `isPlaying`, `isLooping`, `load`, `cancelLoad`, `play`, `audition`, `pause`, `stop`, `seek`, `setLooping`, `sourceToOutput`, `output`, `destroy`, plus the selection model's `getSelection`, `setSelection` and `subscribe`); `WavePlayer` satisfies it and so can your own model. The view does not destroy a supplied player or cancel its loads when detached. Route the shared output once. Loading or changing selection through any view updates the player and all its views; renderer, zoom and snap remain local. See [Player](./player.md#share-a-player-between-widgets).
 
 - Load an audio URL or local file using the built-in controls. Loading does not start playback.
 - Drag in either direction to create a range and start looping its audition. The endpoints are normalized to increasing seconds.
@@ -388,7 +388,7 @@ type WaveformSelectorOptions = {
 
 ### Loading feedback
 
-The complete selector renders the block's download/read byte counts, indeterminate decode/peaks phases, and Cancel loading action. A progress fraction appears only with a known positive byte total; no decode/stretch percentage is fabricated. `getState().loadProgress` uses [the block contract](./player.md#loading-state-progress-and-cancellation). Successful completion, errors and cancellation remove loading feedback. A new `load` can retry; a cancelled promise settling does not imply a committed source. Multiple selectors sharing one player show the same progress and cancellation state.
+The complete selector renders the player's download/read byte counts, indeterminate decode/peaks phases, and Cancel loading action. A progress fraction appears only with a known positive byte total; no decode/stretch percentage is fabricated. `getState().loadProgress` uses [the player contract](./player.md#loading-state-progress-and-cancellation). Successful completion, errors and cancellation remove loading feedback. A new `load` can retry; a cancelled promise settling does not imply a committed source. Multiple selectors sharing one player show the same progress and cancellation state.
 
 ### Displaying committed edits
 

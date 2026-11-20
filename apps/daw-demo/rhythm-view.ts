@@ -1,7 +1,7 @@
 import { effect } from "@audiorective/core";
-import { PadBank } from "@audiorective/blocks/pads";
-import type { SampleLease, SampleLibrary } from "@audiorective/blocks/samples";
-import { StepSequencer } from "@audiorective/blocks/sequencer";
+import { PadBank } from "@audiorective/pads";
+import type { SampleLease, SampleLibrary } from "@audiorective/samples";
+import { StepSequencer } from "@audiorective/sequencer";
 import { mountPadGrid, mountStepGrid } from "@audiorective/widgets";
 import type { Workspace } from "@audiorective/daw";
 
