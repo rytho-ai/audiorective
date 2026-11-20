@@ -73,3 +73,16 @@ Variants (guess mode, 3 runs per task, every run read):
 | Real bugs found by reading    | late stop, unstarted Clock | 0           | 4                                                                   | 1 (`clips[2]` for "clip 2") |
 
 VL3 shape: Web Audio timing on clips and tracks — `clip.start(when)`, `clip.stop(when)`, `track.stop(when)`, `transport.stopAll(when)`, `launchScene(clips, when)` with `when` as audio seconds or a quantize string (`"bar"`, `"2 bars"`, `"beat"`); `clip.cancel()`; `EventTarget` `statechange`; `transport.start()` resumes the context. Lessons: letting the toolkit own playback removed both the driver and the timing-bug class in every variant; a variant that leaves the caller to create and start the clock reintroduces ordering and autoplay bugs; the only VL3 miss repeated the step-index lesson (no "clips[0] is the first clip" hint). Evidence is weak: all variants hit the 100% grader ceiling and defaults differed (VL1 quantized to `"bar"`, VL3 to `"none"`).
+
+Real builds (fresh agent per variant, same brief: 7 tracks × 8 scenes, mixer with two returns; one hidden 48-test render acceptance suite validated by 8 mutations):
+
+|                                    | VL1 objects | VL2 launcher plays | VL3 hybrid |
+| ---------------------------------- | ----------- | ------------------ | ---------- |
+| Hidden acceptance                  | 48/48       | 48/48              | 48/48      |
+| Launcher module / page (excl. CSS) | 348 / 601   | 186 / 999          | 466 / 680  |
+
+All three were timing-correct, so "the toolkit owns playback" is settled. They differed in use: every build lacked a playing clip's start time, every build created its own `Clock` because the variant's transport exposed no position, and the event-based variants could not tell a cancel from a commit. A guess run never surfaced these; only full pages did (hence step 7).
+
+Contextual desire (agents shown the current `Clock` and `StepSequencer` types): 18/18 reused `Clock` with `clock.attach(launcher)` and 0/18 invented a transport, versus a separate `Transport` in the blind round. Names both rounds agreed on: `ClipLauncher`, `launch({ quantize })`, `cancelQueued()`, `launchScene`, `stop` / `stopAll`, `{ buffer, loop }`; the contextual round switched quantize to the sequencer's `"1m"` and state to cells.
+
+VL4 (decision log + both desire rounds + the step-sequencer conventions: `Clock` + `attach`, state in cells with `startsAt` / `startedAt`, cancellable queued stops, `clips[0]` hint, defined stopped-clock behaviour): guess run 100%, 0 launcher bugs, "clip 2" → `clips[1]` 3/3.
