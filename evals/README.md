@@ -21,7 +21,7 @@ node evals/run_trigger_evals.mjs audio-processor-authoring --runs 5 --json /tmp/
 node evals/run_trigger_evals.mjs audiorective --skill-dir ../audiorective-main/skills/audiorective
 ```
 
-It needs the Claude Code CLI on `PATH` and a login. Options: `--runs` (3), `--concurrency` (8), `--timeout` seconds (120), `--json <file>` for machine-readable results, `--limit <n>` for a smoke test. A run that does not complete (a timeout, a missing login, a rate limit) is reported as an error and fails its query rather than counting as a non-trigger, so a broken CLI cannot produce a passing negative set. The exit code is non-zero when any query fails.
+It needs the Claude Code CLI on `PATH` and a login. Options: `--runs` (3), `--concurrency` (8), `--timeout` seconds (120), `--json <file>` for machine-readable results, `--limit <n>` for a smoke test, `--user-settings` (see Isolation). A run that does not complete (a timeout, a missing login, a rate limit) is reported as an error and fails its query rather than counting as a non-trigger, so a broken CLI cannot produce a passing negative set. The exit code is non-zero when any query fails.
 
 Report both directions. A description that fires on everything scores perfectly on the positives and is still wrong, so a change that lifts the should-trigger rate has to hold the shouldn't-trigger rate.
 
@@ -38,7 +38,7 @@ node evals/run_functional_evals.mjs audiorective --skill-dir ../audiorective-mai
 node evals/run_functional_evals.mjs audiorective --ids 3,16,20 --runs 2 --model sonnet
 ```
 
-Options: `--skill-dir`, `--ids <a,b,c>`, `--limit <n>`, `--runs` (1), `--concurrency` (4), `--timeout` seconds (600), `--model`, `--grader-model`, `--json <file>`. The report lists each eval's expectations met, whether the skill was opened, and which reference files were read; the JSON also keeps every answer and the grader's evidence. A run that does not complete is reported as an error and excluded from the totals, and the exit code is non-zero.
+Options: `--skill-dir`, `--ids <a,b,c>`, `--limit <n>`, `--runs` (1), `--concurrency` (4), `--timeout` seconds (600), `--model`, `--grader-model`, `--json <file>`, `--user-settings` (see Isolation). The report lists each eval's expectations met, whether the skill was opened, and which reference files were read; the JSON also keeps every answer and the grader's evidence. A run that does not complete is reported as an error and excluded from the totals, and the exit code is non-zero.
 
 ### Token and cost breakdown
 
@@ -74,3 +74,7 @@ Options: `--ids T1,T2`, `--runs` (3), `--concurrency` (4), `--timeout` seconds (
 - Keep **selection** prompts in `evals.json`: requests that never name a package or API, where the expectations check which capability was chosen. Reuse the wording of a positive trigger query so the same request is tested for triggering and for the choice it leads to.
 - Keep **not-applicable** prompts too: requests that resemble a block but do not fit it (many overlapping grains versus the single-playhead `WavePlayer`), where the expected choice is to build on core. Add one whenever a block is added, so a new block is checked for narrowing what agents build.
 - Selection expectations accept equivalent wiring ("X, or an equivalent Y"), and check the choice, the behaviour, and that no pass-through wrapper was added. They measure capability selection only; speed and originality need their own tasks and measurements.
+
+## Isolation from user settings
+
+The trigger and functional runners start `claude -p` with `--setting-sources project`, so only the throwaway project's own `.claude/` loads. Without it, every run also loads the maintainer's `~/.claude`: installed plugins and their skills (about 90 here, including generic ones such as a music-making skill described as "use whenever audio is to be produced"), user `CLAUDE.md` and auto-memory. Those compete with the skill under test and make its trigger rate depend on the machine: eval 16 (a React drum machine) opened the skill in 3 of 7 solver runs with user settings loaded and 7 of 7 without. Evals must measure the skill, not one person's setup. Pass `--user-settings` to either runner to load user settings again, for example to check how the skill behaves next to your own plugins. (`--setting-sources ""` would also drop the project-staged skill, so it is not used here; the guess runner needs no skills and keeps `""`.)

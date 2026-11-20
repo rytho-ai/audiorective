@@ -16,6 +16,7 @@
 // Options: --skill-dir <dir> (default skills/<name>)   --ids <a,b,c>   --limit <n>
 //          --runs <n> (1)   --concurrency <n> (4)   --timeout <seconds> (600)
 //          --model <id>   --grader-model <id>   --json <out-file>
+//          --user-settings  (load ~/.claude: user plugins, skills, CLAUDE.md, memory; off by default)
 
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -34,7 +35,7 @@ const skillName = args.find((a, i) => !a.startsWith("--") && !(args[i - 1]?.star
 const usage = (msg) => {
   if (msg) console.error(`error: ${msg}`);
   console.error(
-    "usage: node evals/run_functional_evals.mjs <skill-name> [--skill-dir d] [--ids a,b] [--limit n] [--runs n] [--concurrency n] [--timeout s] [--model m] [--grader-model m] [--json f]",
+    "usage: node evals/run_functional_evals.mjs <skill-name> [--skill-dir d] [--ids a,b] [--limit n] [--runs n] [--concurrency n] [--timeout s] [--model m] [--grader-model m] [--json f] [--user-settings]",
   );
   process.exit(2);
 };
@@ -56,6 +57,9 @@ const timeoutMs = positiveInt("timeout", 600) * 1000;
 const model = opt("model", null);
 const graderModel = opt("grader-model", model);
 const jsonOut = opt("json", null);
+// By default only the throwaway project's settings load, so the run measures the skill and not the
+// maintainer's installed plugins, user skills, CLAUDE.md or memory. --user-settings opts back in.
+const settingSources = args.includes("--user-settings") ? "user,project,local" : "project";
 const ids = opt("ids", null)
   ?.split(",")
   .map((s) => Number(s.trim()));
@@ -102,6 +106,8 @@ function claude(prompt, { cwd, tools, maxTurns, useModel }) {
       "--strict-mcp-config",
       "--tools",
       tools,
+      "--setting-sources",
+      settingSources,
     ];
     if (useModel) argv.push("--model", useModel);
     const child = spawn("claude", argv, { cwd, env, stdio: ["ignore", "pipe", "ignore"] });
