@@ -13,6 +13,13 @@ class TestProcessor extends AudioProcessor<{ vol: Param<number> }> {
   }
 }
 
+// Chromium (autoplay flag) starts a context running; most lifecycle tests need one that is suspended.
+async function suspendedContext(): Promise<AudioContext> {
+  const ctx = new AudioContext();
+  await ctx.suspend();
+  return ctx;
+}
+
 class TestEngine extends AudioEngine {
   constructor(ctx?: AudioContext) {
     super(ctx);
@@ -32,10 +39,93 @@ describe("AudioEngine", () => {
     engine.dispose();
   });
 
-  test("initial state is 'idle'", () => {
-    const engine = new TestEngine();
-    expect(engine.state()).toBe("idle");
+  test("initial state mirrors the context", async () => {
+    const running = new TestEngine();
+    await running.resume();
+    expect(new TestEngine(running.context).state.value).toBe("running");
+    running.dispose();
+    const engine = new TestEngine(await suspendedContext());
+    expect(engine.state.value).toBe("suspended");
     engine.dispose();
+  });
+
+  test("resume() resumes the context, state becomes 'running'", async () => {
+    const engine = new TestEngine();
+    await engine.resume();
+    expect(engine.state.value).toBe("running");
+    expect(engine.context.state).toBe("running");
+    engine.dispose();
+  });
+
+  test("suspend() when the context is not running leaves it suspended", async () => {
+    const engine = new TestEngine();
+    Object.defineProperty(engine.context, "state", { value: "suspended", configurable: true });
+    await engine.suspend();
+    expect(engine.state.value).toBe("suspended");
+    engine.dispose();
+  });
+
+  test("resume() and suspend() reject with InvalidStateError after dispose()", async () => {
+    const engine = new TestEngine();
+    engine.dispose();
+    await expect(engine.resume()).rejects.toMatchObject({ name: "InvalidStateError", message: "AudioEngine is disposed." });
+    await expect(engine.suspend()).rejects.toMatchObject({ name: "InvalidStateError", message: "AudioEngine is disposed." });
+    await expect(engine.resume()).rejects.toBeInstanceOf(DOMException);
+  });
+
+  test("state is a ReadonlyCell that changes through the lifecycle and ends 'closed'", async () => {
+    const engine = new TestEngine(await suspendedContext());
+    const seen: AudioContextState[] = [];
+    engine.state.subscribe((s) => seen.push(s), { immediate: true });
+    await engine.resume();
+    await engine.suspend();
+    await engine.resume();
+    engine.dispose();
+    expect(seen[0]).toBe("suspended");
+    expect(seen).toContain("running");
+    expect(seen.at(-1)).toBe("closed");
+    expect(engine.state.value).toBe("closed");
+  });
+
+  test("[Symbol.dispose]() disposes the engine, and a second dispose is safe", () => {
+    const engine = new TestEngine();
+    engine[Symbol.dispose]();
+    expect(engine.state.value).toBe("closed");
+    expect(() => engine.dispose()).not.toThrow();
+    expect(() => engine[Symbol.dispose]()).not.toThrow();
+  });
+
+  test("aborting options.signal disposes the engine", () => {
+    const controller = new AbortController();
+    const engine = new AudioEngine(undefined, { signal: controller.signal });
+    const processor = engine.register(new TestProcessor(engine.context));
+    const spy = vi.spyOn(processor, "dispose");
+    controller.abort();
+    expect(engine.state.value).toBe("closed");
+    expect(spy).toHaveBeenCalledOnce();
+  });
+
+  test("an already aborted signal disposes the engine at construction", () => {
+    const engine = new AudioEngine(undefined, { signal: AbortSignal.abort() });
+    expect(engine.state.value).toBe("closed");
+  });
+
+  test("createEngine passes options.signal through", () => {
+    const controller = new AbortController();
+    const engine = createEngine((ctx) => ({ processor: new TestProcessor(ctx) }), { signal: controller.signal });
+    const spy = vi.spyOn(engine.processor, "dispose");
+    controller.abort();
+    expect(engine.core.state.value).toBe("closed");
+    expect(spy).toHaveBeenCalled();
+  });
+
+  test("a borrowed context is not closed by dispose(), though the engine reads 'closed'", () => {
+    const ctx = new AudioContext();
+    const engine = new AudioEngine(ctx);
+    engine.dispose();
+    expect(engine.state.value).toBe("closed");
+    expect(ctx.state).not.toBe("closed");
+    void ctx.close();
   });
 
   test("accepts existing AudioContext in constructor", () => {
@@ -45,84 +135,37 @@ describe("AudioEngine", () => {
     engine.dispose();
   });
 
-  test("start() resumes context, state becomes 'running'", async () => {
-    const engine = new TestEngine();
-    await engine.start();
-    expect(engine.state()).toBe("running");
-    expect(engine.context.state).toBe("running");
-    engine.dispose();
-  });
-
-  test("start() on already running engine is a no-op", async () => {
-    const engine = new TestEngine();
-    await engine.start();
-    await engine.start();
-    expect(engine.state()).toBe("running");
-    engine.dispose();
-  });
-
-  test("start() on disposed engine throws", async () => {
-    const engine = new TestEngine();
-    engine.dispose();
-    await expect(engine.start()).rejects.toThrow("Cannot start a disposed engine");
-  });
-
   test("suspend() pauses context, state becomes 'suspended'", async () => {
     const engine = new TestEngine();
-    await engine.start();
+    await engine.resume();
     await engine.suspend();
-    expect(engine.state()).toBe("suspended");
+    expect(engine.state.value).toBe("suspended");
     expect(engine.context.state).toBe("suspended");
     engine.dispose();
   });
 
-  test("suspend() on non-running engine is a no-op", async () => {
-    const engine = new TestEngine();
-    await engine.suspend();
-    expect(engine.state()).toBe("idle");
-    engine.dispose();
-  });
-
-  test("suspend() on disposed engine warns", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const engine = new TestEngine();
-    engine.dispose();
-    await engine.suspend();
-    expect(warnSpy).toHaveBeenCalledWith("AudioEngine: suspend() called on a disposed engine");
-    warnSpy.mockRestore();
-  });
-
   test("resume() resumes from suspended, state becomes 'running'", async () => {
     const engine = new TestEngine();
-    await engine.start();
+    await engine.resume();
     await engine.suspend();
     await engine.resume();
-    expect(engine.state()).toBe("running");
+    expect(engine.state.value).toBe("running");
     engine.dispose();
   });
 
   test("resume() on non-suspended engine is a no-op", async () => {
     const engine = new TestEngine();
-    await engine.start();
     await engine.resume();
-    expect(engine.state()).toBe("running");
-    engine.dispose();
-  });
-
-  test("resume() on disposed engine warns", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const engine = new TestEngine();
-    engine.dispose();
     await engine.resume();
-    expect(warnSpy).toHaveBeenCalledWith("AudioEngine: resume() called on a disposed engine");
-    warnSpy.mockRestore();
+    expect(engine.state.value).toBe("running");
+    engine.dispose();
   });
 
   test("dispose() sets state to 'disposed'", async () => {
     const engine = new TestEngine();
-    await engine.start();
+    await engine.resume();
     engine.dispose();
-    expect(engine.state()).toBe("disposed");
+    expect(engine.state.value).toBe("closed");
   });
 
   test("dispose() cleans up registered processors", () => {
@@ -144,20 +187,20 @@ describe("AudioEngine", () => {
   test("untilReady() resolves when state becomes 'running'", async () => {
     const engine = new TestEngine();
     const promise = engine.untilReady();
-    await engine.start();
+    await engine.resume();
     await expect(promise).resolves.toBeUndefined();
     engine.dispose();
   });
 
   test("untilReady() resolves immediately if already running", async () => {
     const engine = new TestEngine();
-    await engine.start();
+    await engine.resume();
     await expect(engine.untilReady()).resolves.toBeUndefined();
     engine.dispose();
   });
 
-  test("untilReady() returns cached promise", () => {
-    const engine = new TestEngine();
+  test("untilReady() returns cached promise", async () => {
+    const engine = new TestEngine(await suspendedContext());
     const p1 = engine.untilReady();
     const p2 = engine.untilReady();
     expect(p1).toBe(p2);
@@ -167,99 +210,70 @@ describe("AudioEngine", () => {
 
   test("onstatechange syncs external suspension to state signal", async () => {
     const engine = new TestEngine();
-    await engine.start();
-    expect(engine.state()).toBe("running");
+    await engine.resume();
+    expect(engine.state.value).toBe("running");
 
     // Simulate browser externally suspending the context by calling onstatechange directly
     // In production, the browser fires this when tab goes to background on mobile
     Object.defineProperty(engine.context, "state", { value: "suspended", writable: true });
     engine.context.dispatchEvent(new Event("statechange"));
-    expect(engine.state()).toBe("suspended");
+    expect(engine.state.value).toBe("suspended");
     engine.dispose();
   });
 
   test("raw context.suspend() then raw context.resume() is mirrored and resolves untilReady()", async () => {
     const engine = new TestEngine();
-    await engine.start();
+    await engine.resume();
     await engine.context.suspend();
-    await vi.waitFor(() => expect(engine.state()).toBe("suspended"));
+    await vi.waitFor(() => expect(engine.state.value).toBe("suspended"));
     await engine.context.resume();
-    await vi.waitFor(() => expect(engine.state()).toBe("running"));
+    await vi.waitFor(() => expect(engine.state.value).toBe("running"));
     await expect(engine.untilReady()).resolves.toBeUndefined();
     engine.dispose();
   });
 
   test("statechange to 'interrupted' is mirrored as 'suspended'", async () => {
     const engine = new TestEngine();
-    await engine.start();
+    await engine.resume();
     Object.defineProperty(engine.context, "state", { value: "interrupted", configurable: true });
     engine.context.dispatchEvent(new Event("statechange"));
-    expect(engine.state()).toBe("suspended");
+    expect(engine.state.value).toBe("suspended");
     engine.dispose();
   });
 
   test("resume() from 'interrupted' calls context.resume() and becomes 'running'", async () => {
     const engine = new TestEngine();
-    await engine.start();
+    await engine.resume();
     Object.defineProperty(engine.context, "state", { value: "interrupted", configurable: true });
     engine.context.dispatchEvent(new Event("statechange"));
-    expect(engine.state()).toBe("suspended");
+    expect(engine.state.value).toBe("suspended");
 
     const spy = vi.spyOn(engine.context, "resume");
     await engine.resume();
     expect(spy).toHaveBeenCalledOnce();
-    expect(engine.state()).toBe("running");
-    spy.mockRestore();
-    engine.dispose();
-  });
-
-  test("start() from 'interrupted' calls context.resume() and becomes 'running'", async () => {
-    const engine = new TestEngine();
-    await engine.start();
-    Object.defineProperty(engine.context, "state", { value: "interrupted", configurable: true });
-    engine.context.dispatchEvent(new Event("statechange"));
-    expect(engine.state()).toBe("suspended");
-
-    const spy = vi.spyOn(engine.context, "resume");
-    await engine.start();
-    expect(spy).toHaveBeenCalledOnce();
-    expect(engine.state()).toBe("running");
+    expect(engine.state.value).toBe("running");
     spy.mockRestore();
     engine.dispose();
   });
 
   test("resume() resumes a suspended context even when the mirror says 'running'", async () => {
     const engine = new TestEngine();
-    await engine.start();
-    expect(engine.state()).toBe("running");
+    await engine.resume();
+    expect(engine.state.value).toBe("running");
     // Stub the context as suspended without firing statechange, so the mirror is stale.
     Object.defineProperty(engine.context, "state", { value: "suspended", configurable: true });
 
     const spy = vi.spyOn(engine.context, "resume");
     await engine.resume();
     expect(spy).toHaveBeenCalledOnce();
-    expect(engine.state()).toBe("running");
-    spy.mockRestore();
-    engine.dispose();
-  });
-
-  test("start() resumes a suspended context even when the mirror says 'running'", async () => {
-    const engine = new TestEngine();
-    await engine.start();
-    expect(engine.state()).toBe("running");
-    Object.defineProperty(engine.context, "state", { value: "suspended", configurable: true });
-
-    const spy = vi.spyOn(engine.context, "resume");
-    await engine.start();
-    expect(spy).toHaveBeenCalledOnce();
-    expect(engine.state()).toBe("running");
+    expect(engine.state.value).toBe("running");
     spy.mockRestore();
     engine.dispose();
   });
 
   test("an external close during an awaited resume() keeps the engine disposed", async () => {
     const engine = new TestEngine();
-    await engine.start();
+    await engine.resume();
     await engine.suspend();
     const ctx = engine.context;
     Object.defineProperty(ctx, "state", { value: "suspended", configurable: true });
@@ -271,38 +285,29 @@ describe("AudioEngine", () => {
         resolve();
       });
     await engine.resume();
-    expect(engine.state()).toBe("disposed");
+    expect(engine.state.value).toBe("closed");
   });
 
   test("statechange to 'closed' marks the engine 'disposed'", async () => {
     const engine = new TestEngine();
-    await engine.start();
+    await engine.resume();
     Object.defineProperty(engine.context, "state", { value: "closed", configurable: true });
     engine.context.dispatchEvent(new Event("statechange"));
-    expect(engine.state()).toBe("disposed");
+    expect(engine.state.value).toBe("closed");
   });
 
   test("dispose() still cleans up processors after the context closes externally", async () => {
     const engine = new TestEngine();
-    await engine.start();
+    await engine.resume();
     const processorDisposeSpy = vi.spyOn(engine.getProcessor(), "dispose");
 
     await engine.context.close();
-    await vi.waitFor(() => expect(engine.state()).toBe("disposed"));
+    await vi.waitFor(() => expect(engine.state.value).toBe("closed"));
     expect(processorDisposeSpy).not.toHaveBeenCalled();
 
     engine.dispose();
     expect(processorDisposeSpy).toHaveBeenCalledOnce();
     processorDisposeSpy.mockRestore();
-  });
-
-  test("statechange to 'suspended' while 'idle' keeps 'idle'", () => {
-    const engine = new TestEngine();
-    expect(engine.state()).toBe("idle");
-    Object.defineProperty(engine.context, "state", { value: "suspended", configurable: true });
-    engine.context.dispatchEvent(new Event("statechange"));
-    expect(engine.state()).toBe("idle");
-    engine.dispose();
   });
 });
 
@@ -313,7 +318,7 @@ describe("AudioEngine.autoStart", () => {
     engine.autoStart(target);
     target.dispatchEvent(new Event("click"));
     await engine.untilReady();
-    expect(engine.state()).toBe("running");
+    expect(engine.state.value).toBe("running");
     engine.dispose();
   });
 
@@ -323,7 +328,7 @@ describe("AudioEngine.autoStart", () => {
     engine.autoStart(target);
     target.dispatchEvent(new Event("click"));
     await engine.untilReady();
-    const startSpy = vi.spyOn(engine, "start");
+    const startSpy = vi.spyOn(engine, "resume");
     target.dispatchEvent(new Event("click"));
     target.dispatchEvent(new Event("keydown"));
     expect(startSpy).not.toHaveBeenCalled();
@@ -338,14 +343,14 @@ describe("AudioEngine.autoStart", () => {
 
     target.dispatchEvent(new Event("click"));
     await engine.untilReady();
-    expect(engine.state()).toBe("running");
+    expect(engine.state.value).toBe("running");
 
     await engine.suspend();
-    expect(engine.state()).toBe("suspended");
+    expect(engine.state.value).toBe("suspended");
 
     target.dispatchEvent(new Event("click"));
     await engine.untilReady();
-    expect(engine.state()).toBe("running");
+    expect(engine.state.value).toBe("running");
     engine.dispose();
   });
 
@@ -354,7 +359,7 @@ describe("AudioEngine.autoStart", () => {
     const target = new EventTarget();
     const detach = engine.autoStart(target);
     detach();
-    const startSpy = vi.spyOn(engine, "start");
+    const startSpy = vi.spyOn(engine, "resume");
     target.dispatchEvent(new Event("click"));
     target.dispatchEvent(new Event("keydown"));
     expect(startSpy).not.toHaveBeenCalled();
@@ -363,16 +368,16 @@ describe("AudioEngine.autoStart", () => {
   });
 
   test("respects custom events option", async () => {
-    const engine = new TestEngine();
+    const engine = new TestEngine(await suspendedContext());
     const target = new EventTarget();
     engine.autoStart(target, { events: ["pointerdown"] });
 
     target.dispatchEvent(new Event("click"));
-    expect(engine.state()).toBe("idle");
+    expect(engine.state.value).toBe("suspended");
 
     target.dispatchEvent(new Event("pointerdown"));
     await engine.untilReady();
-    expect(engine.state()).toBe("running");
+    expect(engine.state.value).toBe("running");
     engine.dispose();
   });
 
@@ -381,7 +386,7 @@ describe("AudioEngine.autoStart", () => {
     const target = new EventTarget();
     engine.autoStart(target);
     engine.dispose();
-    const startSpy = vi.spyOn(engine, "start");
+    const startSpy = vi.spyOn(engine, "resume");
     target.dispatchEvent(new Event("click"));
     expect(startSpy).not.toHaveBeenCalled();
     startSpy.mockRestore();
@@ -393,14 +398,14 @@ describe("AudioEngine.autoStart", () => {
     engine.autoStart(target);
     target.dispatchEvent(new Event("click"));
     await engine.untilReady();
-    expect(engine.state()).toBe("running");
+    expect(engine.state.value).toBe("running");
 
     await engine.context.suspend();
-    await vi.waitFor(() => expect(engine.state()).toBe("suspended"));
+    await vi.waitFor(() => expect(engine.state.value).toBe("suspended"));
     await engine.context.resume();
-    await vi.waitFor(() => expect(engine.state()).toBe("running"));
+    await vi.waitFor(() => expect(engine.state.value).toBe("running"));
 
-    const startSpy = vi.spyOn(engine, "start");
+    const startSpy = vi.spyOn(engine, "resume");
     target.dispatchEvent(new Event("click"));
     expect(startSpy).not.toHaveBeenCalled();
     startSpy.mockRestore();
@@ -429,12 +434,16 @@ describe("createEngine", () => {
     expect(disposeSpy).toHaveBeenCalled();
   });
 
-  test("setup runs eagerly — properties available immediately", () => {
-    const engine = createEngine((ctx) => ({
-      processor: new TestProcessor(ctx),
-    }));
+  test("setup runs eagerly — properties available immediately", async () => {
+    const context = await suspendedContext();
+    const engine = createEngine(
+      (ctx) => ({
+        processor: new TestProcessor(ctx),
+      }),
+      { context },
+    );
     expect(engine.processor).toBeInstanceOf(TestProcessor);
-    expect(engine.core.state()).toBe("idle");
+    expect(engine.core.state.value).toBe("suspended");
     engine.core.dispose();
   });
 
@@ -468,24 +477,27 @@ describe("createEngine", () => {
     engine.core.dispose();
   });
 
-  test("full lifecycle: start → suspend → resume → dispose", async () => {
-    const engine = createEngine((ctx) => ({
-      processor: new TestProcessor(ctx),
-    }));
+  test("full lifecycle: resume → suspend → resume → dispose", async () => {
+    const engine = createEngine(
+      (ctx) => ({
+        processor: new TestProcessor(ctx),
+      }),
+      { context: await suspendedContext() },
+    );
 
-    expect(engine.core.state()).toBe("idle");
-    await engine.core.start();
-    expect(engine.core.state()).toBe("running");
-    await engine.core.suspend();
-    expect(engine.core.state()).toBe("suspended");
+    expect(engine.core.state.value).toBe("suspended");
     await engine.core.resume();
-    expect(engine.core.state()).toBe("running");
+    expect(engine.core.state.value).toBe("running");
+    await engine.core.suspend();
+    expect(engine.core.state.value).toBe("suspended");
+    await engine.core.resume();
+    expect(engine.core.state.value).toBe("running");
     engine.core.dispose();
-    expect(engine.core.state()).toBe("disposed");
+    expect(engine.core.state.value).toBe("closed");
   });
 
   test("an external context close rejects pending untilReady() waiters", async () => {
-    const engine = new TestEngine();
+    const engine = new TestEngine(await suspendedContext());
     const pending = engine.untilReady();
     const rejected = expect(pending).rejects.toThrow(/disposed before it became ready/);
     Object.defineProperty(engine.context, "state", { value: "closed", configurable: true });
@@ -502,38 +514,27 @@ describe("createEngine", () => {
     return release;
   }
 
-  test("dispose() during an in-flight start() does not flip the state back", async () => {
-    const engine = new TestEngine();
-    Object.defineProperty(engine.context, "state", { value: "suspended", configurable: true });
-    const release = deferred(engine, "resume");
-    const starting = engine.start();
-    engine.dispose();
-    release();
-    await starting;
-    expect(engine.state()).toBe("disposed");
-  });
-
   test("dispose() during an in-flight resume() does not flip the state back", async () => {
     const engine = new TestEngine();
-    await engine.start();
+    await engine.resume();
     Object.defineProperty(engine.context, "state", { value: "suspended", configurable: true });
     const release = deferred(engine, "resume");
     const resuming = engine.resume();
     engine.dispose();
     release();
     await resuming;
-    expect(engine.state()).toBe("disposed");
+    expect(engine.state.value).toBe("closed");
   });
 
   test("dispose() during an in-flight suspend() does not flip the state back", async () => {
     const engine = new TestEngine();
-    await engine.start();
+    await engine.resume();
     Object.defineProperty(engine.context, "state", { value: "running", configurable: true });
     const release = deferred(engine, "suspend");
     const suspending = engine.suspend();
     engine.dispose();
     release();
     await suspending;
-    expect(engine.state()).toBe("disposed");
+    expect(engine.state.value).toBe("closed");
   });
 });

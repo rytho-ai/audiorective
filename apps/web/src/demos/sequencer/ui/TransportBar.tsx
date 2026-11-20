@@ -13,7 +13,7 @@ export function TransportBar() {
   // here first removes the ordering question: the transport never anchors itself
   // to a suspended context's frozen `currentTime`. Both paths are idempotent.
   async function togglePlay() {
-    await core.start();
+    await core.resume();
     if (playing) machine.pause();
     else machine.play();
   }

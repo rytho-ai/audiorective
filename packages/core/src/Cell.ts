@@ -1,5 +1,6 @@
 import { computed, endBatch, setActiveSub, signal, startBatch } from "alien-signals";
 import { produce, type Draft } from "immer";
+import { subscribeTo } from "./subscribe";
 import type { ComputedAccessor, SignalAccessor } from "./types";
 
 export class Cell<T> {
@@ -8,6 +9,10 @@ export class Cell<T> {
   constructor(initial: T) {
     this.$ = signal(initial);
   }
+
+  /** Calls `listener(value)` after each change (not on subscribe unless `immediate`); returns an unsubscribe function. Valid for useSyncExternalStore. */
+  readonly subscribe = (listener: (value: T) => void, options?: { immediate?: boolean }): (() => void) =>
+    subscribeTo(() => this.$(), listener, options);
 
   get value(): T {
     return this.$();
@@ -40,6 +45,10 @@ export class ReadonlyCell<T> {
     const derived = computed(read);
     this.$ = () => derived();
   }
+
+  /** Calls `listener(value)` after each change (not on subscribe unless `immediate`); returns an unsubscribe function. Valid for useSyncExternalStore. */
+  readonly subscribe = (listener: (value: T) => void, options?: { immediate?: boolean }): (() => void) =>
+    subscribeTo(() => this.$(), listener, options);
 
   get value(): T {
     return this.$();

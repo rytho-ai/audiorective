@@ -8,7 +8,7 @@ describe("fx-rack engine.setEngine", () => {
   });
 
   it("serializes overlapping calls instead of racing to dispose the same rack", async () => {
-    await engine.core.start();
+    await engine.core.resume();
     const disposeSpy = vi.spyOn(FxRack.prototype, "dispose");
     const before = engine.rack.value;
 
@@ -21,7 +21,7 @@ describe("fx-rack engine.setEngine", () => {
   });
 
   it("carries the loaded drum loop onto the replacement rack", async () => {
-    await engine.core.start();
+    await engine.core.resume();
     await engine.loopLoaded;
     const loop = engine.rack.value.deck.buffer;
     expect(loop).toBeInstanceOf(AudioBuffer);

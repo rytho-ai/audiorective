@@ -20,6 +20,9 @@ export class SchedulableParam extends Param<number> {
   // The plain signal, for ParamSync read-back: it must update the value without writing the AudioParam.
   private readonly _signal: SignalAccessor<number>;
 
+  /** Fires on every change, including while a scheduled ramp moves the value. */
+  declare readonly subscribe: Param<number>["subscribe"];
+
   /** Backing AudioParam, for graph param sinks. */
   get audioParam(): AudioParam {
     return this._audioParam;

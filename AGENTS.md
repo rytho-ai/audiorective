@@ -118,6 +118,10 @@ Audio nodes are constructed as **locals** before `super()` so the callback can c
 
 The `schedulableParam` helper (without `bind`) creates a `SchedulableParam` backed by a phantom ConstantSourceNode — useful when you want scheduling without a real AudioParam (e.g., BPM).
 
+### Subscribing
+
+`Cell`, `ReadonlyCell`, `Param` and `SchedulableParam` expose `subscribe(listener, { immediate? })`, which returns an unsubscribe function and works directly with `useSyncExternalStore`. Framework bindings build on it rather than hand-rolling their own subscription.
+
 ## Scheduling Model
 
 |           | `param({ bind: audioParam })` | `schedulableParam({})` (no bind)                  | `param({})` (no bind)  |
@@ -151,7 +155,8 @@ All processors extend `AudioProcessor<P, C>` with explicit registry generics:
 - Constructor passes a build callback to `super()` that returns `{ params, cells? }`
 - Exposes typed `processor.params` (frozen) and `processor.cells` (frozen) registries; `cells` entries are `Cell` or `ReadonlyCell`
 - Instance methods `computed()` and `effect()` for derived values declared after `super()`
-- `dispose()` cleans up effects, params, and ConstantSources
+- `connect(destination, output?, input?)` / `disconnect(destination?)` mirror `AudioNode`; the edges join the context's latency graph, so PDC sees them
+- `dispose()` cleans up effects, params, and ConstantSources; safe to call twice, and `[Symbol.dispose]()` calls it. Every class that owns resources names its teardown `dispose()`
 
 ## Package Dependencies
 

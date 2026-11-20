@@ -33,7 +33,7 @@ const engine = createEngine((context) => {
 engine.core.defineGraph(() => [[engine.tone, engine.core.context.destination]]);
 
 document.querySelector<HTMLButtonElement>("#play")!.onclick = async () => {
-  await engine.core.start();
+  await engine.core.resume();
   engine.tone.trigger();
 };
 ```

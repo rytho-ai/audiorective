@@ -37,23 +37,28 @@ describe("attach", () => {
     engine.dispose();
   });
 
-  test("starts the engine on a gesture on renderer.domElement", async () => {
-    const engine = new AudioEngine();
+  test("resumes the engine on a gesture on renderer.domElement", async () => {
+    const context = new AudioContext();
+    await context.suspend();
+    const engine = new AudioEngine(context);
     const renderer = makeRenderer();
     const detach = attach(engine, renderer);
     renderer.domElement.dispatchEvent(new Event("click"));
+    expect(engine.state.value).toBe("suspended");
     await engine.untilReady();
-    expect(engine.state()).toBe("running");
+    expect(engine.state.value).toBe("running");
     detach();
     engine.dispose();
   });
 
-  test("returned detach stops the auto-start listener", () => {
-    const engine = new AudioEngine();
+  test("returned detach stops the auto-start listener", async () => {
+    const context = new AudioContext();
+    await context.suspend();
+    const engine = new AudioEngine(context);
     const renderer = makeRenderer();
     const detach = attach(engine, renderer);
     detach();
-    const startSpy = vi.spyOn(engine, "start");
+    const startSpy = vi.spyOn(engine, "resume");
     renderer.domElement.dispatchEvent(new Event("click"));
     expect(startSpy).not.toHaveBeenCalled();
     startSpy.mockRestore();

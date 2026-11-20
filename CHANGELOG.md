@@ -23,9 +23,27 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Changed
 
+- **core / all packages:** **Breaking.** `destroy()` is renamed `dispose()` everywhere, and the engine lifecycle follows `AudioContext`. No aliases remain; migrate every call site in one pass.
+
+  | Old                                                                                                                  | New                                                                                                                                  |
+  | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+  | `x.destroy()` on every class and view in every package                                                               | `x.dispose()`; `AudioProcessor`, `AudioEngine`, `Param` and `SchedulableParam` also have `[Symbol.dispose]()`; safe to call twice    |
+  | `override destroy()` in a processor subclass                                                                         | `override dispose()` (call `super.dispose()`)                                                                                        |
+  | `engine.start()`                                                                                                     | `engine.resume()` (resolves at once when already running)                                                                            |
+  | `engine.state()` (callable view), type `EngineStateView`                                                             | `engine.state.value` (a `ReadonlyCell<AudioContextState>`; also `.$()` and `.subscribe`)                                             |
+  | `type EngineState = "idle" \| "running" \| "suspended" \| "destroyed"`                                               | `AudioContextState` (`"suspended" \| "running" \| "closed"`); `"idle"` is now `"suspended"` and `"destroyed"` is `"closed"`          |
+  | `suspend()` / `resume()` after `destroy()` warned and did nothing; `start()` threw `Cannot start a destroyed engine` | `suspend()` / `resume()` reject with `new DOMException("AudioEngine is disposed.", "InvalidStateError")`                             |
+  | `"destroyed"` states and `... is destroyed.` messages                                                                | `"disposed"` and `... is disposed.` (`MidiRecorder`, `AudioRecorder`, `WavePlayer`, `Clock`, `MidiSequence`, `PadBank` and the rest) |
+
+  The engine state starts as the context's own state and follows every `statechange`, so a context the browser lets run without a gesture reads `"running"` without any call. Dispose a borrowed context's engine and `state` still reads `"closed"`; the engine does not close a context it did not create.
+
 - **widgets:** `mountStepGrid` keeps the on colour visible at any value: an active cell draws a cap (`--ar-step-cap-height`, default 4px) in `--ar-step-cell-on-background` above the value band, and the band is inset from the cell sides (`--ar-step-fill-inset`, default 3px). The lane header is 340px by default and the widget adapts to its own width: at 900px or narrower (a container query on the widget root) the header is 300px with compact controls and cells shrink to 14px, so a 768px container fits 16 steps without scrolling and names such as "Tom even" are not truncated.
 
 ### Added
+
+- **core:** `AudioProcessor.connect(destination, output?, input?)` and `disconnect(destination?)` mirror `AudioNode.connect`. The destination is an `AudioNode`, `AudioParam`, `SchedulableParam` or another `AudioProcessor` (its `input`), `connect` returns it so calls chain, and `disconnect()` removes every connection the processor made. The edges join a latency graph per `AudioContext`, so delay compensation, `AudioEngine.getPathLatency` and `AudioEngine.latency` see them; a bare `AudioWorkletNode` destination is connected directly and stays outside the solve. `defineGraph` remains for reactive edge lists, and joins are compensated within one mechanism only. New errors: `AudioProcessor.connect: X has no output`, `AudioProcessor.connect: X has no input`, `X is disposed.`
+- **core:** `subscribe(listener, { immediate? })` on `Cell`, `ReadonlyCell`, `Param`, `SchedulableParam` and `Readable` returns an unsubscribe function, is a bound method valid for `useSyncExternalStore`, and fires on a `SchedulableParam` while a scheduled ramp moves the value. `useValue` in `@audiorective/react` is built on it.
+- **core:** `new AudioEngine(context?, { signal })` and `createEngine(setup, { context?, signal? })` dispose the engine when the signal aborts. New export `AudioEngineOptions`. `AudioEngine` has `[Symbol.dispose]()`.
 
 - **clock:** `SchedulerHandle.cancelFrom(time)` retracts the calling scheduler's own events (registered through `window.own`) that start at or after `time`, synchronously, and touches nothing else: not other schedulers' events, `onTick` events, its earlier events or the refill point. The scheduler refills the span through its most recent window's `own`. `refresh()` is unchanged; do not replay by hand after `cancelFrom` then `refresh()`.
 

@@ -37,7 +37,7 @@ Subscribe to a reactive source. Accepts either:
 - A `Readable<T>` — `Param`, `SchedulableParam`, or `Cell`
 - A `ComputedAccessor<T>` — a callable `() => T` produced by `alien-signals` `computed` or `this.computed(...)` inside an `AudioProcessor`
 
-Re-renders when the value changes. Always returns a read-only snapshot — to mutate, write to the source directly (`param.value = x`, `cell.update(...)`). Computeds have no setter on the source, so they are read-only by construction.
+Re-renders when the value changes. It is built on the source's `subscribe` through `useSyncExternalStore`, so any object with `subscribe(listener)` and `value` also works with `useSyncExternalStore(source.subscribe, () => source.value)` directly. Always returns a read-only snapshot — to mutate, write to the source directly (`param.value = x`, `cell.update(...)`). Computeds have no setter on the source, so they are read-only by construction.
 
 ```typescript
 // Param
@@ -113,7 +113,7 @@ Creates a typed `EngineProvider` and `useEngine` hook for an engine created by `
 
 `EngineProvider` always renders children immediately. Safe because `createEngine` wires up all processors eagerly at construction time. Components use `useValue(engine.core.state)` to know whether audio is running and show UI accordingly.
 
-The `autoStart` prop (default `true`) delegates to [`engine.core.autoStart(document)`](./core.md) — a one-shot gesture listener (`click`/`keydown`/`touchstart`) that calls `engine.core.start()` on the first user interaction. Re-arms automatically if the engine state drops from running (e.g. mobile background suspend).
+The `autoStart` prop (default `true`) delegates to [`engine.core.autoStart(document)`](./core.md) — a one-shot gesture listener (`click`/`keydown`/`touchstart`) that calls `engine.core.resume()` on the first user interaction. Re-arms automatically if the engine state drops from running (e.g. mobile background suspend).
 
 ```typescript
 // audio/engine.ts
@@ -168,16 +168,16 @@ Note that `createEngine`'s setup callback still receives `ctx` and you still pas
 
 ### Starting the transport on the same click
 
-`autoStart` and an explicit `core.start()` are both idempotent, so a transport button can safely do both:
+`autoStart` and an explicit `core.resume()` are both idempotent, so a transport button can safely do both:
 
 ```tsx
 async function togglePlay() {
-  await core.start(); // resolves immediately once running
+  await core.resume(); // resolves immediately once running
   playing ? machine.pause() : machine.play();
 }
 ```
 
-Doing it explicitly removes an ordering question. React attaches its handlers to the root container while `autoStart` listens on `document`, so the button's `onClick` runs _first_ — and a transport started against a still-suspended context anchors itself to a frozen `currentTime`. Awaiting `core.start()` makes the ordering irrelevant.
+Doing it explicitly removes an ordering question. React attaches its handlers to the root container while `autoStart` listens on `document`, so the button's `onClick` runs _first_ — and a transport started against a still-suspended context anchors itself to a frozen `currentTime`. Awaiting `core.resume()` makes the ordering irrelevant.
 
 ### If you genuinely must own one in a component
 

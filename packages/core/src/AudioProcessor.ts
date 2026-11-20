@@ -5,6 +5,7 @@ import { SchedulableParam } from "./SchedulableParam";
 import { Cell, type ReadonlyCell } from "./Cell";
 import { defineGraph as defineGraphFn } from "./graph";
 import type { EdgeList, GraphHandle, ValidateEdges } from "./graph";
+import { addConnection, removeConnections } from "./connections";
 
 // Registry constraints use `any` rather than `unknown` because Param<T>/Cell<T> have
 // T in both reader and writer position, making them invariant in T. Subclasses still
@@ -43,6 +44,9 @@ export abstract class AudioProcessor<P extends ParamRegistry = ParamRegistry, C 
   private _constantSources = new Set<ConstantSourceNode>();
   private _effects: (() => void)[] = [];
   private _graphs: GraphHandle[] = [];
+  // Direct wires to a bare AudioWorkletNode: it has unknowable latency, so it cannot join the latency graph.
+  private _nativeWires: { to: AudioNode; output: number; input: number }[] = [];
+  private _disposed = false;
 
   protected constructor(context: BaseAudioContext, build: (helpers: BuildHelpers) => BuildResult<P, C>) {
     this.context = context;
@@ -126,7 +130,50 @@ export abstract class AudioProcessor<P extends ParamRegistry = ParamRegistry, C 
     return handle;
   }
 
+  /** Connects this processor's output to `destination` like AudioNode.connect and returns `destination`; a processor destination receives its `input`. The edge joins the latency graph, so delay compensation sees it. */
+  connect<T extends AudioNode | AudioProcessor | AudioParam | SchedulableParam>(destination: T, output = 0, input = 0): T {
+    const name = this.constructor.name;
+    if (this._disposed) throw new Error(`${name} is disposed.`);
+    const from = this.output;
+    if (!from) throw new Error(`AudioProcessor.connect: ${name} has no output`);
+    if (destination instanceof AudioProcessor && !destination.input) {
+      throw new Error(`AudioProcessor.connect: ${destination.constructor.name} has no input`);
+    }
+    if (typeof AudioWorkletNode !== "undefined" && destination instanceof AudioWorkletNode) {
+      if (!this._nativeWires.some((w) => w.to === destination && w.output === output && w.input === input)) {
+        from.connect(destination, output, input);
+        this._nativeWires.push({ to: destination, output, input });
+      }
+      return destination;
+    }
+    addConnection(this.context, this, destination, output, input);
+    return destination;
+  }
+
+  /** Removes the connection made by connect(destination), or all of this processor's connections when omitted. */
+  disconnect(destination?: AudioNode | AudioProcessor | AudioParam | SchedulableParam): void {
+    removeConnections(this.context, (from, to) => from === this && (destination === undefined || to === destination));
+    const out = this.output;
+    const kept: typeof this._nativeWires = [];
+    for (const wire of this._nativeWires) {
+      if (destination === undefined || wire.to === destination) {
+        try {
+          out?.disconnect(wire.to, wire.output, wire.input);
+        } catch {
+          /* already gone */
+        }
+      } else kept.push(wire);
+    }
+    this._nativeWires = kept;
+  }
+
+  /** Stops, disconnects and releases everything this processor owns. Safe to call twice. */
   dispose(): void {
+    if (this._disposed) return;
+    this._disposed = true;
+    this.disconnect();
+    removeConnections(this.context, (_from, to) => to === this);
+
     for (const graph of this._graphs) {
       graph.dispose();
     }
@@ -157,5 +204,9 @@ export abstract class AudioProcessor<P extends ParamRegistry = ParamRegistry, C 
     }
     this._constantSources = new Set();
     this._silencer.disconnect();
+  }
+
+  [Symbol.dispose](): void {
+    this.dispose();
   }
 }

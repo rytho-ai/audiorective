@@ -11,7 +11,7 @@ describe("PA engine assembly", () => {
   test("builds five channels + sampler, a mixer, and shared state", async () => {
     const engine = createPaEngine();
     teardown = () => engine.core.dispose();
-    await engine.core.start();
+    await engine.core.resume();
 
     expect(engine.channels).toHaveLength(5);
     expect(engine.mixer.channels).toBe(engine.channels);
@@ -23,7 +23,7 @@ describe("PA engine assembly", () => {
   test("the FX sampler feeds a real channel (shares Vox's chain), not its own", async () => {
     const engine = createPaEngine();
     teardown = () => engine.core.dispose();
-    await engine.core.start();
+    await engine.core.resume();
 
     // FX is not a channel; the sampler exists and triggers are no-ops without buffers (no throw).
     expect(engine.channels.some((c) => c.id === "fx")).toBe(false);
@@ -33,7 +33,7 @@ describe("PA engine assembly", () => {
   test("start() and stop() run without throwing", async () => {
     const engine = createPaEngine();
     teardown = () => engine.core.dispose();
-    await engine.core.start();
+    await engine.core.resume();
 
     expect(() => {
       engine.start();
@@ -44,7 +44,7 @@ describe("PA engine assembly", () => {
   test("headphone toggle is reachable via the mixer", async () => {
     const engine = createPaEngine();
     teardown = () => engine.core.dispose();
-    await engine.core.start();
+    await engine.core.resume();
 
     engine.mixer.params.headphone.value = true;
     // Poll: the headphone bus ramps to -9.5 dB (~0.33); the audio clock can run slow under load.

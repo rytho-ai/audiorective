@@ -32,6 +32,6 @@ export interface Readable<T> {
   // NoInfer: T comes from `value`. A writable `$` is overloaded, and inferring from it would pick its setter signature.
   readonly $: ComputedAccessor<NoInfer<T>>;
   readonly value: T;
+  /** Calls `listener(value)` after each change (not on subscribe unless `immediate`); returns an unsubscribe function. Valid for useSyncExternalStore. */
+  subscribe(listener: (value: T) => void, options?: { immediate?: boolean }): () => void;
 }
-
-export type EngineState = "idle" | "running" | "suspended" | "disposed";

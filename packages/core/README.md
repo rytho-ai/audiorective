@@ -242,7 +242,7 @@ const engine = createEngine((ctx) => {
 });
 
 engine.synth; // fully typed
-await engine.start();
+await engine.resume();
 engine.state.value; // "running"
 await engine.suspend();
 engine.dispose(); // terminal — processors cleaned up, context closed

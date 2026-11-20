@@ -72,7 +72,7 @@ export const { EngineProvider, useEngine } = createEngineContext(engine);
 
 Always renders children immediately. Safe because `createEngine` wires all processors eagerly at construction time.
 
-`autoStart` (default `true`) registers a one-time gesture listener (`click`/`keydown`/`touchstart`) that calls `engine.core.start()` on first interaction. Re-arms if the engine state drops from running (e.g. mobile background suspend).
+`autoStart` (default `true`) registers a one-time gesture listener (`click`/`keydown`/`touchstart`) that calls `engine.core.resume()` on first interaction. Re-arms if the engine state drops from running (e.g. mobile background suspend).
 
 ```tsx
 <EngineProvider>

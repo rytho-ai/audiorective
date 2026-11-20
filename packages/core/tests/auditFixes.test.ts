@@ -97,14 +97,14 @@ describe("AudioProcessor.dispose", () => {
 describe("AudioEngine", () => {
   test("state and latency have no writer", () => {
     const engine = new AudioEngine(ctx);
-    expect(engine.state()).toBe("idle");
-    expect(engine.state.value).toBe("idle");
-    expect(engine.state.$()).toBe("idle");
+    const initial = engine.state.value;
+    expect(["suspended", "running"]).toContain(initial);
+    expect(engine.state.$()).toBe(initial);
     expect(() => {
       (engine.state as unknown as { value: string }).value = "running";
     }).toThrow();
-    (engine.state.$ as unknown as (v: string) => void)("running");
-    expect(engine.state()).toBe("idle");
+    (engine.state.$ as unknown as (v: string) => void)("closed");
+    expect(engine.state.value).toBe(initial);
     expect(() => {
       (engine.latency as unknown as { value: number }).value = 5;
     }).toThrow();
@@ -112,17 +112,16 @@ describe("AudioEngine", () => {
     engine.dispose();
   });
 
-  test("start/suspend/resume/untilReady do not subscribe a calling effect", async () => {
+  test("suspend/resume/untilReady do not subscribe a calling effect", async () => {
     const engine = new AudioEngine(ctx);
     let runs = 0;
     const stop = effect(() => {
       runs++;
       void engine.untilReady().catch(() => {});
-      void engine.start();
       void engine.suspend();
       void engine.resume();
     });
-    await engine.start();
+    await engine.resume();
     await engine.suspend();
     await engine.resume();
     expect(runs).toBe(1);
@@ -132,7 +131,7 @@ describe("AudioEngine", () => {
 
   test("dispose rejects a pending untilReady and tears its wait down", async () => {
     const engine = new AudioEngine(ctx);
-    await engine.suspend(); // idle stays idle
+    await engine.suspend(); // not running: stays suspended
     const pending = engine.untilReady();
     engine.dispose();
     await expect(pending).rejects.toThrow(/disposed/);

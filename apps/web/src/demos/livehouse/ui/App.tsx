@@ -1,12 +1,11 @@
 import type { CSSProperties } from "react";
 import { useValue } from "@audiorective/react";
-import type { EngineState } from "@audiorective/core";
 import { EngineProvider, engine } from "../audio/engine";
 import { SceneHost } from "./SceneHost";
 import { Hud } from "./Hud";
 
 function Hint() {
-  const state = useValue<EngineState>(engine.core.state);
+  const state = useValue<AudioContextState>(engine.core.state);
   const text = state !== "running" ? "Click to enter the livehouse (enables audio)" : "Click scene to walk (WASD + mouse) · Esc to mix";
   return <div style={hintStyle}>{text}</div>;
 }

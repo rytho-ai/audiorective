@@ -141,7 +141,10 @@ class Param<T> implements Readable<T> {
   readonly $: SignalAccessor<T>;
   get value(): T;
   set value(v: T);
-  dispose(): void; // stops bind effect (no-op if no bind)
+  /** Calls `listener(value)` after each change (not on subscribe unless `immediate`); returns an unsubscribe function. Valid for useSyncExternalStore. */
+  subscribe(listener: (value: T) => void, options?: { immediate?: boolean }): () => void;
+  dispose(): void; // stops bind effect (no-op if no bind); safe to call twice
+  [Symbol.dispose](): void;
 }
 ```
 
@@ -163,6 +166,8 @@ Numeric parameter with Web Audio scheduling methods. All scheduling methods retu
 
 ```typescript
 class SchedulableParam extends Param<number> {
+  /** Fires on every change, including while a scheduled ramp moves the value. */
+  subscribe(listener: (value: number) => void, options?: { immediate?: boolean }): () => void;
   read(): number; // read directly from AudioParam (realtime)
   syncFromAudio(): void; // pull AudioParam value into signal
   rebind(audioParam: AudioParam, opts?: { reassert?: boolean }): void; // re-point at a new AudioParam
@@ -214,8 +219,22 @@ Shared interface for anything that can be read and tracked: `Param<T>`, `Cell<T>
 interface Readable<T> {
   readonly $: () => T;
   readonly value: T;
+  /** Calls `listener(value)` after each change (not on subscribe unless `immediate`); returns an unsubscribe function. Valid for useSyncExternalStore. */
+  subscribe(listener: (value: T) => void, options?: { immediate?: boolean }): () => void;
 }
 ```
+
+### `subscribe(listener, options?)`
+
+`Cell`, `ReadonlyCell`, `Param` and `SchedulableParam` share one subscription method: `subscribe(listener, { immediate? })` calls `listener(value)` after each change and returns a function that unsubscribes. With `immediate: true` it also calls the listener once with the current value at subscribe time. Several writes in one `batch` call it once with the final value, and a write that leaves the value unchanged does not call it.
+
+```typescript
+const stop = synth.params.volume.subscribe((v) => label.set(v.toFixed(2)), { immediate: true });
+// ...later
+stop();
+```
+
+`subscribe` is a bound method, so it can be passed on directly, for example as the first argument of React's `useSyncExternalStore(cell.subscribe, () => cell.value)`. The listener runs outside tracking: what it reads does not subscribe it to anything, and a subscription made inside an `effect` is not torn down when that effect re-runs. On a `SchedulableParam` it fires on every change, including while a scheduled ramp moves the value (the `ParamSync` read-back updates the signal at its sync interval, 100 ms by default), so a UI bound with `subscribe` follows an automation without polling. The audio thread only advances a param whose node is part of a running graph, so a ramp on a node that nothing pulls does not move the value.
 
 ### Cell\<T\>
 
@@ -226,6 +245,8 @@ class Cell<T> implements Readable<T> {
   readonly $: SignalAccessor<T>;
   get value(): T;
   set value(v: T);
+  /** Calls `listener(value)` after each change (not on subscribe unless `immediate`); returns an unsubscribe function. Valid for useSyncExternalStore. */
+  subscribe(listener: (value: T) => void, options?: { immediate?: boolean }): () => void;
   update(recipe: (draft: Draft<T>) => void): void;
 }
 
@@ -275,6 +296,8 @@ A tracked view that cannot be written: `.value` has no setter, `$` takes no argu
 class ReadonlyCell<T> implements Readable<T> {
   readonly $: () => T;
   get value(): T;
+  /** Calls `listener(value)` after each change (not on subscribe unless `immediate`); returns an unsubscribe function. Valid for useSyncExternalStore. */
+  subscribe(listener: (value: T) => void, options?: { immediate?: boolean }): () => void;
 }
 
 function readonlyCell<T>(source: Cell<T> | (() => T)): ReadonlyCell<T>;
@@ -344,11 +367,18 @@ abstract class AudioProcessor<
   abstract get output(): AudioNode | undefined;
   get input(): AudioNode | undefined; // default: undefined
 
+  /** Connects this processor's output to `destination` like AudioNode.connect and returns `destination`; a processor destination receives its `input`. The edge joins the latency graph, so delay compensation sees it. */
+  connect<T extends AudioNode | AudioProcessor | AudioParam | SchedulableParam>(destination: T, output?: number, input?: number): T;
+  /** Removes the connection made by connect(destination), or all of this processor's connections when omitted. */
+  disconnect(destination?: AudioNode | AudioProcessor | AudioParam | SchedulableParam): void;
+
   protected computed<T>(fn: () => T): ComputedAccessor<T>;
   protected effect(fn: () => void): () => void;
   protected defineGraph(fn: () => EdgeList, opts?: { compensate?: boolean }): GraphHandle;
 
+  /** Stops, disconnects and releases everything this processor owns. Safe to call twice. */
   dispose(): void;
+  [Symbol.dispose](): void; // calls dispose(), so `using processor = new Synth(ctx)` works
 }
 
 interface BuildHelpers {
@@ -361,7 +391,11 @@ interface BuildHelpers {
 }
 ```
 
-**`dispose()`** stops all effects, calls `dispose()` on every param in the registry (cleaning up bind effects and `ParamSync` registrations), and stops and disconnects any internally-created `ConstantSourceNode`s and the internal silencer gain that keeps them alive. Cells are not disposed automatically — they're plain reactive containers with no audio-graph resources.
+**`connect(destination, output?, input?)`** mirrors `AudioNode.connect`: it wires the processor's `output` to an `AudioNode`, an `AudioParam`, a `SchedulableParam` (its backing `AudioParam`) or another `AudioProcessor` (its `input`), and returns `destination`, so calls chain: `osc.connect(filter).connect(ctx.destination)`. `output` and `input` pick channel indices. Connecting the same edge twice is one connection. `disconnect(destination)` removes that destination's edges and `disconnect()` removes every connection the processor made through `connect`. Edges that nodes make among themselves (`node.connect(processor.input)`) are plain Web Audio and untouched. See [Latency (PDC)](#latency-pdc) for how a `connect` edge takes part in compensation.
+
+**`dispose()`** disconnects everything the processor connected with `connect()` and every edge that fed it, stops all effects, calls `dispose()` on every param in the registry (cleaning up bind effects and `ParamSync` registrations), and stops and disconnects any internally-created `ConstantSourceNode`s and the internal silencer gain that keeps them alive. Cells are not disposed automatically — they're plain reactive containers with no audio-graph resources. A second call does nothing, and `[Symbol.dispose]()` calls `dispose()` (including a subclass override), so a `using` declaration disposes at scope exit.
+
+**`Symbol.dispose` in TypeScript.** The `[Symbol.dispose]` member needs the `esnext.disposable` lib (included in `"lib": ["esnext"]`) or `@types/node` 20+ in the consuming project; add `"esnext.disposable"` to `compilerOptions.lib` when the editor reports `Property 'dispose' does not exist on type 'SymbolConstructor'`. At runtime it needs a JavaScript engine that defines `Symbol.dispose` (Node 20+, current Chromium and Firefox); `dispose()` itself works everywhere.
 
 **Effects vs instruments — the `.input` convention.** A processor that **transforms** incoming audio (EQ, compressor, reverb, distortion) declares both `input` and `output`. A processor that **produces** audio from scratch (synth, sampler, oscillator) declares only `output`; `input` returns `undefined` from the base class. There are no `EffectProcessor`/`InstrumentProcessor` subclasses — the convention is purely about which getters a processor exposes. Downstream code that needs to insert a processor as an effect (e.g. `bindEffect` in `@audiorective/playcanvas`) checks `processor.input !== undefined`. Spatial's `input` getter is the prototype: it returns the entry `GainNode` that connects into the underlying `PannerNode`.
 
@@ -447,7 +481,9 @@ A `latency` created with the `param()` helper but not also placed in the returne
 
 When a processor calls `this.defineGraph(...)` and declares no `latency`, it's **derived**: the longest path in samples from `input` to `output` through its own graph. A processor that declares a value and also has a `defineGraph` uses the declared value (a worklet-backed processor may still use `defineGraph` for its surrounding wiring).
 
-Compensation runs on every re-solve of a `defineGraph`: at any join with two or more incoming edges, the branches that arrive early get a helper-owned `DelayNode` so every branch lands in step with the latest one. Only edges declared through `defineGraph` are tracked and compensated — a raw `.connect()` is invisible to it.
+Compensation runs on every re-solve of a `defineGraph`: at any join with two or more incoming edges, the branches that arrive early get a helper-owned `DelayNode` so every branch lands in step with the latest one. Edges declared through `defineGraph` and edges made with `processor.connect(...)` are tracked and compensated; a raw `node.connect(...)` between native nodes is invisible to it.
+
+**How `connect` edges are solved.** Every `processor.connect(...)` edge on one `AudioContext` joins a single shared graph, solved like any `defineGraph` graph (compensating delays at unequal joins, `getPathLatency` and `AudioEngine.latency` answering for it). The engine on that context reads its destination arrival together with its own `defineGraph` graphs, so `engine.latency` is the longest path across all of them. Each graph is solved on its own: a join between a `connect` edge and a `defineGraph` edge is not compensated across the two, so put both branches of a join in the same mechanism. Do not wire the same pair through both `connect` and `defineGraph`: the two share one physical connection, and removing it from one removes it for both. A bare `AudioWorkletNode` destination is connected directly and stays outside the solve, because its latency is unknowable; wrap it in a processor that declares `latency` to include it. `defineGraph` remains the form for edge lists that change reactively; `connect` is for fixed wiring.
 
 **Engine queries** (on `AudioEngine`, so `engine.core.latency` for a `createEngine` consumer):
 
@@ -467,7 +503,7 @@ See the [Step Sequencer demo](../apps/web/src/demos/sequencer)'s latency lab for
 class LatencyUnknownError extends Error {}
 ```
 
-Thrown by `engine.getPathLatency(proc)` when `proc` isn't part of the current solve of any `defineGraph` (its own or the engine's) — never wired in, dropped from the edge list, its graph disposed, or wired only to an `AudioParam` — naming the processor. This is a loud failure rather than a silent `0`.
+Thrown by `engine.getPathLatency(proc)` when `proc` isn't part of the current solve of any `defineGraph` (its own or the engine's) or of the `connect` graph — never wired in, dropped from the edge list, its graph disposed, or wired only to an `AudioParam` — naming the processor. This is a loud failure rather than a silent `0`.
 
 ### Spatial
 
@@ -1057,43 +1093,43 @@ vol.dispose(); // cleanup when done
 Because the context is created eagerly, construction requires a browser. In an environment with no `AudioContext` constructor the engine throws [`EngineEnvironmentError`](#engineenvironmenterror) instead of building a half-formed graph.
 
 ```
-createEngine() / new Engine()  →  context created (suspended)               →  'idle'
-.core.start()                  →  context.resume() (needs user gesture)      →  'running'
+createEngine() / new Engine()  →  context created                           →  state mirrors context ("suspended" until the browser allows audio)
+.core.resume()                 →  context.resume() (needs user gesture)      →  'running'
 .core.suspend()                →  context.suspend()                          →  'suspended'
-.core.resume()                 →  context.resume()                           →  'running'
-.core.dispose()                →  processors disposed, context closed*      →  'disposed' (terminal)
+.core.dispose()                →  processors disposed, context closed*      →  'closed' (terminal)
 ```
 
-\* **Context ownership.** An engine that creates its own `AudioContext` closes it on `dispose()`. A context passed in (`new AudioEngine(ctx)`, `createEngine(setup, { context })`) is borrowed and is never closed by the engine; the caller closes it. The engine listens with `addEventListener("statechange")` rather than assigning `onstatechange`, so a borrowed context keeps its own handler, and `dispose()` removes the engine's listener.
+\* **Context ownership.** An engine that creates its own `AudioContext` closes it on `dispose()`. A context passed in (`new AudioEngine(ctx)`, `createEngine(setup, { context })`) is borrowed and is never closed by the engine; the caller closes it, though `engine.state` still reads `"closed"` after `dispose()`. The engine listens with `addEventListener("statechange")` rather than assigning `onstatechange`, so a borrowed context keeps its own handler, and `dispose()` removes the engine's listener.
 
-`engine.state` and `engine.latency` are read-only: `state` is a callable view (`engine.state()`, `.value`, `$()`) and `latency` is a `ReadonlyCell<number>`. Only the engine writes them. `start()`, `suspend()`, `resume()` and `untilReady()` read the state untracked, so calling them inside an effect does not subscribe it. `dispose()` and an external close of the context (state `"disposed"`) reject any pending `untilReady()` with an error, and a call made once the engine is disposed rejects at once. A `start()`, `resume()` or `suspend()` still awaiting the context when it closes leaves the state `"disposed"`.
+`engine.state` mirrors `AudioContext.state` as a `ReadonlyCell<AudioContextState>` (`"suspended" | "running" | "closed"`): read `engine.state.value`, track it in an effect, or `subscribe` to it. `engine.latency` is a `ReadonlyCell<number>`. Only the engine writes them. `suspend()`, `resume()` and `untilReady()` read the state untracked, so calling them inside an effect does not subscribe it. `dispose()` and an external close of the context (state `"closed"`) reject any pending `untilReady()` with an error. `resume()` resolves at once when the context is already running.
 
-Calling `.core.start()` on a disposed engine throws. Calling `.core.suspend()`/`.core.resume()` on a disposed engine warns and no-ops.
+After `dispose()`, `resume()` and `suspend()` reject with `new DOMException("AudioEngine is disposed.", "InvalidStateError")`. A `resume()` or `suspend()` still awaiting the context when it closes leaves the state `"closed"`.
 
-The engine mirrors every `statechange` its context reports, not just the transition its own methods cause: a raw `context.resume()`/`context.suspend()` called on the underlying `AudioContext`, Safari's non-standard `interrupted` state (a phone call, Siri, another app taking the audio session), and `closed`. `interrupted` reads as `"suspended"`; `closed` reads as `"disposed"`. `start()` and `resume()` check the real `context.state` rather than the mirror, so either one reliably means "make sure the context is running now" even if the mirror was stale.
+The engine mirrors every `statechange` its context reports, not just the transition its own methods cause: a raw `context.resume()`/`context.suspend()` called on the underlying `AudioContext`, Safari's non-standard `interrupted` state (a phone call, Siri, another app taking the audio session), and `closed`. `interrupted` reads as `"suspended"`. `resume()` checks the real `context.state` rather than the mirror, so it reliably means "make sure the context is running now" even if the mirror was stale. A context that the browser lets run without a gesture starts `"running"` after its first `statechange`.
 
-### EngineState
-
-```typescript
-type EngineState = "idle" | "running" | "suspended" | "disposed";
-```
+**Cancelling with a signal.** The constructor and `createEngine` take `{ signal }`; aborting it calls `dispose()`, and an already aborted signal disposes the engine at construction. `engine[Symbol.dispose]()` calls `dispose()` too.
 
 ### AudioEngine
 
 ```typescript
 class AudioEngine {
-  constructor(existingContext?: AudioContext);
+  /** Without a context it creates one and closes it on dispose(). Aborting `options.signal` calls dispose(). */
+  constructor(existingContext?: AudioContext, options?: { signal?: AbortSignal });
 
   get context(): AudioContext;
-  get state(): EngineStateView; // read-only: state(), state.value, state.$()
+  /** Mirrors AudioContext.state: "suspended" until resume() runs, then "running"; "closed" after dispose(). */
+  readonly state: ReadonlyCell<AudioContextState>;
   readonly latency: ReadonlyCell<number>; // samples — see Latency (PDC)
   get perceivedTime(): number;
   untilReady(): Promise<void>; // resolves when state becomes 'running'; rejects if the engine is disposed first
 
-  start(): Promise<void>; // context.resume(), requires user gesture
+  /** Suspends the context. Rejects with InvalidStateError after dispose(). */
   suspend(): Promise<void>;
+  /** Resumes the context; call it from a user gesture. Resolves at once when already running; rejects with InvalidStateError after dispose(). */
   resume(): Promise<void>;
-  dispose(): void; // terminal — cannot restart
+  /** Disposes registered processors and graphs, and closes a context the engine created. Safe to call twice. */
+  dispose(): void;
+  [Symbol.dispose](): void;
 
   register<T extends AudioProcessor>(processor: T): T;
   defineGraph(fn: () => EdgeList, opts?: Omit<GraphOptions, "context">): GraphHandle; // root graph, sink = ctx.destination
@@ -1108,7 +1144,7 @@ class AudioEngine {
 
 ### `autoStart(target, options?)`
 
-Arms one-shot gesture listeners on `target` that call `start()` on the first user interaction. Re-arms automatically if the engine state later drops from `running` (e.g. mobile background suspend). Disarms permanently when the engine is disposed. Returns a detach function that stops the effect and removes any armed listeners.
+Arms one-shot gesture listeners on `target` that call `resume()` on the first user interaction. Re-arms automatically if the engine state later drops from `running` (e.g. mobile background suspend). Disarms permanently when the engine is disposed. Returns a detach function that stops the effect and removes any armed listeners.
 
 This is the engine-side primitive used by `@audiorective/react`'s `EngineProvider` and `@audiorective/threejs`'s `attach()`. Use it directly in frameworks without a wrapper.
 
@@ -1153,16 +1189,16 @@ function App() {
 
 ### First gesture resumes, then schedule
 
-A suspended context's `currentTime` is frozen, so anything scheduled "now" before the context runs lands at a stale time. When the gesture that starts audio is also the one that issues a command (a launch, a play button), await `start()` first, then run the command:
+A suspended context's `currentTime` is frozen, so anything scheduled "now" before the context runs lands at a stale time. When the gesture that starts audio is also the one that issues a command (a launch, a play button), await `resume()` first, then run the command:
 
 ```typescript
 async function onPlay() {
-  await engine.core.start(); // resumes inside the click; a no-op when already running
+  await engine.core.resume(); // resumes inside the click; resolves at once when already running
   clock.start(); // now context.currentTime is live
 }
 ```
 
-`start()` is safe to call on every command; it resolves immediately while the context is running.
+`resume()` is safe to call on every command; it resolves immediately while the context is running.
 
 ### `EngineEnvironmentError`
 
@@ -1184,7 +1220,7 @@ Vue setup-style factory that replaces subclassing for the common case. User-defi
 ```typescript
 function createEngine<T extends Record<string, unknown>>(
   setup: (context: AudioContext, helpers: EngineSetupHelpers) => T,
-  options?: { context?: AudioContext },
+  options?: { context?: AudioContext; signal?: AbortSignal }, // aborting the signal disposes the engine
 ): T & { core: AudioEngine };
 
 interface EngineSetupHelpers {
@@ -1226,8 +1262,8 @@ const engine = createEngine((ctx, { defineGraph }) => {
 
 engine.synth; // Synth — fully typed, no ! assertion
 engine.sequencer; // Sequencer
-engine.core.start(); // resume AudioContext
-engine.core.state(); // EngineState
+engine.core.resume(); // resume AudioContext
+engine.core.state.value; // AudioContextState
 engine.core.latency.value; // samples — longest path into ctx.destination
 engine.core.perceivedTime; // ctx.currentTime minus latency and output latency — what the listener hears now
 engine.core.getPathLatency(synth); // samples from synth.output to ctx.destination
@@ -1354,13 +1390,12 @@ export { DEFAULT_SYNC_INTERVAL_MS };
 
 // Types
 export type {
-  EngineStateView,
+  AudioEngineOptions,
   ValueRange,
   ParamRange,
   ParamSpec,
   ParamBind,
   ParamOptions,
-  EngineState,
   Readable,
   SignalAccessor,
   ComputedAccessor,
@@ -1400,20 +1435,24 @@ export type {
 
 ## Common errors
 
-| Message                                                                                          | Cause                                                                                                                                            | Fix                                                                                                    |
-| ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| `AudioEngine disposed before it became ready`                                                    | `untilReady()` was called on, or was pending when, a disposed engine.                                                                            | Create a new engine; `dispose()` is final. Do not await readiness across a teardown.                   |
-| `An immer producer returned a new value *and* modified its draft. …`                             | Immer's message, thrown from `Cell.update` when an expression-bodied recipe such as `p => Object.assign(p, x)` mutates the draft and returns it. | Use a block body, `p => { Object.assign(p, x); }`, or assign `cell.value = next` to replace the value. |
-| `createEngine: setup returned reserved key "core"`                                               | The object returned by `setup` has a `core` property, which the engine reserves for itself.                                                      | Rename that property; read the engine core as `engine.core`.                                           |
-| `Event transform "<id>" returned an event without a finite "beat".`                              | A beat transform (the default unit) returned an event whose `beat` is missing or not finite.                                                     | Fix that transform; return finite beats, or set `unit: "second"` to work with `when`.                  |
-| `Event transform "<id>" returned an event without a finite "when".`                              | A seconds transform (`unit: "second"`) returned an event whose `when` is missing or not finite.                                                  | Fix that transform; return finite seconds.                                                             |
-| `Event transform "<id>" returned an event whose "durationBeats" is not a finite number above 0.` | A beat transform returned an event with a `durationBeats` that is zero, negative or not finite.                                                  | Fix that transform; omit `durationBeats` or return a finite number above 0.                            |
-| `Event transform "<id>" has a unit other than "beat" or "second".`                               | A transform's `unit` is something else, such as `"ms"`.                                                                                          | Use `"beat"` (or omit `unit`) or `"second"`.                                                           |
-| `Event transform "<id>" returned an event whose "duration" is not a finite number above 0.`      | A seconds transform returned an event with a `duration` that is zero, negative or not finite.                                                    | Fix that transform; omit `duration` or return a finite number above 0.                                 |
-| `Event transform "<id>" returned an event whose "velocity" is not a finite number from 0 to 1.`  | A transform returned a hit with a `velocity` outside 0..1 or not finite.                                                                         | Fix that transform; clamp velocity to 0..1.                                                            |
-| `Event transform "<id>" must return an array of events.`                                         | A transform returned something other than an array.                                                                                              | Return an array (possibly empty) from `apply`.                                                         |
-| `<name>'s path latency is unknown: …`                                                            | A latency query on a processor that appears in no `defineGraph` (`LatencyUnknownError`).                                                         | Wire it with `defineGraph`, its own or the engine's, instead of raw `.connect()`.                      |
-| `defineGraph: <name> is a bare AudioWorkletNode …`                                               | A worklet node was used directly as an edge endpoint, so its latency is unknowable.                                                              | Wrap it in an `AudioProcessor` that declares `latency`.                                                |
-| `defineGraph: <name> used as source has no output` / `defineGraph: <name> has no output`         | A processor with no `output` (an input-only sink) was used as an edge source or endpoint.                                                        | Check the edge direction; give the processor an `output` or route from a node that has one.            |
-| `loadAudioBuffer: failed to fetch <url> (<status>)`                                              | The URL answered with a non-2xx HTTP status.                                                                                                     | Check the URL and server response; decode errors surface from `decodeAudioData` instead.               |
-| `registerWorklet: this AudioContext has no audioWorklet, so "<name>" cannot be loaded. …`        | The context has no `audioWorklet` (old browser, some test contexts); this is `WorkletUnavailableError`.                                          | Run in a browser with AudioWorklet support, or choose an engine that needs no worklet.                 |
+| Message                                                                                          | Cause                                                                                                                                            | Fix                                                                                                                 |
+| ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| `AudioEngine disposed before it became ready`                                                    | `untilReady()` was called on, or was pending when, a disposed engine.                                                                            | Create a new engine; `dispose()` is final. Do not await readiness across a teardown.                                |
+| `An immer producer returned a new value *and* modified its draft. …`                             | Immer's message, thrown from `Cell.update` when an expression-bodied recipe such as `p => Object.assign(p, x)` mutates the draft and returns it. | Use a block body, `p => { Object.assign(p, x); }`, or assign `cell.value = next` to replace the value.              |
+| `createEngine: setup returned reserved key "core"`                                               | The object returned by `setup` has a `core` property, which the engine reserves for itself.                                                      | Rename that property; read the engine core as `engine.core`.                                                        |
+| `Event transform "<id>" returned an event without a finite "beat".`                              | A beat transform (the default unit) returned an event whose `beat` is missing or not finite.                                                     | Fix that transform; return finite beats, or set `unit: "second"` to work with `when`.                               |
+| `Event transform "<id>" returned an event without a finite "when".`                              | A seconds transform (`unit: "second"`) returned an event whose `when` is missing or not finite.                                                  | Fix that transform; return finite seconds.                                                                          |
+| `Event transform "<id>" returned an event whose "durationBeats" is not a finite number above 0.` | A beat transform returned an event with a `durationBeats` that is zero, negative or not finite.                                                  | Fix that transform; omit `durationBeats` or return a finite number above 0.                                         |
+| `Event transform "<id>" has a unit other than "beat" or "second".`                               | A transform's `unit` is something else, such as `"ms"`.                                                                                          | Use `"beat"` (or omit `unit`) or `"second"`.                                                                        |
+| `Event transform "<id>" returned an event whose "duration" is not a finite number above 0.`      | A seconds transform returned an event with a `duration` that is zero, negative or not finite.                                                    | Fix that transform; omit `duration` or return a finite number above 0.                                              |
+| `Event transform "<id>" returned an event whose "velocity" is not a finite number from 0 to 1.`  | A transform returned a hit with a `velocity` outside 0..1 or not finite.                                                                         | Fix that transform; clamp velocity to 0..1.                                                                         |
+| `Event transform "<id>" must return an array of events.`                                         | A transform returned something other than an array.                                                                                              | Return an array (possibly empty) from `apply`.                                                                      |
+| `<name>'s path latency is unknown: …`                                                            | A latency query on a processor that appears in no `defineGraph` and has no `connect` edge (`LatencyUnknownError`).                               | Wire it with `defineGraph`, its own or the engine's, or with `processor.connect(...)`, not a raw node `.connect()`. |
+| `AudioEngine is disposed.`                                                                       | `resume()` or `suspend()` was called after `dispose()` (rejects with a `DOMException` named `InvalidStateError`).                                | Create a new engine; `dispose()` is final. Stop callers (gesture handlers, `autoStart`) before disposing.           |
+| `AudioProcessor.connect: <name> has no output`                                                   | `connect()` was called on a processor whose `output` getter returns `undefined`.                                                                 | Give the processor an `output`, or connect a node that has one.                                                     |
+| `AudioProcessor.connect: <name> has no input`                                                    | `connect()` was given a processor destination whose `input` getter returns `undefined` (an instrument or output-only processor).                 | Connect to a processor that declares `input`, or to a node or param.                                                |
+| `<name> is disposed.`                                                                            | `connect()` was called on a processor after `dispose()`.                                                                                         | Create a new processor; `dispose()` is final.                                                                       |
+| `defineGraph: <name> is a bare AudioWorkletNode …`                                               | A worklet node was used directly as an edge endpoint, so its latency is unknowable.                                                              | Wrap it in an `AudioProcessor` that declares `latency`.                                                             |
+| `defineGraph: <name> used as source has no output` / `defineGraph: <name> has no output`         | A processor with no `output` (an input-only sink) was used as an edge source or endpoint.                                                        | Check the edge direction; give the processor an `output` or route from a node that has one.                         |
+| `loadAudioBuffer: failed to fetch <url> (<status>)`                                              | The URL answered with a non-2xx HTTP status.                                                                                                     | Check the URL and server response; decode errors surface from `decodeAudioData` instead.                            |
+| `registerWorklet: this AudioContext has no audioWorklet, so "<name>" cannot be loaded. …`        | The context has no `audioWorklet` (old browser, some test contexts); this is `WorkletUnavailableError`.                                          | Run in a browser with AudioWorklet support, or choose an engine that needs no worklet.                              |

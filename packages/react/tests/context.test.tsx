@@ -69,17 +69,23 @@ class DummyProcessor extends AudioProcessor<{ vol: Param<number> }> {
   }
 }
 
-function makeEngine() {
-  return createEngine((ctx) => {
-    const processor = new DummyProcessor(ctx);
-    return { processor };
-  });
+// Chromium (autoplay flag) starts a context running; these tests need one that waits for a gesture.
+async function makeEngine() {
+  const context = new AudioContext();
+  await context.suspend();
+  return createEngine(
+    (ctx) => {
+      const processor = new DummyProcessor(ctx);
+      return { processor };
+    },
+    { context },
+  );
 }
 
 describe("createEngineContext", () => {
   describe("EngineProvider", () => {
-    test("always renders children regardless of engine state", () => {
-      const engine = makeEngine();
+    test("always renders children regardless of engine state", async () => {
+      const engine = await makeEngine();
       const { EngineProvider } = createEngineContext(engine);
 
       render(
@@ -89,12 +95,12 @@ describe("createEngineContext", () => {
       );
 
       expect(screen.getByTestId("child")).toBeTruthy();
-      expect(engine.core.state()).toBe("idle");
+      expect(engine.core.state.value).toBe("suspended");
       engine.core.dispose();
     });
 
-    test("useEngine() returns typed engine", () => {
-      const engine = makeEngine();
+    test("useEngine() returns typed engine", async () => {
+      const engine = await makeEngine();
       const { EngineProvider, useEngine } = createEngineContext(engine);
 
       function Inner() {
@@ -114,8 +120,8 @@ describe("createEngineContext", () => {
   });
 
   describe("useEngine", () => {
-    test("throws outside provider", () => {
-      const engine = makeEngine();
+    test("throws outside provider", async () => {
+      const engine = await makeEngine();
       const { useEngine } = createEngineContext(engine);
 
       function Bad() {
@@ -131,9 +137,9 @@ describe("createEngineContext", () => {
   });
 
   describe("autoStart", () => {
-    test("calls engine.start() on first gesture", async () => {
-      const engine = makeEngine();
-      const startSpy = vi.spyOn(engine.core, "start");
+    test("calls engine.resume() on first gesture", async () => {
+      const engine = await makeEngine();
+      const startSpy = vi.spyOn(engine.core, "resume");
       const { EngineProvider } = createEngineContext(engine);
 
       render(
@@ -151,8 +157,8 @@ describe("createEngineContext", () => {
     });
 
     test("removes listeners after first gesture", async () => {
-      const engine = makeEngine();
-      const startSpy = vi.spyOn(engine.core, "start");
+      const engine = await makeEngine();
+      const startSpy = vi.spyOn(engine.core, "resume");
       const { EngineProvider } = createEngineContext(engine);
 
       render(
@@ -175,8 +181,8 @@ describe("createEngineContext", () => {
     });
 
     test("autoStart={false} disables gesture listener", async () => {
-      const engine = makeEngine();
-      const startSpy = vi.spyOn(engine.core, "start");
+      const engine = await makeEngine();
+      const startSpy = vi.spyOn(engine.core, "resume");
       const { EngineProvider } = createEngineContext(engine);
 
       render(
@@ -194,7 +200,7 @@ describe("createEngineContext", () => {
     });
 
     test("re-arms listeners when engine state drops from running", async () => {
-      const engine = makeEngine();
+      const engine = await makeEngine();
       const { EngineProvider } = createEngineContext(engine);
 
       render(
@@ -207,19 +213,19 @@ describe("createEngineContext", () => {
       await act(async () => {
         fireEvent.click(document);
       });
-      expect(engine.core.state()).toBe("running");
+      expect(engine.core.state.value).toBe("running");
 
       // Simulate mobile background suspend
       await act(async () => {
         await engine.core.suspend();
       });
-      expect(engine.core.state()).toBe("suspended");
+      expect(engine.core.state.value).toBe("suspended");
 
       // Next gesture should re-start
       await act(async () => {
         fireEvent.click(document);
       });
-      expect(engine.core.state()).toBe("running");
+      expect(engine.core.state.value).toBe("running");
 
       engine.core.dispose();
     });

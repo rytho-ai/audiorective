@@ -59,6 +59,7 @@ describe("attach", () => {
     const engine = new AudioEngine();
     const app = makeApp(null);
     await engine.context.suspend();
+    await vi.waitFor(() => expect(engine.state.value).toBe("suspended"));
 
     const removeSpy = vi.spyOn(app.graphicsDevice.canvas, "removeEventListener");
     const dispose = attach(engine, app as never);

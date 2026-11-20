@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useValue } from "@audiorective/react";
-import type { EngineState } from "@audiorective/core";
 import type { DrumVoiceId } from "../../sequencer/audio/drumKit";
 import { useEngine } from "../audio/engine";
 import { exportBars, readSettings } from "../audio/exportBars";
@@ -14,7 +13,7 @@ const PADS: { id: DrumVoiceId; label: string }[] = [
 
 function Hint() {
   const { core } = useEngine();
-  const state = useValue<EngineState>(core.state);
+  const state = useValue<AudioContextState>(core.state);
   if (state === "running") return null;
   return <p className="app__hint">Press Play to enable audio</p>;
 }
@@ -27,7 +26,7 @@ export function Transport() {
   const [exportError, setExportError] = useState<string | null>(null);
 
   async function togglePlay() {
-    await core.start();
+    await core.resume();
     if (playing) rack.stop();
     else rack.play();
   }
