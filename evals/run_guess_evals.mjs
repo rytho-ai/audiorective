@@ -14,6 +14,7 @@
 //
 // Options: --mode desire|guess   --variant <file.d.ts> (guess)   --ids T1,T2   --runs <n> (3)
 //          --concurrency <n> (4)   --model <id>   --grader-model <id>   --timeout <seconds> (300)
+//          --context <file.d.ts> (desire: show the existing API of other packages; the solver invents a NEW package that fits it)
 //          --json <out-file>   --md <out-file> (desire: markdown cluster report)
 //          --regrade <results.json> (guess: re-grade the stored samples of an earlier run with the
 //          current grader and compile check; no solver calls)
@@ -45,6 +46,7 @@ const args = process.argv.slice(2);
 const flagsWithValue = new Set([
   "mode",
   "variant",
+  "context",
   "ids",
   "runs",
   "concurrency",
@@ -60,7 +62,7 @@ const suitePath = args.find((a, i) => !a.startsWith("--") && !(args[i - 1]?.star
 const usage = (msg) => {
   if (msg) console.error(`error: ${msg}`);
   console.error(
-    "usage: node evals/run_guess_evals.mjs <suite.json> --mode desire|guess [--variant f.d.ts] [--ids T1,T2] [--runs n] [--concurrency n] [--model m] [--grader-model m] [--timeout s] [--json f] [--md f] [--regrade results.json] [--checks-only results.json]",
+    "usage: node evals/run_guess_evals.mjs <suite.json> --mode desire|guess [--variant f.d.ts] [--context f.d.ts] [--ids T1,T2] [--runs n] [--concurrency n] [--model m] [--grader-model m] [--timeout s] [--json f] [--md f] [--regrade results.json] [--checks-only results.json]",
   );
   process.exit(2);
 };
@@ -95,6 +97,10 @@ const ids = opt("ids", null)
   .map((s) => s.trim());
 const variantPath = opt("variant", checksOnlyPath && stored?.variant ? resolve(stored.variant) : null);
 if (mode === "guess" && (!variantPath || !existsSync(variantPath))) usage("guess mode needs --variant <existing file.d.ts>");
+const contextPath = opt("context", null);
+if (contextPath && mode !== "desire") usage("--context needs --mode desire");
+if (contextPath && !existsSync(contextPath)) usage(`--context file not found: ${contextPath}`);
+const contextDts = contextPath ? readFileSync(contextPath, "utf8") : null;
 const variantRaw = mode === "guess" ? readFileSync(variantPath, "utf8") : null;
 const STEP_BASE_LINE = /^[ \t]*\/\/[ \t]*@step-base[ \t]+([01])[ \t]*\r?\n?/m;
 const stepBase = variantRaw ? Number(variantRaw.match(STEP_BASE_LINE)?.[1] ?? NaN) : NaN; // NaN: undeclared
@@ -203,10 +209,15 @@ const DESIRE_INTRO =
 const GUESS_INTRO =
   "You are using `@audiorective/*`. Its complete public API is the type declarations below; there are no other docs. Write the code for the task using only this API (plus standard Web Audio/DOM). Reply with one ```ts block (and ```html if needed), no explanation.";
 
+const DESIRE_CONTEXT_INTRO =
+  "You are using the TypeScript web-audio toolkit `@audiorective/*`. Its existing API (other packages) is below. The task needs a capability none of these packages offers yet. Write the code you would *expect* to write for the task using a NEW package for that capability that fits with the existing API: invent the new package's API, and reuse the existing packages wherever that is natural. Reply with one ```ts block (and an ```html block only if your API is markup-based), no explanation.";
+
 const solverPrompt = (task) =>
-  mode === "desire"
-    ? `${DESIRE_INTRO}\n\n## Task\n${task.prompt}`
-    : `${GUESS_INTRO}\n\n## Type declarations\n\`\`\`ts\n${variantDts}\n\`\`\`\n\n## Task\n${task.prompt}`;
+  mode === "desire" && contextDts
+    ? `${DESIRE_CONTEXT_INTRO}\n\n## The toolkit's existing API (other packages)\n\`\`\`ts\n${contextDts}\n\`\`\`\n\n## Task\n${task.prompt}`
+    : mode === "desire"
+      ? `${DESIRE_INTRO}\n\n## Task\n${task.prompt}`
+      : `${GUESS_INTRO}\n\n## Type declarations\n\`\`\`ts\n${variantDts}\n\`\`\`\n\n## Task\n${task.prompt}`;
 
 // ---- code extraction and metrics ------------------------------------------
 
@@ -460,6 +471,11 @@ function clusterPrompt(task, samples) {
     "Reply with JSON only, no prose, no code fence:",
     '{"clusters":[{"shape":"short name","count":N,"samples":[sample numbers],"representative":"a short snippet (<= 12 lines) from one sample"}],',
     ' "recurring":{"names":["method/class/property names that recur across samples, with how many samples"],"signatures":["recurring argument orders / call signatures"],"time_units":"how time/tempo/ms/seconds/beats are expressed","pattern_and_velocity":"how patterns, steps and velocities are expressed","cancellation_cleanup":"how stopping, cancellation and cleanup are done","other":"anything else striking"}}',
+    ...(contextDts
+      ? [
+          "The agents were shown the toolkit's existing API (other packages) and asked to invent a NEW package that fits with it. In the `other` field, report where the invented API REUSES existing concepts (e.g. the existing Clock/transport, cells, events) and where it DUPLICATES them (e.g. its own transport, tempo or timer), with counts of samples for each.",
+        ]
+      : []),
     "Cluster counts must sum to the number of samples.",
     "",
     `## Task given to the agents\n${task.prompt}`,

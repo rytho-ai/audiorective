@@ -61,9 +61,10 @@ node evals/run_guess_evals.mjs evals/affordance/step-sequencer.json --mode guess
 ```
 
 - **desire** asks the solver to invent the API it would expect. There is no compile and no per-run grading; after all runs, one clustering call per task groups the samples by API shape and lists recurring names, signatures, time units, pattern and velocity encodings, and cleanup styles.
+  With `--context <file.d.ts>` the solver also sees the toolkit's existing API (other packages) and is asked to invent a NEW package for the task's capability that fits with it; clustering then reports where the invented API reuses existing concepts (such as `Clock`) and where it duplicates them.
 - **guess** gives the solver only the variant's `.d.ts` (`declare module "@audiorective/…"` blocks). The solver's `ts` block is compiled with the repo's TypeScript (`--strict`, `es2022`, bundler resolution, `dom` lib) next to the declarations, then a separate grader, never told which variant it is looking at, scores the code against the expectations and classifies errors as `wrong-name`, `wrong-signature`, `wrong-concept`, `invented-api`, `platform-misuse` or `other`. An `html` block is counted in lines of code and ignored by the compiler.
 
-Options: `--ids T1,T2`, `--runs` (3), `--concurrency` (4), `--timeout` seconds (300), `--model`, `--grader-model`, `--json <file>`, `--md <file>` (desire). The report gives, per task and overall, the compile pass rate, expectations met, mean lines of code (non-blank, non-comment) and error-kind counts; the JSON also keeps every raw reply. A run that does not complete (timeout, login, rate limit, no code block, unparseable grader reply after one retry) is reported as an error, excluded from the totals, and makes the exit code non-zero.
+Options: `--ids T1,T2`, `--runs` (3), `--concurrency` (4), `--timeout` seconds (300), `--model`, `--grader-model`, `--json <file>`, `--context <file.d.ts>` (desire), `--md <file>` (desire). The report gives, per task and overall, the compile pass rate, expectations met, mean lines of code (non-blank, non-comment) and error-kind counts; the JSON also keeps every raw reply. A run that does not complete (timeout, login, rate limit, no code block, unparseable grader reply after one retry) is reported as an error, excluded from the totals, and makes the exit code non-zero.
 
 ## Maintaining the sets
 
