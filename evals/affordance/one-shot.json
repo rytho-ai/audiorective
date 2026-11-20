@@ -52,9 +52,12 @@
       "checks": [
         {
           "expectation": 0,
-          "label": "semitone ratio uses 12 and 60",
-          "all": ["\\b60\\b", "\\b12\\b"],
-          "any": ["\\*\\*", "Math\\.pow\\(\\s*2", "detune", "pitch", "semitone", "cents"]
+          "label": "semitone ratio uses 12 and 60, or the library transposes from rootNote 60 with the octave-up note written",
+          "all": ["\\b60\\b"],
+          "any": [
+            "^(?=[\\s\\S]*\\b12\\b)(?=[\\s\\S]*(?:\\*\\*|Math\\.pow\\(\\s*2|detune|pitch|semitone|cents))",
+            "^(?=[\\s\\S]*rootNote\\s*:\\s*(?:60\\b|[\"']C4[\"']))(?=[\\s\\S]*(?:\\b72\\b|[\"']C5[\"']))"
+          ]
         },
         {
           "expectation": 2,
