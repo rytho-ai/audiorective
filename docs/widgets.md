@@ -84,14 +84,14 @@ The attachment owns its gesture and drawing. The caller owns the points and play
 
 ## Step grid and pads
 
-`mountStepGrid(root, { sequencer, formatStep?, labels?, laneLabel? })` is a lane-aware, pluggable step editor. `sequencer` is a local structural contract, `StepGridSequencer = { lanes: Record<string, StepGridLane> }`; a `StepSequencer` from [Step Sequencer](./sequencer.md) satisfies it directly, as can your own model with the same lane shape (the widget imports no block values). Destroying the view leaves the borrowed sequencer available.
+`mountStepGrid(root, { sequencer, formatStep?, labels?, laneLabel? })` is a lane-aware, pluggable step editor. `sequencer` is a local structural contract, `StepGridSequencer = { lanes: Record<string, StepGridLane> }` (a lane carries `pattern`, `length`, `rate`, `swing`, `direction`, `mute`, `solo`, `params`, `playhead`, `progress` and `steps`); a `StepSequencer` from [Step Sequencer](./sequencer.md) satisfies it directly, as can your own model with the same lane shape (the widget imports no block values). Destroying the view leaves the borrowed sequencer available.
 
 The grid reads each lane's length, rate, direction, swing, mute, solo, `steps`, `playhead` and `progress` and writes through the lane's setters and `steps[i]` fields. The column count is the longest lane length seen. `laneLabel(name)` names a lane for display (default: the lane name).
 
 Each lane row has a header and a row of cells.
 
 - **Header:** a column header row (`Steps`, `Rate`, `Dir`, `Swing`) sits above the lanes, aligned with fixed-width header columns. Each lane row is as tall as its cells: a filled name block, Mute and Solo square toggles, then the four columns. Every control writes the lane's setter.
-  - `Steps` and `Swing` are number boxes (`role="spinbutton"` with `aria-valuemin`, `aria-valuemax`, `aria-valuenow` and `aria-valuetext`). Drag vertically (8 px per step, 3 px per percent), press Up/Right or Down/Left (Shift moves by 10), PageUp and PageDown (10), Home and End, scroll the wheel while the box is focused, or double-click (or press Enter) to type a value; Enter commits, Escape cancels, and the value is clamped. `Steps` is limited to 1..128; swing is 0 to 100 percent.
+  - `Steps` and `Swing` are number boxes (`role="spinbutton"` with `aria-valuemin`, `aria-valuemax`, `aria-valuenow` and `aria-valuetext`). Drag vertically (8 px per step, 3 px per percent), press Up/Right or Down/Left (Shift moves by 10), PageUp and PageDown (10), Home and End, scroll the wheel while the box is focused, or double-click (or press Enter) to type a value; Enter commits, Escape cancels, and the value is clamped. `Steps` is limited to 1..128; swing is 0 to 100 percent, the lane's `swing` of 0..1 shown as a percentage: it delays every odd step by that share of half a step (100% is half a step late), a fixed beat offset that follows tempo.
   - `Rate` is a styled `select` over the twelve straight and triplet rates. `Dir` is a button that cycles `→`, `←`, `↔`.
 - **Parameter tabs:** a strip under the grid selects which per-step value the grid shows and edits: Velocity, Offset, Length, Repeat, Pitch and Chance, then one tab for each per-lane custom param (the union by id across lanes; a lane without that param shows its cells inert on that tab). Ranges come from the lane's `params` and the built-in `Step` ranges. Velocity, chance, length and custom values draw as a fill height, offset and pitch as a bar from the centre line, repeat as segment marks.
 - **Cells:** click toggles. A vertical drag edits the active parameter. A fill-height value covers its range over one cell height, repeat takes 12 px per hit and pitch 3 px per semitone; repeat and pitch snap to integers and every value stays inside its range. A value label (`65%`, `+3 st`, `x4`) shows while editing, on hover and on focus. A drag does not also toggle.
@@ -137,7 +137,7 @@ Each lane row has a header and a row of cells.
 `StepGridPluginContext` extends `WidgetPluginContext` (`listen`, `onCleanup`) with the members below; `StepGridPlugin` is `WidgetPlugin<StepGridPluginContext>`:
 
 - `surface`: the positioned element that holds the lanes.
-- `sequencer`: the borrowed sequencer, so a plugin writes steps through `sequencer.lanes.<name>.steps[i]`.
+- `sequencer`: the borrowed sequencer, so a plugin writes steps through `sequencer.lanes.<name>.steps[i]` and whole patterns through `lanes.<name>.pattern`. The context types each lane with the writable members of a real lane: `pattern`, `length`, `rate`, `swing`, `direction`, `mute` and `solo`.
 - `cellElement(laneId, step)`: the cell element, or `null` for an unknown lane or step.
 - `cellRect(laneId, step)`: `{ x, y, width, height }` in CSS pixels relative to `surface`, or `null`.
 - `mountOverlay(element)`: add a full-surface overlay (`pointer-events: none` by default). Returns its cleanup.
