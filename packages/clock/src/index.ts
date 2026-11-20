@@ -2,8 +2,19 @@ export { Timeline } from "./Timeline";
 export { TempoParam } from "./TempoParam";
 export type { TempoParamOptions } from "./TempoParam";
 export { Clock } from "./Clock";
-export type { ClockOptions, Scheduler, SchedulerHandle, SchedulerWindow, TickWindow, MissedGap, CancellableEvent } from "./Clock";
-export type { CoreTickWindow, TransportState, TimeSource } from "./types";
+export type {
+  ClockOptions,
+  Scheduler,
+  SchedulerHandle,
+  SchedulerWindow,
+  ResetReason,
+  TransportChange,
+  TransportChangeType,
+  TickWindow,
+  MissedGap,
+  CancellableEvent,
+} from "./Clock";
+export type { CoreTickWindow, TransportState, TimeSignature, TimeSource } from "./types";
 
 export { WorkerTickSource, IntervalTickSource, ManualTickSource } from "./TickSource";
 export type { TickSource } from "./TickSource";
