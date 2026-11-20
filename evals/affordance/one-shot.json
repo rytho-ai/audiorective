@@ -1,0 +1,139 @@
+{
+  "area": "one-shot",
+  "description": "API-shape experiment for one-shot sound sources: playing a decoded sample or a synthesized sound once, polyphonically, with velocity and pitch, in pad grids with choke groups, from a clock or sequencer at exact audio times, and through per-pad effects. The same six tasks are given with no API (desire mode) or with one variant's type declarations only (guess mode). Expectations are variant-agnostic: they describe behaviour, not names.",
+  "tasks": [
+    {
+      "id": "O1-click-velocity",
+      "prompt": "I have a decoded drum sample in a variable `snare` (an AudioBuffer) and a <button id=\"hit\">. Make the button play the sample when pressed. The harder you press, the louder: use the pointer event's pressure when the device reports it (a mouse reports 0.5, so treat 0.5 as the default level of 0.7), and clamp the result between 0.1 and 1. Pressing the button again while the sound is still playing must layer a second copy on top instead of cutting the first one off. Browser autoplay rules apply.",
+      "expectations": [
+        "Creates or resumes the audio context inside the click or pointer handler (or calls an API documented as doing so).",
+        "Plays the given sample from the button's pointer event, one new sound per press.",
+        "Maps pointer pressure to a velocity or gain between 0.1 and 1 (0.5 pressure -> 0.7), clamped, and applies it to that one hit only.",
+        "A second press while the first is still sounding adds a new overlapping voice (not cut off, not blocked), with enough polyphony for at least a few overlapping hits.",
+        "The result reaches the speakers."
+      ],
+      "checks": [
+        {
+          "expectation": 2,
+          "label": "pressure is read and clamped to 0.1 and 1",
+          "all": ["pressure", "0\\.1\\b", "(?:Math\\.(?:min|max)|clamp)"]
+        }
+      ]
+    },
+    {
+      "id": "O2-pad-grid-choke",
+      "prompt": "Build an 8-pad drum pad grid from a ready object `kit` of decoded AudioBuffers with the keys kick, snare, clap, closedHat, openHat, tomLow, tomHigh, crash. Each pad is a button that plays its sound when pressed, at full level. Hi-hats must behave like a real drum machine: pressing closedHat immediately cuts off any openHat that is still ringing (a short fade is fine to avoid a click), while every other pad keeps ringing and layers freely. Pressing openHat again restarts it. Browser autoplay rules apply.",
+      "expectations": [
+        "Creates or resumes the audio context inside the press handler (or calls an API documented as doing so).",
+        "Has eight pads, each wired to its own sound from `kit`.",
+        "Pressing closedHat stops a still-ringing openHat (a choke between those two pads), with a short fade or an API's equivalent so there is no click.",
+        "Pressing any other pad does not cut off sounding pads; those layer.",
+        "The choke is done by the library's group, choke or voice-stop mechanism rather than by hand-tracking timers."
+      ],
+      "checks": [
+        {
+          "expectation": 4,
+          "label": "no timer used to emulate the choke (setTimeout/setInterval whose callback stops or cancels a voice)",
+          "none": ["set(?:Timeout|Interval)\\([^;]*\\b(?:stop|cancel|release)"]
+        }
+      ]
+    },
+    {
+      "id": "O3-keyboard-sampler",
+      "prompt": "I recorded one piano note, middle C (MIDI note 60), as an AudioBuffer in `piano`. Turn it into a playable instrument for MIDI notes 48 to 72 (C3 to C5): `noteOn(note, velocity)` and `noteOff(note)` functions, where velocity is 0..1. Every note is the same sample played at a different speed so its pitch matches. Up to 8 notes may sound at once; if a ninth arrives, the oldest note gives way. Releasing a key fades that note out over 0.25 s instead of cutting it. Notes outside 48..72 are ignored. Hitting the same note again while it is held starts a new voice for it.",
+      "expectations": [
+        "Transposes by semitones from MIDI 60, so playback ratio is 2^((note-60)/12) (directly or through a semitone/cents/detune parameter).",
+        "Maps velocity 0..1 to that voice's level.",
+        "Caps polyphony at 8 voices and the oldest voice is the one that gives way.",
+        "noteOff fades only that note's voice(s) out over 0.25 s and does not stop the others.",
+        "Notes outside 48..72 do nothing.",
+        "Keeps a handle per sounding note so a later noteOff can find it (a map or array of live voices), or uses the library's own per-note bookkeeping."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "semitone ratio uses 12 and 60",
+          "all": ["\\b60\\b", "\\b12\\b"],
+          "any": ["\\*\\*", "Math\\.pow\\(\\s*2", "detune", "pitch", "semitone", "cents"]
+        },
+        {
+          "expectation": 2,
+          "label": "polyphony 8 appears",
+          "all": ["\\b8\\b"]
+        }
+      ]
+    },
+    {
+      "id": "O4-exact-time-retract",
+      "prompt": "At 100 BPM, play the sample in `kick` (an AudioBuffer) on beats 1 and 3 of every bar and `snare` on beats 2 and 4, looping forever, started by a play button, timed by the audio clock (not by JavaScript timers) so it never drifts or jitters when the page is busy. Add a second button, \"drop next kick on 3\": when pressed while playing, the next kick that lands on beat 3 must not sound if it has not sounded yet (if its sound has already started, leave it alone), and later bars play normally. Express the pattern as 4 steps: step 1 kick, step 2 snare, step 3 kick, step 4 snare, each step one beat. The second button should only touch step 3 and must not restart or stop the playing loop.",
+      "expectations": [
+        "Creates or resumes the audio context inside the play click (or calls an API documented as doing so).",
+        "Plays the 4-step pattern: steps 1 and 3 with `kick`, steps 2 and 4 with `snare`, one beat per step, at 100 BPM, looping.",
+        "Hits are scheduled ahead on the audio clock at exact audio times, not with setTimeout/setInterval/requestAnimationFrame.",
+        "The second button retracts or mutes only the upcoming step-3 kick that has not started yet (step index translated correctly if the API is 0-based), without stopping, restarting or rebuilding the whole loop.",
+        "A hit whose sound has already started is not cut off by the retraction.",
+        "Later bars play the kick on beat 3 normally unless the code states the drop is permanent."
+      ],
+      "checks": [
+        {
+          "expectation": 2,
+          "label": "no JavaScript timers for timing",
+          "none": ["setTimeout\\(", "setInterval\\(", "requestAnimationFrame\\(", "performance\\.now\\(", "Date\\.now\\("]
+        },
+        {
+          "expectation": 3,
+          "label": "step 3 is addressed at the variant's index, or a cancel / retract / transform-and-refresh path is used",
+          "any": ["{call:3}", "\\.cancel\\(", "cancelFrom\\(", "\\.refresh\\(", "transform"]
+        }
+      ]
+    },
+    {
+      "id": "O5-synth-one-shot",
+      "prompt": "I have no sample files. Make a \"laser zap\" sound by synthesis: a sine oscillator whose frequency drops exponentially from 1200 Hz to 200 Hz over 0.25 s, with its volume decaying to silence over the same 0.25 s. Use it in the same ways one would use a loaded sample: (a) a button that fires one zap per press at a velocity argument 0..1 (overlapping presses layer), and (b) the sound of a 16-step pattern at 120 BPM with zaps on steps 1, 5, 9 and 13 (looping, started from a click), where each hit's velocity is applied. Both uses must share one definition of the zap, and neither may use a sound file.",
+      "expectations": [
+        "Creates or resumes the audio context inside the click handler (or calls an API documented as doing so).",
+        "Synthesizes the zap with an oscillator frequency ramp 1200 -> 200 Hz over 0.25 s (exponential ramp) and a gain that decays to ~0 over 0.25 s, on the audio clock (scheduled with the hit's start time, not started 'now' for a future hit).",
+        "The button path fires one overlapping zap per press with the given velocity applied to its level.",
+        "The pattern path puts zaps on steps 1, 5, 9, 13 (index translated correctly) at 120 BPM, looping, and each hit's velocity is applied.",
+        "The zap is defined once and both paths use that one definition (a single function/factory/class, not two copies).",
+        "Each synthesized voice is stopped after its end so oscillators do not leak."
+      ],
+      "checks": [
+        {
+          "expectation": 1,
+          "label": "1200 and 200 Hz, 0.25 s, exponential ramp, no sample file",
+          "all": ["\\b1200\\b", "\\b200\\b", "0?\\.25\\b", "exponentialRampToValueAtTime"],
+          "none": ["fetch\\(", "decodeAudioData", "loadAudioBuffer"]
+        },
+        {
+          "expectation": 3,
+          "label": "tempo 120 and steps 1, 5, 9, 13 at the variant's index (or as a pattern string)",
+          "all": ["\\b120\\b"],
+          "any": [
+            "(?:{call:1}[\\s\\S]*{call:5}[\\s\\S]*{call:9}[\\s\\S]*{call:13})",
+            "[Xx1-9]\\.\\.\\.[Xx1-9]\\.\\.\\.[Xx1-9]\\.\\.\\.[Xx1-9]\\.\\.\\.",
+            "\\[\\s*[0-9.]+\\s*,(?:\\s*0\\s*,){3}\\s*[0-9.]+\\s*,(?:\\s*0\\s*,){3}\\s*[0-9.]+"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "O6-per-pad-routing",
+      "prompt": "Extend a 4-pad drum kit (kick, snare, closedHat, openHat; decoded AudioBuffers in `kit`) so each pad has its own effect: the snare goes through a reverb (a ConvolverNode I already have as `reverb`), the hats go through a feedback delay (build a DelayNode of 0.3 s with 35% feedback), and the kick stays dry. All four reach the speakers. closedHat still cuts a ringing openHat even though both go to the delay, and a hit already in the delay tail keeps echoing after the cut (the cut only silences the openHat sample itself). Add a checkbox \"snare reverb\" that turns the snare's reverb send on and off live, without touching other pads and without cutting a snare that is sounding. Pads are pressed by buttons; browser autoplay rules apply.",
+      "expectations": [
+        "Creates or resumes the audio context inside the press handler (or calls an API documented as doing so).",
+        "Routes the snare pad through the reverb, both hats through one delay of 0.3 s with ~0.35 feedback, and the kick directly to the output, with all of them reaching the speakers.",
+        "closedHat cuts a ringing openHat; the cut does not silence what is already echoing in the delay.",
+        "The checkbox changes the snare's reverb send live (a gain or a re-route of that pad only) and does not stop a sounding snare.",
+        "Routing is per pad through the library's per-pad output, send or destination control (or a per-pad node chain created for each pad), not a global rewire of the whole kit."
+      ],
+      "checks": [
+        {
+          "expectation": 1,
+          "label": "delay time 0.3 and feedback 0.35",
+          "all": ["0?\\.3\\b", "0?\\.35\\b"]
+        }
+      ]
+    }
+  ]
+}
