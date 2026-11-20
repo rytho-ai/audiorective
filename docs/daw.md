@@ -288,7 +288,7 @@ The same view works with `Workspace.create()` and `openWorkspace()`. Pass a `des
 
 `workspace.transport` is the Workspace's Clock (`workspace.clock`): `transport.timeline`, `transport.attach(scheduler)` and `transport.refresh()` let any scheduler, such as an `@audiorective/sequencer` `Sequencer` created with `{ transport: workspace.transport, context: workspace.context }`, follow Workspace's beats and tempo. Pause, stop and seek reset attached schedulers; Workspace keeps play, pause, seek and tempo.
 
-Attach a caller-owned `StepSequencer` with `workspace.attachStepSequencer(sequence)`. Connect the instrument's output to a caller-selected mix path. The attached pattern uses Workspace's Clock windows and tempo mapping. Pattern and transform edits (`setCell`, `toggle`, `setLane`, `setSize`, `setTransforms`) refresh pending steps, and transport pause, stop and seek reset the sequence's scheduled events. Call the returned detach function to remove only this sequence. An attached live pattern belongs to the current app session. Saveable Arrangement clips belong to Project.
+Attach a caller-owned `StepSequencer` with `workspace.transport.attach(seq)`. Route each lane's `output` (or your `onHit` voices) to a caller-selected mix path. The attached sequencer uses Workspace's Clock windows and tempo mapping. Edits to its lanes and steps re-queue pending hits, and transport pause, stop and seek reset its scheduled events. Call the returned detach function (or `seq.dispose()`) to remove only this sequencer. An attached live pattern belongs to the current app session. Saveable Arrangement clips belong to Project.
 
 ## Clip Launcher
 
@@ -371,15 +371,14 @@ A small [Cubase 14 export shared on the Steinberg forum](https://forums.steinber
 | `Audio clip gain automation needs a non-negative source start and non-negative finite gains.`                                                                    | Use original source seconds and non-negative linear gain.                                           |
 | `Clip gain must be non-negative and fades must fit its duration.`                                                                                                | Keep the combined fade lengths within the clip duration.                                            |
 
-| Routing message                                                                                               | Fix                                                                        |
-| ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `Workspace needs a new step sequencer on a live transport.`                                                   | Attach each sequence once per live Workspace and keep its detach callback. |
-| `Project bus roles need a bus track and a supported role.`                                                    | Use `busRole` on a bus with role `submix` or `effect`.                     |
-| `Project track routing needs an existing track.` / `Sync new or removed tracks before changing live routing.` | Add the tracks and await `workspace.sync()` before live rewiring.          |
-| `Project routes need existing buses, unique sends and non-negative send gain.`                                | Use current bus IDs, one send per bus and a non-negative linear gain.      |
-| `Project track routing cannot form a cycle.`                                                                  | Remove the feedback edge between buses.                                    |
-| `Project has duplicate channel IDs.` / `Project bus tracks cannot contain clips.`                             | Use unique channel IDs and put clips on source tracks.                     |
-| `Project has unsupported send settings.`                                                                      | Use post-fader sends with linear gain.                                     |
+| Routing message                                                                                               | Fix                                                                   |
+| ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `Project bus roles need a bus track and a supported role.`                                                    | Use `busRole` on a bus with role `submix` or `effect`.                |
+| `Project track routing needs an existing track.` / `Sync new or removed tracks before changing live routing.` | Add the tracks and await `workspace.sync()` before live rewiring.     |
+| `Project routes need existing buses, unique sends and non-negative send gain.`                                | Use current bus IDs, one send per bus and a non-negative linear gain. |
+| `Project track routing cannot form a cycle.`                                                                  | Remove the feedback edge between buses.                               |
+| `Project has duplicate channel IDs.` / `Project bus tracks cannot contain clips.`                             | Use unique channel IDs and put clips on source tracks.                |
+| `Project has unsupported send settings.`                                                                      | Use post-fader sends with linear gain.                                |
 
 | Clip Launcher message                                                 | Fix                                                                                         |
 | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |

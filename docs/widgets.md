@@ -84,35 +84,23 @@ The attachment owns its gesture and drawing. The caller owns the points and play
 
 ## Step grid and pads
 
-`mountStepGrid(root, { sequencer, formatStep?, labels? })` is a lane-aware, pluggable step editor. `sequencer` is a local structural contract, so a `StepSequencer` or your own pattern model fits; the widget imports no block values. Destroying the view leaves the borrowed sequencer available.
+`mountStepGrid(root, { sequencer, formatStep?, labels?, laneLabel? })` is a lane-aware, pluggable step editor. `sequencer` is a local structural contract, `StepGridSequencer = { lanes: Record<string, StepGridLane> }`; a `StepSequencer` from [Step Sequencer](./sequencer.md) satisfies it directly, as can your own model with the same lane shape (the widget imports no block values). Destroying the view leaves the borrowed sequencer available.
 
-```typescript
-interface StepGridSequencer {
-  pattern: Readable<{ size: number; lanes: readonly Lane[] }>; // Lane: id, label, steps, rate, direction, swing, mute, solo, cells[]
-  playheads: Readable<Readonly<Record<string, number | null>>>;
-  loopProgress: Readable<number | null>;
-  params?: readonly ParamSpec[]; // from @audiorective/core: { id, label?, min, max, default, step? }
-  cellParams?: readonly ParamSpec[]; // ranges for the built-in values, by id
-  rates?: readonly Rate[]; // the Rate picker's options
-  setCell(laneId: string, step: number, patch: Partial<Cell>): void;
-  toggle(laneId: string, step: number): void;
-  setLane(laneId: string, patch: Partial<Omit<Lane, "id" | "cells">>): void;
-}
-```
+The grid reads each lane's length, rate, direction, swing, mute, solo, `steps`, `playhead` and `progress` and writes through the lane's setters and `steps[i]` fields. The column count is the longest lane length seen. `laneLabel(name)` names a lane for display (default: the lane name).
 
 Each lane row has a header and a row of cells.
 
-- **Header:** a column header row (`Steps`, `Rate`, `Dir`, `Swing`) sits above the lanes, aligned with fixed-width header columns. Each lane row is as tall as its cells: a filled name block, Mute and Solo square toggles, then the four columns. Every control calls `setLane`.
-  - `Steps` and `Swing` are number boxes (`role="spinbutton"` with `aria-valuemin`, `aria-valuemax`, `aria-valuenow` and `aria-valuetext`). Drag vertically (8 px per step, 3 px per percent), press Up/Right or Down/Left (Shift moves by 10), PageUp and PageDown (10), Home and End, scroll the wheel while the box is focused, or double-click (or press Enter) to type a value; Enter commits, Escape cancels, and the value is clamped. `Steps` is limited to the pattern `size`; swing is 0 to 100 percent.
-  - `Rate` is a styled `select` over `sequencer.rates`, or the twelve built-in rates when absent. `Dir` is a button that cycles `→`, `←`, `↔`.
-- **Parameter tabs:** a strip under the grid selects which cell value the grid shows and edits: Velocity, Offset, Length, Repeat, Pitch and Chance, then one tab for each entry of `sequencer.params`. When `sequencer.cellParams` declares a built-in id, its `min`, `max`, `default` and `step` replace the built-in range, snapping and fine/coarse key steps (integer values such as repeat and pitch always snap to whole numbers; the value labels keep their built-in units). Velocity, chance, length and custom values draw as a fill height, offset and pitch as a bar from the centre line, repeat as segment marks.
+- **Header:** a column header row (`Steps`, `Rate`, `Dir`, `Swing`) sits above the lanes, aligned with fixed-width header columns. Each lane row is as tall as its cells: a filled name block, Mute and Solo square toggles, then the four columns. Every control writes the lane's setter.
+  - `Steps` and `Swing` are number boxes (`role="spinbutton"` with `aria-valuemin`, `aria-valuemax`, `aria-valuenow` and `aria-valuetext`). Drag vertically (8 px per step, 3 px per percent), press Up/Right or Down/Left (Shift moves by 10), PageUp and PageDown (10), Home and End, scroll the wheel while the box is focused, or double-click (or press Enter) to type a value; Enter commits, Escape cancels, and the value is clamped. `Steps` is limited to 1..128; swing is 0 to 100 percent.
+  - `Rate` is a styled `select` over the twelve straight and triplet rates. `Dir` is a button that cycles `→`, `←`, `↔`.
+- **Parameter tabs:** a strip under the grid selects which per-step value the grid shows and edits: Velocity, Offset, Length, Repeat, Pitch and Chance, then one tab for each per-lane custom param (the union by id across lanes; a lane without that param shows its cells inert on that tab). Ranges come from the lane's `params` and the built-in `Step` ranges. Velocity, chance, length and custom values draw as a fill height, offset and pitch as a bar from the centre line, repeat as segment marks.
 - **Cells:** click toggles. A vertical drag edits the active parameter. A fill-height value covers its range over one cell height, repeat takes 12 px per hit and pitch 3 px per semitone; repeat and pitch snap to integers and every value stays inside its range. A value label (`65%`, `+3 st`, `x4`) shows while editing, on hover and on focus. A drag does not also toggle.
-- **Polymeter:** cells beyond a lane's `steps` are dimmed and inert. Each lane's playhead cell is highlighted, a bar across the top shows `loopProgress`, and the ruler marks every 4th step (1, 5, 9, 13 …).
+- **Polymeter:** cells beyond a lane's `steps` are dimmed and inert. Each lane's `playhead` cell is highlighted, a bar across the top follows the first lane with a non-null `progress`, and the ruler marks every 4th step (1, 5, 9, 13 …).
 - **Fold:** the Fold toggle hides lanes with no active step.
 - **Keyboard:** the grid is one tab stop (roving `tabindex`). Left and Right (or Home and End) move along a lane, Alt+Up and Alt+Down move between lanes, Enter and Space toggle, Up and Down adjust the active parameter by a fine step, PageUp and PageDown by a coarse one (velocity 5% and 25%; pitch 1 and 12 semitones).
-- **Updates:** the widget keeps every element across pattern changes and repaints only the cells, headers and playheads whose values changed. It rebuilds cells only when `size` or the lane list changes.
+- **Updates:** the widget keeps every element across pattern changes and repaints only the cells, headers and playheads whose values changed. It rebuilds cells only when the column count or the lane list changes.
 
-`formatStep(label, step)` names each cell for assistive technology (default `Kick step 3`). `labels` overrides the built-in strings (`grid`, `velocity`, `offset`, `length`, `repeat`, `pitch`, `chance`, `fold`, `mute`, `solo`, `steps`, `rate`, `direction`, `swing`, `dir`); custom tabs use the param's `label`.
+`formatStep(label, step)` names each cell for assistive technology (default `Kick step 3`). `labels` overrides the built-in strings (`grid`, `velocity`, `offset`, `length`, `repeat`, `pitch`, `chance`, `fold`, `mute`, `solo`, `steps`, `rate`, `direction`, `swing`, `dir`); custom tabs are labelled with the param name. The lane set is read at mount; the grid does not add or remove lanes afterwards.
 
 **Styling.** Every colour and size is a CSS custom property with a neutral default, so a page themes the grid by setting properties on the root or an ancestor, without overriding selectors:
 
@@ -149,13 +137,13 @@ Each lane row has a header and a row of cells.
 `StepGridPluginContext` extends `WidgetPluginContext` (`listen`, `onCleanup`) with the members below; `StepGridPlugin` is `WidgetPlugin<StepGridPluginContext>`:
 
 - `surface`: the positioned element that holds the lanes.
-- `sequencer`: the borrowed sequencer, so a plugin writes cells through `setCell` and `setLane`.
+- `sequencer`: the borrowed sequencer, so a plugin writes steps through `sequencer.lanes.<name>.steps[i]`.
 - `cellElement(laneId, step)`: the cell element, or `null` for an unknown lane or step.
 - `cellRect(laneId, step)`: `{ x, y, width, height }` in CSS pixels relative to `surface`, or `null`.
 - `mountOverlay(element)`: add a full-surface overlay (`pointer-events: none` by default). Returns its cleanup.
 - `addToolbarItem(element)`: add an element to the toolbar strip beside the parameter tabs. Returns its cleanup.
 - `activeParameter`: a `Readable<string>` of the selected tab id, and `setActiveParameter(id)` to select a built-in or custom tab.
-- `onPatternChange(listener)`: called after the grid has updated for each pattern change. Returns its cleanup.
+- `onPatternChange(listener)`: called after the grid has updated for each change. Returns its cleanup.
 
 ```typescript
 import { mountStepGrid, type StepGridPlugin } from "@audiorective/widgets";
@@ -169,7 +157,7 @@ const euclid: StepGridPlugin = {
     context.listen(button, "click", () => {
       for (let step = 0; step < 16; step++) {
         const hit = Math.floor(((step + 1) * 5) / 16) > Math.floor((step * 5) / 16);
-        context.sequencer.setCell("kick", step, { velocity: hit ? 1 : 0 });
+        context.sequencer.lanes.kick.steps[step].velocity = hit ? 1 : 0;
       }
       context.setActiveParameter("velocity");
     });

@@ -6,14 +6,14 @@ title: Blocks
 
 The package has no root entry. Each capability is a subpath that imports only `@audiorective/core`, so importing one never loads another:
 
-| Subpath                          | Exports         | Kind                                                                                                                |
-| -------------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `@audiorective/blocks/player`    | `WavePlayer`    | Standalone: give it an `AudioContext`                                                                               |
-| `@audiorective/blocks/recorder`  | `AudioRecorder` | Standalone                                                                                                          |
-| `@audiorective/blocks/samples`   | `SampleLibrary` | Standalone; previews through core `BufferPlayer`                                                                    |
-| `@audiorective/blocks/pads`      | `PadBank`       | Standalone: bring your own `AudioBuffer`s                                                                           |
-| `@audiorective/blocks/sequencer` | `StepSequencer` | Borrowing: needs a `BeatTiming` (`beatToTime`, `timeToBeat`) and a `trigger(hit)` that returns a `CancellableEvent` |
-| `@audiorective/blocks/launcher`  | `ClipLauncher`  | Borrowing: needs a transport (`BeatTiming` plus `now`, `schedule`, `reset`)                                         |
+| Subpath                          | Exports         | Kind                                                                                              |
+| -------------------------------- | --------------- | ------------------------------------------------------------------------------------------------- |
+| `@audiorective/blocks/player`    | `WavePlayer`    | Standalone: give it an `AudioContext`                                                             |
+| `@audiorective/blocks/recorder`  | `AudioRecorder` | Standalone                                                                                        |
+| `@audiorective/blocks/samples`   | `SampleLibrary` | Standalone; previews through core `BufferPlayer`                                                  |
+| `@audiorective/blocks/pads`      | `PadBank`       | Standalone: bring your own `AudioBuffer`s                                                         |
+| `@audiorective/blocks/sequencer` | `StepSequencer` | Borrowing: attaches to a clock or transport (`clock.attach(seq)`), which supplies the beat timing |
+| `@audiorective/blocks/launcher`  | `ClipLauncher`  | Borrowing: needs a transport (`BeatTiming` plus `now`, `schedule`, `reset`)                       |
 
 `BeatTiming` and `CancellableEvent` are core contracts ([Core](./core.md#shared-contracts)); `Timeline`, `Clock` and `PadBank` satisfy them structurally, so a drum machine needs only `clock`, `blocks/sequencer`, `blocks/pads` and `core`. See [Architecture](./architecture.md).
 
@@ -22,8 +22,8 @@ The package has no root entry. Each capability is a subpath that imports only `@
 - [WavePlayer](./player.md): range playback, selection, loading, offline stretch and shared views.
 - [Audio Recorder](./recorder.md): PCM take capture.
 - [Pad Bank](./pads.md): sample hits with choke groups.
-- [Step Sequencer](./sequencer.md): step patterns, lanes, transforms and the standalone drum machine.
-- [Step Sequencer: advanced](./sequencer-advanced.md): the explicit form, `refreshOnEdit`, transform sockets, custom per-step params and the standalone drum machine.
+- [Step Sequencer](./sequencer.md): lanes of steps in four layers, from one-line patterns to hooks.
+- [Step Sequencer: advanced](./sequencer-advanced.md): custom `transform`, per-step field semantics, shared transports, the step grid and a full drum machine.
 - [Sample Library](./samples.md): imported sample storage and previews.
 - [Clip Launcher](./launcher.md): quantized clip launching.
 

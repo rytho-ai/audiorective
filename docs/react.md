@@ -44,7 +44,7 @@ Re-renders when the value changes. Always returns a read-only snapshot — to mu
 const volume = useValue(synth.volume);
 
 // Cell
-const pattern = useValue(sequencer.pattern); // Cell<StepPattern>
+const pattern = useValue(sequencer.pattern); // Cell<boolean[]>
 
 // Computed
 const label = useValue(synth.displayLabel); // ComputedAccessor<string>

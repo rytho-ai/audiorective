@@ -130,7 +130,7 @@ type ParamRange = ValueRange & Readonly<{ default: number; step?: number }>; // 
 type ParamSpec = ParamRange & Readonly<{ id: string; label?: string }>; // a named numeric parameter
 ```
 
-`StepSequencer` takes `params: ParamSpec[]` and lists its built-in cell ranges as `cellParams: ParamSpec[]`; the step grid's `params` and `cellParams` use the same type. `ValueRange` alone types ranges with no default or id: the `EffectRack` macro mappings, and the CLAP parameter info in `host.parameterInfo`. To declare your own numeric parameter, write a `ParamSpec` (`{ id: "cutoff", label: "Cutoff", min: 0, max: 1, default: 0.5, step: 0.01 }`) and import the type from `@audiorective/core`.
+A `StepSequencer` lane declares per-step numbers as `params: Record<string, ParamRange>` (a `ParamSpec` without the `id`). `ValueRange` alone types ranges with no default or id: the `EffectRack` macro mappings, and the CLAP parameter info in `host.parameterInfo`. To declare your own numeric parameter, write a `ParamSpec` (`{ id: "cutoff", label: "Cutoff", min: 0, max: 1, default: 0.5, step: 0.01 }`) and import the type from `@audiorective/core`.
 
 ### Param\<T\>
 
