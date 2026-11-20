@@ -1,6 +1,8 @@
 import { describe, expect, test, vi } from "vitest";
 import { Clock, ManualTickSource, Timeline, renderTimeline } from "@audiorective/clock";
-import { HitEvent, StepSequencer, type Hit } from "../src/StepSequencer";
+import { HitEvent, StepSequencer, type Hit, type SoundFactory, type SoundHit } from "../src/StepSequencer";
+
+const tone: SoundFactory = (ctx) => new OscillatorNode(ctx, { frequency: 440 });
 
 /** 120 bpm: a beat is 0.5 s and a "16n" step 0.125 s. Time advances only when the test says so. */
 function harness(lookAhead = 3) {
@@ -259,8 +261,8 @@ describe("notation and lane setters", () => {
     lane.mute = true;
     expect(lane.mute).toBe(true);
     expect(lane.sound).toBeUndefined();
-    lane.sound = "C4";
-    expect(lane.sound).toBe("C4");
+    lane.sound = tone;
+    expect(lane.sound).toBe(tone);
     expect(lane.output).toBeInstanceOf(GainNode);
     lane.sound = undefined;
     expect(lane.sound).toBeUndefined();
@@ -391,8 +393,10 @@ describe("hits, cleanup and disposal", () => {
     expect(() => new StepSequencer({ a: { pattern: "X", rate: "fast" as never } })).toThrow("Step Sequencer needs a Time");
     expect(() => new StepSequencer({ a: { pattern: "X", rate: "1000n" } })).toThrow("Step Sequencer needs a rate");
     expect(() => new StepSequencer({ a: { pattern: "X", swing: "x%" as never } })).toThrow("Step Sequencer swing needs");
-    expect(() => new StepSequencer({ a: { pattern: "X", sound: "C4" } })).toThrow("Step Sequencer needs options.context for a lane with a sound.");
-    expect(() => new StepSequencer({ a: { pattern: "X", sound: "H9" as never } }, { context: ctx })).toThrow("Step Sequencer sound needs");
+    expect(() => new StepSequencer({ a: { pattern: "X", sound: tone } })).toThrow("Step Sequencer needs options.context for a lane with a sound.");
+    expect(() => new StepSequencer({ a: { pattern: "X", sound: "kick" as never } }, { context: ctx })).toThrow(
+      "Sound needs an AudioBuffer or a sound factory function.",
+    );
     expect(() => new StepSequencer({ a: { pattern: "X", params: { v: { min: 1, max: 0, default: 0 } } } })).toThrow(
       "Step Sequencer lane params need",
     );
@@ -445,7 +449,7 @@ describe("sound", () => {
   test("output defaults to the destination and connect reroutes it", async () => {
     const out = await renderTimeline({ seconds: 0.2, channels: 1, sampleRate: 8000 }, (ctx, ticks) => {
       const clock = new Clock({ timeline: new Timeline({ audioContext: ctx }), tickSource: ticks, lookAhead: 0.2 });
-      const seq = new StepSequencer({ k: { pattern: "X", sound: "A4" } }, { context: ctx });
+      const seq = new StepSequencer({ k: { pattern: "X", sound: tone } }, { context: ctx });
       const half = new GainNode(ctx, { gain: 0.5 });
       half.connect(ctx.destination);
       expect(seq.lanes.k!.connect(half)).toBe(half);
@@ -454,13 +458,68 @@ describe("sound", () => {
     });
     const direct = await renderTimeline({ seconds: 0.2, channels: 1, sampleRate: 8000 }, (ctx, ticks) => {
       const clock = new Clock({ timeline: new Timeline({ audioContext: ctx }), tickSource: ticks, lookAhead: 0.2 });
-      const seq = new StepSequencer({ k: { pattern: "X", sound: "A4" } }, { context: ctx });
+      const seq = new StepSequencer({ k: { pattern: "X", sound: tone } }, { context: ctx });
       expect(seq.lanes.k!.output.context).toBe(ctx);
       clock.attach(seq);
       clock.start(0);
     });
     expect(peak(direct, 0, 0.1)).toBeGreaterThan(0.1);
     expect(peak(out, 0, 0.1)).toBeCloseTo(peak(direct, 0, 0.1) / 2, 2);
+  });
+
+  /** Render one lane whose sound is `sound`, hits at 0.1 s with a quarter-second step (8n at 120 bpm). */
+  const renderSound = (sound: SoundFactory, pattern = "X...", step?: { velocity?: number }) =>
+    renderTimeline({ seconds: 0.8, channels: 1, sampleRate: 8000 }, (ctx, ticks) => {
+      const clock = new Clock({ timeline: new Timeline({ audioContext: ctx }), tickSource: ticks, lookAhead: 0.5 });
+      const seq = new StepSequencer({ k: { pattern, rate: "8n", sound } }, { context: ctx });
+      if (step?.velocity !== undefined) seq.lanes.k!.steps[0]!.velocity = step.velocity;
+      clock.attach(seq);
+      clock.start(0.1);
+    });
+  const constant: SoundFactory = (ctx) => new ConstantSourceNode(ctx, { offset: 1 });
+
+  test("a factory voice is connected, started and stopped by the player: held for the step, then faded out", async () => {
+    const out = await renderSound((ctx) => {
+      const a = new ConstantSourceNode(ctx, { offset: 0.2 });
+      const b = new ConstantSourceNode(ctx, { offset: 0.3 });
+      const mix = new GainNode(ctx);
+      a.connect(mix);
+      b.connect(mix);
+      return { output: mix, sources: [a, b] };
+    });
+    expect(peak(out, 0.15, 0.3)).toBeCloseTo(0.5, 2); // both oscillators of the voice are held for the 0.25 s step
+    expect(peak(out, 0.4, 0.8)).toBe(0); // and both are stopped once it ends
+  });
+
+  test("a voice's own duration ends it however long the step is, and the step's length reaches the factory", async () => {
+    const seen: SoundHit[] = [];
+    const out = await renderSound((ctx, hit) => {
+      seen.push(hit);
+      const source = new ConstantSourceNode(ctx, { offset: 1 });
+      return { output: source, sources: [source], duration: 0.05 };
+    });
+    expect(seen[0]!.duration).toBeCloseTo(0.25, 6);
+    expect(peak(out, 0.11, 0.14)).toBeCloseTo(1, 2);
+    expect(peak(out, 0.2, 0.8)).toBe(0);
+  });
+
+  test("the player applies velocity once, after the factory's output", async () => {
+    const seen: number[] = [];
+    const out = await renderSound((ctx, hit) => (seen.push(hit.velocity), constant(ctx, hit)), "5");
+    expect(seen[0]).toBeCloseTo(0.5, 6);
+    expect(peak(out, 0.15, 0.3)).toBeCloseTo(0.5, 2);
+  });
+
+  test("a retracted hit's factory voice never sounds", async () => {
+    const out = await renderTimeline({ seconds: 0.5, channels: 1, sampleRate: 8000 }, (ctx, ticks) => {
+      const clock = new Clock({ timeline: new Timeline({ audioContext: ctx }), tickSource: ticks, lookAhead: 0.2 });
+      const seq = new StepSequencer({ k: { pattern: "X...", rate: "8n", sound: constant } }, { context: ctx });
+      clock.attach(seq);
+      clock.start(0.1);
+      ticks.tick();
+      seq.dispose();
+    });
+    expect(peak(out, 0, 0.5)).toBe(0);
   });
 
   test("a factory sound is called per hit", async () => {

@@ -36,8 +36,8 @@ const sortHits = (hits: Played[]) => [...hits].sort((a, b) => a.when - b.when ||
 function instrumentSource(context: AudioContext) {
   const buffer = context.createBuffer(1, context.sampleRate, context.sampleRate);
   const bank = new PadBank(context, [
-    { id: "kick", buffer },
-    { id: "snare", buffer },
+    { id: "kick", sound: buffer },
+    { id: "snare", sound: buffer },
   ]);
   disposers.push(() => bank.dispose());
   const played: Played[] = [];
@@ -45,13 +45,13 @@ function instrumentSource(context: AudioContext) {
   return {
     played: () => {
       played.length = 0;
-      for (const [lane, velocity, when] of spy.mock.calls) played.push({ lane, velocity: velocity!, when: when! });
+      for (const [lane, options] of spy.mock.calls) played.push({ lane, velocity: options!.velocity!, when: options!.when! });
       return played;
     },
-    live: () => bank.cells.activeEvents.value,
+    live: () => bank.cells.activeVoices.value,
     onHit: (hit: Hit) => {
-      const played = bank.trigger(hit.lane, hit.velocity, hit.when);
-      return () => played?.cancel();
+      const played = bank.trigger(hit.lane, { velocity: hit.velocity, when: hit.when });
+      return () => played?.stop();
     },
   };
 }

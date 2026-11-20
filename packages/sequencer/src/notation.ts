@@ -1,5 +1,3 @@
-/** A note name such as "C4" or "F#3". */
-export type NoteName = `${"A" | "B" | "C" | "D" | "E" | "F" | "G"}${"#" | "b" | ""}${number}`;
 /** A step length or duration: "16n" note, "16n." dotted, "8t" triplet, "1m" bar (all in beats), or "250ms", "2s", a number (seconds). */
 export type Time = number | `${number}n` | `${number}n.` | `${number}t` | `${number}m` | `${number}ms` | `${number}s`;
 /** Steps as text (X = 1, x = 0.8, 1-9 = tenths, . = rest; spaces ignored) or one velocity per step. */
@@ -108,18 +106,4 @@ export function parseSwing(swing: number | `${number}%`): number {
   if (!Number.isFinite(value) || value < 0 || value > 1)
     throw new Error('Step Sequencer swing needs a number from 0 to 1 or a percentage like "30%".');
   return value;
-}
-
-const SEMITONES: Readonly<Record<string, number>> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
-
-/** Frequency in Hz of a note name (A4 = 440), or undefined when `text` is not a note name. */
-export function noteToHz(text: string): number | undefined {
-  const match = /^([A-G])([#b]?)(-?\d+)$/.exec(text);
-  if (!match) return undefined;
-  const midi = 12 * (Number(match[3]) + 1) + SEMITONES[match[1]!]! + (match[2] === "#" ? 1 : match[2] === "b" ? -1 : 0);
-  return 440 * Math.pow(2, (midi - 69) / 12);
-}
-
-export function isNoteName(value: unknown): value is NoteName {
-  return typeof value === "string" && noteToHz(value) !== undefined;
 }

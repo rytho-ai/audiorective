@@ -78,7 +78,7 @@ describe("StepSequencer readers are tracked", () => {
     }
     expectTracked(
       () => lane.sound,
-      () => (lane.sound = "C4"),
+      () => (lane.sound = (ctx) => new OscillatorNode(ctx)),
     );
     expectTracked(
       () => lane.steps.length,
