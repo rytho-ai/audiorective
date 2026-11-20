@@ -89,11 +89,11 @@ Side     (core only)   react, threejs, playcanvas, devtools
 
 "Independent" means two things: the module imports no sibling, and it works when taken out alone. They are separate questions.
 
-| Kind           | Test                                                                     | Modules                                                                                                           |
-| -------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
-| **Standalone** | Imports only core; give it an `AudioContext` and it works                | `clock`, `midi`, `effects`, `host`, `blocks/player`, `blocks/recorder`, `blocks/samples`, `blocks/pads`           |
-| **Borrowing**  | Imports only core, but cannot run until the caller supplies an interface | `blocks/sequencer` (a `BeatTiming` and a trigger returning a `CancellableEvent`), `blocks/launcher` (a transport) |
-| **Composed**   | Imports a sibling capability module                                      | none; an exception needs a written reason and an edge that disappears when the feature is unused                  |
+| Kind           | Test                                                                     | Modules                                                                                                 |
+| -------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| **Standalone** | Imports only core; give it an `AudioContext` and it works                | `clock`, `midi`, `effects`, `host`, `blocks/player`, `blocks/recorder`, `blocks/samples`, `blocks/pads` |
+| **Borrowing**  | Imports only core, but cannot run until the caller supplies an interface | `blocks/sequencer` (attaches to a clock or transport), `blocks/launcher` (a transport)                  |
+| **Composed**   | Imports a sibling capability module                                      | none; an exception needs a written reason and an edge that disappears when the feature is unused        |
 
 A borrowing module names what it needs as a structural type in [core](./core.md#shared-contracts), so `Timeline`, `Clock`, `PadBank` or the DAW runtime can each satisfy it without the module importing any of them. `SampleLibrary` previews through core `BufferPlayer` for the same reason: it stays standalone.
 

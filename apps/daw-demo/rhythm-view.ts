@@ -6,9 +6,9 @@ import { mountPadGrid, mountStepGrid } from "@audiorective/widgets";
 import type { Workspace } from "@audiorective/daw";
 
 const lanes = [
-  { id: "kick", label: "Kick", key: "a", hits: [0, 8] },
-  { id: "open", label: "Open hat", key: "s", hits: [4, 12], group: "hat" },
-  { id: "closed", label: "Closed hat", key: "d", hits: [2, 6, 10, 14], group: "hat" },
+  { id: "kick", label: "Kick", key: "a", pattern: "x.......x.......", group: undefined },
+  { id: "open", label: "Open hat", key: "s", pattern: "....x.......x...", group: "hat" },
+  { id: "closed", label: "Closed hat", key: "d", pattern: "..x...x...x...x.", group: "hat" },
 ] as const;
 
 export function mountRhythmView(
@@ -24,21 +24,17 @@ export function mountRhythmView(
     lanes.map((lane, index) => ({
       id: lane.id,
       buffer: defaults[index],
-      group: "group" in lane ? lane.group : undefined,
+      group: lane.group,
     })),
   );
   bank.output.connect(workspace.output);
-  const sequence = new StepSequencer(
-    {
-      size: 16,
-      lanes: lanes.map(({ id, label, hits }) => ({
-        id,
-        label,
-        cells: Array.from({ length: 16 }, (_, index) => ({ velocity: (hits as readonly number[]).includes(index) ? 0.8 : 0 })),
-      })),
+  const sequence = new StepSequencer(Object.fromEntries(lanes.map(({ id, pattern }) => [id, pattern])), {
+    context,
+    onHit: ({ lane, velocity, when, pitch, duration }) => {
+      const played = bank.trigger(lane, velocity, when, { pitch, duration });
+      return played ? () => played.cancel() : undefined;
     },
-    ({ laneId, velocity, when, pitch, duration }) => bank.trigger(laneId, velocity, when, { pitch, duration }),
-  );
+  });
 
   const element = document.createElement("div");
   element.className = "rhythm-view";
@@ -104,7 +100,7 @@ export function mountRhythmView(
       play.setAttribute("aria-pressed", "false");
       return;
     }
-    detach = workspace.attachStepSequencer(sequence);
+    detach = workspace.transport.attach(sequence);
     play.textContent = "停止鼓機";
     play.setAttribute("aria-pressed", "true");
     void workspace.play().catch((error) => {
@@ -126,6 +122,7 @@ export function mountRhythmView(
   });
   const grid = mountStepGrid(element, {
     sequencer: sequence,
+    laneLabel: (name) => lanes.find(({ id }) => id === name)?.label ?? name,
     formatStep: (label, step) => `${label} 第 ${step + 1} 格`,
     labels: {
       velocity: "力度",
@@ -153,6 +150,7 @@ export function mountRhythmView(
     destroy() {
       destroyed = true;
       detach?.();
+      sequence.dispose();
       stopChoices();
       grid.destroy();
       pads.destroy();

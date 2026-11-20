@@ -4,13 +4,11 @@ import {
   cell,
   effect,
   hash01,
-  readonlyCell,
   untracked,
   type BeatTiming,
   type CancellableEvent,
   type EventTransform,
   type ParamSpec,
-  type ReadonlyCell,
   type SecondsOf,
   type TimedBeatEvent,
 } from "@audiorective/core";
@@ -18,124 +16,34 @@ import { describePattern, parsePattern, parseSwing, parseTime, type Pattern, typ
 import { assertSound, playSound, type Sound } from "./sounds";
 
 export type { NoteName, Pattern, Time } from "./notation";
-export type { Sound, SoundFactory } from "./sounds";
+export type { Sound, SoundFactory, SoundHit } from "./sounds";
 
 export type StepRate = "1/2" | "1/4" | "1/8" | "1/16" | "1/32" | "1/64" | "1/2T" | "1/4T" | "1/8T" | "1/16T" | "1/32T" | "1/64T";
 export type StepDirection = "forward" | "backward" | "bounce";
 
-/** One step of one lane. `velocity` 0 means the step is off. */
-export type StepCell = Readonly<{
-  /** 0..1; 0 = step off. */
-  velocity: number;
-  /** -0.5..0.5 of one lane step. */
-  offset: number;
-  /** 1/16..4 lane steps. */
-  length: number;
-  /** Integer 1..8: hits evenly spaced inside the step. */
-  repeat: number;
-  /** Integer semitones -24..24. */
-  pitch: number;
-  /** 0..1 probability that the step plays. */
-  chance: number;
-  /** One number per declared `params` entry, and nothing else. `{}` when none are declared. */
-  custom: Readonly<Record<string, number>>;
-}>;
-
-/** A caller-defined per-step number. The sequencer stores and validates it and passes it to the trigger; it never interprets it. */
-export type StepParamSpec = ParamSpec;
-
-export type StepLane = Readonly<{
-  id: string;
-  label: string;
-  /** Integer 1..size: this lane's own length (polymeter). */
-  steps: number;
-  rate: StepRate;
-  direction: StepDirection;
-  /** 0..1: delays every odd lane step by `swing * 0.5` lane steps. */
-  swing: number;
-  mute: boolean;
-  solo: boolean;
-  /** Length is `pattern.size`; cells beyond `steps` are kept but not played. */
-  cells: readonly StepCell[];
-}>;
-
-/** `size` counts 1/16 steps (integer 1..128) and sets the loop length. */
-export type StepPattern = Readonly<{ size: number; lanes: readonly StepLane[] }>;
-
-export type StepCellInput = Readonly<Partial<Omit<StepCell, "custom">> & { custom?: Readonly<Record<string, number>> }>;
-export type StepLaneInput = Readonly<Partial<Omit<StepLane, "cells">> & { id: string; cells?: readonly StepCellInput[] }>;
-export type StepPatternInput = Readonly<{ size: number; lanes: readonly StepLaneInput[] }>;
-
-/**
- * One hit inside the transform pipeline. `beat` is where it sounds and `durationBeats` how long it lasts, in beats,
- * with offset and repeat already applied; transforms move and resize it in beats. The trigger receives its `StepHit`.
- */
-export type StepEvent = TimedBeatEvent &
-  Readonly<{
-    laneId: string;
-    /** Index of the cell that produced this hit. */
-    step: number;
-    /** The lane's step counter within the loop (before direction is applied). */
-    count: number;
-    /** Beat of the lane step boundary, before offset and repeat. */
-    stepBeat: number;
-    /** The lane's step length in beats. */
-    rateBeats: number;
-    /** The lane's swing value (0..1). */
-    swing: number;
-    /** Semitones. */
-    pitch: number;
-    /** The cell's custom values. */
-    custom: Readonly<Record<string, number>>;
-    /** Loops since timing beat 0: `floor(stepBeat / loopBeats)`. */
-    loop: number;
-    repeatIndex: number;
-    repeatCount: number;
-  }>;
-
-/** One hit as the trigger receives it, after the transforms and the clamp to now: `when` and `duration` are final audio-context seconds. */
-export type StepHit = SecondsOf<StepEvent>;
-
-/** A transform over a sequencer's hits. Beat-based unless it sets `unit: "second"`. */
-export type StepTransform = EventTransform<StepEvent>;
-
-export type StepWindow = Readonly<{
-  beat: { start: number; end: number };
-  time: { current: number };
-  own(event: CancellableEvent, when: number): void;
-}>;
-
 export type StepSequencerOptions = Readonly<{
   /**
-   * Seeds the stable randomness: each step's `chance` draw and `context.randomFor` in transforms are pure functions of `seed` and the
-   * step's position (lane, loop, step counter), so an edit, re-queue, seek or different tick size never changes them. Default 0;
-   * pass a different number per instance or run for a different pattern.
+   * Seeds the stable randomness: each step's `chance` draw and `random` in `transform` are pure functions of `seed` and the step's position
+   * (lane, loop, index), so an edit, re-queue, seek or different tick size never changes them. Default 0; pass a different number per
+   * instance or run for a different pattern.
    */
   seed?: number;
   /**
-   * A sequential source in [0, 1), used for `chance` and as `context.random` instead of the stable draw. Each call advances it, so a
-   * re-queue draws new numbers and pending chance steps can flip; keep it for tests that script exact draws. Default: `chance` is
-   * stable from `seed`, and `context.random` is `Math.random`.
+   * A sequential source in [0, 1), used for `chance` instead of the stable draw. Each call advances it, so a re-queue draws new numbers and
+   * pending chance steps can flip; keep it for tests that script exact draws. Default: `chance` is stable from `seed`.
    */
   random?: () => number;
-  /** Custom per-step parameters, fixed at construction. */
-  params?: readonly StepParamSpec[];
-  /** Transforms run in order over each window's hits. Default `defaultStepTransforms`. */
-  transforms?: readonly StepTransform[];
-  /**
-   * Lane-record form: the context that lanes with a `sound` play into (and whose destination their `output` joins). Required when any lane
-   * has a sound or `lane.sound` is set later.
-   */
+  /** The context that lanes with a `sound` play into (and whose destination their `output` joins). Required when any lane has a sound or `lane.sound` is set later. */
   context?: BaseAudioContext;
   /**
-   * Lane-record form: called ahead of time for each hit that will sound, before its `hit` event listeners. May return a cleanup that runs if
-   * the hit is retracted (an edit re-queues it, the transport stops or seeks, or `dispose()` runs), like a React effect cleanup. After a
-   * retraction `onHit` can run again for the same hit.
+   * Called ahead of time for each hit that will sound, before its `hit` event listeners. May return a cleanup that runs if the hit is
+   * retracted (an edit re-queues it, the transport stops or seeks, or `dispose()` runs), like a React effect cleanup. After a retraction
+   * `onHit` can run again for the same hit.
    */
   onHit?: (hit: Hit) => void | (() => void);
   /**
-   * Adjust or drop each hit in seconds just before it is scheduled, after `transforms`. `random(key?)` is stable for the same `seed`, lane,
-   * loop, index and `key`, so a retracted and re-queued hit gets the same number. Return the hit (changed or not), or `null` to drop it.
+   * Adjust or drop each hit in seconds just before it is scheduled. `random(key?)` is stable for the same `seed`, lane, loop, index and
+   * `key`, so a retracted and re-queued hit gets the same number. Return the hit (changed or not), or `null` to drop it.
    */
   transform?: HitTransform;
   /** Aborting the signal calls `dispose()`. */
@@ -145,7 +53,7 @@ export type StepSequencerOptions = Readonly<{
 /** Describes a per-step number the way `<input type="range">` does. */
 export type ParamRange = Readonly<{ min: number; max: number; step?: number; default: number }>;
 
-/** One lane in the lane-record form. */
+/** One lane. A string or number array is the shorthand for `{ pattern }`. */
 export type LaneOptions = Readonly<{
   pattern: Pattern;
   /**
@@ -155,11 +63,15 @@ export type LaneOptions = Readonly<{
   rate?: Time | StepRate;
   /** 0..1 or "30%": delays every second step by that fraction of half a step. Default 0. */
   swing?: number | `${number}%`;
+  /** Order the lane walks its steps in. Default "forward". */
+  direction?: StepDirection;
   /** Plays a voice per hit into `lane.output`; needs `options.context`. Without it the lane only reports hits. */
   sound?: Sound;
   /** Per-step numbers by name; each step holds one, and `hit.values` carries them. */
   params?: Readonly<Record<string, ParamRange>>;
   mute?: boolean;
+  /** While any lane is soloed, only soloed lanes play. Default false. */
+  solo?: boolean;
   /** Called for each hit of this lane after the sequencer-level `onHit`; may return a cleanup. */
   onHit?: (hit: Hit) => void | (() => void);
 }>;
@@ -175,6 +87,8 @@ export type Hit = Readonly<{
   duration: number;
   /** 0..1. */
   velocity: number;
+  /** Semitones. */
+  pitch: number;
   /** The step's per-step values by name. */
   values: Readonly<Record<string, number>>;
   /** How many times this lane has looped since beat 0. */
@@ -195,61 +109,90 @@ export class HitEvent extends Event {
   }
 }
 
-/** One step of a lane. Writes commit through the sequencer's cells, so a running transport hears them on the next pass. */
+/** One step of a lane. Writes validate and commit through the sequencer, so a running transport hears them on the next pass. */
 export type Step = {
   /** 0..1; 0 is a rest. */
   velocity: number;
+  /** -0.5..0.5 of one lane step: moves the hit earlier or later. */
+  offset: number;
+  /** 1/16..4 lane steps: how long the hit lasts. */
+  length: number;
+  /** Integer 1..8: hits evenly spaced inside the step. */
+  repeat: number;
+  /** Integer semitones -24..24. */
+  pitch: number;
+  /** 0..1 probability that the step plays. */
+  chance: number;
   /** Per-step values by name (the lane's declared `params`). */
   readonly values: Record<string, number>;
 };
 
-/** What the transport tells a scheduler on attach (a clock's `SchedulerHandle`). */
+/** What a transport tells a scheduler on attach (a clock's `SchedulerHandle`). */
 export type TransportHandle = Readonly<{ refresh(): void; detach(): void }>;
 
-type LaneMeta = Readonly<{ rate: Time | StepRate | undefined; sound: Sound | undefined }>;
-type LaneHost = Readonly<{
-  meta(id: string): LaneMeta;
-  setMeta(id: string, patch: Partial<LaneMeta>): void;
-  setPattern(id: string, velocities: readonly number[]): void;
-  params(id: string): readonly StepParamSpec[];
-  output(id: string): GainNode;
-  connect(id: string, node: AudioNode): AudioNode;
-  disconnect(id: string): void;
+/**
+ * The part of a transport window `schedule` reads. Internal to transports: `clock.attach(sequencer)` and `workspace.transport.attach(sequencer)`
+ * pass it; applications never build one.
+ */
+export type StepWindow = Readonly<{
+  beat: { start: number; end: number };
+  time: { current: number };
+  own(event: CancellableEvent, when: number): void;
 }>;
 
-/** Delays every hit whose lane step count is odd by `swing * 0.5` lane steps. Without it, lane `swing` has no effect. */
-export function stepSwing(): StepTransform {
-  return {
-    id: "step-swing",
-    apply: (events) =>
-      events.map((hit) => (hit.count % 2 === 1 && hit.swing > 0 ? { ...hit, beat: hit.beat + hit.swing * 0.5 * hit.rateBeats } : hit)),
-  };
-}
+type StepCell = Readonly<{
+  velocity: number;
+  offset: number;
+  length: number;
+  repeat: number;
+  pitch: number;
+  chance: number;
+  custom: Readonly<Record<string, number>>;
+}>;
+type StepCellPatch = Partial<Omit<StepCell, "custom">> & { custom?: Readonly<Record<string, number>> };
 
-/**
- * Re-queue the transport's look-ahead once per committed change of `sequencer.pattern` or `sequencer.transforms`.
- * Does not run on attach, and never subscribes a calling effect. Returns a disposer; call it before the transport goes away.
- * `transport` is structural: a Clock, a Workspace clock or anything with `refresh()`. A Clock refills in a microtask shared by
- * every `refresh()` of the same task, so several edits do not re-queue several times.
- */
-export function refreshOnEdit(sequencer: Pick<StepSequencer, "pattern" | "transforms">, transport: { refresh(): void }): () => void {
-  let armed = false;
-  return untracked(() =>
-    effect(() => {
-      sequencer.pattern.$();
-      sequencer.transforms.$();
-      if (!armed) {
-        armed = true;
-        return;
-      }
-      untracked(() => transport.refresh());
-    }),
-  );
-}
+type LaneData = Readonly<{
+  /** Integer 1..128: this lane's own length (polymeter). */
+  steps: number;
+  rate: Time | StepRate;
+  direction: StepDirection;
+  swing: number;
+  mute: boolean;
+  solo: boolean;
+  sound: Sound | undefined;
+  /** At least `steps` long; cells beyond `steps` are kept but not played. */
+  cells: readonly StepCell[];
+}>;
+type LaneFields = Partial<Omit<LaneData, "cells">>;
 
-export const defaultStepTransforms: readonly StepTransform[] = Object.freeze([stepSwing()]);
+type LaneHost = Readonly<{
+  data(name: string): LaneData;
+  patch(name: string, patch: LaneFields): void;
+  setPattern(name: string, velocities: readonly number[]): void;
+  setCell(name: string, index: number, patch: StepCellPatch): void;
+  params(name: string): readonly ParamSpec[];
+  playhead(name: string): number | null;
+  progress(name: string): number | null;
+  output(name: string): GainNode;
+  connect(name: string, node: AudioNode): AudioNode;
+  disconnect(name: string): void;
+}>;
 
-const MAX_SIZE = 128;
+/** One hit inside the transform pipeline, in beats with offset, swing and repeat already applied. */
+type StepEvent = TimedBeatEvent &
+  Readonly<{
+    laneId: string;
+    step: number;
+    count: number;
+    pitch: number;
+    custom: Readonly<Record<string, number>>;
+    loop: number;
+    repeatIndex: number;
+    repeatCount: number;
+  }>;
+type StepHit = SecondsOf<StepEvent>;
+
+const MAX_STEPS = 128;
 const EPS = 1e-9;
 const RATE_BEATS: Readonly<Record<StepRate, number>> = {
   "1/2": 2,
@@ -266,69 +209,72 @@ const RATE_BEATS: Readonly<Record<StepRate, number>> = {
   "1/64T": 1 / 24,
 };
 const DIRECTIONS: readonly StepDirection[] = ["forward", "backward", "bounce"];
-/** The built-in cell fields as data, in display order: the one source for validation and for views. Same shape as a custom `StepParamSpec`. */
-export const stepCellParams: readonly StepParamSpec[] = Object.freeze(
-  [
-    { id: "velocity", label: "Velocity", min: 0, max: 1, default: 0, step: 0.01 },
-    { id: "offset", label: "Offset", min: -0.5, max: 0.5, default: 0, step: 0.01 },
-    { id: "length", label: "Length", min: 1 / 16, max: 4, default: 1, step: 1 / 16 },
-    { id: "repeat", label: "Repeat", min: 1, max: 8, default: 1, step: 1 },
-    { id: "pitch", label: "Pitch", min: -24, max: 24, default: 0, step: 1 },
-    { id: "chance", label: "Chance", min: 0, max: 1, default: 1, step: 0.01 },
-  ].map((spec) => Object.freeze(spec)),
-);
-/** The twelve lane rates in display order: straight from 1/2 down to 1/64, then the triplets. */
-export const stepRates: readonly StepRate[] = Object.freeze(Object.keys(RATE_BEATS) as StepRate[]);
-const BUILTIN_KEYS = stepCellParams.map((spec) => spec.id) as (keyof StepCell & string)[];
-const BUILTIN_CELL = Object.fromEntries(stepCellParams.map((spec) => [spec.id, spec.default])) as Omit<StepCell, "custom">;
-/** Built-in fields that only take whole numbers. */
-const INTEGER_KEYS: ReadonlySet<string> = new Set(["repeat", "pitch"]);
+/** The built-in step fields as data, in display order: the one source for validation. */
+const FIELDS = [
+  { id: "velocity", min: 0, max: 1, default: 0, integer: false },
+  { id: "offset", min: -0.5, max: 0.5, default: 0, integer: false },
+  { id: "length", min: 1 / 16, max: 4, default: 1, integer: false },
+  { id: "repeat", min: 1, max: 8, default: 1, integer: true },
+  { id: "pitch", min: -24, max: 24, default: 0, integer: true },
+  { id: "chance", min: 0, max: 1, default: 1, integer: false },
+] as const;
+type FieldId = (typeof FIELDS)[number]["id"];
+const FIELD_IDS = FIELDS.map((field) => field.id) as readonly FieldId[];
+const BUILTIN_CELL = Object.fromEntries(FIELDS.map((field) => [field.id, field.default])) as Omit<StepCell, "custom">;
 
-const SIZE_ERROR = "Step Sequencer needs an integer size from 1 to 128.";
-const LANES_ERROR = "Step Sequencer needs lanes with unique, nonempty IDs.";
-const LANE_ERROR =
-  "Step Sequencer lane needs steps from 1 to the pattern size, a known rate and direction, swing from 0 to 1, boolean mute and solo, and at most size cells.";
+const LANE_ERROR = "Step Sequencer lane needs a length from 1 to 128, a known direction and boolean mute and solo.";
 const CELL_ERROR =
   "Step Sequencer cell needs velocity and chance from 0 to 1, offset from -0.5 to 0.5, length from 1/16 to 4, an integer repeat from 1 to 8 and an integer pitch from -24 to 24.";
-const PARAMS_ERROR =
-  "Step Sequencer params need unique nonempty ids that differ from the built-in cell keys (and from custom), a finite min below max, and a default from min to max.";
 const CUSTOM_ERROR = "Step Sequencer custom values need declared param ids and finite numbers from each param's min to max.";
-const TRANSFORMS_ERROR = "Step Sequencer transforms need an array of objects that each have a nonempty string id and an apply function.";
-const TARGET_ERROR = "Step Sequencer needs an existing lane and step.";
+const PARAM_RANGE_ERROR =
+  "Step Sequencer lane params need nonempty names that differ from the built-in step keys, a finite min below max, a step above 0 and a default from min to max.";
+const LANE_RECORD_ERROR = "Step Sequencer lanes need nonempty names mapped to a pattern or to lane options with a pattern.";
+const ARGUMENTS_ERROR = "Step Sequencer takes a record of lanes and an options object.";
+const CONTEXT_ERROR = "Step Sequencer needs options.context for a lane with a sound.";
+const CALLBACK_ERROR = "Step Sequencer onHit and transform need functions.";
+const DISPOSED_ERROR = "Step Sequencer is disposed.";
 const LANE_TARGET_ERROR = "Step Sequencer needs an existing lane.";
+const RATE_ERROR = "Step Sequencer needs a rate that is a StepRate or a Time, at least 1/128 of a beat long.";
+const MIN_RATE_BEATS = 1 / 128;
+const DEFAULT_RATE: Time = "16n";
 
 const inRange = (value: number, min: number, max: number) => typeof value === "number" && Number.isFinite(value) && value >= min && value <= max;
 const inRangeInt = (value: number, min: number, max: number) => inRange(value, min, max) && Number.isInteger(value);
-const validSize = (size: number) => inRangeInt(size, 1, MAX_SIZE);
+const isStepRate = (rate: unknown): rate is StepRate => typeof rate === "string" && Object.prototype.hasOwnProperty.call(RATE_BEATS, rate);
 
-function buildParams(params: readonly StepParamSpec[] | undefined): readonly StepParamSpec[] {
-  if (params === undefined) return Object.freeze([]);
-  if (!Array.isArray(params)) throw new Error(PARAMS_ERROR);
-  const ids = new Set<string>();
-  for (const spec of params) {
-    if (
-      !spec ||
-      typeof spec.id !== "string" ||
-      !spec.id ||
-      ids.has(spec.id) ||
-      spec.id === "custom" ||
-      (BUILTIN_KEYS as readonly string[]).includes(spec.id) ||
-      !Number.isFinite(spec.min) ||
-      !Number.isFinite(spec.max) ||
-      !(spec.min < spec.max) ||
-      !inRange(spec.default, spec.min, spec.max)
-    )
-      throw new Error(PARAMS_ERROR);
-    ids.add(spec.id);
-  }
-  return Object.freeze(params.map((spec) => Object.freeze({ ...spec })));
+/** Throws unless `rate` is a `StepRate` or a `Time` of at least 1/128 beat (seconds are checked against the tempo when scheduling). */
+function checkRate(rate: unknown): Time | StepRate {
+  if (isStepRate(rate)) return rate;
+  const parsed = parseTime(rate as Time);
+  if (!(parsed.value > 0) || (parsed.unit === "beats" && parsed.value < MIN_RATE_BEATS)) throw new Error(RATE_ERROR);
+  return rate as Time;
 }
 
-function makeCell(base: StepCell, patch: StepCellInput, specs: readonly StepParamSpec[]): StepCell {
+function toParamSpecs(params: LaneOptions["params"]): readonly ParamSpec[] {
+  if (params === undefined) return [];
+  if (typeof params !== "object" || params === null) throw new Error(PARAM_RANGE_ERROR);
+  return Object.entries(params).map(([id, range]) => {
+    if (
+      !id ||
+      id === "custom" ||
+      (FIELD_IDS as readonly string[]).includes(id) ||
+      !range ||
+      !Number.isFinite(range.min) ||
+      !Number.isFinite(range.max) ||
+      !(range.min < range.max) ||
+      !inRange(range.default, range.min, range.max) ||
+      (range.step !== undefined && !(Number.isFinite(range.step) && range.step > 0))
+    )
+      throw new Error(PARAM_RANGE_ERROR);
+    return Object.freeze({ id, min: range.min, max: range.max, default: range.default, ...(range.step !== undefined ? { step: range.step } : {}) });
+  });
+}
+
+function makeCell(base: StepCell, patch: StepCellPatch, specs: readonly ParamSpec[]): StepCell {
   const next: Record<string, unknown> = { ...base };
-  for (const key of BUILTIN_KEYS) if (patch[key] !== undefined) next[key] = patch[key];
-  for (const { id, min, max } of stepCellParams) {
-    if (!(INTEGER_KEYS.has(id) ? inRangeInt : inRange)(next[id] as number, min, max)) throw new Error(CELL_ERROR);
+  for (const id of FIELD_IDS) if (patch[id] !== undefined) next[id] = patch[id];
+  for (const { id, min, max, integer } of FIELDS) {
+    if (!(integer ? inRangeInt : inRange)(next[id] as number, min, max)) throw new Error(CELL_ERROR);
   }
   if (patch.custom !== undefined) {
     if (typeof patch.custom !== "object" || patch.custom === null) throw new Error(CUSTOM_ERROR);
@@ -344,46 +290,13 @@ function makeCell(base: StepCell, patch: StepCellInput, specs: readonly StepPara
 }
 
 const sameCell = (a: StepCell, b: StepCell) =>
-  BUILTIN_KEYS.every((key) => a[key] === b[key]) && Object.keys(a.custom).every((id) => a.custom[id] === b.custom[id]);
+  FIELD_IDS.every((id) => a[id] === b[id]) && Object.keys(a.custom).every((id) => a.custom[id] === b.custom[id]);
 
-type LaneFields = Omit<StepLane, "id" | "cells">;
-
-function makeLaneFields(base: LaneFields, patch: Partial<LaneFields>, size: number): LaneFields {
-  const next = { ...base };
-  for (const key of ["label", "steps", "rate", "direction", "swing", "mute", "solo"] as const) {
-    if (patch[key] !== undefined) (next as Record<string, unknown>)[key] = patch[key];
-  }
-  if (
-    typeof next.label !== "string" ||
-    !inRangeInt(next.steps, 1, size) ||
-    !stepRates.includes(next.rate) ||
-    !DIRECTIONS.includes(next.direction) ||
-    !inRange(next.swing, 0, 1) ||
-    typeof next.mute !== "boolean" ||
-    typeof next.solo !== "boolean"
-  )
-    throw new Error(LANE_ERROR);
-  return next;
-}
-
-function buildPattern(input: StepPatternInput, specsFor: (id: string) => readonly StepParamSpec[], blankFor: (id: string) => StepCell): StepPattern {
-  if (!input || !validSize(input.size)) throw new Error(SIZE_ERROR);
-  const { size } = input;
-  const ids = new Set<string>();
-  const lanes = input.lanes.map((lane) => {
-    if (!lane.id || typeof lane.id !== "string" || ids.has(lane.id)) throw new Error(LANES_ERROR);
-    ids.add(lane.id);
-    const supplied = lane.cells ?? [];
-    if (supplied.length > size) throw new Error(LANE_ERROR);
-    const fields = makeLaneFields(
-      { label: lane.id, steps: size, rate: "1/16", direction: "forward", swing: 0, mute: false, solo: false },
-      lane,
-      size,
-    );
-    const cells = Array.from({ length: size }, (_, index) => makeCell(blankFor(lane.id), supplied[index] ?? {}, specsFor(lane.id)));
-    return Object.freeze({ id: lane.id, ...fields, cells: Object.freeze(cells) });
-  });
-  return Object.freeze({ size, lanes: Object.freeze(lanes) });
+function checkFields(patch: LaneFields): void {
+  if (patch.steps !== undefined && !inRangeInt(patch.steps, 1, MAX_STEPS)) throw new Error(LANE_ERROR);
+  if (patch.direction !== undefined && !DIRECTIONS.includes(patch.direction)) throw new Error(LANE_ERROR);
+  if (patch.mute !== undefined && typeof patch.mute !== "boolean") throw new Error(LANE_ERROR);
+  if (patch.solo !== undefined && typeof patch.solo !== "boolean") throw new Error(LANE_ERROR);
 }
 
 /** Cell index played by lane step counter `k`. */
@@ -398,64 +311,17 @@ function cellIndex(direction: StepDirection, steps: number, k: number): number {
 /** A step hit's identity, from fields that survive a transform's `{ ...hit }` copy. */
 const stepKey = (hit: StepEvent): string => `${hit.laneId}:${hit.loop}:${hit.count}:${hit.repeatIndex}`;
 
-const PARAM_RANGE_ERROR =
-  "Step Sequencer lane params need nonempty names that differ from the built-in cell keys, a finite min below max, a step above 0 and a default from min to max.";
-const LANE_RECORD_ERROR = "Step Sequencer lanes need nonempty names mapped to a pattern or to lane options with a pattern.";
-const CONTEXT_ERROR = "Step Sequencer needs options.context for a lane with a sound.";
-const CALLBACK_ERROR = "Step Sequencer onHit and transform need functions.";
-const OLD_FORM_ERROR = "Step Sequencer onHit and context belong to the lane-record form: pass lanes as a record of names to patterns.";
-const DISPOSED_ERROR = "Step Sequencer is disposed.";
-const RATE_ERROR = "Step Sequencer needs a rate that is a StepRate or a Time, at least 1/128 of a beat long.";
-const MIN_RATE_BEATS = 1 / 128;
-const DEFAULT_RATE: Time = "16n";
-
-const isStepRate = (rate: unknown): rate is StepRate => typeof rate === "string" && Object.prototype.hasOwnProperty.call(RATE_BEATS, rate);
-
-/** Throws unless `rate` is a `StepRate` or a `Time` of at least 1/128 beat (seconds are checked against the tempo when scheduling). */
-function checkRate(rate: unknown): Time | StepRate {
-  if (isStepRate(rate)) return rate;
-  const parsed = parseTime(rate as Time);
-  if (!(parsed.value > 0) || (parsed.unit === "beats" && parsed.value < MIN_RATE_BEATS)) throw new Error(RATE_ERROR);
-  return rate as Time;
-}
-
-function toParamSpecs(params: LaneOptions["params"]): readonly StepParamSpec[] {
-  if (params === undefined) return [];
-  if (typeof params !== "object" || params === null) throw new Error(PARAM_RANGE_ERROR);
-  return Object.entries(params).map(([id, range]) => {
-    if (
-      !id ||
-      id === "custom" ||
-      (BUILTIN_KEYS as readonly string[]).includes(id) ||
-      !range ||
-      !Number.isFinite(range.min) ||
-      !Number.isFinite(range.max) ||
-      !(range.min < range.max) ||
-      !inRange(range.default, range.min, range.max) ||
-      (range.step !== undefined && !(Number.isFinite(range.step) && range.step > 0))
-    )
-      throw new Error(PARAM_RANGE_ERROR);
-    return Object.freeze({ id, min: range.min, max: range.max, default: range.default, ...(range.step !== undefined ? { step: range.step } : {}) });
-  });
-}
-
 /**
- * An editable looping pattern over a borrowed beat transport.
+ * Looping lanes of steps over a borrowed beat transport: `new StepSequencer({ kick: "X...X...", hat: { pattern: "xx", rate: "8n" } }, options)`.
  *
- * Two forms share one engine.
- * Lane-record form: `new StepSequencer({ kick: "X...", hat: { pattern, rate, sound } }, options)`. Every lane loops forever on its own length
- * at its own rate (polymeter), `clock.attach(sequencer)` is all the wiring a live edit needs, and hits reach `onHit`, `hit` events and an
- * optional per-lane `sound`.
- * Explicit form: `new StepSequencer({ size, lanes }, trigger, options)`. Lanes share one loop of `size` 1/16 steps, the caller's `trigger`
- * makes the sound, and edits re-queue through `refreshOnEdit` or `Workspace.attachStepSequencer`.
- * Each lane has its own length, rate, direction and swing; each cell its own velocity, offset, length, repeat, pitch, chance and caller-declared
- * custom values. Swing and any other timing plug-in run as `transforms` over each window's hits.
+ * Every lane loops forever on its own length at its own rate (polymeter). `clock.attach(sequencer)` or `workspace.transport.attach(sequencer)`
+ * is all the wiring a live edit needs: each committed change re-queues the transport's look-ahead. Hits reach `onHit`, `hit` events, a
+ * per-lane `sound` and the optional `transform`.
  */
 export class StepSequencer extends EventTarget {
   private readonly data;
   private readonly heads;
-  private readonly progress;
-  private readonly metaCell;
+  private readonly progresses;
   private readonly events = new Set<CancellableEvent>();
   private readonly pending = new Set<{ endsAt: number; finish(): void }>();
   private readonly handles = new Set<TransportHandle>();
@@ -464,158 +330,110 @@ export class StepSequencer extends EventTarget {
   private readonly random: () => number;
   private readonly drawChance: ((lane: string, loop: number, count: number) => number) | undefined;
   private readonly seed: number;
-  private readonly blank: StepCell;
-  private readonly laneParams = new Map<string, readonly StepParamSpec[]>();
+  private readonly laneParams = new Map<string, readonly ParamSpec[]>();
   private readonly laneBlank = new Map<string, StepCell>();
-  private readonly trigger: (hit: StepHit) => CancellableEvent | null;
-  private readonly independent: boolean;
+  private readonly names: readonly string[];
   private readonly onHitOption: StepSequencerOptions["onHit"];
   private readonly laneHits = new Map<string, NonNullable<LaneOptions["onHit"]>>();
-  private readonly userTransform: StepTransform | undefined;
+  private readonly userTransform: EventTransform<StepEvent> | undefined;
   private readonly abortSignal: AbortSignal | undefined;
   private readonly onAbort = () => this.dispose();
   private onHitHandler: ((event: HitEvent) => unknown) | null = null;
   private onHitWrapper: EventListener | null = null;
   private stopWatching: (() => void) | undefined;
   private disposed = false;
-  private readonly tf;
-  /** The built-in cell fields as data (same objects as `stepCellParams`), for views that edit cells. */
-  readonly cellParams: readonly StepParamSpec[] = stepCellParams;
-  /** The lane rates in display order (same list as `stepRates`). */
-  readonly rates: readonly StepRate[] = stepRates;
-  /** Explicit form: custom per-step parameters declared at construction. Empty in the lane-record form, where each lane declares its own `params`. */
-  readonly params: readonly StepParamSpec[];
   /** The context lanes with a `sound` play into, when one was given. */
   readonly context: BaseAudioContext | undefined;
-  /** Transforms run, in order, over each window's hits. Replace with `setTransforms`. */
-  readonly transforms: ReadonlyCell<readonly StepTransform[]>;
-  readonly pattern: ReadonlyCell<StepPattern>;
-  /** Current cell index per lane, or `null` when stopped. */
-  readonly playheads: ReadonlyCell<Readonly<Record<string, number | null>>>;
-  /** 0..1 position in the loop (the longest lane's own loop in the lane-record form), or `null` when stopped. */
-  readonly loopProgress: ReadonlyCell<number | null>;
   /** One live view per lane, by name: `sequencer.lanes.kick.steps[4].velocity = 0.8`. */
   readonly lanes: Readonly<Record<string, Lane>>;
 
-  /** Lane-record form: each lane loops on its own length and rate; `clock.attach(sequencer)` follows a transport. */
-  constructor(lanes: Readonly<Record<string, Pattern | LaneOptions>>, options?: StepSequencerOptions);
-  /** Explicit form: shared loop of `size` 1/16 steps; `trigger` makes the sound for each hit. */
-  constructor(pattern: StepPatternInput, trigger: (hit: StepHit) => CancellableEvent | null, options?: StepSequencerOptions);
-  constructor(
-    first: StepPatternInput | Readonly<Record<string, Pattern | LaneOptions>>,
-    second?: StepSequencerOptions | ((hit: StepHit) => CancellableEvent | null),
-    third: StepSequencerOptions = {},
-  ) {
+  constructor(lanes: Readonly<Record<string, Pattern | LaneOptions>>, options: StepSequencerOptions = {}) {
     super();
-    const explicit = typeof second === "function";
-    const options: StepSequencerOptions = (explicit ? third : second) ?? {};
-    if (typeof options !== "object" || options === null) throw new Error(LANE_RECORD_ERROR);
-    this.independent = !explicit;
-    this.params = buildParams(options.params);
-    this.blank = Object.freeze({
-      ...BUILTIN_CELL,
-      custom: Object.freeze(Object.fromEntries(this.params.map((spec) => [spec.id, spec.default]))),
-    });
+    if (typeof options !== "object" || options === null || typeof lanes !== "object" || lanes === null || Array.isArray(lanes))
+      throw new Error(ARGUMENTS_ERROR);
     this.seed = options.seed ?? 0;
     this.random = options.random ?? Math.random;
-    const injected = options.random;
-    this.drawChance = injected ? undefined : (lane, loop, count) => hash01(this.seed, "chance", lane, loop, count);
+    this.drawChance = options.random ? undefined : (lane, loop, count) => hash01(this.seed, "chance", lane, loop, count);
     if (
       (options.onHit !== undefined && typeof options.onHit !== "function") ||
       (options.transform !== undefined && typeof options.transform !== "function")
     )
       throw new Error(CALLBACK_ERROR);
-    if (explicit && (options.onHit !== undefined || options.context !== undefined)) throw new Error(OLD_FORM_ERROR);
     this.onHitOption = options.onHit;
     this.context = options.context;
     this.abortSignal = options.signal;
-    const specsFor = (id: string) => this.laneParams.get(id) ?? this.params;
-    const blankFor = (id: string) => this.laneBlank.get(id) ?? this.blank;
-    let built: StepPattern;
-    const meta: Record<string, LaneMeta> = {};
-    if (explicit) {
-      this.trigger = second;
-      built = buildPattern(first as StepPatternInput, specsFor, blankFor);
-      for (const lane of built.lanes) meta[lane.id] = Object.freeze({ rate: undefined, sound: undefined });
-    } else {
-      this.trigger = (hit) => this.fire(hit);
-      const record = first as Readonly<Record<string, Pattern | LaneOptions>>;
-      if (typeof record !== "object" || record === null || Array.isArray(record)) throw new Error(LANE_RECORD_ERROR);
-      const inputs: StepLaneInput[] = [];
-      let size = 1;
-      for (const [name, definition] of Object.entries(record)) {
-        const lane: LaneOptions =
-          typeof definition === "string" || Array.isArray(definition) ? { pattern: definition as Pattern } : (definition as LaneOptions);
-        if (!name || !lane || typeof lane !== "object" || lane.pattern === undefined) throw new Error(LANE_RECORD_ERROR);
-        const velocities = parsePattern(lane.pattern);
-        const specs = toParamSpecs(lane.params);
-        const rate = checkRate(lane.rate ?? DEFAULT_RATE);
-        const swing = lane.swing === undefined ? 0 : parseSwing(lane.swing);
-        if (lane.sound !== undefined) {
-          assertSound(lane.sound);
-          if (!this.context) throw new Error(CONTEXT_ERROR);
-        }
-        if (lane.onHit !== undefined) {
-          if (typeof lane.onHit !== "function") throw new Error(CALLBACK_ERROR);
-          this.laneHits.set(name, lane.onHit);
-        }
-        this.laneParams.set(name, Object.freeze(specs));
-        this.laneBlank.set(
-          name,
-          Object.freeze({ ...BUILTIN_CELL, custom: Object.freeze(Object.fromEntries(specs.map((spec) => [spec.id, spec.default]))) }),
-        );
-        meta[name] = Object.freeze({ rate, sound: lane.sound });
-        size = Math.max(size, velocities.length);
-        inputs.push({ id: name, steps: velocities.length, swing, mute: lane.mute ?? false, cells: velocities.map((velocity) => ({ velocity })) });
+    const built: Record<string, LaneData> = {};
+    for (const [name, definition] of Object.entries(lanes)) {
+      const lane: LaneOptions =
+        typeof definition === "string" || Array.isArray(definition) ? { pattern: definition as Pattern } : (definition as LaneOptions);
+      if (!name || !lane || typeof lane !== "object" || lane.pattern === undefined) throw new Error(LANE_RECORD_ERROR);
+      const velocities = parsePattern(lane.pattern);
+      const specs = toParamSpecs(lane.params);
+      const fields: LaneFields = {
+        direction: lane.direction ?? "forward",
+        mute: lane.mute ?? false,
+        solo: lane.solo ?? false,
+      };
+      checkFields(fields);
+      const rate = checkRate(lane.rate ?? DEFAULT_RATE);
+      const swing = lane.swing === undefined ? 0 : parseSwing(lane.swing);
+      if (lane.sound !== undefined) {
+        assertSound(lane.sound);
+        if (!this.context) throw new Error(CONTEXT_ERROR);
       }
-      built = buildPattern({ size, lanes: inputs }, specsFor, blankFor);
+      if (lane.onHit !== undefined) {
+        if (typeof lane.onHit !== "function") throw new Error(CALLBACK_ERROR);
+        this.laneHits.set(name, lane.onHit);
+      }
+      const blank: StepCell = Object.freeze({
+        ...BUILTIN_CELL,
+        custom: Object.freeze(Object.fromEntries(specs.map((spec) => [spec.id, spec.default]))),
+      });
+      this.laneParams.set(name, Object.freeze(specs));
+      this.laneBlank.set(name, blank);
+      built[name] = Object.freeze({
+        steps: velocities.length,
+        rate,
+        direction: fields.direction!,
+        swing,
+        mute: fields.mute!,
+        solo: fields.solo!,
+        sound: lane.sound,
+        cells: Object.freeze(velocities.map((velocity) => makeCell(blank, { velocity }, specs))),
+      });
     }
+    this.names = Object.freeze(Object.keys(built));
     this.userTransform = options.transform && this.secondsTransform(options.transform);
-    this.tf = cell<readonly StepTransform[]>(this.checkTransforms(options.transforms ?? defaultStepTransforms));
-    this.transforms = readonlyCell(this.tf);
-    this.data = cell<StepPattern>(built);
-    this.metaCell = cell<Readonly<Record<string, LaneMeta>>>(Object.freeze(meta));
-    this.heads = cell<Readonly<Record<string, number | null>>>(this.stopped(built));
-    this.progress = cell<number | null>(null);
-    this.pattern = readonlyCell(this.data);
-    this.playheads = readonlyCell(this.heads);
-    this.loopProgress = readonlyCell(this.progress);
+    this.data = cell<Readonly<Record<string, LaneData>>>(Object.freeze(built));
+    this.heads = cell<Readonly<Record<string, number | null>>>(this.stopped());
+    this.progresses = cell<Readonly<Record<string, number | null>>>(this.stopped());
     const host: LaneHost = {
-      meta: (id) => this.metaCell.value[id]!,
-      setMeta: (id, patch) =>
-        untracked(() => {
-          const all = this.metaCell.value;
-          const next = { ...all[id]!, ...patch };
-          if (next.rate === all[id]!.rate && next.sound === all[id]!.sound) return;
-          this.metaCell.value = Object.freeze({ ...all, [id]: Object.freeze(next) });
-        }),
-      setPattern: (id, velocities) => this.setPattern(id, velocities),
-      params: specsFor,
-      output: (id) => this.outputFor(id),
-      connect: (id, node) => {
-        const output = this.outputFor(id);
+      data: (name) => this.data.value[name]!,
+      patch: (name, patch) => this.patchLane(name, patch),
+      setPattern: (name, velocities) => this.setPattern(name, velocities),
+      setCell: (name, index, patch) => this.setCell(name, index, patch),
+      params: (name) => this.laneParams.get(name)!,
+      playhead: (name) => this.heads.value[name] ?? null,
+      progress: (name) => this.progresses.value[name] ?? null,
+      output: (name) => this.outputFor(name),
+      connect: (name, node) => {
+        const output = this.outputFor(name);
         output.disconnect();
         output.connect(node);
         return node;
       },
-      disconnect: (id) => this.outputFor(id).disconnect(),
+      disconnect: (name) => this.outputFor(name).disconnect(),
     };
-    this.lanes = Object.freeze(Object.fromEntries(built.lanes.map(({ id }) => [id, new Lane(this, id, host)])));
-    for (const [name, { sound }] of Object.entries(meta)) if (sound !== undefined) this.outputFor(name);
+    this.lanes = Object.freeze(Object.fromEntries(this.names.map((name) => [name, new Lane(name, host)])));
+    for (const name of this.names) if (built[name]!.sound !== undefined) this.outputFor(name);
     if (this.abortSignal) {
       if (this.abortSignal.aborted) this.dispose();
       else this.abortSignal.addEventListener("abort", this.onAbort, { once: true });
     }
   }
 
-  private checkTransforms(list: readonly StepTransform[]): readonly StepTransform[] {
-    if (!Array.isArray(list) || list.some((item) => !item || typeof item.id !== "string" || !item.id || typeof item.apply !== "function"))
-      throw new Error(TRANSFORMS_ERROR);
-    return Object.freeze([...list]);
-  }
-
   /** The user's `transform(hit, random)` as a seconds transform over the internal events. */
-  private secondsTransform(transform: HitTransform): StepTransform {
+  private secondsTransform(transform: HitTransform): EventTransform<StepEvent> {
     return {
       id: "transform",
       unit: "second",
@@ -624,7 +442,7 @@ export class StepSequencer extends EventTarget {
         for (const event of events) {
           const result = transform(this.publicHit(event), (key) => context.randomFor(event, key));
           if (result === null) continue;
-          out.push({ ...event, when: result.when, duration: result.duration, velocity: result.velocity, custom: result.values });
+          out.push({ ...event, when: result.when, duration: result.duration, velocity: result.velocity, pitch: result.pitch, custom: result.values });
         }
         return out;
       },
@@ -638,28 +456,14 @@ export class StepSequencer extends EventTarget {
       when: hit.when,
       duration: hit.duration,
       velocity: hit.velocity,
+      pitch: hit.pitch,
       values: hit.custom,
       loop: hit.loop,
     });
   }
 
-  /** Replace the transform list in one write. Compose with `[...defaultStepTransforms, mine]` to keep swing. */
-  setTransforms(list: readonly StepTransform[]): void {
-    untracked(() => {
-      this.tf.value = this.checkTransforms(list);
-    });
-  }
-
-  private stopped(pattern: StepPattern): Readonly<Record<string, number | null>> {
-    return Object.freeze(Object.fromEntries(pattern.lanes.map(({ id }) => [id, null])));
-  }
-
-  private laneIndex(pattern: StepPattern, laneId: string): number {
-    return pattern.lanes.findIndex(({ id }) => id === laneId);
-  }
-
-  private replaceLane(pattern: StepPattern, index: number, lane: StepLane): StepPattern {
-    return Object.freeze({ ...pattern, lanes: Object.freeze(pattern.lanes.map((item, i) => (i === index ? lane : item))) });
+  private stopped(): Readonly<Record<string, null>> {
+    return Object.freeze(Object.fromEntries(this.names.map((name) => [name, null])));
   }
 
   /** Lane view by name; throws for an unknown lane. */
@@ -669,99 +473,55 @@ export class StepSequencer extends EventTarget {
     return lane;
   }
 
-  /** Change fields of one cell. Unknown lane or step, and out-of-range values, throw. */
-  setCell(laneId: string, step: number, patch: StepCellInput): void {
+  private replaceLane(name: string, lane: LaneData): void {
+    this.data.value = Object.freeze({ ...this.data.value, [name]: lane });
+  }
+
+  private patchLane(name: string, patch: LaneFields): void {
     untracked(() => {
-      const pattern = this.data.value;
-      const index = this.laneIndex(pattern, laneId);
-      if (index < 0 || !Number.isInteger(step) || step < 0 || step >= pattern.size) throw new Error(TARGET_ERROR);
-      const lane = pattern.lanes[index];
-      const before = lane.cells[step];
-      const after = makeCell(before, patch, this.laneParams.get(laneId) ?? this.params);
+      checkFields(patch);
+      const lane = this.data.value[name]!;
+      const keys = Object.keys(patch) as (keyof LaneFields)[];
+      if (keys.every((key) => patch[key] === lane[key])) return;
+      let cells = lane.cells;
+      if (patch.steps !== undefined && patch.steps > cells.length) {
+        const blank = this.laneBlank.get(name)!;
+        cells = Object.freeze([...cells, ...Array.from({ length: patch.steps - cells.length }, () => blank)]);
+      }
+      this.replaceLane(name, Object.freeze({ ...lane, ...patch, cells }));
+    });
+  }
+
+  private setCell(name: string, index: number, patch: StepCellPatch): void {
+    untracked(() => {
+      const lane = this.data.value[name]!;
+      const before = lane.cells[index]!;
+      const after = makeCell(before, patch, this.laneParams.get(name)!);
       if (sameCell(after, before)) return;
-      const cells = Object.freeze(lane.cells.map((item, i) => (i === step ? after : item)));
-      this.data.value = this.replaceLane(pattern, index, Object.freeze({ ...lane, cells }));
+      this.replaceLane(name, Object.freeze({ ...lane, cells: Object.freeze(lane.cells.map((item, i) => (i === index ? after : item))) }));
     });
   }
 
-  /** An off cell turns on at velocity 1; an on cell turns off. Other fields are kept. */
-  toggle(laneId: string, step: number): void {
+  /** One write: the lane's first cells take `velocities`, and its length becomes their count. */
+  private setPattern(name: string, velocities: readonly number[]): void {
     untracked(() => {
-      const pattern = this.data.value;
-      const lane = pattern.lanes.find(({ id }) => id === laneId);
-      if (!lane || !Number.isInteger(step) || step < 0 || step >= pattern.size) throw new Error(TARGET_ERROR);
-      this.setCell(laneId, step, { velocity: lane.cells[step].velocity > 0 ? 0 : 1 });
-    });
-  }
-
-  /** Change lane fields (`label`, `steps`, `rate`, `direction`, `swing`, `mute`, `solo`) in one write. */
-  setLane(laneId: string, patch: Partial<Omit<StepLane, "id" | "cells">>): void {
-    untracked(() => {
-      const pattern = this.data.value;
-      const index = this.laneIndex(pattern, laneId);
-      if (index < 0) throw new Error(LANE_TARGET_ERROR);
-      const lane = pattern.lanes[index];
-      const { id, cells, ...fields } = lane;
-      const next = makeLaneFields(fields, patch, pattern.size);
-      if ((Object.keys(next) as (keyof LaneFields)[]).every((key) => next[key] === fields[key])) return;
-      this.data.value = this.replaceLane(pattern, index, Object.freeze({ id, ...next, cells }));
-    });
-  }
-
-  /** One write: the lane's first cells take `velocities`, its length becomes their count, and the loop grows to fit. */
-  private setPattern(laneId: string, velocities: readonly number[]): void {
-    untracked(() => {
-      const pattern = this.data.value;
-      const index = this.laneIndex(pattern, laneId);
-      const lane = pattern.lanes[index];
-      const size = Math.max(pattern.size, velocities.length);
-      const blank = this.laneBlank.get(laneId) ?? this.blank;
-      const specs = this.laneParams.get(laneId) ?? this.params;
+      const lane = this.data.value[name]!;
+      const blank = this.laneBlank.get(name)!;
+      const specs = this.laneParams.get(name)!;
+      const size = Math.max(lane.cells.length, velocities.length);
       const cells = Array.from({ length: size }, (_, i) => {
         const base = lane.cells[i] ?? blank;
         return i < velocities.length ? makeCell(base, { velocity: velocities[i] }, specs) : base;
       });
-      const changed =
-        size !== pattern.size ||
-        lane.steps !== velocities.length ||
-        cells.some((item, i) => item !== lane.cells[i] && !sameCell(item, lane.cells[i] ?? blank));
+      const changed = lane.steps !== velocities.length || cells.some((item, i) => item !== lane.cells[i] && !sameCell(item, lane.cells[i] ?? blank));
       if (!changed) return;
-      const lanes = pattern.lanes.map((item, i) =>
-        i === index
-          ? Object.freeze({ ...lane, steps: velocities.length, cells: Object.freeze(cells) })
-          : size === pattern.size
-            ? item
-            : Object.freeze({
-                ...item,
-                cells: Object.freeze(Array.from({ length: size }, (_, k) => item.cells[k] ?? this.laneBlank.get(item.id) ?? this.blank)),
-              }),
-      );
-      this.data.value = Object.freeze({ size, lanes: Object.freeze(lanes) });
-    });
-  }
-
-  /** Resize the loop: every lane's cells are truncated or padded with off cells, and each lane's `steps` is clamped. */
-  setSize(size: number): void {
-    untracked(() => {
-      if (!validSize(size)) throw new Error(SIZE_ERROR);
-      const pattern = this.data.value;
-      if (size === pattern.size) return;
-      const lanes = pattern.lanes.map((lane) =>
-        Object.freeze({
-          ...lane,
-          steps: Math.min(lane.steps, size),
-          cells: Object.freeze(Array.from({ length: size }, (_, i) => lane.cells[i] ?? this.laneBlank.get(lane.id) ?? this.blank)),
-        }),
-      );
-      batch(() => {
-        this.data.value = Object.freeze({ size, lanes: Object.freeze(lanes) });
-      });
+      this.replaceLane(name, Object.freeze({ ...lane, steps: velocities.length, cells: Object.freeze(cells) }));
     });
   }
 
   /** The lane's step length in beats. Seconds convert at the tempo at beat 0 of `timing`. */
-  private rateBeats(lane: StepLane, timing: BeatTiming): number {
-    const rate = this.metaCell.value[lane.id]?.rate ?? lane.rate;
+  private rateBeats(lane: LaneData, timing: BeatTiming): number {
+    const { rate } = lane;
     if (isStepRate(rate)) return RATE_BEATS[rate];
     const parsed = parseTime(rate);
     if (parsed.unit === "beats") return parsed.value;
@@ -769,90 +529,72 @@ export class StepSequencer extends EventTarget {
     return beatSeconds > 0 ? parsed.value / beatSeconds : 0;
   }
 
-  /** Register this window's hits with `window.own`. Reads `timing` for beat/time mapping; pass the Timeline the window came from. */
+  /**
+   * Register this window's hits with `window.own`. Called by the transport a sequencer is attached to (`clock.attach`,
+   * `workspace.transport.attach`) with the window and the Timeline it came from; applications do not call it.
+   */
   schedule(window: StepWindow, timing: BeatTiming): void {
     untracked(() => {
       if (this.disposed) return;
-      const pattern = this.data.value;
-      const loopBeats = pattern.size * 0.25;
+      const lanes = this.data.value;
       const now = window.time.current;
       for (const record of [...this.pending]) if (record.endsAt <= now) record.finish();
-      const soloed = pattern.lanes.some((lane) => lane.solo);
+      const soloed = this.names.some((name) => lanes[name]!.solo);
       const planned: StepEvent[] = [];
-      const plan = (lane: StepLane, loop: number, count: number, step: number, beat: number, rate: number) => {
-        const cellData = lane.cells[step];
-        if (cellData.velocity <= 0 || !((this.drawChance ? this.drawChance(lane.id, loop, count) : this.random()) < cellData.chance)) return;
-        const trigger = beat + cellData.offset * rate;
-        for (let repeat = 0; repeat < cellData.repeat; repeat++) {
-          const start = trigger + (repeat * rate) / cellData.repeat;
-          planned.push({
-            laneId: lane.id,
-            step,
-            count,
-            stepBeat: beat,
-            rateBeats: rate,
-            swing: lane.swing,
-            velocity: cellData.velocity,
-            pitch: cellData.pitch,
-            custom: cellData.custom,
-            loop,
-            beat: start,
-            durationBeats: (cellData.length * rate) / cellData.repeat,
-            repeatIndex: repeat,
-            repeatCount: cellData.repeat,
-          });
-        }
-      };
-      if (this.independent) {
-        // every lane loops on its own length: its step counter runs from beat 0, forever
-        for (const lane of pattern.lanes) {
-          if (lane.mute || (soloed && !lane.solo)) continue;
-          const rate = this.rateBeats(lane, timing);
-          if (!(rate >= MIN_RATE_BEATS)) continue;
-          const first = Math.max(0, Math.ceil(window.beat.start / rate - EPS));
-          const end = Math.ceil(window.beat.end / rate - EPS);
-          for (let k = first; k < end; k++) {
-            const loop = Math.floor(k / lane.steps);
-            plan(lane, loop, k - loop * lane.steps, cellIndex(lane.direction, lane.steps, k), k * rate, rate);
-          }
-        }
-      } else {
-        const firstLoop = Math.floor(Math.max(0, window.beat.start) / loopBeats + EPS);
-        const endLoop = Math.ceil(window.beat.end / loopBeats - EPS);
-        for (let loop = firstLoop; loop < endLoop; loop++) {
-          const loopStart = loop * loopBeats;
-          for (const lane of pattern.lanes) {
-            if (lane.mute || (soloed && !lane.solo)) continue;
-            const rate = this.rateBeats(lane, timing);
-            if (!(rate >= MIN_RATE_BEATS)) continue;
-            const count = Math.ceil(loopBeats / rate - EPS);
-            const first = Math.max(0, Math.ceil((window.beat.start - loopStart) / rate - EPS));
-            const end = Math.min(count, Math.ceil((window.beat.end - loopStart) / rate - EPS));
-            for (let k = first; k < end; k++) plan(lane, loop, k, cellIndex(lane.direction, lane.steps, k), loopStart + k * rate, rate);
+      for (const name of this.names) {
+        const lane = lanes[name]!;
+        if (lane.mute || (soloed && !lane.solo)) continue;
+        const rate = this.rateBeats(lane, timing);
+        if (!(rate >= MIN_RATE_BEATS)) continue;
+        // the lane's step counter runs from beat 0, forever
+        const first = Math.max(0, Math.ceil(window.beat.start / rate - EPS));
+        const end = Math.ceil(window.beat.end / rate - EPS);
+        for (let k = first; k < end; k++) {
+          const loop = Math.floor(k / lane.steps);
+          const count = k - loop * lane.steps;
+          const step = cellIndex(lane.direction, lane.steps, k);
+          const data = lane.cells[step]!;
+          if (data.velocity <= 0 || !((this.drawChance ? this.drawChance(name, loop, count) : this.random()) < data.chance)) continue;
+          const swung = count % 2 === 1 && lane.swing > 0 ? lane.swing * 0.5 * rate : 0;
+          const trigger = k * rate + data.offset * rate + swung;
+          for (let repeat = 0; repeat < data.repeat; repeat++) {
+            planned.push({
+              laneId: name,
+              step,
+              count,
+              velocity: data.velocity,
+              pitch: data.pitch,
+              custom: data.custom,
+              loop,
+              beat: trigger + (repeat * rate) / data.repeat,
+              durationBeats: (data.length * rate) / data.repeat,
+              repeatIndex: repeat,
+              repeatCount: data.repeat,
+            });
           }
         }
       }
-      // The scheduler, not the transforms, validates, converts to seconds, clamps to `now`, triggers and owns every output.
-      const transforms = this.userTransform ? [...this.tf.value, this.userTransform] : this.tf.value;
+      // The scheduler, not the transform, validates, converts to seconds, clamps to `now`, plays and owns every output.
+      const transforms = this.userTransform ? [this.userTransform] : [];
       for (const hit of applyEventTransforms(planned, transforms, { now, timing, random: this.random, seed: this.seed, keyOf: stepKey })) {
-        const event = this.trigger(hit);
+        const event = this.fire(hit);
         if (!event) continue;
         this.events.add(event);
         event.onEnded(() => this.events.delete(event));
         window.own(event, hit.when);
       }
-      this.publishPosition(pattern, timing.timeToBeat(now), loopBeats, timing);
+      this.publishPosition(lanes, timing.timeToBeat(now), timing);
     });
   }
 
-  /** Lane-record form: one hit's event, voice and callbacks. Returns a retractable event, or `null` when nothing could need retracting. */
+  /** One hit's event, voice and callbacks. Returns a retractable event, or `null` when nothing could need retracting. */
   private fire(hit: StepHit): CancellableEvent | null {
     const pub = this.publicHit(hit);
-    const meta = this.metaCell.value[hit.laneId]!;
+    const sound = this.data.value[hit.laneId]!.sound;
     let voice: CancellableEvent | null = null;
-    if (meta.sound !== undefined && this.context) {
+    if (sound !== undefined && this.context) {
       try {
-        voice = playSound(this.context, meta.sound, this.outputFor(hit.laneId), pub);
+        voice = playSound(this.context, sound, this.outputFor(hit.laneId), pub);
       } catch (error) {
         console.error("Step Sequencer sound failed:", error);
       }
@@ -900,80 +642,69 @@ export class StepSequencer extends EventTarget {
     };
   }
 
-  private outputFor(laneId: string): GainNode {
+  private outputFor(name: string): GainNode {
     if (!this.context) throw new Error(CONTEXT_ERROR);
-    let output = this.outputs.get(laneId);
+    let output = this.outputs.get(name);
     if (!output) {
       output = new GainNode(this.context);
       output.connect(this.context.destination);
-      this.outputs.set(laneId, output);
+      this.outputs.set(name, output);
     }
     return output;
   }
 
-  private publishPosition(pattern: StepPattern, beat: number, loopBeats: number, timing: BeatTiming): void {
+  private publishPosition(lanes: Readonly<Record<string, LaneData>>, beat: number, timing: BeatTiming): void {
     const at = Math.max(0, beat);
     const heads: Record<string, number | null> = {};
-    let inLoop = (((at % loopBeats) + loopBeats) % loopBeats) / loopBeats;
-    if (this.independent) {
-      let longest = 0;
-      for (const lane of pattern.lanes) {
-        const rate = this.rateBeats(lane, timing);
-        if (!(rate >= MIN_RATE_BEATS)) {
-          heads[lane.id] = null;
-          continue;
-        }
-        heads[lane.id] = cellIndex(lane.direction, lane.steps, Math.floor(at / rate + EPS));
-        const own = lane.steps * rate;
-        if (own > longest) {
-          longest = own;
-          inLoop = (((at % own) + own) % own) / own;
-        }
+    const progresses: Record<string, number | null> = {};
+    for (const name of this.names) {
+      const lane = lanes[name]!;
+      const rate = this.rateBeats(lane, timing);
+      if (!(rate >= MIN_RATE_BEATS)) {
+        heads[name] = null;
+        progresses[name] = null;
+        continue;
       }
-    } else {
-      for (const lane of pattern.lanes) {
-        const rate = this.rateBeats(lane, timing);
-        const count = Math.ceil(loopBeats / rate - EPS);
-        const k = Math.min(count - 1, Math.floor((inLoop * loopBeats) / rate + EPS));
-        heads[lane.id] = cellIndex(lane.direction, lane.steps, k);
-      }
+      heads[name] = cellIndex(lane.direction, lane.steps, Math.floor(at / rate + EPS));
+      const own = lane.steps * rate;
+      progresses[name] = (((at % own) + own) % own) / own;
     }
     const previous = this.heads.value;
-    const same = pattern.lanes.every(({ id }) => previous[id] === heads[id]);
+    const same = this.names.every((name) => previous[name] === heads[name]);
     batch(() => {
       if (!same) this.heads.value = Object.freeze(heads);
-      this.progress.value = inLoop;
+      this.progresses.value = Object.freeze(progresses);
     });
   }
 
-  /** Cancel only this pattern's events (running each hit's `onHit` cleanup) and clear its playheads. */
+  /**
+   * Cancel only this sequencer's events (running each hit's `onHit` cleanup) and clear the playheads. Called by the transport on stop, seek and
+   * detach; applications do not call it.
+   */
   reset(): void {
     untracked(() => {
       for (const event of [...this.events]) event.cancel();
       this.events.clear();
       batch(() => {
-        this.heads.value = this.stopped(this.data.value);
-        this.progress.value = null;
+        this.heads.value = this.stopped();
+        this.progresses.value = this.stopped();
       });
     });
   }
 
   /**
-   * Called by `clock.attach(sequencer)` (or `workspace.transport.attach`) with a handle to that transport. In the lane-record form every
-   * committed edit (a step, `pattern`, `rate`, `swing`, `mute`, `sound`, a transform) then calls `handle.refresh()`, which retracts the pending
-   * hits and queues them again; several edits in one task re-queue once. The explicit form records the handle for `dispose()` only
-   * and still re-queues through `refreshOnEdit`. Returns the cleanup the clock runs on detach.
+   * Called by `clock.attach(sequencer)` (or `workspace.transport.attach`) with a handle to that transport. Every committed edit (a step, a
+   * lane's pattern, `rate`, `swing`, `direction`, `mute`, `solo`, `sound`) then calls `handle.refresh()`, which retracts the pending hits and
+   * queues them again; several edits in one task re-queue once. Returns the cleanup the transport runs on detach.
    */
   attached(handle: TransportHandle): () => void {
     if (this.disposed) throw new Error(DISPOSED_ERROR);
     this.handles.add(handle);
-    if (this.independent && !this.stopWatching) {
+    if (!this.stopWatching) {
       let armed = false;
       this.stopWatching = untracked(() =>
         effect(() => {
           this.data.$();
-          this.tf.$();
-          this.metaCell.$();
           if (!armed) {
             armed = true;
             return;
@@ -1042,25 +773,28 @@ export class StepSequencer extends EventTarget {
   }
 }
 
-/** Live view of one lane. Setters commit through the sequencer's cells, so an attached transport hears them on the next pass. */
+/** Live view of one lane. Setters validate and commit, so an attached transport hears them on the next pass. */
 export class Lane {
   private cache: Step[] = [];
   private view: readonly Step[] = Object.freeze([]);
 
   /** @internal Built by the sequencer; read `sequencer.lanes.<name>`. */
   constructor(
-    private readonly owner: StepSequencer,
     readonly name: string,
     private readonly host: LaneHost,
   ) {}
 
-  private data(): StepLane {
-    return this.owner.pattern.value.lanes.find(({ id }) => id === this.name)!;
+  private data(): LaneData {
+    return this.host.data(this.name);
   }
 
-  /** Number of steps this lane loops over. */
+  /** Number of steps this lane loops over (integer 1..128). Growing it brings back the steps a shorter length hid. */
   get length(): number {
     return this.data().steps;
+  }
+
+  set length(length: number) {
+    this.host.patch(this.name, { steps: length });
   }
 
   /** The lane's pattern as text when notation can express every velocity, else as a number array. Assigning sets its length too. */
@@ -1075,11 +809,11 @@ export class Lane {
 
   /** Step length: a `Time` or a `StepRate`. */
   get rate(): Time | StepRate {
-    return this.host.meta(this.name).rate ?? this.data().rate;
+    return this.data().rate;
   }
 
   set rate(rate: Time | StepRate) {
-    this.host.setMeta(this.name, { rate: checkRate(rate) });
+    this.host.patch(this.name, { rate: checkRate(rate) });
   }
 
   /** 0..1. Assign a number or a string like "30%". */
@@ -1088,7 +822,16 @@ export class Lane {
   }
 
   set swing(swing: number | `${number}%`) {
-    this.owner.setLane(this.name, { swing: parseSwing(swing) });
+    this.host.patch(this.name, { swing: parseSwing(swing) });
+  }
+
+  /** The order steps are walked in: "forward", "backward", or "bounce" (up and back without repeating the ends). */
+  get direction(): StepDirection {
+    return this.data().direction;
+  }
+
+  set direction(direction: StepDirection) {
+    this.host.patch(this.name, { direction });
   }
 
   get mute(): boolean {
@@ -1096,12 +839,21 @@ export class Lane {
   }
 
   set mute(mute: boolean) {
-    this.owner.setLane(this.name, { mute });
+    this.host.patch(this.name, { mute });
+  }
+
+  /** While any lane is soloed, only soloed lanes play. */
+  get solo(): boolean {
+    return this.data().solo;
+  }
+
+  set solo(solo: boolean) {
+    this.host.patch(this.name, { solo });
   }
 
   /** The voice played for each hit, or `undefined`. Setting one needs `options.context`. */
   get sound(): Sound | undefined {
-    return this.host.meta(this.name).sound;
+    return this.data().sound;
   }
 
   set sound(sound: Sound | undefined) {
@@ -1109,12 +861,22 @@ export class Lane {
       assertSound(sound);
       this.host.output(this.name);
     }
-    this.host.setMeta(this.name, { sound });
+    this.host.patch(this.name, { sound });
   }
 
   /** The declared per-step params by name. */
   get params(): Readonly<Record<string, ParamRange>> {
     return Object.freeze(Object.fromEntries(this.host.params(this.name).map(({ id, ...range }) => [id, range as ParamRange])));
+  }
+
+  /** Step index (0-based) the transport is on right now, or `null` while stopped. Updates once per scheduling window. */
+  get playhead(): number | null {
+    return this.host.playhead(this.name);
+  }
+
+  /** 0..1 through the lane's own loop (`length` steps at `rate`), or `null` while stopped. Updates once per scheduling window. */
+  get progress(): number | null {
+    return this.host.progress(this.name);
   }
 
   /** Where the lane's voices arrive; joined to the context destination until `connect` reroutes it. Needs `options.context`. */
@@ -1141,26 +903,25 @@ export class Lane {
   }
 
   private makeStep(index: number): Step {
-    const cellAt = () => this.data().cells[index]!;
+    const { host, name } = this;
+    const cellAt = () => host.data(name).cells[index]!;
     const values: Record<string, number> = {};
-    for (const { id } of this.host.params(this.name)) {
+    for (const { id } of host.params(name)) {
       Object.defineProperty(values, id, {
         enumerable: true,
         get: () => cellAt().custom[id]!,
-        set: (value: number) => this.owner.setCell(this.name, index, { custom: { [id]: value } }),
+        set: (value: number) => host.setCell(name, index, { custom: { [id]: value } }),
       });
     }
     Object.freeze(values);
-    const { owner, name } = this;
-    const step = {
-      get velocity() {
-        return cellAt().velocity;
-      },
-      set velocity(velocity: number) {
-        owner.setCell(name, index, { velocity });
-      },
-      values,
-    };
-    return Object.freeze(step);
+    const step: Record<string, unknown> = { values };
+    for (const id of FIELD_IDS) {
+      Object.defineProperty(step, id, {
+        enumerable: true,
+        get: () => cellAt()[id],
+        set: (value: number) => host.setCell(name, index, { [id]: value }),
+      });
+    }
+    return Object.freeze(step) as Step;
   }
 }

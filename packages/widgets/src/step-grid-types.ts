@@ -1,56 +1,54 @@
-import type { ParamSpec, Readable } from "@audiorective/core";
+import type { ParamRange, ParamSpec, Readable } from "@audiorective/core";
 import type { PluginTarget, Unsubscribe, WidgetPlugin, WidgetPluginContext } from "./types";
 
 export type StepGridRate = "1/2" | "1/4" | "1/8" | "1/16" | "1/32" | "1/64" | "1/2T" | "1/4T" | "1/8T" | "1/16T" | "1/32T" | "1/64T";
 export type StepGridDirection = "forward" | "backward" | "bounce";
 
-/** The values the grid reads from one step. `custom` carries one number per declared param. */
-export type StepGridCell = Readonly<{
-  velocity: number;
-  offset: number;
-  length: number;
-  repeat: number;
-  pitch: number;
-  chance: number;
-  custom?: Readonly<Record<string, number>>;
-}>;
-
-export type StepGridLane = Readonly<{
-  id: string;
-  label: string;
-  steps: number;
-  rate: StepGridRate;
-  direction: StepGridDirection;
-  /** 0..1, shown as a percentage. */
-  swing: number;
-  mute: boolean;
-  solo: boolean;
-  /** One entry per pattern step; entries beyond `steps` are shown dimmed. */
-  cells: readonly StepGridCell[];
-}>;
-
-export type StepGridPattern = Readonly<{ size: number; lanes: readonly StepGridLane[] }>;
-
 /** A caller-defined per-step number; the grid shows it as an extra tab. */
 export type StepGridParamSpec = ParamSpec;
 
-export type StepGridCellPatch = Partial<Omit<StepGridCell, "custom">> & { custom?: Readonly<Record<string, number>> };
-export type StepGridLanePatch = Partial<Omit<StepGridLane, "id" | "cells">>;
+/** One step of a lane: the six built-in values plus the lane's custom per-step values. Writes take effect on the sequencer at once. */
+export interface StepGridStep {
+  /** 0..1; 0 is a rest. */
+  velocity: number;
+  /** -0.5..0.5 of one lane step. */
+  offset: number;
+  /** 1/16..4 lane steps. */
+  length: number;
+  /** Integer 1..8. */
+  repeat: number;
+  /** Integer semitones -24..24. */
+  pitch: number;
+  /** 0..1. */
+  chance: number;
+  /** One number per param the lane declares. */
+  readonly values: Record<string, number>;
+}
+
+/** What the grid reads and writes of one lane. Every read is tracked by core effects. */
+export interface StepGridLane {
+  /** Steps this lane loops over; assigning it resizes the lane. */
+  length: number;
+  /** A rate such as "1/16" or "1/8T" (a `StepRate`), or any other value the model accepts (shown as is). */
+  rate: string | number;
+  /** 0..1, shown as a percentage. */
+  swing: number;
+  direction: StepGridDirection;
+  mute: boolean;
+  solo: boolean;
+  /** Custom per-step numbers this lane declares, by id; they become tabs after the built-in ones. */
+  readonly params: Readonly<Record<string, ParamRange>>;
+  /** The step the transport is on, or `null` while stopped. */
+  readonly playhead: number | null;
+  /** 0..1 through the lane's loop, or `null` while stopped; the top progress bar follows the first lane that has one. */
+  readonly progress?: number | null;
+  /** The first `length` steps. */
+  readonly steps: readonly StepGridStep[];
+}
 
 /** What the grid reads and drives. A `StepSequencer` satisfies it, and so can any model with these members. */
 export interface StepGridSequencer {
-  readonly pattern: Readable<StepGridPattern>;
-  readonly playheads: Readable<Readonly<Record<string, number | null>>>;
-  readonly loopProgress: Readable<number | null>;
-  /** Custom per-step parameters, shown as tabs after the built-in ones. */
-  readonly params?: readonly StepGridParamSpec[];
-  /** Ranges for the built-in cell values, matched by id (`velocity`, `offset`, `length`, `repeat`, `pitch`, `chance`). Absent ids keep the built-in range. */
-  readonly cellParams?: readonly StepGridParamSpec[];
-  /** The rates offered in each lane's Rate picker. Defaults to the twelve straight and triplet rates. */
-  readonly rates?: readonly StepGridRate[];
-  setCell(laneId: string, step: number, patch: StepGridCellPatch): void;
-  toggle(laneId: string, step: number): void;
-  setLane(laneId: string, patch: StepGridLanePatch): void;
+  readonly lanes: Readonly<Record<string, StepGridLane>>;
 }
 
 /** User-facing strings; each key overrides the English default. */
@@ -75,6 +73,8 @@ export type StepGridLabels = {
 
 export type StepGridOptions = {
   sequencer: StepGridSequencer;
+  /** Display name of a lane. Defaults to the lane's name. */
+  laneLabel?(name: string): string;
   /** Accessible name of one step, for example `Kick step 3`. */
   formatStep?(label: string, step: number): string;
   labels?: Partial<StepGridLabels>;
@@ -101,8 +101,8 @@ export interface StepGridPluginContext extends WidgetPluginContext {
   readonly activeParameter: Readable<string>;
   /** Select a tab by id: a built-in parameter or a declared custom param. Throws for an unknown id. */
   setActiveParameter(id: string): void;
-  /** Called after the grid has updated for each pattern change. */
-  onPatternChange(listener: (pattern: StepGridPattern) => void): Unsubscribe;
+  /** Called after the grid has updated for any change to the lanes, with the sequencer's lanes. */
+  onPatternChange(listener: (lanes: StepGridSequencer["lanes"]) => void): Unsubscribe;
 }
 
 export type StepGridPlugin = WidgetPlugin<StepGridPluginContext>;

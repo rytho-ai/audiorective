@@ -256,37 +256,6 @@ describe("PadBank readers are tracked", () => {
 });
 
 describe("StepSequencer readers are tracked", () => {
-  const make = () =>
-    watch(new StepSequencer({ size: 4, lanes: [{ id: "k", label: "K", cells: [{ velocity: 1 }] }] }, () => null), touched.stepSequencer);
-  test("pattern follows setCell, toggle, setLane and setSize", () => {
-    const sequencer = make();
-    expectTracked(
-      () => sequencer.pattern.value,
-      () => sequencer.setCell("k", 1, { velocity: 0.5 }),
-    );
-    expectTracked(
-      () => sequencer.pattern.value,
-      () => sequencer.toggle("k", 2),
-    );
-    expectTracked(
-      () => sequencer.pattern.value,
-      () => sequencer.setLane("k", { swing: 0.3 }),
-    );
-    expectTracked(
-      () => sequencer.pattern.value,
-      () => sequencer.setSize(8),
-    );
-  });
-  test("transforms follows setTransforms", () => {
-    const sequencer = make();
-    expectTracked(
-      () => sequencer.transforms.value,
-      () => sequencer.setTransforms([]),
-    );
-  });
-});
-
-describe("lane-record StepSequencer readers are tracked", () => {
   const ctx = new OfflineAudioContext(1, 128, 8000);
   const make = () => {
     const sequencer = watch(
@@ -318,6 +287,25 @@ describe("lane-record StepSequencer readers are tracked", () => {
       () => (lane.mute = true),
     );
     expectTracked(
+      () => lane.solo,
+      () => (lane.solo = true),
+    );
+    expectTracked(
+      () => lane.direction,
+      () => (lane.direction = "bounce"),
+    );
+    expectTracked(
+      () => lane.length,
+      () => (lane.length = 8),
+    );
+    for (const field of ["offset", "length", "repeat", "pitch", "chance"] as const) {
+      const value = field === "repeat" ? 2 : field === "pitch" ? 3 : 0.5;
+      expectTracked(
+        () => lane.steps[0]![field],
+        () => (lane.steps[0]![field] = value),
+      );
+    }
+    expectTracked(
       () => lane.sound,
       () => (lane.sound = "C4"),
     );
@@ -336,6 +324,23 @@ describe("lane-record StepSequencer readers are tracked", () => {
     expect(Object.keys(lane.params)).toEqual(["p"]);
     expect(sequencer.lane("k")).toBe(sequencer.lanes.k);
     expect(sequencer.context).toBe(ctx);
+  });
+  test("playhead and progress follow the transport position", async () => {
+    const { sequencer, lane } = make();
+    const timing = { timeToBeat: (t: number) => t, beatToTime: (b: number) => b };
+    const window = (current: number) => ({ beat: { start: current, end: current + 1 }, time: { current }, own() {} });
+    await expectTracked(
+      () => lane.playhead,
+      () => sequencer.schedule(window(0.5), timing),
+    );
+    await expectTracked(
+      () => lane.progress,
+      () => sequencer.schedule(window(0.75), timing),
+    );
+    await expectTracked(
+      () => lane.playhead,
+      () => sequencer.reset(),
+    );
   });
   test("output, connect and disconnect", () => {
     const { lane } = make();
@@ -385,21 +390,21 @@ describe("command methods called inside an effect do not subscribe it", () => {
   });
 
   test("StepSequencer commands and schedule", () => {
-    const pattern = { size: 4, lanes: [{ id: "k", label: "K", cells: [{ velocity: 1 }] }] };
-    const sequencer = watch(new StepSequencer(pattern, () => null), touched.stepSequencer);
+    const sequencer = watch(new StepSequencer({ k: "X..." }), touched.stepSequencer);
+    const lane = watch(sequencer.lanes.k!, touched.lane);
     const timing = { timeToBeat: (t: number) => t, beatToTime: (b: number) => b };
     const window = { beat: { start: 0, end: 2 }, time: { current: 0 }, own() {} };
+    const step = lane.steps[1]!;
     let runs = 0;
     const stop = effect(() => {
       runs++;
-      sequencer.setCell("k", 1, { velocity: 0.5 });
-      sequencer.toggle("k", 3);
-      sequencer.setLane("k", { swing: 0.2 });
-      sequencer.setSize(8);
-      sequencer.setTransforms([]);
+      step.velocity = 0.5;
+      lane.swing = 0.2;
+      lane.pattern = "XX..";
       sequencer.schedule(window, timing);
+      sequencer.reset();
     });
-    sequencer.setCell("k", 2, { velocity: 0.5 });
+    sequencer.lanes.k!.steps[2]!.velocity = 0.5;
     sequencer.reset();
     stop();
     expect(runs).toBe(1);

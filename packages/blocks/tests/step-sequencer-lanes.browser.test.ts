@@ -191,7 +191,6 @@ describe("polymeter and rates", () => {
     expect(at(hits, "five").map((h) => [h.loop, h.index])).toEqual(Array.from({ length: 16 }, (_, k) => [Math.floor(k / 5), k % 5]));
     expect(at(hits, "eight").map((h) => [h.loop, h.index])).toEqual(Array.from({ length: 16 }, (_, k) => [Math.floor(k / 8), k % 8]));
     expect(at(hits, "sixteen").map((h) => h.loop)).toEqual(Array(16).fill(0));
-    expect(seq.pattern.value.size).toBe(16);
     expect(seq.lanes.five!.length).toBe(5);
   });
 
@@ -252,7 +251,7 @@ describe("notation and lane setters", () => {
     lane.pattern = "X.X.X";
     expect(lane.length).toBe(5);
     lane.pattern = "X".repeat(20);
-    expect(seq.pattern.value.size).toBe(20);
+    expect(lane.length).toBe(20);
     lane.rate = "8t";
     expect(lane.rate).toBe("8t");
     lane.swing = "30%";
@@ -403,7 +402,6 @@ describe("hits, cleanup and disposal", () => {
     expect(() => new StepSequencer({ "": "X" })).toThrow("Step Sequencer lanes need nonempty names");
     expect(() => new StepSequencer({ a: {} as never })).toThrow("Step Sequencer lanes need nonempty names");
     expect(() => new StepSequencer({ a: "X" }, { onHit: 3 as never })).toThrow("Step Sequencer onHit and transform need functions.");
-    expect(() => new StepSequencer({ size: 4, lanes: [] }, () => null, { onHit: () => {} })).toThrow("belong to the lane-record form");
     const seq = new StepSequencer({ a: "X" });
     expect(() => seq.lanes.a!.output).toThrow("needs options.context");
     expect(() => seq.lane("nope")).toThrow("Step Sequencer needs an existing lane.");

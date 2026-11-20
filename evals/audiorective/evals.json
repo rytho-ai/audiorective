@@ -41,7 +41,7 @@
         "Uses Sampler (or another audiorective playback primitive: PadBank, or a StepSequencer lane `sound`) for the one-shot drum hits",
         "Keeps the step pattern in reactive audio-layer state: a Cell (or a plain class holding a Cell), or a StepSequencer's own lane pattern/steps; not a Param<boolean[][]> and not in DOM state",
         "Schedules hits from the clock's tick windows / rulers with audio-time timestamps, either in its own onTick or through a StepSequencer attached with `clock.attach`; not on the main thread at playback time",
-        "Keeps scheduling logic in the audio class (or the attached StepSequencer); DOM handlers only edit the pattern (toggleStep, `steps[i]` writes, setCell) or call start / stop",
+        "Keeps scheduling logic in the audio class (or the attached StepSequencer); DOM handlers only edit the pattern (toggleStep, `lanes.<name>.steps[i]` writes) or call start / stop",
         "Resumes or starts the AudioContext from a user gesture"
       ]
     },
@@ -245,7 +245,7 @@
       "expectations": [
         "Chooses the timing primitive from @audiorective/clock (Clock/Timeline tick windows or rulers) for transport, tempo and swing, rather than setInterval, setTimeout or requestAnimationFrame scheduling",
         "Chooses a one-shot playback primitive from @audiorective/core (Sampler/Voice, or an equivalent buffer source scheduled with audio-clock times), PadBank, or a StepSequencer lane `sound`, for the hits, with per-step velocity applied as gain at trigger time (a lane `sound` scales gain by velocity itself)",
-        "Does not import the @audiorective/blocks root (it has none) or a daw package; either builds on @audiorective/blocks/sequencer StepSequencer (lane-record or explicit form), optionally with @audiorective/blocks/pads, or writes its own scheduling in the app's audio layer from clock windows",
+        "Does not import the @audiorective/blocks root (it has none) or a daw package; either builds on the @audiorective/blocks/sequencer StepSequencer lane-record form, optionally with @audiorective/blocks/pads, or writes its own scheduling in the app's audio layer from clock windows",
         "Keeps pattern and velocity in reactive state owned by the audio layer (a Cell, a plain class holding Cells, or a StepSequencer's lane steps) and reads it in React with useValue (or an equivalent tracked read of that same state); no second copy of the pattern in useState, a context or an external store",
         "Scheduling lives in an audio-layer class or method; React handlers only write params/cells or call methods",
         "Adds no wrapper layer around the library's primitives that only forwards calls (no re-implemented transport, event bus or subscription system)"
@@ -646,8 +646,8 @@
       "expected_output": "Uses StepSequencer and PadBank under the Workspace Clock, with separate manual pad triggers and borrowed widgets.",
       "files": [],
       "expectations": [
-        "Constructs a velocity pattern and passes each returned PadBank handle from the step trigger",
-        "Uses Workspace.attachStepSequencer with cleanup and keeps manual hits outside the scheduled ownership",
+        "Constructs the lanes as patterns and triggers a PadBank hit from each StepSequencer `onHit`, returning a cleanup that cancels that pad hit so a retracted hit is retracted together with its choke",
+        "Attaches the sequencer with workspace.transport.attach(seq) and keeps manual hits outside the scheduled ownership",
         "Assigns both hats the same choke group and calls mountStepGrid and mountPadGrid over the borrowed model/actions",
         "Explains that pending hits and their chokes are revoked together and live patterns are session state"
       ]
@@ -872,33 +872,33 @@
       "expected_output": "A small drum machine over clock, the blocks sequencer and pads subpaths and an optional step-grid widget, with no daw package and no sample library.",
       "files": [],
       "expectations": [
-        "Imports StepSequencer from @audiorective/blocks/sequencer (either constructor form) and PadBank from @audiorective/blocks/pads (or an equivalent that schedules retractable grouped hits through Clock) with Clock (and Timeline unless the Clock is built with `new Clock({ context, bpm })`) from @audiorective/clock; there is no @audiorective/blocks root import",
+        "Imports StepSequencer from @audiorective/blocks/sequencer and PadBank from @audiorective/blocks/pads (or an equivalent that schedules retractable grouped hits) with Clock from @audiorective/clock (a Timeline only if the Clock is built from one); there is no @audiorective/blocks root import",
         "Puts closed and open hat in one choke group so cancelling a scheduled closed-hat hit also retracts its future choke, instead of scheduling an irreversible stop on the open hat",
         "Does not import @audiorective/daw, @audiorective/host, @audiorective/effects, @audiorective/midi, @audiorective/blocks/samples or @audiorective/blocks/player, and creates no Project or Workspace",
-        "Drives the sequencer from the Clock with the same Timeline as the BeatTiming, and re-queues after pattern edits: either `sequencer.schedule(window, timeline)` from the Clock tick (the sequencer registers its hits with window.own itself) plus `clock.refresh()` after edits (or `refreshOnEdit`), or `clock.attach(sequencer)`, which re-queues automatically",
-        "Uses @audiorective/widgets mountStepGrid for the grid or names it as an option; a hand-written grid is acceptable when it edits the sequencer through setCell / toggle (or `steps[i]` writes in the lane-record form)",
+        "Drives the sequencer with `clock.attach(sequencer)`, which re-queues automatically after every pattern edit, instead of a private scheduling loop",
+        "Uses @audiorective/widgets mountStepGrid for the grid or names it as an option; a hand-written grid is acceptable when it edits the sequencer through `lanes.<name>.steps[i]` writes",
         "Cleans up by destroying the clock and PadBank and leaving the caller's AudioContext open"
       ]
     },
     {
       "id": 66,
       "prompt": "my audiorective StepSequencer needs a humanize effect that nudges each hit's timing by a few milliseconds, and the lane swing must keep working. don't fork the block and don't run anything.",
-      "expected_output": "A page-local seconds-unit transform plugged into the sequencer's transforms socket, composed with the default transforms.",
+      "expected_output": "A seconds-domain `transform(hit, random)` option that jitters `when`, with lane swing untouched.",
       "files": [],
       "expectations": [
-        "Implements the millisecond jitter in the seconds domain, adjusting `when` on the hits, because the jitter is in milliseconds: either a StepTransform (EventTransform<StepEvent>) object with an id, `unit: \"second\"` and a pure apply (types from @audiorective/blocks/sequencer), or the lane-record form's `transform(hit, random)` option, which runs in seconds and returns the hit moved",
-        "Keeps lane swing working: with the transforms route via sequencer.setTransforms([...defaultStepTransforms, humanize]) (or the transforms option) so stepSwing stays, or with the `transform` option, which runs after the swing transforms; swing is not replaced or dropped",
-        "Takes randomness from the transform context's randomFor(hit) or the `random(key?)` passed to a `transform(hit, random)` option (both stable per hit across re-queues), not from context.random or Math.random, and does not trigger or cancel audio or keep state across windows inside the transform"
+        "Implements the millisecond jitter in the seconds domain through the StepSequencer `transform(hit, random)` option, returning the hit with `when` moved by a few milliseconds",
+        "Keeps lane swing working: the `transform` runs after swing, offset and repeat are applied, so swing is neither replaced nor dropped",
+        "Takes randomness from the `random(key?)` passed to `transform` (stable per hit across re-queues), not from Math.random, and does not trigger or cancel audio or keep state across calls inside the transform"
       ]
     },
     {
       "id": 67,
       "prompt": "In my vanilla audiorective drum machine I want the step grid to also edit a per-step filter cutoff, and a button on the grid that fills the kick lane with a euclidean rhythm. I don't want to fork the widget or the sequencer. don't run anything.",
-      "expected_output": "A custom StepSequencer param shown as a grid tab, and a page-local step grid plugin attached through grid.attach.",
+      "expected_output": "A lane `params` entry shown as a grid tab, and a page-local step grid plugin attached through grid.attach.",
       "files": [],
       "expectations": [
-        "Declares the cutoff as a custom per-step parameter with { id, min, max, default } (the StepSequencer `params` option, or a lane-record lane's `params`) and reads it in the trigger (hit.custom, or hit.values in the lane-record form); mountStepGrid shows it as an extra tab with no widget change",
-        "Writes the euclidean button as a plugin object with attach(context) passed to grid.attach, using context.addToolbarItem and context.sequencer.setCell (or toggle), not by querying the widget's internal markup",
+        "Declares the cutoff as a lane `params` entry with { min, max, default } and reads it from `hit.values` in `onHit`; mountStepGrid shows it as an extra tab with no widget change",
+        "Writes the euclidean button as a plugin object with attach(context) passed to grid.attach, using context.addToolbarItem and writing `context.sequencer.lanes.kick.steps[i].velocity`, not by querying the widget's internal markup",
         "Registers listeners through context.listen or context.onCleanup so attachment.destroy() or grid.destroy() releases them, and does not import @audiorective/daw"
       ]
     },
@@ -915,12 +915,12 @@
     {
       "id": 69,
       "prompt": "In my audiorective StepSequencer I want a transform that pushes every hit on an odd lane step a 32nd note (an eighth of a beat) late, and it has to stay musically the same when I automate the tempo. don't fork the block and don't run anything.",
-      "expected_output": "A beat-unit StepTransform that moves hit.beat, composed with the default transforms.",
+      "expected_output": "Lane `swing` or per-step `offset` (beat-based) instead of a seconds `transform`, with the reason.",
       "files": [],
       "expectations": [
-        "Writes a StepTransform with an id and no `unit` (or `unit: \"beat\"`) whose apply returns hits with `beat` increased by 0.125, instead of adding seconds to `when` or converting with context.timing",
-        "Leaves durationBeats and every other hit field unchanged, keeps no state across windows, and does not trigger or cancel audio",
-        "Plugs it in through the transforms socket while keeping swing: sequencer.setTransforms([...defaultStepTransforms, mine]) (or the transforms option with the default transforms kept) so lane swing keeps working; a seconds-based `transform` hit callback is not an acceptable substitute because it would not stay tempo-independent"
+        "Does not write a seconds-domain `transform` that adds a fixed time to `when`, and explains that `transform` runs in seconds and would not follow tempo automation",
+        "Uses a beat-based per-lane or per-step field instead: lane `swing` of 1 (\"100%\") on a 16th-note lane delays odd steps by half a step, one eighth of a beat, or `steps[i].offset = 0.5` on the odd steps; both follow tempo",
+        "Does not fork the block and keeps no state in a transform; the nudge is a fixed beat offset that stays the same when the tempo is automated"
       ]
     },
     {
@@ -957,7 +957,7 @@
       "files": [],
       "expectations": [
         "States that clock.refresh() cancels owned events immediately but defers the refill to a microtask, so onTick is not called inside refresh() and a re-entrancy guard around it is not needed",
-        "States that several refresh() calls in the same task (or via refreshOnEdit, or the automatic re-queue of a sequencer attached with `clock.attach`) produce one refill, so batch() is not needed for the re-queue count, only to give observers one coherent pattern change",
+        "States that several refresh() calls in the same task (or the automatic re-queue of a sequencer attached with `clock.attach`) produce one refill, so batch() is not needed for the re-queue count, only to give observers one coherent pattern change",
         "Does not tell the user that onTick runs synchronously inside refresh(), and does not wrap refresh() in a setTimeout or manual debounce"
       ]
     }

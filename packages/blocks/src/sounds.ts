@@ -1,7 +1,8 @@
 import type { CancellableEvent } from "@audiorective/core";
 import { noteToHz, type NoteName } from "./notation";
 
-export type SoundFactory = (context: BaseAudioContext) => AudioScheduledSourceNode;
+/** Called once per hit; `hit.pitch` is the step's semitone offset, which a factory applies itself (a note name or an `AudioBuffer` follow it automatically). */
+export type SoundFactory = (context: BaseAudioContext, hit: SoundHit) => AudioScheduledSourceNode;
 /** A note played by the built-in tone synth, a decoded sample, or a source factory. */
 export type Sound = NoteName | AudioBuffer | SoundFactory;
 
@@ -11,7 +12,7 @@ const ATTACK = 0.004;
 const MIN_BODY = 0.05;
 const RELEASE = 0.02;
 
-export type SoundHit = Readonly<{ when: number; duration: number; velocity: number }>;
+export type SoundHit = Readonly<{ when: number; duration: number; velocity: number; /** Semitones. */ pitch: number }>;
 
 const SOUND_ERROR = () => 'Step Sequencer sound needs a note name like "C4", an AudioBuffer or a function returning an audio source node.';
 
@@ -77,7 +78,7 @@ export function playSound(context: BaseAudioContext, sound: Sound, destination: 
   const gain = new GainNode(context);
   gain.connect(destination);
   if (typeof sound === "string") {
-    const hz = noteToHz(sound)!;
+    const hz = noteToHz(sound)! * 2 ** (hit.pitch / 12);
     const osc = new OscillatorNode(context, { type: "triangle", frequency: hz });
     osc.connect(gain);
     const peak = TONE_PEAK * hit.velocity;
@@ -90,7 +91,7 @@ export function playSound(context: BaseAudioContext, sound: Sound, destination: 
   }
   gain.gain.value = hit.velocity;
   if (typeof sound === "function") {
-    const node = sound(context);
+    const node = sound(context, hit);
     if (!node || typeof node.start !== "function" || typeof node.stop !== "function") {
       gain.disconnect();
       throw new Error(
@@ -101,7 +102,7 @@ export function playSound(context: BaseAudioContext, sound: Sound, destination: 
     const oneShot = typeof AudioBufferSourceNode !== "undefined" && node instanceof AudioBufferSourceNode;
     return voice(context, node, gain, hit.when, oneShot ? undefined : hit.when + hit.duration);
   }
-  const source = new AudioBufferSourceNode(context, { buffer: sound });
+  const source = new AudioBufferSourceNode(context, { buffer: sound, playbackRate: 2 ** (hit.pitch / 12) });
   source.connect(gain);
   return voice(context, source, gain, hit.when, undefined);
 }

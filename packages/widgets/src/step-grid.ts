@@ -2,17 +2,16 @@ import { cell, effect, readonlyCell, untracked, type ValueRange } from "@audiore
 import { createPluginHost } from "./plugin-host";
 import { stepGridStyles } from "./step-grid-style";
 import type {
-  StepGridCell,
-  StepGridCellPatch,
   StepGridDirection,
   StepGridHandle,
   StepGridLabels,
   StepGridLane,
   StepGridOptions,
   StepGridParamSpec,
-  StepGridPattern,
   StepGridPluginContext,
   StepGridRate,
+  StepGridSequencer,
+  StepGridStep,
 } from "./step-grid-types";
 import type { Unsubscribe } from "./types";
 
@@ -23,7 +22,8 @@ const DIRECTIONS: readonly StepGridDirection[] = ["forward", "backward", "bounce
 const ARROWS: Record<StepGridDirection, string> = { forward: "→", backward: "←", bounce: "↔" };
 const DRAG_THRESHOLD = 3;
 const BOX_DRAG = 3;
-const HEADER_FIELDS = ["label", "steps", "rate", "direction", "swing", "mute", "solo"] as const;
+const HEADER_FIELDS = ["length", "rate", "direction", "swing", "mute", "solo"] as const;
+const MAX_LENGTH = 128;
 
 const DEFAULT_LABELS: StepGridLabels = {
   grid: "Step sequencer",
@@ -162,24 +162,6 @@ function builtIns(labels: StepGridLabels): ParamDef[] {
   ];
 }
 
-/** Narrow a built-in definition to the range a sequencer declares for the same id. */
-function withSpec(def: ParamDef, spec: StepGridParamSpec): ParamDef {
-  const range = spec.max - spec.min;
-  if (!(range > 0) || !Number.isFinite(range)) return def;
-  const ratio = range / (def.max - def.min);
-  const quantum = def.integer ? 1 : spec.step !== undefined && spec.step > 0 ? spec.step : def.quantum * ratio;
-  return {
-    ...def,
-    min: spec.min,
-    max: spec.max,
-    fallback: spec.default,
-    quantum,
-    fine: def.integer ? def.fine : Math.max(quantum, def.fine * ratio),
-    coarse: def.integer ? def.coarse : Math.max(quantum, def.coarse * ratio),
-    span: def.unitPx ? () => def.unitPx! * range : def.span,
-  };
-}
-
 function customDef(spec: StepGridParamSpec): ParamDef {
   const range = spec.max - spec.min;
   const step = spec.step !== undefined && spec.step > 0 ? spec.step : range / 100;
@@ -209,13 +191,35 @@ function snap(def: ParamDef, value: number): number {
   return +clamp(snapped, def.min, def.max).toFixed(6);
 }
 
-function readValue(def: ParamDef, source: StepGridCell): number {
-  if (def.custom) return source.custom?.[def.id] ?? def.fallback;
+function readValue(def: ParamDef, source: StepGridStep): number {
+  if (def.custom) return source.values[def.id] ?? def.fallback;
   return (source as unknown as Record<string, number>)[def.id] ?? def.fallback;
 }
 
-function patchFor(def: ParamDef, value: number): StepGridCellPatch {
-  return def.custom ? { custom: { [def.id]: value } } : ({ [def.id]: value } as StepGridCellPatch);
+type Snap = Readonly<{
+  length: number;
+  rate: string;
+  direction: StepGridDirection;
+  swing: number;
+  mute: boolean;
+  solo: boolean;
+  params: StepGridLane["params"];
+  /** One entry per visible step (the first `length`). */
+  cells: readonly Readonly<StepGridStep>[];
+}>;
+
+function readLane(lane: StepGridLane): Snap {
+  const { length, rate, direction, swing, mute, solo, params } = lane;
+  const cells = lane.steps.map(({ velocity, offset, length, repeat, pitch, chance, values }) => ({
+    velocity,
+    offset,
+    length,
+    repeat,
+    pitch,
+    chance,
+    values: { ...values },
+  }));
+  return { length, rate: String(rate), direction, swing, mute, solo, params, cells };
 }
 
 type NumberBox = {
@@ -352,6 +356,7 @@ function createNumberBox(doc: Document, pxPerUnit: number, onChange: (value: num
 
 type LaneView = {
   id: string;
+  label: string;
   el: HTMLElement;
   name: HTMLElement;
   mute: HTMLButtonElement;
@@ -364,7 +369,7 @@ type LaneView = {
   cells: HTMLElement[];
   /** The key last painted into each cell, so unchanged cells are skipped. */
   keys: string[];
-  lane: StepGridLane | undefined;
+  snap: Snap | undefined;
   head: number | null;
 };
 
@@ -372,20 +377,21 @@ type Drag = { view: LaneView; step: number; def: ParamDef; startY: number; start
 
 /**
  * A pluggable, lane-aware step editor over a borrowed sequencer.
- * `sequencer` is a structural contract (`pattern`, `playheads`, `loopProgress` readables and `setCell`, `toggle`, `setLane`),
+ * `sequencer` is a structural contract (`lanes`: per lane `length`, `rate`, `swing`, `direction`, `mute`, `solo`, `params`, `playhead` and `steps`),
  * so a `StepSequencer` or your own model fits. Destroying the grid leaves the borrowed sequencer alone.
  */
 export function mountStepGrid(root: HTMLElement, options: StepGridOptions): StepGridHandle {
   const { sequencer } = options;
   const labels = { ...DEFAULT_LABELS, ...options.labels };
   const formatStep = options.formatStep ?? ((label: string, step: number) => `${label} step ${step + 1}`);
+  const laneLabel = options.laneLabel ?? ((name: string) => name);
   const doc = root.ownerDocument;
-  const specs = new Map((sequencer.cellParams ?? []).map((spec) => [spec.id, spec]));
-  const rates = sequencer.rates?.length ? sequencer.rates : RATES;
-  const defs = [
-    ...builtIns(labels).map((def) => (specs.has(def.id) ? withSpec(def, specs.get(def.id)!) : def)),
-    ...(sequencer.params ?? []).map(customDef),
-  ];
+  const laneIds = Object.keys(sequencer.lanes);
+  const customSpecs = new Map<string, StepGridParamSpec>();
+  for (const id of laneIds)
+    for (const [param, range] of Object.entries(untracked(() => sequencer.lanes[id].params)))
+      if (!customSpecs.has(param)) customSpecs.set(param, { id: param, ...range });
+  const defs = [...builtIns(labels), ...[...customSpecs.values()].map(customDef)];
   const defById = new Map(defs.map((def) => [def.id, def]));
   const make = <K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, parent?: HTMLElement): HTMLElementTagNameMap[K] => {
     const element = doc.createElement(tag);
@@ -438,14 +444,15 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
   }
 
   const views = new Map<string, LaneView>();
-  let pattern: StepGridPattern | undefined;
+  /** Columns shown: the longest lane length seen so far; it grows and never shrinks. */
+  let columns = 0;
   let rulerSize = -1;
   let folded = false;
   let tabCell: HTMLElement | undefined;
   let drag: Drag | undefined;
   let suppressClick = false;
   let destroyed = false;
-  const patternListeners = new Set<(pattern: StepGridPattern) => void>();
+  const patternListeners = new Set<(lanes: StepGridSequencer["lanes"]) => void>();
   const disposers: Unsubscribe[] = [];
   const timers = new Set<ReturnType<typeof setTimeout>>();
 
@@ -455,35 +462,50 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
   }
 
   const defOf = () => defById.get(active.value)!;
-  const laneOf = (id: string) => views.get(id)?.lane;
-  const hasActive = (lane: StepGridLane) => lane.cells.some((value, step) => step < lane.steps && value.velocity > 0);
-
-  function cellKey(def: ParamDef, lane: StepGridLane, step: number): string {
-    const value = lane.cells[step];
-    return `${step < lane.steps ? 1 : 0}|${value.velocity > 0 ? 1 : 0}|${readValue(def, value)}|${def.id}|${lane.label}`;
+  const hasActive = (snap: Snap) => snap.cells.some((value) => value.velocity > 0);
+  const missing = (def: ParamDef, snap: Snap) => def.custom && !(def.id in snap.params);
+  /** The live step when it is visible and editable under `def`, else `undefined`. */
+  function stepOf(laneView: LaneView, step: number, def: ParamDef): StepGridStep | undefined {
+    const snap = laneView.snap;
+    if (!snap || step >= snap.length || missing(def, snap)) return undefined;
+    return untracked(() => sequencer.lanes[laneView.id].steps[step]);
+  }
+  /** Write `value` (clamped to the lane's own range for a custom param) to one step. */
+  function write(laneView: LaneView, step: number, def: ParamDef, value: number): void {
+    const target = stepOf(laneView, step, def);
+    if (!target) return;
+    const own = def.custom ? laneView.snap!.params[def.id] : undefined;
+    const next = own ? clamp(value, own.min, own.max) : value;
+    if (def.custom) target.values[def.id] = next;
+    else (target as unknown as Record<string, number>)[def.id] = next;
   }
 
-  function paint(laneView: LaneView, lane: StepGridLane, step: number, def: ParamDef): void {
-    const key = cellKey(def, lane, step);
+  function paint(laneView: LaneView, snap: Snap, step: number, def: ParamDef): void {
+    const value = snap.cells[step];
+    const shown = value && !missing(def, snap) ? value : undefined;
+    const current = shown ? readValue(def, shown) : undefined;
+    const key = `${value ? (value.velocity > 0 ? 1 : 0) : 2}|${shown ? 1 : 0}|${current}|${def.id}`;
     if (laneView.keys[step] === key) return;
     laneView.keys[step] = key;
     const element = laneView.cells[step];
-    const value = lane.cells[step];
-    const on = value.velocity > 0;
-    const inert = step >= lane.steps;
-    const current = readValue(def, value);
+    const on = !!value && value.velocity > 0;
+    const inert = !shown;
     element.dataset.on = String(on);
     element.dataset.inert = String(inert);
     element.setAttribute("aria-pressed", String(on));
-    if (inert) element.setAttribute("aria-disabled", "true");
-    else element.removeAttribute("aria-disabled");
-    if (inert) element.tabIndex = -1;
-    const text = def.text(current);
-    element.setAttribute("aria-label", `${formatStep(lane.label, step)}, ${def.label} ${text}`);
+    if (inert) {
+      element.setAttribute("aria-disabled", "true");
+      element.tabIndex = -1;
+    } else element.removeAttribute("aria-disabled");
+    const text = current === undefined ? "" : def.text(current);
+    element.setAttribute("aria-label", text ? `${formatStep(laneView.label, step)}, ${def.label} ${text}` : formatStep(laneView.label, step));
     (element.lastElementChild as HTMLElement).textContent = text;
     const fill = element.firstElementChild as HTMLElement;
     const half = (def.max - def.min) / 2;
-    if (def.kind === "fill") {
+    if (current === undefined) {
+      fill.style.height = "0%";
+      fill.style.bottom = "0";
+    } else if (def.kind === "fill") {
       fill.style.height = `${((current - def.min) / (def.max - def.min)) * 100}%`;
       fill.style.bottom = "0";
     } else if (def.kind === "centre") {
@@ -498,19 +520,16 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
     }
   }
 
-  function paintLane(laneView: LaneView, lane: StepGridLane, all: boolean): void {
+  function paintLane(laneView: LaneView, snap: Snap): void {
     const def = defOf();
-    const previous = laneView.lane;
-    for (let step = 0; step < laneView.cells.length; step++) {
-      if (all || !previous || previous.cells[step] !== lane.cells[step] || previous.steps !== lane.steps || previous.label !== lane.label)
-        paint(laneView, lane, step, def);
-    }
+    for (let step = 0; step < laneView.cells.length; step++) paint(laneView, snap, step, def);
   }
 
-  function createLane(lane: StepGridLane): LaneView {
+  function createLane(id: string): LaneView {
+    const label = laneLabel(id);
     const el = make("div", "ar-sg-lane");
     el.setAttribute("role", "group");
-    el.dataset.lane = lane.id;
+    el.dataset.lane = id;
     const head = make("div", "ar-sg-head", el);
     const name = make("span", "ar-sg-name", head);
     const mute = make("button", "ar-sg-mute", head);
@@ -519,28 +538,29 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
     const solo = make("button", "ar-sg-solo", head);
     solo.type = "button";
     solo.textContent = "S";
+    const live = () => sequencer.lanes[id];
     const steps = createNumberBox(doc, 8, (value) => {
-      const current = laneOf(lane.id);
-      if (current) sequencer.setLane(lane.id, { steps: clamp(value, 1, pattern?.size ?? current.cells.length) });
+      live().length = clamp(value, 1, MAX_LENGTH);
     });
     steps.el.classList.add("ar-sg-steps");
     head.append(steps.el);
     const rateWrap = make("span", "ar-sg-select", head);
     const rate = make("select", undefined, rateWrap);
-    for (const value of rates) {
+    for (const value of RATES) {
       const option = make("option", undefined, rate);
       option.value = option.textContent = value;
     }
     const dir = make("button", "ar-sg-dir", head);
     dir.type = "button";
     const swing = createNumberBox(doc, 3, (value) => {
-      if (laneOf(lane.id)) sequencer.setLane(lane.id, { swing: clamp(value, 0, 100) / 100 });
+      live().swing = clamp(value, 0, 100) / 100;
     });
     swing.el.classList.add("ar-sg-swing");
     head.append(swing.el);
     const cellsEl = make("div", "ar-sg-cells", el);
     const laneView: LaneView = {
-      id: lane.id,
+      id,
+      label,
       el,
       name,
       mute,
@@ -552,23 +572,27 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
       cellsEl,
       cells: [],
       keys: [],
-      lane: undefined,
+      snap: undefined,
       head: null,
     };
     mute.addEventListener("click", () => {
-      const current = laneOf(lane.id);
-      if (current) sequencer.setLane(lane.id, { mute: !current.mute });
+      const lane = untracked(live);
+      lane.mute = !untracked(() => lane.mute);
     });
     solo.addEventListener("click", () => {
-      const current = laneOf(lane.id);
-      if (current) sequencer.setLane(lane.id, { solo: !current.solo });
+      const lane = untracked(live);
+      lane.solo = !untracked(() => lane.solo);
     });
     dir.addEventListener("click", () => {
-      const current = laneOf(lane.id);
-      if (current) sequencer.setLane(lane.id, { direction: DIRECTIONS[(DIRECTIONS.indexOf(current.direction) + 1) % DIRECTIONS.length] });
+      const lane = untracked(live);
+      const current = untracked(() => lane.direction);
+      lane.direction = DIRECTIONS[(DIRECTIONS.indexOf(current) + 1) % DIRECTIONS.length];
     });
-    rate.addEventListener("change", () => sequencer.setLane(lane.id, { rate: rate.value as StepGridRate }));
-    // Stored for destroy(): the lane's own control listeners die with its elements.
+    rate.addEventListener("change", () => {
+      const lane = untracked(live);
+      if (rate.value !== String(untracked(() => lane.rate))) lane.rate = rate.value;
+    });
+    // The lane's own control listeners die with its elements.
     return laneView;
   }
 
@@ -576,25 +600,30 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
     if (element.textContent !== text) element.textContent = text;
   }
 
-  function refreshHeader(laneView: LaneView, lane: StepGridLane): void {
-    const size = pattern?.size ?? lane.cells.length;
-    setText(laneView.name, lane.label);
-    laneView.el.setAttribute("aria-label", lane.label);
-    laneView.mute.setAttribute("aria-pressed", String(lane.mute));
-    laneView.mute.setAttribute("aria-label", `${lane.label} ${labels.mute}`);
+  function refreshHeader(laneView: LaneView, snap: Snap): void {
+    const label = laneView.label;
+    setText(laneView.name, label);
+    laneView.el.setAttribute("aria-label", label);
+    laneView.mute.setAttribute("aria-pressed", String(snap.mute));
+    laneView.mute.setAttribute("aria-label", `${label} ${labels.mute}`);
     laneView.mute.title = labels.mute;
-    laneView.solo.setAttribute("aria-pressed", String(lane.solo));
-    laneView.solo.setAttribute("aria-label", `${lane.label} ${labels.solo}`);
+    laneView.solo.setAttribute("aria-pressed", String(snap.solo));
+    laneView.solo.setAttribute("aria-label", `${label} ${labels.solo}`);
     laneView.solo.title = labels.solo;
-    laneView.steps.update({ value: lane.steps, min: 1, max: size, text: String(lane.steps), label: `${lane.label} ${labels.steps}` });
-    if (laneView.rate.value !== lane.rate) laneView.rate.value = lane.rate;
-    laneView.rate.setAttribute("aria-label", `${lane.label} ${labels.rate}`);
+    laneView.steps.update({ value: snap.length, min: 1, max: MAX_LENGTH, text: String(snap.length), label: `${label} ${labels.steps}` });
+    if (!Array.from(laneView.rate.options).some((option) => option.value === snap.rate)) {
+      const option = doc.createElement("option");
+      option.value = option.textContent = snap.rate;
+      laneView.rate.append(option);
+    }
+    if (laneView.rate.value !== snap.rate) laneView.rate.value = snap.rate;
+    laneView.rate.setAttribute("aria-label", `${label} ${labels.rate}`);
     laneView.rate.title = labels.rate;
-    setText(laneView.dir, ARROWS[lane.direction]);
-    laneView.dir.setAttribute("aria-label", `${lane.label} ${labels.direction}: ${lane.direction}`);
-    laneView.dir.title = `${labels.direction}: ${lane.direction}`;
-    const swing = Math.round(lane.swing * 100);
-    laneView.swing.update({ value: swing, min: 0, max: 100, text: `${swing}%`, label: `${lane.label} ${labels.swing} %` });
+    setText(laneView.dir, ARROWS[snap.direction]);
+    laneView.dir.setAttribute("aria-label", `${label} ${labels.direction}: ${snap.direction}`);
+    laneView.dir.title = `${labels.direction}: ${snap.direction}`;
+    const swing = Math.round(snap.swing * 100);
+    laneView.swing.update({ value: swing, min: 0, max: 100, text: `${swing}%`, label: `${label} ${labels.swing} %` });
   }
 
   function syncRuler(size: number): void {
@@ -613,10 +642,6 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
   }
 
   function syncCells(laneView: LaneView, size: number): void {
-    while (laneView.cells.length > size) {
-      laneView.cells.pop()!.remove();
-      laneView.keys.pop();
-    }
     while (laneView.cells.length < size) {
       const step = laneView.cells.length;
       const element = make("div", "ar-sg-cell", laneView.cellsEl);
@@ -634,15 +659,17 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
   }
 
   function setHead(laneView: LaneView, next: number | null): void {
-    if (laneView.head === next) return;
-    if (laneView.head !== null) delete laneView.cells[laneView.head]?.dataset.current;
+    if (laneView.head !== next && laneView.head !== null) delete laneView.cells[laneView.head]?.dataset.current;
     laneView.head = next;
-    if (next !== null && laneView.cells[next]) laneView.cells[next].dataset.current = "true";
+    const element = next === null ? undefined : laneView.cells[next];
+    if (element && element.dataset.current !== "true") element.dataset.current = "true";
   }
 
   function applyHeads(heads: Readonly<Record<string, number | null>>): void {
     for (const laneView of views.values()) setHead(laneView, heads[laneView.id] ?? null);
   }
+
+  const readHeads = () => Object.fromEntries(laneIds.map((id) => [id, sequencer.lanes[id].playhead ?? null]));
 
   function focusable(element: HTMLElement | undefined): element is HTMLElement {
     return !!element && lanesEl.contains(element) && element.dataset.inert !== "true" && !element.closest("[hidden]");
@@ -665,48 +692,27 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
   }
 
   function applyFold(): void {
-    for (const laneView of views.values()) laneView.el.hidden = folded && !!laneView.lane && !hasActive(laneView.lane);
+    for (const laneView of views.values()) laneView.el.hidden = folded && !!laneView.snap && !hasActive(laneView.snap);
     ensureTabCell();
   }
 
-  function applyPattern(next: StepGridPattern): void {
-    const previous = pattern;
-    pattern = next;
-    const ids = new Set(next.lanes.map((lane) => lane.id));
-    for (const [id, laneView] of views) {
-      if (ids.has(id)) continue;
-      if (drag?.view === laneView) drag = undefined;
-      laneView.el.remove();
-      views.delete(id);
+  function applyLanes(snaps: ReadonlyMap<string, Snap>): void {
+    columns = Math.max(columns, ...[...snaps.values()].map((snap) => snap.length));
+    syncRuler(columns);
+    for (const [id, snap] of snaps) {
+      const laneView = views.get(id)!;
+      const before = laneView.snap;
+      if (laneView.cells.length !== columns) syncCells(laneView, columns);
+      if (!before || HEADER_FIELDS.some((field) => before[field] !== snap[field])) refreshHeader(laneView, snap);
+      laneView.snap = snap;
+      paintLane(laneView, snap);
+      laneView.el.hidden = folded && !hasActive(snap);
     }
-    const forceCells = previous?.size !== next.size;
-    syncRuler(next.size);
-    let order = false;
-    next.lanes.forEach((lane, index) => {
-      let laneView = views.get(lane.id);
-      if (!laneView) {
-        laneView = createLane(lane);
-        views.set(lane.id, laneView);
-        order = true;
-      }
-      if (lanesEl.children[index] !== laneView.el) order = true;
-    });
-    if (order) lanesEl.append(...next.lanes.map((lane) => views.get(lane.id)!.el));
-    for (const lane of next.lanes) {
-      const laneView = views.get(lane.id)!;
-      if (laneView.lane === lane && !forceCells) continue;
-      const before = laneView.lane;
-      if (!before || before.cells.length !== next.size) syncCells(laneView, next.size);
-      if (forceCells || !before || HEADER_FIELDS.some((field) => before[field] !== lane[field])) refreshHeader(laneView, lane);
-      paintLane(laneView, lane, false);
-      laneView.lane = lane;
-      laneView.el.hidden = folded && !hasActive(lane);
-    }
-    applyHeads(untracked(() => sequencer.playheads.value));
+    applyHeads(untracked(readHeads));
     ensureTabCell();
     for (const listener of [...patternListeners]) {
       try {
-        listener(next);
+        listener(sequencer.lanes);
       } catch (error) {
         console.error("Step grid pattern listener failed:", error);
       }
@@ -721,6 +727,12 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
     active.value = id;
   }
 
+  for (const id of laneIds) {
+    const laneView = createLane(id);
+    views.set(id, laneView);
+    lanesEl.append(laneView.el);
+  }
+
   const stopActive = effect(() => {
     const id = active.value;
     const def = defById.get(id)!;
@@ -731,29 +743,38 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
       tab.tabIndex = key === id ? 0 : -1;
     }
     untracked(() => {
-      for (const laneView of views.values()) if (laneView.lane) paintLane(laneView, laneView.lane, true);
+      for (const laneView of views.values()) if (laneView.snap) paintLane(laneView, laneView.snap);
     });
   });
-  const stopPattern = effect(() => {
-    const next = sequencer.pattern.value;
-    untracked(() => applyPattern(next));
+  const stopLanes = effect(() => {
+    const snaps = new Map(laneIds.map((id) => [id, readLane(sequencer.lanes[id])]));
+    untracked(() => applyLanes(snaps));
   });
   const stopHeads = effect(() => {
-    const heads = sequencer.playheads.value;
+    const heads = readHeads();
     untracked(() => applyHeads(heads));
   });
   const stopProgress = effect(() => {
-    const progress = sequencer.loopProgress.value;
+    let progress: number | null = null;
+    for (const id of laneIds) {
+      progress = sequencer.lanes[id].progress ?? null;
+      if (progress !== null) break;
+    }
     progressFill.style.width = progress === null ? "0" : `${clamp(progress, 0, 1) * 100}%`;
     progressTrack.dataset.active = String(progress !== null);
   });
 
   function adjust(laneView: LaneView, step: number, def: ParamDef, delta: number): void {
-    const lane = laneView.lane;
-    if (!lane || step >= lane.steps) return;
-    const current = readValue(def, lane.cells[step]);
+    const target = stepOf(laneView, step, def);
+    if (!target) return;
+    const current = readValue(def, target);
     const next = snap(def, current + delta);
-    if (next !== current) sequencer.setCell(lane.id, step, patchFor(def, next));
+    if (next !== current) write(laneView, step, def, next);
+  }
+
+  function toggle(laneView: LaneView, step: number): void {
+    const target = stepOf(laneView, step, defOf());
+    if (target) target.velocity = target.velocity > 0 ? 0 : 1;
   }
 
   function target(event: Event): { laneView: LaneView; step: number; element: HTMLElement } | undefined {
@@ -772,15 +793,17 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
   on(lanesEl, "pointerdown", (event: PointerEvent) => {
     const hit = target(event);
     suppressClick = false;
-    if (!hit || event.button !== 0 || hit.element.dataset.inert === "true" || !hit.laneView.lane) return;
+    if (!hit || event.button !== 0 || hit.element.dataset.inert === "true") return;
     const def = defOf();
+    const current = stepOf(hit.laneView, hit.step, def);
+    if (!current) return;
     const rect = hit.element.getBoundingClientRect();
     drag = {
       view: hit.laneView,
       step: hit.step,
       def,
       startY: event.clientY,
-      startValue: readValue(def, hit.laneView.lane.cells[hit.step]),
+      startValue: untracked(() => readValue(def, current)),
       span: def.span(rect.height),
       pointerId: event.pointerId,
       moved: false,
@@ -799,10 +822,10 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
       drag.moved = true;
       drag.view.cells[drag.step].dataset.editing = "true";
     }
-    const lane = drag.view.lane;
-    if (!lane) return;
+    const current = stepOf(drag.view, drag.step, drag.def);
+    if (!current) return;
     const next = snap(drag.def, drag.startValue + (delta / drag.span) * (drag.def.max - drag.def.min));
-    if (next !== readValue(drag.def, lane.cells[drag.step])) sequencer.setCell(lane.id, drag.step, patchFor(drag.def, next));
+    if (next !== untracked(() => readValue(drag!.def, current))) write(drag.view, drag.step, drag.def, next);
   });
   const endDrag = (event: PointerEvent) => {
     if (!drag || event.pointerId !== drag.pointerId) return;
@@ -825,8 +848,8 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
       suppressClick = false;
       return;
     }
-    if (hit.element.dataset.inert === "true" || !hit.laneView.lane) return;
-    sequencer.toggle(hit.laneView.id, hit.step);
+    if (hit.element.dataset.inert === "true") return;
+    toggle(hit.laneView, hit.step);
   });
   on(lanesEl, "focusin", (event: FocusEvent) => {
     const hit = target(event);
@@ -834,12 +857,12 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
   });
   on(lanesEl, "keydown", (event: KeyboardEvent) => {
     const hit = target(event);
-    const lane = hit?.laneView.lane;
+    const lane = hit?.laneView.snap;
     if (!hit || !lane || event.ctrlKey || event.metaKey || hit.element.dataset.inert === "true") return;
     const { laneView, step } = hit;
     const focusStep = (nextLane: LaneView, nextStep: number) => {
-      const next = nextLane.lane;
-      const element = next && nextLane.cells[clamp(nextStep, 0, next.steps - 1)];
+      const next = nextLane.snap;
+      const element = next && nextLane.cells[clamp(nextStep, 0, next.length - 1)];
       if (element) {
         setTabCell(element);
         element.focus();
@@ -853,7 +876,7 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
         break;
       case "Home":
       case "End":
-        focusStep(laneView, event.key === "Home" ? 0 : lane.steps - 1);
+        focusStep(laneView, event.key === "Home" ? 0 : lane.length - 1);
         break;
       case "ArrowUp":
       case "ArrowDown":
@@ -869,7 +892,7 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
         break;
       case "Enter":
       case " ":
-        sequencer.toggle(laneView.id, step);
+        toggle(laneView, step);
         break;
       default:
         return;
@@ -928,7 +951,7 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
       destroyed = true;
       plugins.destroy();
       stopActive();
-      stopPattern();
+      stopLanes();
       stopHeads();
       stopProgress();
       for (const timer of timers) clearTimeout(timer);
