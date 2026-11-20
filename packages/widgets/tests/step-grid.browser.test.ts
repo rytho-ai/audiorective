@@ -1,17 +1,8 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { userEvent } from "vitest/browser";
-import { cell, readonlyCell } from "@audiorective/core";
-import { StepSequencer } from "@audiorective/blocks/sequencer";
-import {
-  mountStepGrid,
-  type StepGridCell,
-  type StepGridCellPatch,
-  type StepGridLane,
-  type StepGridLanePatch,
-  type StepGridPattern,
-  type StepGridPluginContext,
-  type StepGridSequencer,
-} from "../src";
+import { cell } from "@audiorective/core";
+import { StepSequencer, type ParamRange } from "@audiorective/blocks/sequencer";
+import { mountStepGrid, type StepGridLane, type StepGridPluginContext, type StepGridSequencer, type StepGridStep } from "../src";
 import { cleanup, host, own, pointer } from "./helpers";
 
 afterEach(async () => {
@@ -19,28 +10,24 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-const PARAMS = [{ id: "cutoff", label: "Cutoff", min: 100, max: 1100, default: 600, step: 10 }] as const;
+const CUTOFF: ParamRange = { min: 100, max: 1100, default: 600, step: 10 };
+const PARAMS = { cutoff: CUTOFF };
+const capitalize = (name: string) => name[0].toUpperCase() + name.slice(1);
+
+const velocities = (length: number, at: Record<number, number> = {}) => Array.from({ length }, (_, step) => at[step] ?? 0);
 
 function real(options: { params?: boolean } = { params: true }) {
-  const sequencer = new StepSequencer(
-    {
-      size: 16,
-      lanes: [
-        { id: "kick", label: "Kick", cells: [{ velocity: 0.4 }, {}, {}, {}, { velocity: 1 }] },
-        { id: "snare", label: "Snare", steps: 8, rate: "1/8", cells: [{}, {}, { velocity: 0.8 }] },
-        { id: "hat", label: "Hat" },
-      ],
-    },
-    () => null,
-    options.params ? { params: PARAMS } : {},
-  );
-  return sequencer;
+  return new StepSequencer({
+    kick: { pattern: velocities(16, { 0: 0.4, 4: 1 }), ...(options.params ? { params: PARAMS } : {}) },
+    snare: { pattern: velocities(8, { 2: 0.8 }), rate: "1/8", ...(options.params ? { params: PARAMS } : {}) },
+    hat: velocities(16),
+  });
 }
 
 function mount(sequencer: StepGridSequencer = real()) {
   const root = host();
   root.style.height = "auto";
-  const grid = mountStepGrid(root, { sequencer });
+  const grid = mountStepGrid(root, { sequencer, laneLabel: capitalize });
   own(() => grid.destroy());
   return { root, grid, sequencer };
 }
@@ -49,8 +36,11 @@ const cellAt = (root: HTMLElement, laneId: string, step: number) =>
   root.querySelector<HTMLElement>(`.ar-sg-cell[data-lane="${laneId}"][data-step="${step}"]`)!;
 const laneAt = (root: HTMLElement, laneId: string) => root.querySelector<HTMLElement>(`.ar-sg-lane[data-lane="${laneId}"]`)!;
 const tab = (root: HTMLElement, id: string) => root.querySelector<HTMLButtonElement>(`.ar-sg-tab[data-parameter="${id}"]`)!;
-const lane = (sequencer: StepSequencer, id: string) => sequencer.pattern.value.lanes.find((item) => item.id === id)!;
-const valueOf = (sequencer: StepSequencer, id: string, step: number) => lane(sequencer, id).cells[step];
+const valueOf = (sequencer: StepGridSequencer, id: string, step: number) => sequencer.lanes[id].steps[step];
+const toggle = (sequencer: StepGridSequencer, id: string, step: number) => {
+  const target = valueOf(sequencer, id, step);
+  target.velocity = target.velocity > 0 ? 0 : 1;
+};
 
 async function drag(element: HTMLElement, dy: number, finish = true): Promise<void> {
   const rect = element.getBoundingClientRect();
@@ -65,6 +55,70 @@ function key(element: HTMLElement, name: string, init: KeyboardEventInit = {}): 
   element.dispatchEvent(new KeyboardEvent("keydown", { key: name, bubbles: true, cancelable: true, ...init }));
 }
 
+/** The lanes of `source` with `playhead` and `progress` driven by signals (as a transport publishes them) and a `tick` that re-notifies readers. */
+function withPlayback(source: StepSequencer) {
+  const heads = cell<Readonly<Record<string, number | null>>>({});
+  const progress = cell<Readonly<Record<string, number | null>>>({});
+  const tick = cell(0);
+  const lanes = Object.fromEntries(
+    Object.entries(source.lanes).map(([name, live]) => [
+      name,
+      {
+        get length() {
+          tick.$();
+          return live.length;
+        },
+        set length(value: number) {
+          live.length = value;
+        },
+        get rate() {
+          return live.rate;
+        },
+        set rate(value: string | number) {
+          live.rate = value as typeof live.rate;
+        },
+        get swing() {
+          return live.swing;
+        },
+        set swing(value: number) {
+          live.swing = value;
+        },
+        get direction() {
+          return live.direction;
+        },
+        set direction(value) {
+          live.direction = value;
+        },
+        get mute() {
+          return live.mute;
+        },
+        set mute(value: boolean) {
+          live.mute = value;
+        },
+        get solo() {
+          return live.solo;
+        },
+        set solo(value: boolean) {
+          live.solo = value;
+        },
+        get params() {
+          return live.params;
+        },
+        get steps() {
+          return live.steps;
+        },
+        get playhead() {
+          return heads.value[name] ?? null;
+        },
+        get progress() {
+          return progress.value[name] ?? null;
+        },
+      } satisfies StepGridLane,
+    ]),
+  );
+  return { sequencer: { lanes } satisfies StepGridSequencer, heads, progress, tick };
+}
+
 describe("rendering", () => {
   test("each lane shows its header with the model's values", () => {
     const { root } = mount();
@@ -73,7 +127,7 @@ describe("rendering", () => {
     const [steps, swing] = snare.querySelectorAll<HTMLElement>("[role=spinbutton]");
     expect(steps.textContent).toBe("8");
     expect(steps.getAttribute("aria-valuenow")).toBe("8");
-    expect(steps.getAttribute("aria-valuemax")).toBe("16");
+    expect(steps.getAttribute("aria-valuemax")).toBe("128");
     expect(steps.getAttribute("aria-label")).toBe("Snare Steps");
     expect(swing.textContent).toBe("0%");
     expect(swing.getAttribute("aria-valuemax")).toBe("100");
@@ -107,68 +161,68 @@ describe("rendering", () => {
     expect(new Set(heads).size).toBe(1);
   });
 
-  test("header controls call setLane", async () => {
+  test("header controls write the lane", async () => {
     const { root, sequencer } = mount();
     const head = laneAt(root, "snare");
     head.querySelector<HTMLButtonElement>(".ar-sg-mute")!.click();
-    expect(lane(sequencer, "snare").mute).toBe(true);
+    expect(sequencer.lanes.snare.mute).toBe(true);
     expect(head.querySelector(".ar-sg-mute")!.getAttribute("aria-pressed")).toBe("true");
     head.querySelector<HTMLButtonElement>(".ar-sg-solo")!.click();
-    expect(lane(sequencer, "snare").solo).toBe(true);
+    expect(sequencer.lanes.snare.solo).toBe(true);
     const dir = head.querySelector<HTMLButtonElement>(".ar-sg-dir")!;
     const seen: string[] = [];
     for (let i = 0; i < 3; i++) {
       dir.click();
-      seen.push(lane(sequencer, "snare").direction);
+      seen.push(sequencer.lanes.snare.direction);
     }
     expect(seen).toEqual(["backward", "bounce", "forward"]);
     const rate = head.querySelector<HTMLSelectElement>("select")!;
     rate.value = "1/16T";
     rate.dispatchEvent(new Event("change", { bubbles: true }));
-    expect(lane(sequencer, "snare").rate).toBe("1/16T");
+    expect(sequencer.lanes.snare.rate).toBe("1/16T");
     const [steps, swing] = head.querySelectorAll<HTMLElement>("[role=spinbutton]");
     key(steps, "ArrowDown");
-    expect(lane(sequencer, "snare").steps).toBe(7);
+    expect(sequencer.lanes.snare.length).toBe(7);
     key(steps, "PageUp");
-    expect(lane(sequencer, "snare").steps).toBe(16);
-    expect(steps.textContent).toBe("16");
+    expect(sequencer.lanes.snare.length).toBe(17);
+    expect(steps.textContent).toBe("17");
     key(steps, "End");
     key(steps, "Home");
-    expect(lane(sequencer, "snare").steps).toBe(1);
+    expect(sequencer.lanes.snare.length).toBe(1);
     key(swing, "ArrowUp", { shiftKey: true });
-    expect(lane(sequencer, "snare").swing).toBeCloseTo(0.1);
+    expect(sequencer.lanes.snare.swing).toBeCloseTo(0.1);
     expect(swing.textContent).toBe("10%");
     steps.focus();
     steps.dispatchEvent(new WheelEvent("wheel", { deltaY: -1, bubbles: true, cancelable: true }));
-    expect(lane(sequencer, "snare").steps).toBe(2);
+    expect(sequencer.lanes.snare.length).toBe(2);
   });
 
   test("a number box is dragged vertically and typed into on double-click", async () => {
     const { root, sequencer } = mount();
     const [steps, swing] = laneAt(root, "snare").querySelectorAll<HTMLElement>("[role=spinbutton]");
     await drag(swing, 30);
-    expect(lane(sequencer, "snare").swing).toBeCloseTo(0.1);
+    expect(sequencer.lanes.snare.swing).toBeCloseTo(0.1);
     await drag(steps, -16);
-    expect(lane(sequencer, "snare").steps).toBe(6);
+    expect(sequencer.lanes.snare.length).toBe(6);
     steps.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     const input = steps.querySelector("input")!;
     expect(steps.dataset.editing).toBe("true");
     input.value = "12";
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    expect(lane(sequencer, "snare").steps).toBe(12);
+    expect(sequencer.lanes.snare.length).toBe(12);
     expect(steps.querySelector("input")).toBeNull();
     expect(steps.textContent).toBe("12");
     steps.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     const again = steps.querySelector("input")!;
     again.value = "999";
     again.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    expect(lane(sequencer, "snare").steps).toBe(16);
+    expect(sequencer.lanes.snare.length).toBe(128);
     steps.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     const cancelled = steps.querySelector("input")!;
     cancelled.value = "3";
     cancelled.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    expect(lane(sequencer, "snare").steps).toBe(16);
-    expect(steps.textContent).toBe("16");
+    expect(sequencer.lanes.snare.length).toBe(128);
+    expect(steps.textContent).toBe("128");
   });
 
   test("cells beyond a lane's steps are dimmed and inert", () => {
@@ -178,8 +232,8 @@ describe("rendering", () => {
     expect(beyond.getAttribute("aria-disabled")).toBe("true");
     expect(cellAt(root, "snare", 7).dataset.inert).toBe("false");
     beyond.click();
-    expect(valueOf(sequencer, "snare", 8).velocity).toBe(0);
-    sequencer.setLane("snare", { steps: 12 });
+    expect(sequencer.lanes.snare.steps).toHaveLength(8);
+    sequencer.lanes.snare.length = 12;
     expect(beyond.dataset.inert).toBe("false");
     expect(cellAt(root, "snare", 12).dataset.inert).toBe("true");
   });
@@ -279,9 +333,9 @@ describe("editing", () => {
     tab(root, "cutoff").click();
     const height = element.getBoundingClientRect().height;
     await drag(element, height / 2); // 600 + 500 clamps at 1100
-    expect(valueOf(sequencer, "kick", 0).custom.cutoff).toBe(1100);
+    expect(valueOf(sequencer, "kick", 0).values.cutoff).toBe(1100);
     await drag(element, -height / 2);
-    expect(valueOf(sequencer, "kick", 0).custom.cutoff).toBeCloseTo(600, 5);
+    expect(valueOf(sequencer, "kick", 0).values.cutoff).toBeCloseTo(600, 5);
     expect(element.querySelector(".ar-sg-value")!.textContent).toBe("600");
   });
 
@@ -360,7 +414,7 @@ describe("tabs and fold", () => {
   test("built-in tabs come first, then the sequencer's custom params", () => {
     const { root } = mount();
     const names = [...root.querySelectorAll(".ar-sg-tab")].map((element) => element.textContent);
-    expect(names).toEqual(["Velocity", "Offset", "Length", "Repeat", "Pitch", "Chance", "Cutoff"]);
+    expect(names).toEqual(["Velocity", "Offset", "Length", "Repeat", "Pitch", "Chance", "cutoff"]);
     expect(tab(root, "velocity").getAttribute("aria-selected")).toBe("true");
     tab(root, "cutoff").click();
     expect(tab(root, "cutoff").getAttribute("aria-selected")).toBe("true");
@@ -384,8 +438,8 @@ describe("tabs and fold", () => {
   test("a centre bar grows from the middle in both directions", () => {
     const { root, sequencer } = mount();
     tab(root, "pitch").click();
-    sequencer.setCell("kick", 0, { pitch: 12 });
-    sequencer.setCell("kick", 1, { pitch: -12 });
+    sequencer.lanes.kick.steps[0].pitch = 12;
+    sequencer.lanes.kick.steps[1].pitch = -12;
     const fills = [0, 1].map((step) => cellAt(root, "kick", step).querySelector<HTMLElement>(".ar-sg-fill")!);
     expect([fills[0].style.height, fills[0].style.bottom]).toEqual(["25%", "50%"]);
     expect([fills[1].style.height, fills[1].style.bottom]).toEqual(["25%", "25%"]);
@@ -398,64 +452,96 @@ describe("tabs and fold", () => {
     expect(fold.getAttribute("aria-pressed")).toBe("true");
     expect(laneAt(root, "hat").hidden).toBe(true);
     expect(laneAt(root, "kick").hidden).toBe(false);
-    sequencer.toggle("hat", 3);
+    toggle(sequencer, "hat", 3);
     expect(laneAt(root, "hat").hidden).toBe(false);
-    sequencer.toggle("hat", 3);
+    toggle(sequencer, "hat", 3);
     expect(laneAt(root, "hat").hidden).toBe(true);
     fold.click();
     expect(laneAt(root, "hat").hidden).toBe(false);
   });
 });
 
-function fake(initial: StepGridPattern) {
-  const pattern = cell(initial);
-  const heads = cell<Readonly<Record<string, number | null>>>({});
-  const progress = cell<number | null>(null);
-  const calls: Array<[string, ...unknown[]]> = [];
-  const replace = (laneId: string, change: (current: StepGridLane) => StepGridLane) => {
-    pattern.value = { ...pattern.value, lanes: pattern.value.lanes.map((item) => (item.id === laneId ? change(item) : item)) };
-  };
-  const sequencer: StepGridSequencer = {
-    pattern: readonlyCell(pattern),
-    playheads: readonlyCell(heads),
-    loopProgress: readonlyCell(progress),
-    setCell(laneId: string, step: number, patch: StepGridCellPatch) {
-      calls.push(["setCell", laneId, step, patch]);
-      replace(laneId, (item) => ({
-        ...item,
-        cells: item.cells.map((value, index) => (index === step ? { ...value, ...patch, custom: value.custom } : value)),
-      }));
-    },
-    toggle(laneId: string, step: number) {
-      calls.push(["toggle", laneId, step]);
-      replace(laneId, (item) => ({
-        ...item,
-        cells: item.cells.map((value, index) => (index === step ? { ...value, velocity: value.velocity > 0 ? 0 : 1 } : value)),
-      }));
-    },
-    setLane(laneId: string, patch: StepGridLanePatch) {
-      calls.push(["setLane", laneId, patch]);
-      replace(laneId, (item) => ({ ...item, ...patch }));
-    },
-  };
-  return { sequencer, pattern, heads, progress, calls };
-}
-const plainCell = (velocity = 0): StepGridCell => ({ velocity, offset: 0, length: 1, repeat: 1, pitch: 0, chance: 1 });
-const plainLane = (id: string, size: number, on: number[] = [], steps = size): StepGridLane => ({
-  id,
-  label: id.toUpperCase(),
-  steps,
-  rate: "1/16",
-  direction: "forward",
-  swing: 0,
-  mute: false,
-  solo: false,
-  cells: Array.from({ length: size }, (_, step) => plainCell(on.includes(step) ? 0.8 : 0)),
+describe("per-lane lengths and params", () => {
+  test("the grid grows to the longest lane and never shrinks", () => {
+    const { root, sequencer } = mount();
+    expect(root.querySelectorAll(".ar-sg-tick")).toHaveLength(16);
+    sequencer.lanes.snare.length = 24;
+    expect(root.querySelectorAll(".ar-sg-tick")).toHaveLength(24);
+    expect(root.querySelectorAll(".ar-sg-cell")).toHaveLength(72);
+    expect(cellAt(root, "snare", 23).dataset.inert).toBe("false");
+    expect(cellAt(root, "kick", 16).dataset.inert).toBe("true");
+    expect(cellAt(root, "kick", 16).getAttribute("aria-disabled")).toBe("true");
+    sequencer.lanes.snare.length = 4;
+    expect(root.querySelectorAll(".ar-sg-cell")).toHaveLength(72);
+    expect(cellAt(root, "snare", 4).dataset.inert).toBe("true");
+    expect(cellAt(root, "snare", 3).dataset.inert).toBe("false");
+  });
+
+  test("lanes of different lengths keep their own steps and edit only visible ones", () => {
+    const { root, sequencer } = mount();
+    cellAt(root, "snare", 9).click();
+    expect(sequencer.lanes.snare.pattern).toBe("..x.....");
+    cellAt(root, "snare", 1).click();
+    expect(sequencer.lanes.snare.steps[1].velocity).toBe(1);
+    expect(sequencer.lanes.kick.steps[1].velocity).toBe(0);
+  });
+
+  test("custom tabs are the union by id, the first declaration's range wins, and lanes without the param are dimmed", () => {
+    const sequencer = new StepSequencer({
+      a: { pattern: "X...", params: { cutoff: { min: 0, max: 10, default: 5 } } },
+      b: { pattern: "X...", params: { cutoff: { min: 0, max: 100, default: 50 }, drive: { min: 0, max: 1, default: 0.5 } } },
+      c: "X...",
+    });
+    const { root } = mount(sequencer);
+    expect([...root.querySelectorAll(".ar-sg-tab")].map((element) => element.textContent).slice(6)).toEqual(["cutoff", "drive"]);
+    tab(root, "cutoff").click();
+    expect(cellAt(root, "a", 0).getAttribute("aria-label")).toBe("A step 1, cutoff 5");
+    expect(cellAt(root, "b", 0).getAttribute("aria-label")).toBe("B step 1, cutoff 50");
+    expect(cellAt(root, "c", 0).dataset.inert).toBe("true");
+    tab(root, "drive").click();
+    expect(cellAt(root, "a", 0).dataset.inert).toBe("true");
+    expect(cellAt(root, "b", 0).dataset.inert).toBe("false");
+    cellAt(root, "a", 0).click();
+    expect(sequencer.lanes.a.steps[0].velocity).toBe(1);
+    cellAt(root, "b", 0).click();
+    expect(sequencer.lanes.b.steps[0].velocity).toBe(0);
+    tab(root, "velocity").click();
+    expect(cellAt(root, "c", 0).dataset.inert).toBe("false");
+  });
+
+  test("a lane's own narrower range clamps a custom write", () => {
+    const sequencer = new StepSequencer({
+      a: { pattern: "X...", params: { cutoff: { min: 0, max: 10, default: 5 } } },
+      b: { pattern: "X...", params: { cutoff: { min: 0, max: 4, default: 2 } } },
+    });
+    const { root } = mount(sequencer);
+    tab(root, "cutoff").click();
+    for (let i = 0; i < 40; i++) key(cellAt(root, "b", 0), "ArrowUp");
+    expect(sequencer.lanes.b.steps[0].values.cutoff).toBe(4);
+  });
+
+  test("a rate outside the list is shown as is", () => {
+    const { root, sequencer } = mount();
+    sequencer.lanes.kick.rate = "16n.";
+    expect(laneAt(root, "kick").querySelector<HTMLSelectElement>("select")!.value).toBe("16n.");
+    sequencer.lanes.kick.rate = "1/8T";
+    expect(laneAt(root, "kick").querySelector<HTMLSelectElement>("select")!.value).toBe("1/8T");
+  });
+
+  test("lane names are the labels unless laneLabel renames them", () => {
+    const root = host();
+    const grid = mountStepGrid(root, { sequencer: real() });
+    own(() => grid.destroy());
+    expect(laneAt(root, "kick").querySelector(".ar-sg-name")!.textContent).toBe("kick");
+    expect(cellAt(root, "kick", 0).getAttribute("aria-label")).toBe("kick step 1, Velocity 40%");
+    const named = mount();
+    expect(laneAt(named.root, "kick").querySelector(".ar-sg-name")!.textContent).toBe("Kick");
+  });
 });
 
 describe("playback display", () => {
-  test("the playhead highlight and loop progress follow the readables", () => {
-    const model = fake({ size: 8, lanes: [plainLane("a", 8), plainLane("b", 8, [], 4)] });
+  test("the playhead highlight and loop progress follow the lanes", () => {
+    const model = withPlayback(new StepSequencer({ a: velocities(8), b: velocities(4) }));
     const { root } = mount(model.sequencer);
     const current = () => [...root.querySelectorAll<HTMLElement>(".ar-sg-cell")].filter((element) => element.dataset.current === "true");
     expect(current()).toHaveLength(0);
@@ -465,28 +551,23 @@ describe("playback display", () => {
     expect(current().map((element) => `${element.dataset.lane}${element.dataset.step}`)).toEqual(["a5", "b1"]);
     model.heads.value = { a: 6, b: null };
     expect(current().map((element) => `${element.dataset.lane}${element.dataset.step}`)).toEqual(["a6"]);
-    model.progress.value = 0.25;
+    model.progress.value = { a: 0.25 };
     expect(fill.style.width).toBe("25%");
-    model.progress.value = null;
+    model.progress.value = { b: 0.5 };
+    expect(fill.style.width).toBe("50%");
+    model.progress.value = {};
     expect(fill.parentElement!.dataset.active).toBe("false");
     model.heads.value = {};
     expect(current()).toHaveLength(0);
   });
 
-  test("a changed shape adds lanes, removes lanes and resizes cells", () => {
-    const model = fake({ size: 4, lanes: [plainLane("a", 4, [0]), plainLane("b", 4)] });
+  test("a playhead on a column the grid grows into is highlighted once it exists", () => {
+    const source = new StepSequencer({ a: velocities(4) });
+    const model = withPlayback(source);
     const { root } = mount(model.sequencer);
-    const keep = cellAt(root, "a", 0);
-    model.heads.value = { a: 1, c: 5 };
-    model.pattern.value = { size: 8, lanes: [plainLane("c", 8), plainLane("a", 8, [0, 6])] };
-    expect([...root.querySelectorAll(".ar-sg-lane")].map((element) => (element as HTMLElement).dataset.lane)).toEqual(["c", "a"]);
-    expect(root.querySelectorAll(".ar-sg-cell")).toHaveLength(16);
-    expect(cellAt(root, "a", 0)).toBe(keep);
-    expect(cellAt(root, "c", 5).dataset.current).toBe("true");
-    expect(cellAt(root, "a", 6).getAttribute("aria-pressed")).toBe("true");
-    model.pattern.value = { size: 2, lanes: [plainLane("a", 2, [1])] };
-    expect(root.querySelectorAll(".ar-sg-cell")).toHaveLength(2);
-    expect(root.querySelectorAll(".ar-sg-tick")).toHaveLength(2);
+    source.lanes.a.length = 8;
+    model.heads.value = { a: 6 };
+    expect(cellAt(root, "a", 6).dataset.current).toBe("true");
   });
 });
 
@@ -498,7 +579,7 @@ describe("efficiency", () => {
     const records: MutationRecord[] = [];
     const observer = new MutationObserver((list) => records.push(...list));
     observer.observe(root, { subtree: true, childList: true, attributes: true, characterData: true });
-    sequencer.setCell("kick", 2, { velocity: 0.9 });
+    sequencer.lanes.kick.steps[2].velocity = 0.9;
     records.push(...observer.takeRecords());
     expect(records.length).toBeGreaterThan(0);
     expect(
@@ -509,7 +590,7 @@ describe("efficiency", () => {
   });
 
   test("a playhead move touches only the old and new cell", () => {
-    const model = fake({ size: 16, lanes: [plainLane("a", 16), plainLane("b", 16)] });
+    const model = withPlayback(new StepSequencer({ a: velocities(16), b: velocities(16) }));
     const { root } = mount(model.sequencer);
     model.heads.value = { a: 3 };
     const records: MutationRecord[] = [];
@@ -522,13 +603,12 @@ describe("efficiency", () => {
     expect([...touched].sort()).toEqual(["3", "4"]);
   });
 
-  test("rewriting identical values paints nothing", () => {
-    const model = fake({ size: 8, lanes: [plainLane("a", 8, [1])] });
+  test("a change notification with identical values paints nothing", () => {
+    const model = withPlayback(new StepSequencer({ a: velocities(8, { 1: 0.8 }) }));
     const { root } = mount(model.sequencer);
     const observer = new MutationObserver(() => undefined);
     observer.observe(root, { subtree: true, childList: true, attributes: true, characterData: true });
-    const same = model.pattern.value;
-    model.pattern.value = { ...same, lanes: same.lanes.map((item) => ({ ...item, cells: item.cells.map((value) => ({ ...value })) })) };
+    model.tick.value++;
     expect(observer.takeRecords().map((r) => `${r.type}:${r.attributeName}:${(r.target as HTMLElement).className}`)).toEqual([]);
     observer.disconnect();
   });
@@ -602,16 +682,20 @@ describe("plugin host", () => {
   test("onPatternChange fires after the grid updates, and stops on detach", () => {
     const { root, context, sequencer, attachment } = plugged();
     const seen: number[] = [];
-    context.onPatternChange((pattern) => {
-      seen.push(pattern.lanes[2].cells[1].velocity);
-      expect(cellAt(root, "hat", 1).getAttribute("aria-pressed")).toBe(String(pattern.lanes[2].cells[1].velocity > 0));
+    context.onPatternChange((lanes) => {
+      expect(lanes).toBe(sequencer.lanes);
+      seen.push(lanes.hat.steps[1].velocity);
+      expect(cellAt(root, "hat", 1).getAttribute("aria-pressed")).toBe(String(lanes.hat.steps[1].velocity > 0));
     });
-    sequencer.toggle("hat", 1);
-    sequencer.toggle("hat", 1);
+    toggle(sequencer, "hat", 1);
+    toggle(sequencer, "hat", 1);
     expect(seen).toEqual([1, 0]);
+    sequencer.lanes.hat.mute = true;
+    expect(seen).toEqual([1, 0, 0]);
+    seen.length = 0;
     attachment.destroy();
-    sequencer.toggle("hat", 1);
-    expect(seen).toEqual([1, 0]);
+    toggle(sequencer, "hat", 1);
+    expect(seen).toEqual([]);
   });
 
   test("setActiveParameter switches the tab and activeParameter tracks it", () => {
@@ -629,7 +713,7 @@ describe("plugin host", () => {
 
   test("a plugin can write cells through the sequencer", () => {
     const { context, sequencer } = plugged();
-    context.sequencer.setCell("hat", 4, { velocity: 0.5 });
+    context.sequencer.lanes.hat.steps[4].velocity = 0.5;
     expect(valueOf(sequencer, "hat", 4).velocity).toBe(0.5);
   });
 
@@ -657,7 +741,7 @@ describe("plugin host", () => {
       throw new Error("listener failed");
     });
     context.onPatternChange(good);
-    sequencer.toggle("hat", 0);
+    toggle(sequencer, "hat", 0);
     expect(good).toHaveBeenCalledTimes(1);
     expect(error).toHaveBeenCalled();
   });
@@ -689,7 +773,8 @@ describe("plugin host", () => {
 
 describe("lifecycle and contract", () => {
   test("destroy removes the view and releases effects and listeners", () => {
-    const model = fake({ size: 8, lanes: [plainLane("a", 8, [1])] });
+    const source = new StepSequencer({ a: velocities(8, { 1: 0.8 }) });
+    const model = withPlayback(source);
     const root = host();
     const grid = mountStepGrid(root, { sequencer: model.sequencer });
     const element = cellAt(root, "a", 1);
@@ -697,36 +782,82 @@ describe("lifecycle and contract", () => {
     grid.destroy();
     grid.destroy();
     expect(root.querySelector(".ar-step-grid")).toBeNull();
-    model.pattern.value = { size: 8, lanes: [plainLane("a", 8, [2])] };
+    source.lanes.a.steps[1].velocity = 0;
+    source.lanes.a.length = 12;
     model.heads.value = { a: 3 };
-    model.progress.value = 0.5;
+    model.progress.value = { a: 0.5 };
     expect(element.getAttribute("aria-pressed")).toBe("true");
     expect(element.dataset.current).toBeUndefined();
     lanes.append(element);
+    source.lanes.a.steps[1].velocity = 0.8;
     element.click();
     key(element, "ArrowUp");
-    expect(model.calls).toEqual([]);
+    expect(source.lanes.a.steps[1].velocity).toBe(0.8);
   });
 
-  test("works over a hand-written sequencer and reports edits through its methods", async () => {
-    const model = fake({ size: 8, lanes: [plainLane("a", 8, [1])] });
-    const { root } = mount(model.sequencer);
+  test("works over a hand-written sequencer and reports edits through its members", () => {
+    const writes: string[] = [];
+    const state = cell({ length: 8, mute: false, velocity: [0, 0.8, 0, 0, 0, 0, 0, 0] });
+    const steps: StepGridStep[] = state.value.velocity.map((_, index) => ({
+      get velocity() {
+        return state.value.velocity[index];
+      },
+      set velocity(value: number) {
+        writes.push(`velocity ${index} ${+value.toFixed(2)}`);
+        state.value = { ...state.value, velocity: state.value.velocity.map((item, at) => (at === index ? value : item)) };
+      },
+      offset: 0,
+      length: 1,
+      repeat: 1,
+      pitch: 0,
+      chance: 1,
+      values: {},
+    }));
+    const only: StepGridLane = {
+      get length() {
+        return state.value.length;
+      },
+      set length(value: number) {
+        writes.push(`length ${value}`);
+      },
+      rate: "1/16",
+      swing: 0,
+      direction: "forward",
+      get mute() {
+        return state.value.mute;
+      },
+      set mute(value: boolean) {
+        writes.push(`mute ${value}`);
+        state.value = { ...state.value, mute: value };
+      },
+      solo: false,
+      params: {},
+      playhead: null,
+      get steps() {
+        return steps.slice(0, state.value.length);
+      },
+    };
+    const { root } = mount({ lanes: { a: only } });
     expect(root.querySelectorAll(".ar-sg-tab")).toHaveLength(6);
+    expect(laneAt(root, "a").querySelectorAll("select option")).toHaveLength(12);
     cellAt(root, "a", 0).click();
-    expect(model.calls.at(-1)).toEqual(["toggle", "a", 0]);
+    expect(writes.at(-1)).toBe("velocity 0 1");
     const element = cellAt(root, "a", 1);
-    await drag(element, element.getBoundingClientRect().height / 4);
-    expect(model.calls.at(-1)).toEqual(["setCell", "a", 1, { velocity: expect.closeTo(1, 5) }]);
+    key(element, "ArrowDown");
+    expect(writes.at(-1)).toBe("velocity 1 0.75");
+    expect(element.getAttribute("aria-label")).toContain("75%");
     laneAt(root, "a").querySelector<HTMLButtonElement>(".ar-sg-mute")!.click();
-    expect(model.calls.at(-1)).toEqual(["setLane", "a", { mute: true }]);
+    expect(writes.at(-1)).toBe("mute true");
     expect(laneAt(root, "a").querySelector(".ar-sg-mute")!.getAttribute("aria-pressed")).toBe("true");
+    key(laneAt(root, "a").querySelector<HTMLElement>("[role=spinbutton]")!, "ArrowUp");
+    expect(writes.at(-1)).toBe("length 9");
   });
 
   test("localizes labels and step names", () => {
-    const model = fake({ size: 4, lanes: [plainLane("a", 4, [0])] });
     const root = host();
     const grid = mountStepGrid(root, {
-      sequencer: model.sequencer,
+      sequencer: new StepSequencer({ a: "x..." }),
+      laneLabel: (name) => name.toUpperCase(),
       formatStep: (label, step) => `${label} 第 ${step + 1} 格`,
       labels: { velocity: "力度", fold: "收合" },
     });
@@ -734,70 +865,5 @@ describe("lifecycle and contract", () => {
     expect(tab(root, "velocity").textContent).toBe("力度");
     expect(root.querySelector(".ar-sg-fold")!.textContent).toBe("收合");
     expect(cellAt(root, "a", 0).getAttribute("aria-label")).toBe("A 第 1 格, 力度 80%");
-  });
-});
-
-describe("sequencer-declared ranges", () => {
-  function fake(extra: Partial<StepGridSequencer>, velocity = 1) {
-    const lanes: StepGridLane[] = [
-      {
-        id: "a",
-        label: "A",
-        steps: 4,
-        rate: "1/16",
-        direction: "forward",
-        swing: 0,
-        mute: false,
-        solo: false,
-        cells: Array.from({ length: 4 }, () => ({ velocity, offset: 0, length: 1, repeat: 1, pitch: 0, chance: 1 })),
-      },
-    ];
-    const pattern = cell<StepGridPattern>({ size: 4, lanes });
-    const setCell = vi.fn((laneId: string, step: number, patch: StepGridCellPatch) => {
-      const next = pattern.value.lanes.map((item) =>
-        item.id === laneId ? { ...item, cells: item.cells.map((value, index) => (index === step ? { ...value, ...patch } : value)) } : item,
-      );
-      pattern.value = { size: 4, lanes: next };
-    });
-    const sequencer: StepGridSequencer = {
-      pattern: readonlyCell(pattern),
-      playheads: readonlyCell(cell<Record<string, number | null>>({})),
-      loopProgress: readonlyCell(cell<number | null>(null)),
-      setCell,
-      toggle: vi.fn(),
-      setLane: vi.fn(),
-      ...extra,
-    };
-    return { sequencer, setCell };
-  }
-
-  test("falls back to the built-in ranges and rates", () => {
-    const { root } = mount(fake({}).sequencer);
-    expect(laneAt(root, "a").querySelectorAll("select option")).toHaveLength(12);
-    const element = cellAt(root, "a", 0);
-    key(element, "ArrowDown");
-    expect(element.getAttribute("aria-label")).toContain("95%");
-  });
-
-  test("uses cellParams for ranges and rates for the picker", () => {
-    const { sequencer, setCell } = fake(
-      {
-        cellParams: [
-          { id: "velocity", min: 0, max: 127, default: 0, step: 1 },
-          { id: "pitch", min: -12, max: 12, default: 0, step: 1 },
-        ],
-        rates: ["1/4", "1/8"],
-      },
-      100,
-    );
-    const { root } = mount(sequencer);
-    expect([...laneAt(root, "a").querySelectorAll("select option")].map((item) => (item as HTMLOptionElement).value)).toEqual(["1/4", "1/8"]);
-    const element = cellAt(root, "a", 0);
-    key(element, "PageDown");
-    const sent = setCell.mock.calls.at(-1)![2] as { velocity: number };
-    expect(sent.velocity).toBe(68);
-    tab(root, "pitch").click();
-    for (let i = 0; i < 20; i++) key(cellAt(root, "a", 1), "ArrowUp");
-    expect((setCell.mock.calls.at(-1)![2] as { pitch: number }).pitch).toBe(12);
   });
 });

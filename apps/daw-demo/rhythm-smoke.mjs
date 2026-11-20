@@ -79,16 +79,16 @@ try {
       kit.trigger("manual", 1, 0.1);
       let scheduled = 0;
       const sequencer = new StepSequencer(
+        { closed: { pattern: ".X..", rate: "1/8" } },
         {
-          size: 8,
-          lanes: [{ id: "closed", label: "Closed", steps: 4, rate: "1/8", cells: [{}, { velocity: 1 }] }],
-        },
-        ({ laneId, velocity, when }) => {
-          scheduled++;
-          return kit.trigger(laneId, velocity, when);
+          onHit: ({ lane, velocity, when }) => {
+            scheduled++;
+            const hit = kit.trigger(lane, velocity, when);
+            return hit ? () => hit.cancel() : undefined;
+          },
         },
       );
-      const detach = workspace.attachStepSequencer(sequencer);
+      const detach = workspace.transport.attach(sequencer);
       await workspace.play();
       const planned = context.suspend(0.14).then(async () => {
         workspace.refresh();
@@ -97,17 +97,18 @@ try {
       });
       const changed = context.suspend(0.18).then(() => {
         if (scheduled < 1) throw new Error("Step was not queued before the edit");
-        if (cancelled) sequencer.toggle("closed", 1);
+        if (cancelled) sequencer.lanes.closed.steps[1].velocity = 0;
         return resume();
       });
       const [rendered] = await Promise.all([context.startRendering(), planned, changed]);
       detach();
-      if (Object.values(sequencer.playheads.value).some((head) => head !== null)) throw new Error("Detached sequencer retained its playhead");
+      if (sequencer.lanes.closed.playhead !== null) throw new Error("Detached sequencer retained its playhead");
       const frames = rendered.getChannelData(0);
       const result = [frames[9600], frames[16800]];
       workspace.destroy();
       kit.destroy();
       project.destroy();
+      sequencer.dispose();
       return result;
     }
     return { cancelled: await run(true), kept: await run(false) };
