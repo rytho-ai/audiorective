@@ -34,7 +34,7 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { createUsageTracker, printUsageReport, usageJson } from "./usage.mjs";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -259,10 +259,28 @@ function countLoc(code) {
 
 // ---- compile check ---------------------------------------------------------
 
+// React's own types, so a solver's `import ... from "react"` and JSX type-check like in a real app.
+const reactTypes = [join(repoRoot, "packages/react/node_modules/@types/react"), join(repoRoot, "node_modules/@types/react")].find(existsSync);
+// Looks like JSX: a closing tag, or a tag right after `return`, `=>` or `(`.
+const JSX_HINT = /<\/[A-Za-z][\w.-]*\s*>|(?:\breturn|=>|\()\s*\(?\s*<[A-Za-z][\w.]*[\s/>]/;
+
+// Type-checks as main.ts. Code that fails to parse as .ts and looks like JSX is checked again as
+// main.tsx (react-jsx transform) and that result is kept, so valid .ts code keeps its .ts meaning.
 function compile(variant, tsCode) {
+  const first = compileAs(variant, tsCode, false);
+  if (first.error || first.passed || !JSX_HINT.test(tsCode) || !first.all.some((l) => /error TS1\d{3}:/.test(l))) return first;
+  return compileAs(variant, tsCode, true);
+}
+
+function compileAs(variant, tsCode, tsx) {
   const dir = scratch("guess-tsc-");
+  const main = tsx ? "main.tsx" : "main.ts";
   writeFileSync(join(dir, "variant.d.ts"), variant);
-  writeFileSync(join(dir, "main.ts"), tsCode.trim() ? tsCode : "export {};\n");
+  writeFileSync(join(dir, main), tsCode.trim() ? tsCode : "export {};\n");
+  if (reactTypes) {
+    mkdirSync(join(dir, "node_modules/@types"), { recursive: true });
+    symlinkSync(reactTypes, join(dir, "node_modules/@types/react"), "dir");
+  }
   const r = spawnSync(
     process.execPath,
     [
@@ -281,7 +299,8 @@ function compile(variant, tsCode) {
       "false",
       "--pretty",
       "false",
-      "main.ts",
+      ...(tsx ? ["--jsx", "react-jsx"] : []),
+      main,
       "variant.d.ts",
     ],
     { cwd: dir, encoding: "utf8", timeout: 120_000 },
@@ -292,7 +311,7 @@ function compile(variant, tsCode) {
     .split("\n")
     .filter((l) => /\berror TS\d+:/.test(l))
     .map((l) => l.trim());
-  return { passed: r.status === 0 && lines.length === 0, diagnostics: lines.length, first: lines.slice(0, 5), all: lines };
+  return { passed: r.status === 0 && lines.length === 0, diagnostics: lines.length, first: lines.slice(0, 5), all: lines, tsx };
 }
 
 // ---- grader ----------------------------------------------------------------
