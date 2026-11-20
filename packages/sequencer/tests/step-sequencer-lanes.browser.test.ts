@@ -2,8 +2,6 @@ import { describe, expect, test, vi } from "vitest";
 import { Clock, ManualTickSource, Timeline, renderTimeline } from "@audiorective/clock";
 import { HitEvent, StepSequencer, type Hit, type SoundFactory, type SoundHit } from "../src/StepSequencer";
 
-const tone: SoundFactory = (ctx) => new OscillatorNode(ctx, { frequency: 440 });
-
 /** 120 bpm: a beat is 0.5 s and a "16n" step 0.125 s. Time advances only when the test says so. */
 function harness(lookAhead = 3) {
   const ctx = { currentTime: 0 };
