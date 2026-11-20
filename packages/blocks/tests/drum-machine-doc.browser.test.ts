@@ -1,4 +1,4 @@
-// Mirrors the "Standalone drum machine" example in docs/blocks.md. The wiring is
+// Mirrors the "Standalone drum machine" example in docs/sequencer.md. The wiring is
 // identical except for the DOM-only grid (`mountStepGrid`), buffers synthesized
 // in place of decoded files, and the test's own assertions.
 import { afterEach, expect, test, vi } from "vitest";
@@ -20,7 +20,7 @@ async function drumMachine() {
   const silent = (seconds: number) => context.createBuffer(1, Math.ceil(context.sampleRate * seconds), context.sampleRate);
   const [kick, snare, closedHat, openHat] = [silent(0.1), silent(0.1), silent(0.05), silent(3)];
 
-  // ---- begin: same code as docs/blocks.md ----
+  // ---- begin: same code as docs/sequencer.md ----
   const bank = new PadBank(context, [
     { id: "kick", buffer: kick },
     { id: "snare", buffer: snare },
@@ -45,7 +45,7 @@ async function drumMachine() {
   const timeline = new Timeline({ audioContext: context, bpm: 120 });
   const clock = new Clock({ timeline, onTick: (window) => sequencer.schedule(window, timeline) });
   const stopRefresh = refreshOnEdit(sequencer, clock); // every edit re-queues the look-ahead
-  // ---- end: same code as docs/blocks.md ----
+  // ---- end: same code as docs/sequencer.md ----
 
   disposers.push(() => {
     stopRefresh();
@@ -95,9 +95,9 @@ async function openHatEndedAfterStep4(deleteClosed: boolean) {
   if (deleteClosed) {
     // The edit is synchronous, so checking the audio clock right before it is race-free.
     if (context.currentTime > when - SAFE_MARGIN) return null;
-    // ---- begin: same code as docs/blocks.md ----
+    // ---- begin: same code as docs/sequencer.md ----
     sequencer.setCell("closed", 4, { velocity: 0 });
-    // ---- end: same code as docs/blocks.md ----
+    // ---- end: same code as docs/sequencer.md ----
   } else {
     expect(when).toBeGreaterThan(context.currentTime);
   }

@@ -209,7 +209,7 @@ const detach = clock.attach({
 });
 ```
 
-`onTick` runs first, then each attached scheduler in attach order. Owned events registered by any scheduler are cancelled by `start`, `pause`, `stop`, `seek` and `destroy`, and `refresh()` re-queues every scheduler's pending events. Attaching while playing refreshes the look-ahead; `detach()` calls `reset()` once. An error thrown by one scheduler is logged and the others still run. A scheduler may also define `attached(handle)`: `attach` calls it once with `{ refresh(), detach() }` for that transport and runs the cleanup it returns on detach or `destroy`. `StepSequencer` (lane-record form, see [Step Sequencer](./blocks.md#step-sequencer)) uses it to re-queue after its own edits and to detach on `dispose()`. `Scheduler`, `SchedulerHandle` and `SchedulerWindow` are exported types; `Workspace.clock` (also `workspace.transport`) is a Clock, so the same `attach` serves a Workspace.
+`onTick` runs first, then each attached scheduler in attach order. Owned events registered by any scheduler are cancelled by `start`, `pause`, `stop`, `seek` and `destroy`, and `refresh()` re-queues every scheduler's pending events. Attaching while playing refreshes the look-ahead; `detach()` calls `reset()` once. An error thrown by one scheduler is logged and the others still run. A scheduler may also define `attached(handle)`: `attach` calls it once with `{ refresh(), detach() }` for that transport and runs the cleanup it returns on detach or `destroy`. `StepSequencer` (lane-record form, see [Step Sequencer](./sequencer.md#step-sequencer)) uses it to re-queue after its own edits and to detach on `dispose()`. `Scheduler`, `SchedulerHandle` and `SchedulerWindow` are exported types; `Workspace.clock` (also `workspace.transport`) is a Clock, so the same `attach` serves a Workspace.
 
 ### Start at an audio time
 
@@ -237,7 +237,7 @@ clock.start({ atBeat: -0.5 }); // beat 0, the first launch boundary, is half a b
 
 ### Own cancellable events when transport edits must cut queued sound
 
-The default remains unchanged: `Clock` does not cancel sound scheduled by `onTick`, so an unowned event may keep playing for up to the look-ahead interval after `pause()`. For a hard stop or an editable pattern, register a returned event handle with `window.own(event, when)`. `when` is its finite, nonnegative absolute `AudioContext` start time. The handle is a core `CancellableEvent` (`cancel()` and `onEnded(listener)`, re-exported by this package); Clock drops naturally ended events from its registry. `PadBank.trigger()` in [Blocks](./blocks.md#pad-bank) returns a compatible handle. `Timeline` satisfies core's `BeatTiming`, so it can be passed to `StepSequencer.schedule(window, timing)` without any other package in between.
+The default remains unchanged: `Clock` does not cancel sound scheduled by `onTick`, so an unowned event may keep playing for up to the look-ahead interval after `pause()`. For a hard stop or an editable pattern, register a returned event handle with `window.own(event, when)`. `when` is its finite, nonnegative absolute `AudioContext` start time. The handle is a core `CancellableEvent` (`cancel()` and `onEnded(listener)`, re-exported by this package); Clock drops naturally ended events from its registry. `PadBank.trigger()` in [Blocks](./pads.md#pad-bank) returns a compatible handle. `Timeline` satisfies core's `BeatTiming`, so it can be passed to `StepSequencer.schedule(window, timing)` without any other package in between.
 
 ```typescript
 const clock = new Clock({
