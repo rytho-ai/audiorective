@@ -22,6 +22,8 @@ Commands, flags and output fields live in `evals/README.md`. Experiment files (v
 
 ## Principles
 
+The evidence behind each, what agents already know, and per-component results: [findings.md](findings.md). Append to it when a component is done.
+
 - **Mirror what agents already know**, exactly: name, argument order, units, lifecycle, error type. Sources agents know well: Web Audio (`start(when, offset)`, `stop(when)`, `connect`, AudioParam scheduling), `HTMLMediaElement`, DOM (`EventTarget`, `AbortSignal`, `Symbol.dispose`), Tone.js notation (`"16n"`, `"1m"`), React (effect cleanup), musician vocabulary (bars, lanes, velocity 0–1, counting steps from 1). A same-named API with different semantics is a **false affordance** and worse than a new name.
 - **Let the shape carry the hint.** Guidance in docs loses to the agent's intuition; guidance in the type wins. Example: steps addressed as `steps[i]` plus the JSDoc "steps[0] is the first step" was 6/6, either alone was ≤4/6.
 - **One obvious way.** Two forms of one feature cost agents reading and choice.
