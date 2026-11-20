@@ -23,6 +23,7 @@ The package has no root entry. Each capability is a subpath that imports only `@
 - [Audio Recorder](./recorder.md): PCM take capture.
 - [Pad Bank](./pads.md): sample hits with choke groups.
 - [Step Sequencer](./sequencer.md): step patterns, lanes, transforms and the standalone drum machine.
+- [Step Sequencer: advanced](./sequencer-advanced.md): the explicit form, `refreshOnEdit`, transform sockets, custom per-step params and the standalone drum machine.
 - [Sample Library](./samples.md): imported sample storage and previews.
 - [Clip Launcher](./launcher.md): quantized clip launching.
 

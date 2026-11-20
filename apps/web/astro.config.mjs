@@ -44,6 +44,7 @@ export default defineConfig({
             { label: "Audio Recorder", slug: "docs/recorder" },
             { label: "Pad Bank", slug: "docs/pads" },
             { label: "Step Sequencer", slug: "docs/sequencer" },
+            { label: "Step Sequencer: advanced", slug: "docs/sequencer-advanced" },
             { label: "Sample Library", slug: "docs/samples" },
             { label: "Clip Launcher", slug: "docs/launcher" },
             { label: "Widgets", slug: "docs/widgets" },
