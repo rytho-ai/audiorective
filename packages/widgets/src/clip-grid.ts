@@ -1,20 +1,42 @@
-import { effect, type Readable } from "@audiorective/core";
+import { cell, effect, type Readable } from "@audiorective/core";
 
-type ClipLaunch = Readonly<{ trackId: string; clipId: string | null; mode?: "loop" | "one-shot" }>;
-type ClipLauncherState = Readonly<{
-  active: readonly ClipLaunch[];
-  queued: readonly (ClipLaunch & Readonly<{ beat: number }>)[];
-}>;
+/** The part of a launcher clip the grid reads and drives (an `@audiorective/launcher` `Clip` satisfies it). */
+export interface ClipGridClip {
+  readonly playing: Readable<boolean>;
+  readonly queued: Readable<boolean>;
+  launch(): void;
+}
+/** The part of a launcher track the grid reads and drives (an `@audiorective/launcher` `Track` satisfies it). */
+export interface ClipGridTrack {
+  readonly playing: Readable<unknown>;
+  readonly queued: Readable<unknown>;
+  stop(): void;
+}
+/** The part of a launcher the grid reads and drives (a `ClipLauncher` satisfies it). */
+export interface ClipGridLauncher {
+  readonly playing: Readable<readonly unknown[]>;
+  readonly queued: Readable<readonly Readonly<{ beat: number | null }>[]>;
+  /** Receives the scene's `ClipGridClip` objects: typed `never[]` so a launcher that takes its own clip type (`Clip[]`) satisfies this. */
+  launchScene(clips: readonly never[]): void;
+  stopAll(): void;
+  cancelQueued(): boolean;
+}
 
 export type ClipGridLayout = Readonly<{
-  tracks: readonly Readonly<{ id: string; label: string }>[];
-  scenes: readonly Readonly<{ label: string; clips: readonly Readonly<{ trackId: string; clipId: string; label: string }>[] }>[];
+  tracks: readonly Readonly<{ track: ClipGridTrack; label: string }>[];
+  scenes: readonly Readonly<{
+    label: string;
+    clips: readonly Readonly<{ track: ClipGridTrack; clip: ClipGridClip; label: string }>[];
+  }>[];
 }>;
 
 export type ClipGridOptions = {
-  state: Readable<ClipLauncherState>;
-  launch(changes: readonly ClipLaunch[]): void;
-  cancel(): void;
+  /** The launcher whose cells the grid shows and whose commands its buttons call. The quantize of every launch is `launcher.quantize`. */
+  launcher: ClipGridLauncher;
+  /** Wraps every launch, stop and scene command a button issues, so an app can start playback first; default: run it at once. */
+  launch?(command: () => void): void;
+  /** Replaces the cancel button's `launcher.cancelQueued()`, so an app can also drop launches it is still preparing. */
+  cancel?(): void;
   labels?: Partial<{
     scene: string;
     cancel: string;
@@ -26,8 +48,10 @@ export type ClipGridOptions = {
   }>;
 };
 
-/** Renders a caller-owned scene layout over borrowed launcher state. */
+/** Renders a caller-owned scene layout over a launcher's cells. */
 export function mountClipGrid(root: HTMLElement, options: ClipGridOptions) {
+  const { launcher } = options;
+  const run = (command: () => void) => (options.launch ? options.launch(command) : command());
   const labels = {
     scene: "Scene",
     cancel: "Cancel queued launch",
@@ -53,41 +77,48 @@ export function mountClipGrid(root: HTMLElement, options: ClipGridOptions) {
   toolbar.className = "ar-clip-grid-toolbar";
   const status = doc.createElement("span");
   status.setAttribute("role", "status");
-  const cancel = button(labels.cancel, options.cancel);
-  const arrangement = button(labels.arrangement, () => options.launch(options.state.value.active.map(({ trackId }) => ({ trackId, clipId: null }))));
+  const cancel = button(labels.cancel, () => (options.cancel ? options.cancel() : void launcher.cancelQueued()));
+  const arrangement = button(labels.arrangement, () => run(() => launcher.stopAll()));
   toolbar.append(arrangement, cancel, status);
   const body = doc.createElement("div");
   body.className = "ar-clip-grid-body";
   element.append(toolbar, body);
   root.append(element);
 
-  let slots: { button: HTMLButtonElement; trackId: string; clipId: string }[] = [];
-  let scenes: { button: HTMLButtonElement; clips: readonly ClipLaunch[] }[] = [];
-  let returns: { button: HTMLButtonElement; trackId: string }[] = [];
-  function renderState(state: ClipLauncherState): void {
-    const active = new Map(state.active.map(({ trackId, clipId }) => [trackId, clipId]));
-    const queued = new Map(state.queued.map(({ trackId, clipId }) => [trackId, clipId]));
+  /** Bumped by `setLayout`, so the rendering effect re-runs and subscribes to the new layout's cells. */
+  const layoutVersion = cell(0);
+  let version = 0;
+  let slots: { button: HTMLButtonElement; clip: ClipGridClip }[] = [];
+  let scenes: { button: HTMLButtonElement; clips: readonly ClipGridClip[] }[] = [];
+  let returns: { button: HTMLButtonElement; track: ClipGridTrack }[] = [];
+  function renderState(): void {
+    layoutVersion.$();
     function mark(item: HTMLButtonElement, playing: boolean, pending: boolean): void {
       item.dataset.clipState = pending ? "queued" : playing ? "active" : "idle";
       item.setAttribute("aria-pressed", String(playing));
     }
-    for (const slot of slots) mark(slot.button, active.get(slot.trackId) === slot.clipId, queued.get(slot.trackId) === slot.clipId);
+    for (const slot of slots) mark(slot.button, slot.clip.playing.value, slot.clip.queued.value);
     for (const scene of scenes) {
       mark(
         scene.button,
-        scene.clips.every(({ trackId, clipId }) => active.get(trackId) === clipId),
-        scene.clips.every(({ trackId, clipId }) => queued.get(trackId) === clipId),
+        scene.clips.every((clip) => clip.playing.value),
+        scene.clips.every((clip) => clip.queued.value),
       );
     }
-    for (const { button, trackId } of returns) {
-      button.disabled = !active.has(trackId);
-      button.dataset.clipState = queued.get(trackId) === null ? "queued" : "idle";
+    for (const { button, track } of returns) {
+      button.disabled = !track.playing.value;
+      button.dataset.clipState = track.queued.value ? "queued" : "idle";
     }
-    cancel.disabled = !state.queued.length;
-    arrangement.disabled = !active.size;
-    status.textContent = state.queued.length
-      ? labels.queued(Math.min(...state.queued.map(({ beat }) => beat)))
-      : active.size
+    const queued = launcher.queued.value;
+    const playing = launcher.playing.value;
+    cancel.disabled = !queued.length;
+    arrangement.disabled = !playing.length;
+    const beats = queued.flatMap(({ beat }) => (beat === null ? [] : [beat]));
+    status.textContent = queued.length
+      ? beats.length
+        ? labels.queued(Math.min(...beats))
+        : labels.queued(0)
+      : playing.length
         ? labels.playing
         : labels.idle;
   }
@@ -99,6 +130,7 @@ export function mountClipGrid(root: HTMLElement, options: ClipGridOptions) {
     toolbar.hidden = !layout.scenes.length;
     if (!layout.scenes.length) {
       body.textContent = labels.empty;
+      layoutVersion.value = ++version;
       return;
     }
     const table = doc.createElement("table");
@@ -110,39 +142,38 @@ export function mountClipGrid(root: HTMLElement, options: ClipGridOptions) {
       row.append(cell);
     }
     heading(header, labels.scene, "col");
-    for (const track of layout.tracks) heading(header, track.label, "col");
+    for (const { label } of layout.tracks) heading(header, label, "col");
 
     const rows = table.createTBody();
     for (const scene of layout.scenes) {
       const row = rows.insertRow();
-      const action = button(scene.label, () => options.launch(scene.clips));
+      const action = button(scene.label, () => run(() => launcher.launchScene(scene.clips.map(({ clip }) => clip) as never[])));
       action.setAttribute("aria-label", `${labels.scene} ${scene.label}`);
-      scenes.push({ button: action, clips: scene.clips });
+      scenes.push({ button: action, clips: scene.clips.map(({ clip }) => clip) });
       heading(row, action, "row");
-      const byTrack = new Map(scene.clips.map((clip) => [clip.trackId, clip]));
-      for (const track of layout.tracks) {
+      for (const { track, label } of layout.tracks) {
         const cell = row.insertCell();
-        const clip = byTrack.get(track.id);
-        if (!clip) continue;
-        const action = button(clip.label, () => options.launch([clip]));
-        action.setAttribute("aria-label", `${track.label} · ${scene.label} · ${clip.label}`);
-        slots.push({ button: action, ...clip });
+        const entry = scene.clips.find((slot) => slot.track === track);
+        if (!entry) continue;
+        const action = button(entry.label, () => run(() => entry.clip.launch()));
+        action.setAttribute("aria-label", `${label} · ${scene.label} · ${entry.label}`);
+        slots.push({ button: action, clip: entry.clip });
         cell.append(action);
       }
     }
     const footer = table.createTFoot().insertRow();
     heading(footer, labels.arrangement, "row");
-    for (const track of layout.tracks) {
-      const action = button("↩", () => options.launch([{ trackId: track.id, clipId: null }]));
-      action.setAttribute("aria-label", `${track.label} · ${labels.arrangement}`);
-      returns.push({ button: action, trackId: track.id });
+    for (const { track, label } of layout.tracks) {
+      const action = button("↩", () => run(() => track.stop()));
+      action.setAttribute("aria-label", `${label} · ${labels.arrangement}`);
+      returns.push({ button: action, track });
       footer.insertCell().append(action);
     }
     body.replaceChildren(table);
-    renderState(options.state.value);
+    layoutVersion.value = ++version;
   }
 
-  const stop = effect(() => renderState(options.state.value));
+  const stop = effect(() => renderState());
   return {
     setLayout,
     destroy() {
