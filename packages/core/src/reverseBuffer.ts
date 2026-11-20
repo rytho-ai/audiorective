@@ -12,14 +12,3 @@ export function reverseBuffer(buffer: AudioBuffer): AudioBuffer {
   }
   return out;
 }
-
-/**
- * The region `[offset, offset + duration)` of the original buffer, expressed
- * as an offset/duration into its reversed copy. Regions are clamped to the
- * buffer; an offset past the end yields an empty region.
- */
-export function reverseRegion(offset: number, duration: number | undefined, bufferDuration: number): { offset: number; duration: number } {
-  const start = Math.min(Math.max(0, offset), bufferDuration);
-  const end = duration == null ? bufferDuration : Math.min(bufferDuration, start + duration);
-  return { offset: bufferDuration - end, duration: end - start };
-}

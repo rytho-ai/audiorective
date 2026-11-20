@@ -7,9 +7,8 @@ describe("renderOffline", () => {
       await new Promise((r) => setTimeout(r, 5));
       const hit = ctx.createBuffer(1, 480, 48000);
       hit.getChannelData(0).fill(0.5);
-      const s = new Sampler(ctx);
-      s.buffer = hit;
-      s.output.connect(ctx.destination);
+      const s = new Sampler(ctx, { sound: hit });
+      s.connect(ctx.destination);
       s.trigger({ when: 0.1 });
     });
     expect(buf.sampleRate).toBe(48000);
