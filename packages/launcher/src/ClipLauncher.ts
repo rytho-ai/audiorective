@@ -1224,7 +1224,6 @@ export class ClipLauncher extends EventTarget implements Scheduler {
         const target = this.pickFollow(inst, f.next, F);
         const again = !!inst.cfg.loop;
         if (target) {
-          const before = inst.clip._count;
           this.request({
             track: inst.track,
             clip: target,
@@ -1235,7 +1234,6 @@ export class ClipLauncher extends EventTarget implements Scheduler {
           });
           if (!(inst.stopBeat != null || inst.track.pending || inst.track.commit?.kind === "start") && again)
             inst.follow = { beat: F + this._beats(f.after) };
-          void before;
         } else if (again) inst.follow = { beat: F + this._beats(f.after) };
         changed = true;
       }
@@ -1410,7 +1408,6 @@ export class ClipLauncher extends EventTarget implements Scheduler {
     });
     this.dirtyFrom = null;
     this.syncAll();
-    void reason;
   }
   /** Called by the clock after start, stop, pause, resume, seek and tempo changes; applications do not call it. */
   transport(change: TransportChange): void {
