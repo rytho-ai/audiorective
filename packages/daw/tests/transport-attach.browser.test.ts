@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { StepSequencer, type Hit } from "@audiorective/blocks/sequencer";
+import { StepSequencer, type Hit } from "@audiorective/sequencer";
 import { Project, Workspace } from "../src";
 
 test("workspace.transport.attach(sequencer) queues hits on the workspace transport and dispose detaches", async () => {

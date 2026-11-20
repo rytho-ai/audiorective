@@ -9,19 +9,26 @@ const SCOPE = "@audiorective/";
 
 // ---------------------------------------------------------------- rule data
 
-/** Packages that may import `@audiorective/core*` and nothing else of ours. */
-const CORE_ONLY = ["clock", "midi", "host", "effects", "devtools", "react", "threejs", "playcanvas"];
-
-const BLOCKS_CAPABILITIES = ["WavePlayer", "AudioRecorder", "SampleLibrary", "PadBank", "StepSequencer", "ClipLauncher"];
-/** Private helpers of a blocks capability: module -> relative targets it may import (`dir/*` = whole dir). */
-const BLOCKS_HELPER_ALLOWLIST = {
-  "WavePlayer.ts": ["source.ts"],
-  "AudioRecorder.ts": ["recording/*"],
-  "StepSequencer.ts": ["notation.ts", "sounds.ts"],
-  "sounds.ts": ["notation.ts"],
+/**
+ * The headless capability packages: each imports only `@audiorective/core*`. `entry` is the module its root export
+ * builds from; `helpers` maps a module to the relative targets it may import (`dir/*` = whole dir). Anything else
+ * under `src/` is unclassified.
+ */
+const CAPABILITIES = {
+  player: { entry: "WavePlayer.ts", helpers: { "WavePlayer.ts": ["source.ts"] }, private: ["source.ts"] },
+  recorder: { entry: "AudioRecorder.ts", helpers: { "AudioRecorder.ts": ["recording/*"] }, private: ["recording/*"] },
+  samples: { entry: "SampleLibrary.ts", helpers: {}, private: [] },
+  pads: { entry: "PadBank.ts", helpers: {}, private: [] },
+  sequencer: {
+    entry: "StepSequencer.ts",
+    helpers: { "StepSequencer.ts": ["notation.ts", "sounds.ts"], "sounds.ts": ["notation.ts"] },
+    private: ["notation.ts", "sounds.ts"],
+  },
+  launcher: { entry: "ClipLauncher.ts", helpers: {}, private: [] },
 };
-/** Files that exist only as another capability's private helpers. */
-const BLOCKS_HELPERS = ["source.ts", "recording/*", "notation.ts", "sounds.ts"];
+
+/** Packages that may import `@audiorective/core*` and nothing else of ours. */
+const CORE_ONLY = ["clock", "midi", "host", "effects", "devtools", "react", "threejs", "playcanvas", ...Object.keys(CAPABILITIES)];
 
 const DAW_PROJECT = ["project.ts", "model.ts", "media.ts", "clip-time-map.ts", "tempo-map.ts", "clip-envelope.ts"];
 const DAW_CODEC = ["dawproject.ts"];
@@ -139,20 +146,19 @@ export function checkLayers({ files, manifests }) {
           if (isScoped(spec)) v(imp, "core imports no @audiorective/* package");
         } else if (CORE_ONLY.includes(pkg)) {
           if (isScoped(spec) && pkgOf(spec) !== pkg && !within(spec, "@audiorective/core")) v(imp, `${pkg} may import only @audiorective/core*`);
-        } else if (pkg === "blocks") {
-          checkBlocks(rel, imp, target, v);
+          if (CAPABILITIES[pkg]) checkCapabilityRelative(pkg, rel, imp, target, v);
         } else if (pkg === "widgets") {
           checkWidgets(imp, v);
         } else if (pkg === "daw") {
           checkDaw(rel, imp, target, v);
         }
       }
-      if (pkg === "blocks" && !BLOCKS_CAPABILITIES.some((c) => rel === `${c}.ts`) && !inGroup(rel, BLOCKS_HELPERS)) {
+      if (CAPABILITIES[pkg] && rel !== CAPABILITIES[pkg].entry && !inGroup(rel, CAPABILITIES[pkg].private)) {
         violations.push({
           file,
           line: 1,
           specifier: "",
-          rule: "unclassified blocks file: add it to BLOCKS_CAPABILITIES or BLOCKS_HELPERS in scripts/check-layers.mjs",
+          rule: `unclassified ${pkg} file: add it to its entry or private helpers in CAPABILITIES in scripts/check-layers.mjs`,
         });
       }
       if (pkg === "daw" && !dawGroup(rel)) {
@@ -194,22 +200,19 @@ export function checkLayers({ files, manifests }) {
   return violations;
 }
 
-function checkBlocks(rel, imp, target, v) {
+function checkCapabilityRelative(pkg, rel, imp, target, v) {
   const spec = imp.specifier;
-  if (isScoped(spec)) {
-    if (!within(spec, "@audiorective/core")) v(imp, "blocks may import only @audiorective/core*");
-    return;
-  }
   if (!isRelative(spec)) return;
-  const allowed = BLOCKS_HELPER_ALLOWLIST[rel] ?? [];
+  const { entry, helpers, private: priv } = CAPABILITIES[pkg];
   const resolved = target ?? posix.normalize(posix.join(posix.dirname(rel), spec));
   // Helpers may import siblings within their own directory group (e.g. recording/*).
-  const sameDirHelper = inGroup(rel, BLOCKS_HELPERS) && rel.includes("/") && resolved.startsWith(posix.dirname(rel) + "/");
-  if (sameDirHelper || inGroup(resolved, allowed)) return;
-  const other = BLOCKS_CAPABILITIES.some((c) => resolved === `${c}.ts` || stripExt(resolved) === c);
+  const sameDirHelper = inGroup(rel, priv) && rel.includes("/") && resolved.startsWith(posix.dirname(rel) + "/");
+  if (sameDirHelper || inGroup(resolved, helpers[rel] ?? [])) return;
   v(
     imp,
-    other ? "blocks capabilities must not import each other" : "blocks relative imports are limited to the module's allowlisted private helpers",
+    resolved === entry || stripExt(resolved) === stripExt(entry)
+      ? `${pkg} helpers must not import the package entry`
+      : `${pkg} relative imports are limited to the module's allowlisted private helpers`,
   );
 }
 
@@ -217,13 +220,13 @@ function checkWidgets(imp, v) {
   const spec = imp.specifier;
   if (!isScoped(spec)) return;
   if (within(spec, "@audiorective/core") || within(spec, "@audiorective/midi")) return;
-  if (within(spec, "@audiorective/blocks")) {
-    if (spec !== "@audiorective/blocks/player") v(imp, "widgets may import only @audiorective/blocks/player (type-only)");
-    else if (!imp.typeOnly) v(imp, "widgets must import @audiorective/blocks/player as `import type`");
+  if (within(spec, "@audiorective/player")) {
+    if (spec !== "@audiorective/player") v(imp, "widgets may import only @audiorective/player (type-only)");
+    else if (!imp.typeOnly) v(imp, "widgets must import @audiorective/player as `import type`");
     return;
   }
   if (within(spec, "@audiorective/daw")) v(imp, "widgets never import @audiorective/daw");
-  else v(imp, "widgets may import only core*, midi and type-only blocks/player");
+  else v(imp, "widgets may import only core*, midi and type-only @audiorective/player");
 }
 
 function dawGroup(rel) {

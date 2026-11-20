@@ -25,7 +25,7 @@ Adapters also support `WavePlayer` and `BufferPlayer`. A custom renderer replace
 
 ```typescript
 import { mountWaveformSelector } from "@audiorective/widgets";
-import { WavePlayer } from "@audiorective/blocks/player";
+import { WavePlayer } from "@audiorective/player";
 
 const context = new AudioContext();
 const selector = mountWaveformSelector(document.querySelector<HTMLElement>("#waveform")!, {
@@ -45,7 +45,7 @@ The selector includes URL/File loading with shared phase/byte progress and cance
 
 `getState().loadProgress` comes from the block. `selector.cancelLoad()` or Cancel loading stops the current load; retry with `load()`. Known byte totals support a fraction; decode, peaks and unknown totals stay indeterminate.
 
-For headless control or multiple views, create a `WavePlayer` from `@audiorective/blocks/player` and pass `{ player }` instead of `{ createPlayer }`. Selectors read the same audio and selection owner; each retains its own renderer, zoom and snap settings. Route the shared output once. Destroying a view leaves a supplied player alive; the caller destroys it after all views are finished.
+For headless control or multiple views, create a `WavePlayer` from `@audiorective/player` and pass `{ player }` instead of `{ createPlayer }`. Selectors read the same audio and selection owner; each retains its own renderer, zoom and snap settings. Route the shared output once. Destroying a view leaves a supplied player alive; the caller destroys it after all views are finished.
 
 Selectors display the shared player's committed `version.peaks`, without scanning PCM for each view. A pending stretch keeps the previous waveform visible; successful edits preserve same-source zoom and map scrolling. `getState()` includes `processing`, `stretchRatio`, `revision`, and `sourceDuration`. Selection, position and renderer coordinates use committed output seconds. Selector beat grids are supplied in original source seconds and mapped to output after edits.
 

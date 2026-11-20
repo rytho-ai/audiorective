@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { WavePlayer, type WaveStretchProcessor } from "@audiorective/blocks/player";
+import { WavePlayer, type WaveStretchProcessor } from "@audiorective/player";
 import { mountWaveformSelector, type WaveformRenderer } from "../src";
 import { bandsFile, cleanup, drag, element, host, own } from "./helpers";
 

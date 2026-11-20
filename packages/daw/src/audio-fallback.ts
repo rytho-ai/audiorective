@@ -1,4 +1,4 @@
-import { AudioRecorder } from "@audiorective/blocks/recorder";
+import { AudioRecorder } from "@audiorective/recorder";
 import type { AudioMedia } from "./media";
 import type { Project } from "./model";
 import { createOpfsAudioMediaWriter } from "./opfs-media";

@@ -1,4 +1,4 @@
-import type { WavePlayerState } from "@audiorective/blocks/player";
+import type { WavePlayerState } from "@audiorective/player";
 
 /** The playback version a selector currently displays. */
 export type SelectorVersion = Readonly<{ revision: number; sourceRevision: number; buffer: { readonly duration: number }; peaks: WaveformPeaks }>;

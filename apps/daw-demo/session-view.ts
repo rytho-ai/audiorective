@@ -1,5 +1,5 @@
 import { effect, untracked } from "@audiorective/core";
-import type { ClipLaunch } from "@audiorective/blocks/launcher";
+import type { ClipLaunch } from "@audiorective/launcher";
 import { mountClipGrid, type ClipGridLayout } from "@audiorective/widgets";
 import type { Workspace } from "@audiorective/daw";
 

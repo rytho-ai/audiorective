@@ -20,13 +20,17 @@
     "smoke:webclap": "node webclap-bundle-smoke.mjs"
   },
   "dependencies": {
-    "@audiorective/blocks": "workspace:^",
     "@audiorective/core": "workspace:^",
     "@audiorective/effects": "workspace:^",
     "@audiorective/host": "workspace:^",
     "@audiorective/midi": "workspace:^",
     "@audiorective/widgets": "workspace:^",
-    "@audiorective/daw": "workspace:^"
+    "@audiorective/daw": "workspace:^",
+    "@audiorective/launcher": "workspace:^",
+    "@audiorective/pads": "workspace:^",
+    "@audiorective/recorder": "workspace:^",
+    "@audiorective/samples": "workspace:^",
+    "@audiorective/sequencer": "workspace:^"
   },
   "devDependencies": {
     "playwright": "^1.58.2",

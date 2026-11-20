@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from "vitest";
 import type { BeatTiming, CancellableEvent } from "@audiorective/core";
-import { PadBank } from "../src/PadBank";
+import { PadBank } from "@audiorective/pads";
 import { StepSequencer, type Hit, type LaneOptions, type StepWindow } from "../src/StepSequencer";
 
 const disposers: Array<() => void | Promise<unknown>> = [];

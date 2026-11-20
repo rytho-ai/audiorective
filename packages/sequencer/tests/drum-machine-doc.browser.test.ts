@@ -3,7 +3,7 @@
 // in place of decoded files, and the test's own assertions.
 import { afterEach, expect, test, vi } from "vitest";
 import { Clock } from "@audiorective/clock";
-import { PadBank } from "../src/PadBank";
+import { PadBank } from "@audiorective/pads";
 import { StepSequencer } from "../src/StepSequencer";
 
 const disposers: Array<() => void | Promise<unknown>> = [];

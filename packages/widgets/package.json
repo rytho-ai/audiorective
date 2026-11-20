@@ -51,8 +51,8 @@
   },
   "dependencies": {
     "@audiorective/core": "workspace:^",
-    "@audiorective/blocks": "workspace:^",
-    "@audiorective/midi": "workspace:^"
+    "@audiorective/midi": "workspace:^",
+    "@audiorective/player": "workspace:^"
   },
   "devDependencies": {
     "@types/node": "^24.9.1",
@@ -61,7 +61,8 @@
     "playwright": "^1.58.2",
     "tsdown": "^0.15.9",
     "typescript": "^5.9.3",
-    "vitest": "^4.0.18"
+    "vitest": "^4.0.18",
+    "@audiorective/sequencer": "workspace:^"
   },
   "sideEffects": false
 }

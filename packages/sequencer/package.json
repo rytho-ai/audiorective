@@ -1,46 +1,29 @@
 {
-  "name": "@audiorective/blocks",
+  "name": "@audiorective/sequencer",
   "version": "2.3.2",
-  "description": "Headless audio capture, range playback and a choke-group pad bank",
+  "description": "Headless lane-based step sequencer with pattern notation and built-in sounds",
   "type": "module",
   "license": "MIT",
-  "homepage": "https://github.com/audiorective/audiorective/tree/main/packages/blocks#readme",
+  "homepage": "https://github.com/audiorective/audiorective/tree/main/packages/sequencer#readme",
   "bugs": {
     "url": "https://github.com/audiorective/audiorective/issues"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/audiorective/audiorective.git",
-    "directory": "packages/blocks"
+    "directory": "packages/sequencer"
   },
   "author": "Chriest Yu <jcppman@gmai.com>",
   "files": [
     "dist"
   ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    "./player": {
-      "types": "./dist/player.d.ts",
-      "import": "./dist/player.js"
-    },
-    "./recorder": {
-      "types": "./dist/recorder.d.ts",
-      "import": "./dist/recorder.js"
-    },
-    "./samples": {
-      "types": "./dist/samples.d.ts",
-      "import": "./dist/samples.js"
-    },
-    "./pads": {
-      "types": "./dist/pads.d.ts",
-      "import": "./dist/pads.js"
-    },
-    "./sequencer": {
-      "types": "./dist/sequencer.d.ts",
-      "import": "./dist/sequencer.js"
-    },
-    "./launcher": {
-      "types": "./dist/launcher.d.ts",
-      "import": "./dist/launcher.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     },
     "./package.json": "./package.json"
   },
@@ -55,6 +38,7 @@
   },
   "devDependencies": {
     "@audiorective/clock": "workspace:^",
+    "@audiorective/pads": "workspace:^",
     "@types/node": "^24.9.1",
     "@vitest/browser": "^4.0.18",
     "@vitest/browser-playwright": "^4.0.18",
