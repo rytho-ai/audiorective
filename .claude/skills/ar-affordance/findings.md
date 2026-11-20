@@ -62,3 +62,14 @@ Shape: `new StepSequencer({ kick: "X...X..." }, { context, onHit, transform, see
 ### Clip launcher (in progress)
 
 Desire round: `Transport → Track → Clip` objects, `clip.launch({ quantize: "bar" })`, `clip.state` with `"queued" | "playing" | "stopped"`, `clip.cancelQueued()`, `track.stop({ at: "nextBar" })`, `transport.stopAll`, `launchScene`, change events. Control (current `ClipLauncher` + caller-written driver): see conclusion 8.
+
+Variants (guess mode, 3 runs per task, every run read):
+
+|                               | V0 current                 | VL1 objects | VL2 launcher plays                                                  | VL3 hybrid                  |
+| ----------------------------- | -------------------------- | ----------- | ------------------------------------------------------------------- | --------------------------- |
+| Compile / grader              | 100% / 100%                | 100% / 100% | 100% / 100%                                                         | 100% / 100%                 |
+| Mean LOC                      | 66                         | 37          | 36                                                                  | 31                          |
+| Hand-written transport driver | 18/18                      | 0           | 0 (but create/attach/start a Clock and resume the context in 15/18) | 0                           |
+| Real bugs found by reading    | late stop, unstarted Clock | 0           | 4                                                                   | 1 (`clips[2]` for "clip 2") |
+
+VL3 shape: Web Audio timing on clips and tracks — `clip.start(when)`, `clip.stop(when)`, `track.stop(when)`, `transport.stopAll(when)`, `launchScene(clips, when)` with `when` as audio seconds or a quantize string (`"bar"`, `"2 bars"`, `"beat"`); `clip.cancel()`; `EventTarget` `statechange`; `transport.start()` resumes the context. Lessons: letting the toolkit own playback removed both the driver and the timing-bug class in every variant; a variant that leaves the caller to create and start the clock reintroduces ordering and autoplay bugs; the only VL3 miss repeated the step-index lesson (no "clips[0] is the first clip" hint). Evidence is weak: all variants hit the 100% grader ceiling and defaults differed (VL1 quantized to `"bar"`, VL3 to `"none"`).
