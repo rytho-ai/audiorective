@@ -43,7 +43,7 @@ try {
 
 The selector includes URL/File loading with shared phase/byte progress and cancellation, zoom, scrolling, range handles, keyboard adjustment, optional beat snapping, and playback controls. Drag a new range to audition it; programmatic selection updates do not initiate playback. The caller supplies the `AudioContext` and routes `output`.
 
-`getState().loadProgress` comes from the block. `selector.cancelLoad()` or Cancel loading stops the current load; retry with `load()`. Known byte totals support a fraction; decode, peaks and unknown totals stay indeterminate.
+`getState().loadProgress` comes from the player. `selector.cancelLoad()` or Cancel loading stops the current load; retry with `load()`. Known byte totals support a fraction; decode, peaks and unknown totals stay indeterminate.
 
 For headless control or multiple views, create a `WavePlayer` from `@audiorective/player` and pass `{ player }` instead of `{ createPlayer }`. Selectors read the same audio and selection owner; each retains its own renderer, zoom and snap settings. Route the shared output once. Destroying a view leaves a supplied player alive; the caller destroys it after all views are finished.
 

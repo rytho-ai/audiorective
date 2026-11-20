@@ -46,7 +46,7 @@ const volume = useValue(synth.volume);
 // Cell
 const pattern = useValue(machine.pattern); // Cell<boolean[]>
 
-// A tracked getter on a block (a StepSequencer step or playhead): pass a function
+// A tracked getter on a headless capability class (a StepSequencer step or playhead): pass a function
 const velocity = useValue(useCallback(() => seq.lanes.kick.steps[i].velocity, [seq, i]));
 
 // Computed

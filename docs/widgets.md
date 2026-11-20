@@ -84,7 +84,7 @@ The attachment owns its gesture and drawing. The caller owns the points and play
 
 ## Step grid and pads
 
-`mountStepGrid(root, { sequencer, formatStep?, labels?, laneLabel? })` is a lane-aware, pluggable step editor. `sequencer` is a local structural contract, `StepGridSequencer = { lanes: Record<string, StepGridLane> }` (a lane carries `pattern`, `length`, `rate`, `swing`, `direction`, `mute`, `solo`, `params`, `playhead`, `progress` and `steps`); a `StepSequencer` from [Step Sequencer](./sequencer.md) satisfies it directly, as can your own model with the same lane shape (the widget imports no block values). Destroying the view leaves the borrowed sequencer available.
+`mountStepGrid(root, { sequencer, formatStep?, labels?, laneLabel? })` is a lane-aware, pluggable step editor. `sequencer` is a local structural contract, `StepGridSequencer = { lanes: Record<string, StepGridLane> }` (a lane carries `pattern`, `length`, `rate`, `swing`, `direction`, `mute`, `solo`, `params`, `playhead`, `progress` and `steps`); a `StepSequencer` from [Step Sequencer](./sequencer.md) satisfies it directly, as can your own model with the same lane shape (the widget imports no capability-class values). Destroying the view leaves the borrowed sequencer available.
 
 The grid reads each lane's length, rate, direction, swing, mute, solo, `steps`, `playhead` and `progress` and writes through the lane's setters and `steps[i]` fields. The column count is the longest lane length seen. `laneLabel(name)` names a lane for display (default: the lane name).
 
@@ -344,11 +344,11 @@ if (selector.getState().duration >= 2) {
 // selector.destroy();
 ```
 
-The caller owns the context and routing. The selector resumes the player's context when a user initiates playback; it neither creates nor closes a context, and it does not connect its output to the destination. The widget core imports no block at runtime: the app supplies the `WavePlayer`, directly or through `createPlayer`. Connect its output to a destination or your effects chain. Mount in the browser with a DOM, Web Audio, and `ResizeObserver`; keep mounting behind a client-only boundary in a server-rendered app.
+The caller owns the context and routing. The selector resumes the player's context when a user initiates playback; it neither creates nor closes a context, and it does not connect its output to the destination. The widget core imports no capability class at runtime: the app supplies the `WavePlayer`, directly or through `createPlayer`. Connect its output to a destination or your effects chain. Mount in the browser with a DOM, Web Audio, and `ResizeObserver`; keep mounting behind a client-only boundary in a server-rendered app.
 
 ### Interaction
 
-To share audio and selection across views, call `mountWaveformSelector(root, { player })` with a `WavePlayer` from `@audiorective/player`. Supply either `createPlayer` or `player`. `SelectorPlayer` is a structural contract (`getState`, `version`, `isPlaying`, `isLooping`, `load`, `cancelLoad`, `play`, `audition`, `pause`, `stop`, `seek`, `setLooping`, `sourceToOutput`, `output`, `destroy`, plus the selection model's `getSelection`, `setSelection` and `subscribe`); `WavePlayer` satisfies it and so can your own model. The view does not destroy a supplied player or cancel its loads when detached. Route the shared output once. Loading or changing selection through any view updates the player and all its views; renderer, zoom and snap remain local. See [Blocks](./player.md#share-a-block-between-widgets).
+To share audio and selection across views, call `mountWaveformSelector(root, { player })` with a `WavePlayer` from `@audiorective/player`. Supply either `createPlayer` or `player`. `SelectorPlayer` is a structural contract (`getState`, `version`, `isPlaying`, `isLooping`, `load`, `cancelLoad`, `play`, `audition`, `pause`, `stop`, `seek`, `setLooping`, `sourceToOutput`, `output`, `destroy`, plus the selection model's `getSelection`, `setSelection` and `subscribe`); `WavePlayer` satisfies it and so can your own model. The view does not destroy a supplied player or cancel its loads when detached. Route the shared output once. Loading or changing selection through any view updates the player and all its views; renderer, zoom and snap remain local. See [Player](./player.md#share-a-player-between-widgets).
 
 - Load an audio URL or local file using the built-in controls. Loading does not start playback.
 - Drag in either direction to create a range and start looping its audition. The endpoints are normalized to increasing seconds.
@@ -388,7 +388,7 @@ type WaveformSelectorOptions = {
 
 ### Loading feedback
 
-The complete selector renders the block's download/read byte counts, indeterminate decode/peaks phases, and Cancel loading action. A progress fraction appears only with a known positive byte total; no decode/stretch percentage is fabricated. `getState().loadProgress` uses [the block contract](./player.md#loading-state-progress-and-cancellation). Successful completion, errors and cancellation remove loading feedback. A new `load` can retry; a cancelled promise settling does not imply a committed source. Multiple selectors sharing one player show the same progress and cancellation state.
+The complete selector renders the player's download/read byte counts, indeterminate decode/peaks phases, and Cancel loading action. A progress fraction appears only with a known positive byte total; no decode/stretch percentage is fabricated. `getState().loadProgress` uses [the player contract](./player.md#loading-state-progress-and-cancellation). Successful completion, errors and cancellation remove loading feedback. A new `load` can retry; a cancelled promise settling does not imply a committed source. Multiple selectors sharing one player show the same progress and cancellation state.
 
 ### Displaying committed edits
 

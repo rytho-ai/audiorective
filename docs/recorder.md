@@ -6,7 +6,7 @@ PCM take capture from `@audiorective/recorder`.
 
 ## Record an audio take
 
-`AudioRecorder` captures PCM from a borrowed Web Audio input at sample-frame positions on the caller's `AudioContext`. It is a headless block with an `input` node and **no audible output**. The caller obtains permission, creates and connects the source, routes monitoring separately, and owns the source and context lifetime. The recorder does not create a `MediaStream` or decide where a take belongs in a track.
+`AudioRecorder` captures PCM from a borrowed Web Audio input at sample-frame positions on the caller's `AudioContext`. It is a headless class with an `input` node and **no audible output**. The caller obtains permission, creates and connects the source, routes monitoring separately, and owns the source and context lifetime. The recorder does not create a `MediaStream` or decide where a take belongs in a track.
 
 ```typescript
 import { AudioRecorder } from "@audiorective/recorder";

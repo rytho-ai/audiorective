@@ -41,7 +41,7 @@ export default defineConfig({
             { label: "PlayCanvas", slug: "docs/playcanvas" },
             { label: "Effects", slug: "docs/effects" },
             {
-              label: "Headless blocks",
+              label: "Capabilities",
               items: [
                 { label: "Player", slug: "docs/player" },
                 { label: "Recorder", slug: "docs/recorder" },

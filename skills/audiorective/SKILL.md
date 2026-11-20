@@ -86,7 +86,7 @@ When no capability package or widget matches, build on core with your own `Audio
 | You are building… | Use | Not |
 | --- | --- | --- |
 | One-shot hits, pads, SFX; overlapping voices | core `Sampler` / `Voice` | `WavePlayer` (one playhead) |
-| Editable sequenced hits with future choke groups | `@audiorective/sequencer` `StepSequencer` whose `onHit` calls `bank.trigger(hit.lane, hit.velocity, hit.when, ...)` and returns `() => pad?.cancel()`, over a `@audiorective/pads` `PadBank` (choke `group`); runnable code in `references/sequencer.md#standalone-drum-machine` | a hand-rolled `window.own` loop for a lane/step grid; irreversible `Voice.stop(when)` |
+| Step patterns, drum machine, humanize, ratchets, editable sequenced hits (with choke groups) | `clock` + `@audiorective/sequencer` `StepSequencer`; for choke groups `onHit` calls `bank.trigger(hit.lane, hit.velocity, hit.when, ...)` and returns `() => pad?.cancel()`, over a `@audiorective/pads` `PadBank` (choke `group`); runnable code in `references/sequencer.md#standalone-drum-machine` (no `daw`) | a hand-rolled `window.own` loop for a lane/step grid; a private scheduling loop, forking the sequencer; irreversible `Voice.stop(when)` |
 | Record a short audio take | `@audiorective/recorder` `AudioRecorder`, caller-connected input | `MediaRecorder` chunk intervals |
 | Record MIDI notes from a keyboard | `midi/web` `MidiRecorder`, caller-owned input/context | `MidiSequence` as a live listener |
 | A tempo-locked loop or stem | core `BufferPlayer` + `clock` | `FilePlayer` (media clock) |
@@ -98,7 +98,6 @@ When no capability package or widget matches, build on core with your own `Audio
 | MIDI file notes: parse, edit, select, piano roll | `@audiorective/midi` + `widgets/piano-roll` | live MIDI input |
 | Play, edit and save a DAWproject with WebCLAP devices | `daw` + `host/webclap`; `workspace.player` to `mountPlayer` | separate project or player state |
 | Read, edit or write `.dawproject` in Node (no audio) | `daw/project` + `daw/dawproject` only | `daw` root or `daw/runtime` |
-| Step patterns, drum machine, humanize, ratchets | `clock` + `@audiorective/sequencer`; `references/sequencer.md` (no `daw`) | a private scheduling loop, forking the sequencer |
 | Session view, clip launcher, scene launching | standalone `@audiorective/launcher` `ClipLauncher`; `references/launcher.md` | `daw` Session for step-pattern clips |
 | An editable curve driving a parameter, macro, or clip gain | `core/automation`; clips: `Project.setAudioClipGainAutomation` | hand-scheduled ramps |
 | A synth, custom effect, grains, anything else | your own `AudioProcessor` on core | forcing a capability to fit |
@@ -120,7 +119,7 @@ Open the one page the task needs; read the section, not the whole file.
 | MIDI files, piano roll, recording a MIDI take                       | `midi.md`                                              |
 | Project, takes, clips, Session, DAWproject, live edits (`sync()`)   | `daw.md`                                               |
 | WebCLAP device, CLAP ID, patch save                                 | `host.md` + `daw.md`                                   |
-| Block state (`cells`), loading, cancel, audition                    | `player.md` + `widgets.md`                             |
+| Player state (`cells`), loading, cancel, audition                   | `player.md` + `widgets.md`                             |
 | React, three.js, PlayCanvas, PixiJS                                 | `react.md`, `threejs.md`, `playcanvas.md`, `pixijs.md` |
 | Next.js / Remix / Astro / any server-rendered app                   | `client-boundary.md`                                   |
 | Effects, FX rack, replacing Tone.js effects, offline export         | `effects.md`                                           |

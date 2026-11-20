@@ -142,11 +142,11 @@ const unsubscribe = player.subscribe(render);
 // On observer cleanup: unsubscribe();
 ```
 
-Cancellation or replacement prevents stale progress/results from updating the block. A superseded/cancelled `load` settles without publishing an error; inspect the current state rather than treating every resolution as a successful commit. Web Audio decoding already in progress cannot be interrupted; its result is ignored. Cancellation cannot interrupt synchronous peaks work once it has started. Current failures reject and populate `error`; retry with `load`.
+Cancellation or replacement prevents stale progress/results from updating the player. A superseded/cancelled `load` settles without publishing an error; inspect the current state rather than treating every resolution as a successful commit. Web Audio decoding already in progress cannot be interrupted; its result is ignored. Cancellation cannot interrupt synchronous peaks work once it has started. Current failures reject and populate `error`; retry with `load`.
 
 ### Reusing an existing URL/decode cache
 
-`WavePlayerOptions.loadSource?: WaveSourceLoader` replaces **URL** loading; File inputs use the built-in loader. The adapter receives `(url, { context, signal, onProgress })` and returns `Promise<AudioBuffer>`. It reports actual `download`/`read` or `decode` phases through `onProgress`; the block owns the `peaks` phase, loading/error state, version commit and stale-result guards. A decoded cache hit can return its buffer without reporting artificial I/O phases. The buffer is borrowed and must be treated as immutable.
+`WavePlayerOptions.loadSource?: WaveSourceLoader` replaces **URL** loading; File inputs use the built-in loader. The adapter receives `(url, { context, signal, onProgress })` and returns `Promise<AudioBuffer>`. It reports actual `download`/`read` or `decode` phases through `onProgress`; the player owns the `peaks` phase, loading/error state, version commit and stale-result guards. A decoded cache hit can return its buffer without reporting artificial I/O phases. The buffer is borrowed and must be treated as immutable.
 
 Detach this waiter's progress observers when `signal` aborts or the adapter settles. Shared cache work may continue for other readers; cancellation does not require aborting their request. Byte reports require non-negative safe integers, `totalBytes: null` or a total at least as large as `loadedBytes`. Invalid progress rejects the current load. `WaveLoadProgress` and `WaveSourceLoader` are exported from `@audiorective/player`.
 
@@ -251,7 +251,7 @@ try {
 
 URL loading follows browser CORS rules; URL fetch and File decode failures reject and appear in player/selector error state. Catch module-fetch and compilation errors when calling `createEditor`; module hosting is separate from loading the audio source.
 
-## Share a block between widgets
+## Share a player between widgets
 
 ```typescript
 import { WavePlayer } from "@audiorective/player";
@@ -282,7 +282,7 @@ Loading, selection and playback messages from `WavePlayer`. Stretch and time-map
 
 | Message                                                                                                       | Cause                                            | Fix                                                                             |
 | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------- |
-| `WavePlayer is destroyed.`                                                                                    | Mutating or subscribing after block cleanup      | Create a new WavePlayer; shared views must not destroy their caller's player.   |
+| `WavePlayer is destroyed.`                                                                                    | Mutating or subscribing after player cleanup     | Create a new WavePlayer; shared views must not destroy their caller's player.   |
 | `Position must be finite seconds.` / `Start time must be finite, non-negative seconds.`                       | Invalid `seek` position or `play({ when })` time | Pass finite seconds; `when` is an absolute `AudioContext` time, clamped to now. |
 | `Enter an audio URL.`                                                                                         | Empty URL passed to `load`                       | Supply a URL or File.                                                           |
 | `Audio request failed: HTTP 404.` (status varies)                                                             | URL response is unsuccessful                     | Check the URL, access, and server response; call `load` again to recover.       |

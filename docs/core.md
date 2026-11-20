@@ -1311,7 +1311,7 @@ const jitter: EventTransform<TimedBeatEvent> = {
 registerWorklet(ctx: BaseAudioContext, name: string, source: string): Promise<void>
 ```
 
-Loads a worklet module into `ctx` once per `(context, name)`: concurrent and repeated calls share the first load, and a failed load can be retried. The source is served from a Blob URL, so no bundler setup is needed. It rejects with `WorkletUnavailableError` when the context has no `audioWorklet`. Both are exported from `@audiorective/core`; `@audiorective/effects` re-exports them. Blocks and apps that ship their own worklet use this instead of calling `addModule` themselves.
+Loads a worklet module into `ctx` once per `(context, name)`: concurrent and repeated calls share the first load, and a failed load can be retried. The source is served from a Blob URL, so no bundler setup is needed. It rejects with `WorkletUnavailableError` when the context has no `audioWorklet`. Both are exported from `@audiorective/core`; `@audiorective/effects` re-exports them. Packages and apps that ship their own worklet use this instead of calling `addModule` themselves.
 
 ## Package Structure
 
