@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { effect } from "@audiorective/core";
 import { AudioRecorder } from "../src/AudioRecorder";
 import * as audioRecorderSourceModule from "../src/AudioRecorder.ts?raw";
@@ -20,7 +20,7 @@ describe("AudioRecorder readers are tracked", () => {
     disposers.push(() => recorder.dispose());
     const states: string[] = [];
     const stop = effect(() => void states.push(recorder.cells.state.value));
-    const started = recorder.start({ when: 0.1 });
+    const started = recorder.record({ when: 0.1 });
     started.catch(() => undefined);
     await new Promise((done) => setTimeout(done, 20));
     recorder.cancel();
@@ -29,6 +29,27 @@ describe("AudioRecorder readers are tracked", () => {
     expect(states[0]).toBe("idle");
     expect(states).toContain("armed");
     expect(states[states.length - 1]).toBe("idle");
+  });
+});
+
+describe("commands called inside an effect do not subscribe it", () => {
+  test("AudioRecorder commands and the clock-facing hooks", async () => {
+    const context = new OfflineAudioContext(1, 48_000, 48_000);
+    const recorder = watch(new AudioRecorder(context, { channels: 1 }), touched.audioRecorder);
+    disposers.push(() => recorder.dispose());
+    let runs = 0;
+    const stop = effect(() => {
+      runs++;
+      recorder.schedule();
+      recorder.reset("pause");
+      recorder.attached({ timeline: context as never, state: { value: "stopped" }, meter: { value: [4, 4] }, detach() {} })();
+      expect(() => recorder.stop()).toThrow("AudioRecorder has no started take to stop.");
+      void recorder.record({ when: 0.1 }).catch(() => undefined);
+      recorder.cancel();
+    });
+    await new Promise((done) => setTimeout(done, 20));
+    stop();
+    expect(runs).toBe(1);
   });
 });
 
@@ -51,16 +72,17 @@ describe("AudioRecorder commands drive tracked state", () => {
       await context.startRendering();
       await pending;
     } else {
-      await recorder.start({ when: 0.1 });
-      const pending = recorder.stop({ when: 0.3 });
+      const pending = recorder.record({ when: 0.1 });
+      await vi.waitFor(() => expect(recorder.cells.startsAt.value).toBe(0.1));
+      const stopped = recorder.stop({ when: 0.3 });
       await context.startRendering();
-      await pending;
+      await Promise.all([pending, stopped]);
     }
     stopEffect();
     return { states, runs };
   };
   test.each([
-    ["start and stop", false],
+    ["record", false],
     ["startStream and stopStream", true],
   ])("cells.state follows %s", async (_name, stream) => {
     const { states, runs } = await take(stream);

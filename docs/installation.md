@@ -13,7 +13,7 @@ Which `@audiorective/*` packages to install, what they pull in, and how to keep 
 | `@audiorective/effects`    | DSP effects, channel strips, send buses, offline rendering of an effects chain                               | `signalsmith-stretch` (optional) |
 | `@audiorective/widgets`    | Waveform/MIDI piano-roll display, range selection and audio audition without a UI framework                  | —                                |
 | `@audiorective/player`     | Headless `WavePlayer`: range playback, selection, loading and offline stretch                                | —                                |
-| `@audiorective/recorder`   | Headless `AudioRecorder`: AudioWorklet PCM take capture                                                      | —                                |
+| `@audiorective/recorder`   | Headless `AudioRecorder` and `MicrophoneInput`: AudioWorklet PCM take capture                                | —                                |
 | `@audiorective/samples`    | Headless `SampleLibrary`: imported sample storage and previews                                               | —                                |
 | `@audiorective/pads`       | Headless `PadBank`: sample hits with choke groups                                                            | —                                |
 | `@audiorective/sequencer`  | Headless `StepSequencer`: lanes of steps from one-line patterns                                              | —                                |

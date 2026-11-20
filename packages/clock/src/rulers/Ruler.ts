@@ -1,13 +1,12 @@
+import type { BeatTiming } from "@audiorective/core";
 import type { CoreTickWindow } from "../types";
 
 /**
- * The minimal Timeline surface a Ruler needs. A structural interface (not
- * the concrete Timeline class) so rulers never import Timeline.ts and no
- * circular dependency exists between the two.
+ * The minimal Timeline surface a Ruler needs: the `BeatTiming` a scheduler receives (`beatToTime`, `timeToBeat`) plus `position`. A structural
+ * interface (not the concrete Timeline class) so rulers never import Timeline.ts and no circular dependency exists between the two.
+ * A `Timeline` is a `TimelineLike`, and a `TimelineLike` can be passed wherever a `BeatTiming` is expected.
  */
-export interface TimelineLike {
-  beatToTime(beat: number): number;
-  timeToBeat(time: number): number;
+export interface TimelineLike extends BeatTiming {
   /**
    * Pause-aware played seconds (a stopwatch, not tempo-scaled). Time rulers
    * read this directly rather than deriving from `beat`: transport pauses

@@ -343,6 +343,8 @@ The fold uses floored division rather than `%`. JavaScript's remainder keeps the
 
 Write a custom ruler for anything else (e.g. polyrhythm — one scheduling loop, a different musical grid) by implementing `Ruler<TWindow, TPoint>`:
 
+`TimelineLike` is `BeatTiming` (`beatToTime`, `timeToBeat`: the `timing` argument every `Scheduler.schedule` receives) plus `position`, so a `Timeline` is a `TimelineLike` and a `TimelineLike` is accepted wherever a `BeatTiming` is.
+
 ```typescript
 interface Ruler<TWindow, TPoint> {
   read(window: CoreTickWindow, timeline: TimelineLike): TWindow; // window-scoped; grid()/spans close over its bounds
