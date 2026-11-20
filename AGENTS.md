@@ -7,7 +7,8 @@ Modular toolkit for web audio development. Independent, composable packages that
 - `AGENTS.md` (this file) — contributor conventions for working in this repo
 - `docs/` — full API reference per package, also rendered on the site
 - `skills/` — consumer-facing skills (install via `npx skills add audiorective/audiorective`): `audiorective` for building apps, `audio-processor-authoring` for writing processors. See "Skills" below.
-- `evals/` — trigger and functional test sets for the skills
+- `evals/` — trigger and functional test sets for the skills, and API-affordance suites (`evals/affordance/`)
+- `.claude/skills/` — contributor skills for developing audiorective itself (not shipped): `ar-affordance` (design an API agents guess right, measured by desire/guess runs), `ar-dogfood` (a fresh agent builds a page from a brief; judge by its friction log), `ar-eval` (measure skill/docs changes and classify failures)
 
 ## Monorepo Structure
 
@@ -182,6 +183,8 @@ The skills are the product's front door for agents, so they're maintained like p
 **Errors are documentation, in two tiers.** Every thrown error has a row (message text an agent will actually see → cause → fix) in the "Common errors" table of the reference doc for its area (`docs/player.md`, `docs/recorder.md`, `docs/pads.md`, `docs/sequencer.md`, `docs/samples.md`, `docs/launcher.md`, `docs/widgets.md`, `docs/midi.md`, `docs/automation.md`, the TimeStretch and PCM sections). `SKILL.md` holds only the errors that cut across areas or block getting started (engine, client boundary, autoplay, version drift, graph wiring), plus an "Errors by area" table that routes a message prefix to its reference. A new error therefore needs its row in the reference, and a routing entry in `SKILL.md` only if its message prefix is not already routed. `pnpm check:errors` enforces this: it collects every message thrown in `packages/*/src` (template parts match as wildcards, and the plugin host's messages expand to each widget that creates a host), fails with `file:line` for any message no error table covers, and takes a row that ends in `…` as covering every message that starts with its text. A message that users cannot act on goes in the script's `ALLOWLIST` with a one-line reason.
 
 **Evals.** `evals/<skill>/trigger_eval.json` checks the description fires for the right requests and stays quiet for near-misses; `evals/<skill>/evals.json` checks output quality with verifiable expectations. Run them after editing a description or a rule (`evals/README.md`).
+
+**Judging a change.** Agent correctness decides; tokens and cost are reported beside it. Measure isolated from personal Claude settings (the runners' default), with three runs per eval and deterministic checks before the LLM grader (`ar-eval`). Before implementing a reshaped API, list the decisions already made for that component and keep each one unless the maintainer revisits it (`ar-affordance`).
 
 ## Showroom demos
 
