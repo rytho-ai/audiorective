@@ -19,6 +19,7 @@ import { mountRhythmView } from "./rhythm-view";
 import { StudioView } from "./studio-view";
 import { MidiRecorder } from "@audiorective/midi/web";
 import { effect } from "@audiorective/core";
+import type { Quantize } from "@audiorective/launcher";
 import { WebClapHost } from "@audiorective/host/webclap";
 import { AudioRecorder } from "@audiorective/recorder";
 import { SampleLibrary } from "@audiorective/samples";
@@ -328,18 +329,13 @@ function bindSession(): void {
   detachRangeAuditionView?.();
   const current = workspace;
   detachRangeAuditionView = effect(() => renderRangeAuditionButton(current.auditioningRange.value !== null));
-  const quantum = () => {
+  const quantize = (): Quantize => {
     const choice = $<HTMLSelectElement>("launch-quantum").value;
-    if (choice === "now") return 0;
-    if (choice === "bar") {
-      const [beats, unit] = workspace.project.signature;
-      return (beats * 4) / unit;
-    }
-    return 1;
+    return choice === "now" ? "none" : choice === "bar" ? "1m" : "4n";
   };
   sessionView = mountStudioSession($("clip-grid"), workspace, {
-    quantum,
-    mode: () => ($<HTMLSelectElement>("launch-mode").value === "one-shot" ? "one-shot" : "loop"),
+    quantize,
+    loop: () => $<HTMLSelectElement>("launch-mode").value !== "one-shot",
     report: handleError,
   });
   rhythmView?.destroy();
@@ -864,8 +860,8 @@ function animate(): void {
     const position = workspace.position;
     $("time").textContent = `${Math.floor(position / 60)}:${(position % 60).toFixed(1).padStart(4, "0")}`;
     studio.setPlayhead(position);
-    const { active, queued } = workspace.session.value;
-    if (workspace.clock.state.value === "playing" && !active.length && !queued.length) {
+    const session = workspace.session.value;
+    if (workspace.clock.state.value === "playing" && !session.playing.value.length && !session.queued.value.length) {
       const range = looping ? loopRange() : undefined;
       if (looping && !range) {
         looping = false;

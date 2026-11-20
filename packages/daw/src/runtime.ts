@@ -3,7 +3,7 @@ import type { LoopRange, TickWindow } from "@audiorective/clock";
 import { batch, cell, effect, readonlyCell, untracked, type Cell, type Readable, type ReadonlyCell } from "@audiorective/core";
 import { AutomationBinding, AutomationCurve, audioParamTarget } from "@audiorective/core/automation";
 import { WebClapHost } from "@audiorective/host/webclap";
-import { ClipLauncher, type ClipLaunch, type ClipLauncherState, type QueuedClipLaunch } from "@audiorective/launcher";
+import { ClipLauncher, type Clip as SessionClip, type ClipSpec } from "@audiorective/launcher";
 import type { WaveStretchAnchor, WaveStretchProcessor } from "@audiorective/player";
 import { EffectRack, type RackEffect } from "@audiorective/effects/rack";
 import { AudioTrackSession } from "./audio-track-session";
@@ -60,8 +60,14 @@ export class Workspace {
     return this.clock;
   }
   readonly player: WorkspacePlayer;
-  /** Mirrors `cells.session`. */
-  readonly session: ReadonlyCell<ClipLauncherState>;
+  /**
+   * The Session view's launcher over this Workspace's audio tracks (mirrors `cells.session`): `session.value.tracks[trackId].clips[i]` is the i-th
+   * clip of that Project track, `null` when it is not an in-memory audio clip, so a grid reads a Project clip's state from its cells and launches
+   * it with `clip.launch()`. A launched clip plays through the track's devices, effects and mixer strip and takes the track away from Arrangement
+   * until it is stopped or a one-shot ends. The launcher follows `workspace.transport` (a launch made while stopped waits for `play()`; stop and
+   * seek clear it) and is replaced by `sync()`, so read `session.value` inside the effect that uses it. See `sessionClip`.
+   */
+  readonly session: ReadonlyCell<ClipLauncher>;
   /** Mirrors `cells.auditioningClip`. */
   readonly auditioningClip: ReadonlyCell<string | null>;
   /** Mirrors `cells.auditioningRange`. */
@@ -74,12 +80,15 @@ export class Workspace {
     needsSync: ReadonlyCell<boolean>;
     error: ReadonlyCell<string | null>;
     warnings: ReadonlyCell<readonly string[]>;
-    session: ReadonlyCell<ClipLauncherState>;
+    session: ReadonlyCell<ClipLauncher>;
     auditioningClip: ReadonlyCell<string | null>;
     auditioningRange: ReadonlyCell<RangeAuditionState | null>;
   }>;
   private readonly stretch: ClipStretch;
-  private readonly launcher: ClipLauncher;
+  private readonly sessionSource: Cell<ClipLauncher>;
+  private readonly sessionSources = new WeakMap<SessionClip, PcmAudioClip>();
+  /** Bumped when `reconcileSession` replaces a session clip, so `sessionClip` readers re-run. */
+  private readonly sessionClipEdits = cell(0);
 
   private readonly projectSource: Cell<Project>;
   /** The Project this Workspace destroys with itself, when it was handed one. */
@@ -128,20 +137,8 @@ export class Workspace {
     if (options.destination) this.output.connect(options.destination);
     this.timeline = new Timeline({ audioContext: context, bpm: project.bpm });
     this.clock = new Clock({ timeline: this.timeline, lookAhead: 0.15, tickInterval: 0.025, onTick: (window) => this.schedule(window) });
-    this.launcher = new ClipLauncher({
-      now: () => this.context.currentTime,
-      timeToBeat: (time) => this.timeline.timeToBeat(time),
-      beatToTime: (beat) => this.timeline.beatToTime(beat),
-      schedule: ({ trackId, clipId, mode }, when) => {
-        const buffer = clipId === null ? null : this.scheduler.sessionBufferFor(this.launchableClip(trackId, clipId));
-        const { end, commit, cancel } = this.tracks.get(trackId)!.session!.schedule(buffer, when, mode !== "one-shot");
-        return { commit, cancel, endsAt: end };
-      },
-      reset: () => {
-        for (const track of this.tracks.values()) track.session?.reset();
-      },
-    });
-    this.session = this.launcher.state;
+    this.sessionSource = cell(this.buildSession());
+    this.session = readonlyCell(this.sessionSource);
     this.auditioningClip = this.audition.cells.clip;
     this.auditioningRange = this.audition.cells.range;
     this.cells = Object.freeze({
@@ -328,6 +325,7 @@ export class Workspace {
     this.audition.stopStale();
     this.stop();
     this.activeTempoMap = this.project.tempoMap;
+    this.clock.meter.value = [...this.project.signature];
     await this.captureStates();
     this.disposeTracks();
     try {
@@ -343,6 +341,7 @@ export class Workspace {
       if (this.project.tracks !== tracks) return await this.rebuildTracks(position);
       this.mixer.applyRouting(tracks);
       this.mixer.applyMixer();
+      this.sessionSource.value = this.buildSession();
       this.bindSequences();
       this.seek(position);
       this.topologyPending.value = false;
@@ -544,29 +543,64 @@ export class Workspace {
   }
 
   /**
-   * Queue clips or return tracks to Arrangement at the next launch grid boundary, or now when `quantumBeats` is 0.
-   * A track's launch replaces only that track's pending launch.
+   * The Session clip of a Project audio clip: `session.value.tracks[trackId].clips[i]` for the clip's position in its track, or null when the
+   * clip is unknown or not an in-memory audio clip. Session clips loop and keep their recorded speed; `clip.configure({ loop: false })` makes one a one-shot.
+   * A tracked reader: it re-runs when the Project's clips change and the session clips are replaced to match.
    */
-  launchClips(changes: readonly ClipLaunch[], quantumBeats = 1): readonly QueuedClipLaunch[] {
-    return untracked(() => {
-      if (this.destroyed || this.clock.state.value !== "playing") throw new Error("Start Workspace playback before launching clips.");
-      for (const { trackId, clipId } of changes) {
-        if (!this.tracks.get(trackId)?.session) throw new Error("Clip Launcher requires an audio track.");
-        if (clipId !== null) this.scheduler.sessionBufferFor(this.launchableClip(trackId, clipId));
-      }
-      return this.launcher.queue(changes, quantumBeats);
+  sessionClip(trackId: string, clipId: string): SessionClip | null {
+    this.sessionClipEdits.$();
+    this.project.cells.revision.$();
+    const index = this.project.tracks.find((track) => track.id === trackId)?.clips.findIndex((clip) => clip.id === clipId) ?? -1;
+    return index < 0 ? null : (this.sessionSource.value.tracks[trackId]?.clips[index] ?? null);
+  }
+
+  /** A launcher over the audio tracks built so far; session clips play through each track's input and take it away from Arrangement while they sound. */
+  private buildSession(): ClipLauncher {
+    const specs: Record<string, (ClipSpec | null)[]> = {};
+    for (const track of this.project.tracks)
+      if (this.tracks.get(track.id)?.session) specs[track.id] = track.clips.map((clip) => this.sessionSpec(clip));
+    const launcher = new ClipLauncher(specs, {
+      context: this.context,
+      onSchedule: ({ track, clip, when, endsAt }) => this.tracks.get(track.name)?.session?.follow(when, clip !== null, endsAt),
+    });
+    for (const id of Object.keys(specs)) launcher.tracks[id]!.connect(this.tracks.get(id)!.input);
+    this.clock.attach(launcher);
+    this.project.tracks.forEach((track) => this.recordSessionSources(launcher, track));
+    return launcher;
+  }
+
+  private sessionSpec(clip: ProjectTrack["clips"][number]): ClipSpec | null {
+    if (clip.kind !== "audio" || clip.media) return null;
+    return { buffer: this.scheduler.sessionBufferFor(clip as PcmAudioClip), loop: true, warp: false, name: clip.id };
+  }
+
+  private recordSessionSources(launcher: ClipLauncher, track: ProjectTrack): void {
+    track.clips.forEach((clip, index) => {
+      const sessionClip = launcher.tracks[track.id]?.clips[index];
+      if (sessionClip && clip.kind === "audio" && !clip.media) this.sessionSources.set(sessionClip, clip);
     });
   }
 
-  /** Withdraw one track's pending launch, or every pending launch without an argument. */
-  cancelClipLaunch(trackId?: string): boolean {
-    return this.launcher.cancel(trackId);
-  }
-
-  private launchableClip(trackId: string, clipId: string): PcmAudioClip {
-    const clip = this.tracks.get(trackId)?.clips.find((clip) => clip.id === clipId);
-    if (!clip || clip.kind !== "audio" || clip.media) throw new Error("Clip Launcher requires an in-memory audio clip on the target track.");
-    return clip;
+  /** Bring the session clips in line with the Project's clips: a clip that changed or went away is replaced or removed (stopped at once if it was playing). */
+  private reconcileSession(): void {
+    const launcher = this.sessionSource.value;
+    let replaced = false;
+    for (const track of this.project.tracks) {
+      const sessionTrack = launcher.tracks[track.id];
+      if (!sessionTrack) continue;
+      const count = Math.max(track.clips.length, sessionTrack.clips.length);
+      for (let index = 0; index < count; index++) {
+        const wanted = track.clips[index];
+        const spec = wanted ? this.sessionSpec(wanted) : null;
+        const existing = sessionTrack.clips[index] ?? null;
+        const source = existing ? this.sessionSources.get(existing) : undefined;
+        if ((spec === null && existing === null) || (spec !== null && existing !== null && source === wanted)) continue;
+        replaced = true;
+        const clip = sessionTrack.setClip(index, spec);
+        if (clip && wanted?.kind === "audio" && !wanted.media) this.sessionSources.set(clip, wanted as PcmAudioClip);
+      }
+    }
+    if (replaced) this.sessionClipEdits.value++;
   }
 
   async play(): Promise<void> {
@@ -592,7 +626,6 @@ export class Workspace {
     this.playRequest++;
     untracked(() => this.positionAutomation(this.position, false));
     this.clock.pause();
-    this.launcher.reset();
     this.cancelAudio();
     this.panic();
   }
@@ -600,7 +633,6 @@ export class Workspace {
     this.playRequest++;
     batch(() => {
       this.clock.stop();
-      this.launcher.reset();
       this.seekPoint.value = { seconds: 0 };
     });
     untracked(() => this.positionAutomation(0, false));
@@ -613,7 +645,6 @@ export class Workspace {
   private seekUntracked(seconds: number): void {
     if (!Number.isFinite(seconds) || seconds < 0) throw new RangeError("Workspace seek needs non-negative seconds.");
     this.playRequest++;
-    this.launcher.reset();
     this.panic();
     this.cancelAudio();
     this.activeTempoMap = this.project.tempoMap;
@@ -641,15 +672,7 @@ export class Workspace {
       const runtime = this.tracks.get(track.id);
       if (runtime?.kind === track.kind) runtime.clips = track.clips;
     }
-    const { active, queued } = this.session.value;
-    if (
-      [...active, ...queued].some(
-        ({ trackId, clipId }) =>
-          clipId !== null && !this.project.tracks.find((track) => track.id === trackId)?.clips.some((clip) => clip.id === clipId),
-      )
-    ) {
-      this.launcher.reset();
-    }
+    this.reconcileSession();
     this.cancelAudio();
     this.bindSequences();
     this.refresh();
@@ -838,7 +861,6 @@ export class Workspace {
   }
 
   private schedule(window: TickWindow<Record<never, never>>): void {
-    this.launcher.advance();
     this.scheduler.scheduleArrangement(this.tracks.values(), window, this.activeTempoMap, this.timeline);
   }
 
@@ -861,6 +883,7 @@ export class Workspace {
 
   private disposeTracks(): void {
     for (const off of this.sequenceOff.splice(0)) off();
+    this.sessionSource.value.dispose();
     for (const runtime of this.tracks.values()) this.disposeTrack(runtime);
     this.tracks.clear();
     this.scheduler.forget();
