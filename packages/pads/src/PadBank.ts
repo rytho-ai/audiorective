@@ -1,29 +1,33 @@
 import {
   AudioProcessor,
-  Voice,
+  assertSound,
+  batch,
   cell,
+  playSound,
   readonlyCell,
   untracked,
-  type CancellableEvent,
   type Cell,
+  type PlayOptions,
   type ReadonlyCell,
   type SchedulableParam,
+  type Sound,
+  type Voice,
 } from "@audiorective/core";
 
-export type PadSpec = Readonly<{ id: string; buffer: AudioBuffer; group?: string; gate?: boolean }>;
-
-export type PadHitOptions = Readonly<{
-  /** Semitones; the voice plays at rate `2 ** (pitch / 12)`. Default 0. */
-  pitch?: number;
-  /** Seconds the gate stays open, honoured only for `gate: true` pads. Retractable like choke. */
-  duration?: number;
+export type PadSpec = Readonly<{
+  id: string;
+  /** A decoded sample or a sound factory. */
+  sound: Sound;
+  /** A hit cuts every sounding voice of the pads in the same group (its own pad included) with the bank's `release` fade. Pads without a group layer freely. */
+  group?: string;
 }>;
 
-/** One hit and all of its future policy effects. Clock can own this structural handle. */
-export interface PadHit extends CancellableEvent {
-  /** Same operation as cancel, for callers treating the event as a voice. */
-  stop(): void;
-}
+export type PadBankOptions = Readonly<{
+  /** Seconds a cut or stopped voice fades out. Default 0.005. */
+  release?: number;
+  /** Aborting the signal calls `dispose()`. */
+  signal?: AbortSignal;
+}>;
 
 type Hit = {
   pad: PadSpec;
@@ -31,22 +35,23 @@ type Hit = {
   order: number;
   gate: GainNode;
   voice: Voice;
-  /** Time the gate closes: the earliest of a same-group choke and the hit's own duration. */
+  state: Cell<boolean>;
+  /** Time the gate starts closing: the earliest of a later same-group hit and the hit's own scheduled stop. */
   chokeAt: number;
-  /** Close time from `duration` on a gate pad; Infinity when the hit has none. */
-  closeAt: number;
+  /** Scheduled stop time from `voice.stop(when)`; Infinity when the hit has none. */
+  stopAt: number;
   done: boolean;
-  callbacks: Array<() => void>;
 };
 
 /**
- * Sample hits with retractable same-group choke. The caller owns the AudioContext and routing.
- * A native gain gate carries future choke so cancelling the incoming hit can retract it.
+ * Named pads that each play their own sound, with choke groups. The caller owns the AudioContext and routing:
+ * its output is not connected, `pads.connect(context.destination)`.
+ * A native gain gate carries future choke so stopping the incoming hit before it starts can retract it.
  * Each pad feeds the bank `output` through its own gain; `routePad` redirects that gain, so pads in one choke group can have separate effects.
  */
 export class PadBank extends AudioProcessor<
   { volume: SchedulableParam },
-  { activeEvents: ReadonlyCell<number>; pads: ReadonlyCell<readonly PadSpec[]> }
+  { activeVoices: ReadonlyCell<number>; pads: ReadonlyCell<readonly PadSpec[]> }
 > {
   private readonly outputNode: GainNode;
   /** One bank-owned gain per pad: every hit of the pad feeds it, and it feeds `output` unless routed elsewhere. */
@@ -55,14 +60,18 @@ export class PadBank extends AudioProcessor<
   /** The only store of pad specs; `cells.pads` is its read-only view. */
   private readonly padStore: Cell<readonly PadSpec[]>;
   private readonly hits = new Set<Hit>();
+  private readonly release: number;
+  private readonly abortSignal: AbortSignal | undefined;
+  private readonly onAbort = () => this.dispose();
   private nextOrder = 0;
   private cleanupTimer: ReturnType<typeof setTimeout> | undefined;
   private disposed = false;
 
-  constructor(context: BaseAudioContext, pads: readonly PadSpec[]) {
+  constructor(context: BaseAudioContext, pads: readonly PadSpec[], options: PadBankOptions = {}) {
     const ids = new Set<string>();
     for (const pad of pads) {
       if (!pad.id || ids.has(pad.id)) throw new Error("Pad Bank pad IDs must be nonempty and unique.");
+      assertSound(pad.sound);
       ids.add(pad.id);
     }
     const output = new GainNode(context);
@@ -70,7 +79,7 @@ export class PadBank extends AudioProcessor<
     const store = cell<readonly PadSpec[]>(Object.freeze(pads.map((pad) => Object.freeze({ ...pad }))));
     super(context, ({ param }) => ({
       params: { volume: param({ default: 1, bind: output.gain }) },
-      cells: { activeEvents: readonlyCell(active), pads: readonlyCell(store) },
+      cells: { activeVoices: readonlyCell(active), pads: readonlyCell(store) },
     }));
     this.outputNode = output;
     for (const pad of pads) {
@@ -80,6 +89,12 @@ export class PadBank extends AudioProcessor<
     }
     this.activeStore = active;
     this.padStore = store;
+    this.release = Math.max(0, options.release ?? 0.005);
+    this.abortSignal = options.signal;
+    if (this.abortSignal) {
+      if (this.abortSignal.aborted) this.dispose();
+      else this.abortSignal.addEventListener("abort", this.onAbort, { once: true });
+    }
   }
 
   override get output(): GainNode {
@@ -103,32 +118,28 @@ export class PadBank extends AudioProcessor<
     hit.done = true;
     this.hits.delete(hit);
     hit.voice.stop();
-    hit.gate.disconnect();
-    this.publish();
-    for (const listener of hit.callbacks.splice(0)) {
-      try {
-        listener();
-      } catch (error) {
-        console.error("Instrument event end listener failed:", error);
-      }
-    }
+    batch(() => {
+      this.publish();
+      hit.state.value = false;
+    });
   }
 
+  /** Retire every hit whose gate has finished closing. */
   private settle(): void {
     const now = this.context.currentTime;
-    for (const hit of [...this.hits]) if (hit.chokeAt <= now) this.finish(hit);
+    for (const hit of [...this.hits]) if (hit.chokeAt + this.release <= now) this.finish(hit);
   }
 
   private rebuild(): void {
     if (this.cleanupTimer !== undefined) clearTimeout(this.cleanupTimer);
     this.cleanupTimer = undefined;
     const now = this.context.currentTime;
-    let nextChoke = Infinity;
+    let nextRetire = Infinity;
     for (const hit of this.hits) {
-      let chokeAt = hit.closeAt;
+      let chokeAt = hit.stopAt;
       if (hit.pad.group !== undefined) {
         for (const incoming of this.hits) {
-          if (incoming.pad.group !== hit.pad.group || incoming.pad.id === hit.pad.id) continue;
+          if (incoming.pad.group !== hit.pad.group) continue;
           if (incoming.when > hit.when || (incoming.when === hit.when && incoming.order > hit.order)) {
             chokeAt = Math.min(chokeAt, incoming.when);
           }
@@ -139,88 +150,80 @@ export class PadBank extends AudioProcessor<
       gain.cancelScheduledValues(now);
       gain.setValueAtTime(1, now);
       if (Number.isFinite(chokeAt)) {
-        gain.setValueAtTime(0, Math.max(now, chokeAt));
-        nextChoke = Math.min(nextChoke, chokeAt);
+        const start = Math.max(now, chokeAt);
+        gain.setValueAtTime(1, start);
+        gain.linearRampToValueAtTime(0, start + this.release);
+        nextRetire = Math.min(nextRetire, start + this.release);
       }
     }
-    // The timer only retires silent nodes. The gain event above schedules the actual sound cutoff.
-    if (Number.isFinite(nextChoke)) {
+    // The timer only retires silent nodes. The gain events above schedule the actual fade.
+    if (Number.isFinite(nextRetire)) {
       this.cleanupTimer = setTimeout(
         () => {
           this.cleanupTimer = undefined;
           this.settle();
           this.rebuild();
         },
-        Math.max(1, Math.ceil((nextChoke - now) * 1000) + 1),
+        Math.max(1, Math.ceil((nextRetire - now) * 1000) + 1),
       );
     }
   }
 
+  private stopHit(hit: Hit, when: number | undefined): void {
+    if (hit.done) return;
+    this.settle();
+    const now = this.context.currentTime;
+    const at = Math.max(when ?? now, now);
+    if (at <= now || at <= hit.when) {
+      this.finish(hit);
+    } else {
+      hit.stopAt = Math.min(hit.stopAt, at);
+    }
+    this.rebuild();
+  }
+
   /**
-   * Schedule one hit. Past times play now; unknown pad IDs return null.
-   * `options.pitch` transposes by semitones; `options.duration` closes a gate pad's hit at `when + duration`.
+   * Play pad `id` once. Returns the voice, or null for an unknown id.
+   * A hit in a choke group fades out every sounding voice of the group at its own start time; stopping it before it starts retracts that.
    */
-  trigger(id: string, velocity = 1, when = this.context.currentTime, options: PadHitOptions = {}): PadHit | null {
+  trigger(id: string, options: PlayOptions = {}): Voice | null {
     this.assertAlive();
-    if (!Number.isFinite(when) || when < 0) throw new RangeError("Pad hit time must be finite, non-negative seconds.");
-    if (!Number.isFinite(velocity)) throw new RangeError("Pad hit velocity must be finite.");
-    const { pitch = 0, duration } = options;
-    if (!Number.isFinite(pitch)) throw new RangeError("Pad hit pitch must be finite semitones.");
-    if (duration !== undefined && (!Number.isFinite(duration) || duration <= 0))
-      throw new RangeError("Pad hit duration must be finite, positive seconds.");
     const pad = this.pad(id);
     if (!pad) return null;
     this.settle();
-    const at = Math.max(when, this.context.currentTime);
+    const at = Math.max(options.when ?? this.context.currentTime, this.context.currentTime);
     const gate = new GainNode(this.context);
     gate.connect(this.padNodes.get(pad.id)!);
-    let hit: Hit | undefined;
     let voice: Voice;
     try {
-      voice = new Voice(
+      voice = playSound(
         this.context,
-        pad.buffer,
+        pad.sound,
         gate,
-        { when: at, volume: Math.max(0, Math.min(1, velocity)), rate: 2 ** (pitch / 12), loop: pad.gate ?? false },
-        () => {
-          this.settle();
-          if (hit) {
-            this.finish(hit);
-            this.rebuild();
-          }
-        },
+        { when: at, velocity: options.velocity ?? 1, pitch: options.pitch ?? 0, duration: Infinity },
+        { release: this.release, onFree: () => gate.disconnect() },
       );
     } catch (error) {
       gate.disconnect();
       throw error;
     }
-    hit = {
-      pad,
-      when: at,
-      order: ++this.nextOrder,
-      gate,
-      voice,
-      chokeAt: Infinity,
-      closeAt: pad.gate && duration !== undefined ? at + duration : Infinity,
-      done: false,
-      callbacks: [],
-    };
-    this.hits.add(hit);
+    const state = cell(true);
+    const created: Hit = { pad, when: at, order: ++this.nextOrder, gate, voice, state, chokeAt: Infinity, stopAt: Infinity, done: false };
+    this.hits.add(created);
+    voice.playing.subscribe((playing) => {
+      if (playing || created.done) return;
+      this.settle();
+      this.finish(created);
+      this.rebuild();
+    });
     this.rebuild();
     this.publish();
-    const cancel = () => {
-      if (hit.done) return;
-      this.settle();
-      this.finish(hit);
-      this.rebuild();
-    };
+    const view = readonlyCell(state);
     return {
-      cancel,
-      stop: cancel,
-      onEnded(listener) {
-        if (hit.done) listener();
-        else hit.callbacks.push(listener);
-      },
+      note: null,
+      when: at,
+      playing: view,
+      stop: (when) => this.stopHit(created, when),
     };
   }
 
@@ -237,31 +240,30 @@ export class PadBank extends AudioProcessor<
     node.connect(destination ?? this.outputNode);
   }
 
-  /** Replace a pad's buffer and cancel only hits made from that pad. */
-  assign(id: string, buffer: AudioBuffer): void {
+  /** Replace a pad's sound; its sounding voices are released. */
+  assign(id: string, sound: Sound): void {
     this.assertAlive();
     const pad = this.pad(id);
     if (!pad) throw new Error("Unknown pad.");
+    assertSound(sound);
     this.settle();
     for (const hit of [...this.hits]) if (hit.pad.id === id) this.finish(hit);
-    this.padStore.value = Object.freeze(
-      untracked(() => this.padStore.value).map((item) => (item === pad ? Object.freeze({ ...pad, buffer }) : item)),
-    );
+    this.padStore.value = Object.freeze(untracked(() => this.padStore.value).map((item) => (item === pad ? Object.freeze({ ...pad, sound }) : item)));
     this.rebuild();
   }
 
-  /** Cancel every hit, including those scheduled for the future. */
-  stopAll(): void {
-    this.settle();
-    for (const hit of [...this.hits]) this.finish(hit);
-    if (this.cleanupTimer !== undefined) clearTimeout(this.cleanupTimer);
-    this.cleanupTimer = undefined;
+  /** Release every voice at `when` (default now). */
+  stopAll(when?: number): void {
+    for (const hit of [...this.hits]) this.stopHit(hit, when);
   }
 
   override dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    this.stopAll();
+    this.abortSignal?.removeEventListener("abort", this.onAbort);
+    for (const hit of [...this.hits]) this.finish(hit);
+    if (this.cleanupTimer !== undefined) clearTimeout(this.cleanupTimer);
+    this.cleanupTimer = undefined;
     for (const node of this.padNodes.values()) node.disconnect();
     this.padNodes.clear();
     this.outputNode.disconnect();

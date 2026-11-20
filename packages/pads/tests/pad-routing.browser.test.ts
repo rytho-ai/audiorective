@@ -29,14 +29,14 @@ const level = (buffer: AudioBuffer, channel: number, from: number, to: number) =
 test("two pads in one choke group go to different destinations and the choke still cuts across them", async () => {
   const { context, sample, merger, left, right } = rig();
   const bank = new PadBank(context, [
-    { id: "open", buffer: sample(1, 0.3), group: "hat" },
-    { id: "closed", buffer: sample(0.1, 0.1), group: "hat" },
+    { id: "open", sound: sample(1, 0.3), group: "hat" },
+    { id: "closed", sound: sample(0.1, 0.1), group: "hat" },
   ]);
   bank.output.connect(merger, 0, 2);
   bank.routePad("open", left);
   bank.routePad("closed", right);
-  bank.trigger("open", 1, 0);
-  bank.trigger("closed", 1, 0.2);
+  bank.trigger("open", { when: 0 });
+  bank.trigger("closed", { when: 0.2 });
   const out = await context.startRendering();
   expect(level(out, 0, 0.05, 0.19)).toBeCloseTo(0.3, 3); // open hat reaches its own destination
   expect(level(out, 1, 0.05, 0.19)).toBeLessThan(1e-4);
@@ -48,11 +48,11 @@ test("two pads in one choke group go to different destinations and the choke sti
 
 test("routePad(id, null) restores the bank output", async () => {
   const { context, sample, merger, left } = rig();
-  const bank = new PadBank(context, [{ id: "kick", buffer: sample(0.4, 0.3) }]);
+  const bank = new PadBank(context, [{ id: "kick", sound: sample(0.4, 0.3) }]);
   bank.output.connect(merger, 0, 2);
   bank.routePad("kick", left);
   bank.routePad("kick", null);
-  bank.trigger("kick", 1, 0);
+  bank.trigger("kick", { when: 0 });
   const out = await context.startRendering();
   expect(level(out, 2, 0.05, 0.3)).toBeCloseTo(0.3, 3);
   expect(level(out, 0, 0, 0.5)).toBeLessThan(1e-4);
@@ -62,14 +62,14 @@ test("routePad(id, null) restores the bank output", async () => {
 test("a routed pad bypasses the bank volume; the other pads keep it", async () => {
   const { context, sample, merger, left } = rig();
   const bank = new PadBank(context, [
-    { id: "a", buffer: sample(0.4, 0.4) },
-    { id: "b", buffer: sample(0.4, 0.4) },
+    { id: "a", sound: sample(0.4, 0.4) },
+    { id: "b", sound: sample(0.4, 0.4) },
   ]);
   bank.output.connect(merger, 0, 2);
   bank.routePad("a", left);
   bank.params.volume.value = 0.5;
-  bank.trigger("a", 1, 0);
-  bank.trigger("b", 1, 0);
+  bank.trigger("a", { when: 0 });
+  bank.trigger("b", { when: 0 });
   const out = await context.startRendering();
   expect(level(out, 0, 0.05, 0.3)).toBeCloseTo(0.4, 3); // routed away from the bank volume
   expect(level(out, 2, 0.05, 0.3)).toBeCloseTo(0.2, 3);
@@ -78,9 +78,9 @@ test("a routed pad bypasses the bank volume; the other pads keep it", async () =
 
 test("dispose disconnects only bank-owned edges and leaves the destinations working", async () => {
   const { context, sample, merger, left } = rig();
-  const bank = new PadBank(context, [{ id: "kick", buffer: sample(0.4, 0.3) }]);
+  const bank = new PadBank(context, [{ id: "kick", sound: sample(0.4, 0.3) }]);
   bank.routePad("kick", left);
-  bank.trigger("kick", 1, 0);
+  bank.trigger("kick", { when: 0 });
   bank.dispose();
   // `left` is still wired into the caller's graph: a caller-owned source passes through it.
   const tone = new ConstantSourceNode(context, { offset: 0.5 });
@@ -94,20 +94,20 @@ test("dispose disconnects only bank-owned edges and leaves the destinations work
 
 test("routePad rejects an unknown pad", () => {
   const { context, sample, left } = rig();
-  const bank = new PadBank(context, [{ id: "kick", buffer: sample(0.1, 0.3) }]);
+  const bank = new PadBank(context, [{ id: "kick", sound: sample(0.1, 0.3) }]);
   expect(() => bank.routePad("snare", left)).toThrow("Unknown pad.");
   bank.dispose();
 });
 
-test("a one-shot (gate: false) open hat is choked by a later closed hat in its group", async () => {
+test("an open hat is choked by a later closed hat in its group", async () => {
   const { context, sample, merger } = rig();
   const bank = new PadBank(context, [
-    { id: "open", buffer: sample(1, 0.3), group: "hat" }, // gate omitted: plays once
-    { id: "closed", buffer: sample(0.1, 0.1), group: "hat" },
+    { id: "open", sound: sample(1, 0.3), group: "hat" },
+    { id: "closed", sound: sample(0.1, 0.1), group: "hat" },
   ]);
   bank.output.connect(merger, 0, 2);
-  bank.trigger("open", 1, 0);
-  bank.trigger("closed", 1, 0.2);
+  bank.trigger("open", { when: 0 });
+  bank.trigger("closed", { when: 0.2 });
   const out = await context.startRendering();
   expect(level(out, 2, 0.05, 0.19)).toBeCloseTo(0.3, 3);
   expect(level(out, 2, 0.21, 0.29)).toBeCloseTo(0.1, 3); // only the closed hat; the open hat is gone
@@ -115,22 +115,60 @@ test("a one-shot (gate: false) open hat is choked by a later closed hat in its g
   bank.dispose();
 });
 
-test("gate: true loops past the buffer end; gate: false stops at it; duration closes the gate", async () => {
-  const { context, sample, merger } = rig(1);
+test("a pad's own repeated hit chokes its earlier voice, and pads without a group layer", async () => {
+  const { context, sample, merger } = rig();
   const bank = new PadBank(context, [
-    { id: "once", buffer: sample(0.1, 0.3) },
-    { id: "loop", buffer: sample(0.1, 0.3), gate: true },
-    { id: "timed", buffer: sample(0.1, 0.3), gate: true },
+    { id: "hat", sound: sample(1, 0.3), group: "hat" },
+    { id: "kick", sound: sample(1, 0.2) },
   ]);
   bank.output.connect(merger, 0, 2);
-  bank.trigger("once", 1, 0);
-  const looping = bank.trigger("loop", 1, 0)!;
-  bank.trigger("timed", 1, 0, { duration: 0.25 });
+  bank.trigger("hat", { when: 0 });
+  bank.trigger("hat", { when: 0.2 });
+  bank.trigger("kick", { when: 0 });
+  bank.trigger("kick", { when: 0.2 });
   const out = await context.startRendering();
-  // once ends at 0.1; loop and timed (0.3 each) sound together until timed closes at 0.25; only loop remains after.
-  expect(level(out, 2, 0.05, 0.09)).toBeCloseTo(0.9, 3);
-  expect(level(out, 2, 0.15, 0.24)).toBeCloseTo(0.6, 3);
-  expect(level(out, 2, 0.3, 0.9)).toBeCloseTo(0.3, 3);
-  looping.cancel();
+  expect(level(out, 2, 0.05, 0.19)).toBeCloseTo(0.5, 3); // hat + kick
+  expect(level(out, 2, 0.25, 0.45)).toBeCloseTo(0.7, 3); // second hat (0.3) over two layered kicks (0.2 + 0.2)
+  bank.dispose();
+});
+
+test("a factory pad is choked like a sample pad, with the bank's release fade", async () => {
+  const { context, sample, merger } = rig();
+  const bank = new PadBank(
+    context,
+    [
+      { id: "open", sound: (ctx) => new ConstantSourceNode(ctx, { offset: 0.3 }), group: "hat" },
+      { id: "closed", sound: sample(0.1, 0.1), group: "hat" },
+    ],
+    { release: 0.05 },
+  );
+  bank.output.connect(merger, 0, 2);
+  bank.trigger("open", { when: 0 });
+  bank.trigger("closed", { when: 0.2 });
+  const out = await context.startRendering();
+  expect(level(out, 2, 0.05, 0.19)).toBeCloseTo(0.3, 3);
+  expect(level(out, 2, 0.3, 0.5)).toBeLessThan(1e-4);
+  expect(out.getChannelData(2)[Math.round(0.225 * RATE)]).toBeGreaterThan(0.1);
+  bank.dispose();
+});
+
+test("a pad factory sees the hit's velocity and pitch, and velocity scales the voice once", async () => {
+  const { context, merger } = rig();
+  const seen: Array<{ velocity: number; pitch: number; duration: number }> = [];
+  const bank = new PadBank(context, [
+    {
+      id: "zap",
+      sound: (ctx, hit) => {
+        seen.push({ velocity: hit.velocity, pitch: hit.pitch, duration: hit.duration });
+        const source = new ConstantSourceNode(ctx, { offset: 1 });
+        return { output: source, sources: [source], duration: 0.2 };
+      },
+    },
+  ]);
+  bank.output.connect(merger, 0, 2);
+  bank.trigger("zap", { when: 0, velocity: 0.5, pitch: 7 });
+  const out = await context.startRendering();
+  expect(seen).toEqual([{ velocity: 0.5, pitch: 7, duration: Infinity }]);
+  expect(level(out, 2, 0.05, 0.15)).toBeCloseTo(0.5, 3);
   bank.dispose();
 });
