@@ -2,140 +2,100 @@
 title: Clip Launcher
 ---
 
-Quantized clip launching from `@audiorective/launcher`.
+Tracks of clips launched on musical boundaries, from `@audiorective/launcher`. Signatures, option lists, defaults and units are in the package's type declarations (JSDoc on every member); this page holds what the types do not say. Modes, follow actions, tempo, pattern clips and the host hook are in [advanced](./launcher-advanced.md).
 
-## Clip Launcher
+`ClipLauncher` owns playback. A track plays one clip at a time; launching replaces it on the next boundary, with no gap and no overlap. It borrows its time from a clock (`clock.attach(launcher)`) and imports only `@audiorective/core`.
 
-`ClipLauncher` is the launch state machine of a session view: quantized per-track overrides over a borrowed audio clock. It owns what is queued and active and when each switch is due; your driver owns the sound. It holds no nodes, timers or effects, so there is no `destroy()`.
-
-```ts
-new ClipLauncher(transport: ClipLaunchTransport)
-
-type ClipLaunch = { trackId: string; clipId: string | null; mode?: "loop" | "one-shot" };
-type QueuedClipLaunch = ClipLaunch & { beat: number; when: number }; // the boundary, in beats and absolute audio seconds
-type ClipLauncherState = { active: readonly ClipLaunch[]; queued: readonly QueuedClipLaunch[] }; // at most one entry per track
-
-type ClipLaunchTransport = BeatTiming & {
-  now(): number; // audio-context time
-  schedule(change: ClipLaunch, when: number): ClipLaunchTransition; // one track's change at `when`
-  reset(): void; // stop all playback
-};
-type ClipLaunchTransition = { cancel(): void; commit(): void; endsAt?: number };
-```
-
-`BeatTiming` (`timeToBeat()` and `beatToTime()`) and `now()` come from the same source, usually the `Timeline` of the `Clock` that is running. `state` is a read-only cell; `launcher.state.value` and effects read it like any other cell.
-
-### Launching and cancelling
-
-- `queue(changes, quantumBeats = 1)` queues one launch per listed track (unique track IDs) and returns the `QueuedClipLaunch` list, in call order. Each launch switches at the next multiple of `quantumBeats`.
-- **Pending launches are per track.** Queueing track A replaces only A's pending launch; every other track's pending launch stays. Independent clicks need no merging in your app.
-- **A scene is one `queue` call.** All its tracks share one boundary and the same `when`, so they start on the same sample. A later call that names only one of those tracks replaces just that track.
-- **Quanta are per call.** A track queued with a different quantum than another pending track keeps its own boundary: a track queued on 4 beats and another on 1 beat switch at different times.
-- **Quantum `0` launches now.** There is no boundary: `when` is the current audio time and `beat` the current beat. The switch is still published by the next `advance()`.
-- `clipId: null` is the driver's "no clip" for that track. Your driver decides what it means (silence in a standalone driver; the DAW returns the track to Arrangement). It is committed like any other launch and removes the track from `active`.
-- `cancel(trackId?)` withdraws that track's pending launch, or every pending launch with no argument, and returns whether anything was withdrawn. A launch whose time has arrived cannot be withdrawn; its switch is published instead.
-- `advance()` publishes the switches whose audio time has arrived, plus any one-shot that has ended. Call it from the `Clock`'s `onTick`. `reset()` cancels every pending launch, clears `active`, and calls `transport.reset()`; use it before a discontinuous transport change such as a seek or stop.
-
-Commands never subscribe a calling effect.
-
-### The driver contract
-
-`schedule(change, when)` is called once per changed track, with the same `when` for every track of one `queue` call. It must prepare the sound **reversibly** and return a transition:
-
-| Member   | When it runs                                                                                                                                            | Who calls it | What it must do                                                                                                                                                             |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cancel` | The launch is withdrawn with `cancel()`, replaced by a later launch of the same track, `reset()` runs, or a later track of the same `queue` call throws | The launcher | Retract the incoming playback and leave the previous playback exactly as before. Safe before `when` only.                                                                   |
-| `commit` | An `advance()` finds `when` has arrived                                                                                                                 | The launcher | Release the outgoing playback; the switch has happened. The driver has no other reason to track `when`.                                                                     |
-| `endsAt` | Read once, when the launch commits                                                                                                                      | The launcher | For `mode: "one-shot"`, the absolute audio time the clip ends. The override leaves `active` at that time; the driver schedules its own audio change there. Omit for a loop. |
-
-The launcher never calls `cancel()` after `commit()`. Replacing or withdrawing a track therefore always calls the replaced launch's `cancel()` for you; the driver does not track pending launches itself.
-
-The hard part is the outgoing stop. `AudioBufferSourceNode.stop(when)` cannot be retracted, so a launch that stops the outgoing clip with it cannot be cancelled. Put each launch behind its own `GainNode` gate instead: schedule `setValueAtTime(0, when)` on the outgoing gate, and undo it with `cancelScheduledValues(when)`. The sources are stopped for real only in `commit()`.
+## Layer 1: tracks of buffers
 
 ```ts
-import { ClipLauncher, type ClipLaunch, type ClipLaunchTransition } from "@audiorective/launcher";
-import { Clock, Timeline } from "@audiorective/clock";
+import { Clock } from "@audiorective/clock";
+import { ClipLauncher } from "@audiorective/launcher";
 
-const context = new AudioContext(); // you own it; resume() it from a user gesture
-const buffers = new Map<string, AudioBuffer>(); // clipId -> decoded loop
-const strips = new Map<string, AudioNode>(); // trackId -> the track's input (a Channel input, or a GainNode)
-type Voice = { source: AudioBufferSourceNode; gate: GainNode };
-const playing = new Map<string, Voice>(); // trackId -> the voice that is sounding at the boundary
+const launcher = new ClipLauncher(
+  { drums: [drumsA, drumsB], bass: [bassA, null, bassC] }, // one array per track; null leaves a slot empty
+  { context, quantize: "1m" },
+);
+const clock = new Clock({ context, bpm: 120 });
+clock.attach(launcher); // or workspace.transport.attach(launcher)
+clock.start();
 
-const timeline = new Timeline({ audioContext: context, bpm: 120 });
-const launcher = new ClipLauncher({
-  now: () => context.currentTime,
-  timeToBeat: (time) => timeline.timeToBeat(time),
-  beatToTime: (beat) => timeline.beatToTime(beat),
-  schedule({ trackId, clipId, mode }: ClipLaunch, when: number): ClipLaunchTransition {
-    const outgoing = playing.get(trackId);
-    let incoming: Voice | undefined;
-    if (clipId !== null) {
-      const source = new AudioBufferSourceNode(context, { buffer: buffers.get(clipId)!, loop: mode !== "one-shot" });
-      const gate = new GainNode(context, { gain: 0 });
-      gate.gain.setValueAtTime(1, when); // audible from the boundary
-      source.connect(gate).connect(strips.get(trackId)!);
-      source.start(when);
-      incoming = { source, gate };
-    }
-    outgoing?.gate.gain.setValueAtTime(0, when); // silent from the boundary; the source keeps running until commit
-    if (incoming) playing.set(trackId, incoming);
-    else playing.delete(trackId);
-    const dispose = ({ source, gate }: Voice) => {
-      source.stop();
-      source.disconnect();
-      gate.disconnect();
-    };
-    return {
-      endsAt: incoming && mode === "one-shot" ? when + incoming.source.buffer!.duration : undefined,
-      cancel() {
-        outgoing?.gate.gain.cancelScheduledValues(when); // the outgoing keeps sounding
-        if (incoming) dispose(incoming);
-        if (outgoing) playing.set(trackId, outgoing);
-        else playing.delete(trackId);
-      },
-      commit() {
-        if (outgoing) dispose(outgoing);
-      },
-    };
-  },
-  reset() {
-    for (const voice of playing.values()) {
-      voice.gate.gain.cancelScheduledValues(0);
-      voice.source.stop();
-      voice.source.disconnect();
-      voice.gate.disconnect();
-    }
-    playing.clear();
-  },
-});
-
-const clock = new Clock({ timeline, onTick: () => launcher.advance() });
-await context.resume();
-clock.start({ atBeat: -0.5 }); // beat 0 is then the first boundary half a beat from now
-
-launcher.queue([{ trackId: "drums", clipId: "drums-a" }], 4); // drums start on the next 4-beat boundary
-launcher.queue([{ trackId: "bass", clipId: "bass-a" }], 1); // independent: bass starts on the next beat; drums stay queued
-launcher.queue(
-  [
-    { trackId: "drums", clipId: "drums-b" },
-    { trackId: "bass", clipId: "bass-b" },
-  ],
-  4,
-); // a scene on one boundary; replaces both pending launches
-launcher.queue([{ trackId: "bass", clipId: "bass-c" }], 0); // now, without touching drums
-launcher.queue([{ trackId: "drums", clipId: null }], 1); // quantized stop: silence for that track
-launcher.cancel("drums"); // withdraw just that stop; launcher.cancel() withdraws everything
+launcher.tracks.drums.clips[0].launch(); // clips[0] is the first slot; starts on the next bar
+launcher.launchScene(1); // clips[1] of every track on one shared boundary
+launcher.tracks.bass.stop(); // silence one track on the next boundary
+launcher.stopAll();
 ```
 
-Nothing sounds early: the outgoing voice is only silenced by its gate at `when` and disposed in `commit()`. A one-shot needs no extra call at its end: the driver's source ends there and the launcher drops the override from `active` at `endsAt`.
+A buffer plays once and the clip is then stopped; `loop: true` repeats it. Each track has an `output` (a `GainNode` joined to the destination until `track.connect(node)`), so gain, mute and effects are the app's. Boundaries are `"none"` (at once), `"4n"` (a beat), `"8n"`, `"1m"` (a bar of `clock.meter`) or `"2m"`; `launcher.quantize` is a cell, so a UI can change it at any time.
 
-For engine playback with a Project, and for mounting a view over `state`, see [the DAW Clip Launcher](./daw.md#clip-launcher).
+## Layer 2: per-clip options
+
+```ts
+const launcher = new ClipLauncher(
+  {
+    bass: [
+      { buffer: loop, loop: true, quantize: "4n", gainDb: -3 },
+      { buffer: loop, offsetBeats: 2, loop: { startBeat: 4, endBeat: 12 }, mode: "gate" },
+      { sound: (ctx) => new OscillatorNode(ctx, { frequency: 110 }), length: "2m" }, // a voice made per start
+    ],
+  },
+  { context },
+);
+const clip = launcher.tracks.bass.clips[0];
+clip.gainDb.value = -6; // live
+clip.pitch.value = 3; // semitones, live for a buffer
+clip.configure({ quantize: "1m", loop: false }); // every other option
+```
+
+- **A clip is a buffer, a `sound` factory or a `scheduler`.** The factory returns an unconnected `AudioScheduledSourceNode` (or `{ source, output }`); the launcher starts, stops and connects it to the track. A `scheduler` is a `StepSequencer` or any clock scheduler (see [advanced](./launcher-advanced.md#pattern-clips)).
+- **Material is in beats from its first beat.** A buffer's seconds become beats at its `bpm`, which defaults to the clock tempo when the clip is created. `offsetBeats` sets where the first pass starts; `loop` is `true` or a region `{ startBeat, endBeat }`; `length` is where a one-shot ends. One rule: the material is `[0, length)`, `loop` picks the part that repeats, `offsetBeats` only sets the start, `bpm` only converts seconds to beats.
+- **Buffer clips follow the song tempo.** `warp` defaults to `"repitch"`: the playback rate is clock tempo / `bpm`, so a tempo change or a scene tempo speeds the clip up with the song and moves its pitch. Pass `warp: false` for a clip that must keep its own speed.
+- **`quantize` per clip** overrides `launcher.quantize` for that clip's launch, stop and release. `launch({ quantize, legato })` overrides it for one call.
+- **`track.stop()` quantize:** the explicit option, else the playing clip's `quantize`, else `launcher.quantize`.
+- **`pitch` moves a buffer's playback rate live.** A `sound` factory reads it once, at the start; a `scheduler` clip ignores it.
+- **`configure(patch)`** takes a writable `ClipPatch` (any subset of the options, so `const patch: ClipPatch = {}; patch.loop = true` compiles) and edits any option after construction; the JSDoc says when each takes effect (`loop` at the playing clip's next wrap, `mode`, `length`, `offsetBeats`, `bpm` and `warp` at its next start). It throws `RangeError` for `chance` outside 0..1, `repeatBeats` of 0 or less, or an empty loop.
+
+## Layer 3: scenes, cancel and the wait
+
+```ts
+const launcher = new ClipLauncher(tracks, { context, scenes: [{ name: "Intro" }, { name: "Drop", tempo: 140 }] });
+launcher.launchScene(1); // the clips in slot 1, and the tempo changes to 140 at that boundary
+launcher.tracks.drums.cancelQueued(); // withdraw one track's waiting launch; what plays keeps playing
+launcher.cancelQueued(); // withdraw every waiting launch, stop and scene tempo
+```
+
+- **One waiting launch per track.** Launching a track again replaces only that track's waiting launch; the playing clip is untouched until a boundary lands. A cancelled or replaced launch never sounds.
+- **A scene lands every track on one boundary, sample-aligned**, and ignores each clip's own `quantize`. Empty slots are left alone. `launchScene([clipA, clipB])` starts exactly those clips.
+- **Stopped transport:** launches made while the clock is stopped wait, survive `clock.start(when, offsetBeats)` and start exactly at `when`. Pause freezes everything and `resume()` continues; stop, seek and detach clear it all.
+- **A one-shot ends at its exact end** (`ended` fires then, and the track is free).
+
+## Layer 4: state and events
+
+State is in read-only cells, so an effect or a framework hook tracks it like any other cell:
+
+```ts
+effect(() => render(launcher.queued.value, launcher.playing.value)); // every waiting launch (soonest first) and every playing clip
+effect(() => (cellEl.dataset.state = clip.queued.value ? "queued" : clip.playing.value ? "playing" : "idle"));
+// per clip: playing, queued, startsAt, startedAt, options; per track: playing, queued; position: read it each frame, it is not tracked
+launcher.addEventListener("started", (event) => log(event.track.name, event.clip?.name, event.when, event.offsetBeats));
+```
+
+Events are `queued`, `started`, `ended`, `cancelled` and `skipped` (a `ClipEvent` with `track`, `clip`, `when`, `offsetBeats`); `started` and `ended` carry the exact audio time, delivered on the first clock tick at or after it. Commands (`launch`, `stop`, `launchScene`, `configure`, ...) never subscribe a calling effect.
+
+## Standalone vs the DAW
+
+`Workspace.session` is a launcher over a Project's audio tracks: its clips play through each track's devices and mixer strip. See [the DAW Session](./daw.md#clip-launcher). A grid view over a launcher is `mountClipGrid` in [widgets](./widgets.md).
+
+## When not to use it
+
+For lanes of steps use `StepSequencer`; for a one-off sound, a player. A launcher fits looping and one-shot material switched in time with a transport. For arrangement-style timelines use the DAW `Project`.
 
 ## Common errors
 
-| Clip Launcher message                                   | Fix                                                                                                          |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `Clip Launcher requires a non-negative launch quantum.` | Use a finite number of beats, or 0 to launch at the current audio time.                                      |
-| `Clip Launcher requires one launch per affected track.` | Supply a non-empty group with unique track IDs.                                                              |
-| `Clip Launcher requires a future audio time.`           | Use a running transport whose beat-to-time mapping advances past the current audio time (a quantum above 0). |
+<!-- prettier-ignore -->
+| Clip Launcher message | Cause and fix |
+| --- | --- |
+| `Clip Launcher requires a note value such as "4n" or "1m", got "…".` | A `quantize`, `length` or `follow.after` string is not a note value. Use `"none"`, `"4n"`, `"8n"`, `"1m"`, `"2m"` (`"1m"` is a bar of `clock.meter`). |
+| `Clip Launcher requires chance in 0..1, got ….` | `chance` is a probability. Pass a number from 0 to 1. |
+| `Clip Launcher requires repeatBeats above 0, got ….` | `repeatBeats` is the retrigger interval in beats of a `mode: "repeat"` clip. Pass a number above 0. |
+| `Clip Launcher requires a loop with endBeat after startBeat.` | A loop region needs `endBeat > startBeat`, in material beats. |

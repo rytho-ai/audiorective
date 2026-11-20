@@ -90,12 +90,33 @@ vi.mock("@audiorective/clock", async () => {
     pause = vi.fn();
     refresh = vi.fn();
     destroy = vi.fn();
+    meter = cell<readonly [number, number]>([4, 4]);
+    attach = vi.fn(() => () => undefined);
     constructor() {
       fakes.clocks.push(this);
     }
   }
   return { Clock, Timeline };
 });
+vi.mock("@audiorective/launcher", () => ({
+  ClipLauncher: class {
+    tracks: Record<string, unknown>;
+    dispose = vi.fn();
+    constructor(specs: Record<string, unknown[]>) {
+      this.tracks = Object.fromEntries(
+        Object.entries(specs).map(([id, clips]) => [
+          id,
+          {
+            clips: clips.map((spec) => (spec ? { launch: vi.fn() } : null)),
+            stop: vi.fn(),
+            connect: vi.fn(),
+            setClip: vi.fn((_index: number, spec: unknown) => (spec ? { launch: vi.fn() } : null)),
+          },
+        ]),
+      );
+    }
+  },
+}));
 
 import { effect } from "@audiorective/core";
 import { Project, Workspace, openWorkspace, saveWorkspace, saveWorkspaceTo } from "../src";
@@ -118,6 +139,7 @@ const context = () =>
     currentTime: 0,
     createGain: node,
     createStereoPanner: node,
+    createBuffer: (channels: number) => ({ getChannelData: () => new Float32Array(100), numberOfChannels: channels }),
     resume: async () => undefined,
   }) as unknown as AudioContext;
 
@@ -480,16 +502,6 @@ describe("workspace commands do not subscribe a calling effect", () => {
     { name: "seek", run: (c) => c.workspace.seek(1) },
     { name: "takeAnchor", run: (c) => c.workspace.takeAnchor(1) },
     { name: "play", run: (c) => void c.workspace.play().catch(() => undefined) },
-    {
-      name: "launchClips",
-      run: (c) => {
-        try {
-          c.workspace.launchClips([{ trackId: c.track.id, clipId: null }]);
-        } catch {
-          // Only the reads matter: a MIDI track cannot launch.
-        }
-      },
-    },
     { name: "refreshArrangement", run: (c) => c.workspace.refreshArrangement() },
   ];
   test.each(commands)("$name", async ({ run }) => {
@@ -515,6 +527,24 @@ describe("workspace commands do not subscribe a calling effect", () => {
     expect(runs).toBe(1);
     ctx.workspace.destroy();
     ctx.project.destroy();
+  });
+});
+
+describe("workspace.sessionClip is a tracked reader", () => {
+  test("a view effect re-runs when the Project's clips change", async () => {
+    const { workspace, project } = await setup();
+    const track = project.addTrack("Audio", "audio");
+    await workspace.sync();
+    const first = project.addAudioClip(track.id, { sampleRate: 100, channels: [new Float32Array(100)] }, 0);
+    const seen: Array<unknown> = [];
+    const stop = effect(() => void seen.push(workspace.sessionClip(track.id, first.id)));
+    expect(seen).toHaveLength(1);
+    project.addAudioClip(track.id, { sampleRate: 100, channels: [new Float32Array(100)] }, 1);
+    expect(seen.length).toBeGreaterThan(1);
+    expect(workspace.sessionClip(track.id, "missing")).toBeNull();
+    stop();
+    workspace.destroy();
+    project.destroy();
   });
 });
 

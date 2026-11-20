@@ -35,27 +35,32 @@ try {
   await page.waitForFunction(() => window.sessionFixture && window.__daw?.workspace);
   await page.locator("#session-panel summary").click();
   await page.locator("#launch-quantum").selectOption("bar");
+  // A launch exactly on a boundary starts at once, so let the transport leave beat 0 before queueing a scene.
+  await page.locator("#play").click();
+  await page.waitForFunction(() => window.__daw.workspace.clock.state.value === "playing" && window.__daw.workspace.position > 0.1);
   const intro = page.getByRole("button", { name: "場景 Intro" });
   await intro.click();
-  await page.waitForFunction(() => window.__daw.workspace.session.value.queued[0]?.beat === 4);
+  await page.waitForFunction(() => window.__daw.workspace.session.value.queued.value[0]?.beat === 4);
   assert.equal(await intro.getAttribute("data-clip-state"), "queued");
   await page.getByRole("button", { name: "取消排隊" }).click();
   assert.equal(await intro.getAttribute("data-clip-state"), "idle");
   await page.locator("#launch-quantum").selectOption("beat");
   await intro.click();
-  await page.waitForFunction(() => window.__daw.workspace.session.value.active.length > 1);
+  await page.waitForFunction(() => window.__daw.workspace.session.value.playing.value.length > 1);
   assert.equal(await intro.getAttribute("aria-pressed"), "true");
   if (process.env.DAW_SESSION_SCREENSHOT) await page.screenshot({ path: process.env.DAW_SESSION_SCREENSHOT });
   const returns = page.getByRole("button", { name: "回到編曲", exact: true });
   await returns.click();
-  await page.waitForFunction(() => !window.__daw.workspace.session.value.active.length && !window.__daw.workspace.session.value.queued.length);
+  await page.waitForFunction(
+    () => !window.__daw.workspace.session.value.playing.value.length && !window.__daw.workspace.session.value.queued.value.length,
+  );
   assert.equal(await intro.getAttribute("aria-pressed"), "false");
   await page.locator("#launch-mode").selectOption("one-shot");
   await intro.click();
   await page.waitForFunction(() => {
-    const state = window.__daw.workspace.session.value;
-    const changes = state.queued.length ? state.queued : state.active;
-    return changes.length > 1 && changes.every(({ mode }) => mode === "one-shot");
+    const session = window.__daw.workspace.session.value;
+    const clips = session.queued.value.length ? session.queued.value.map(({ clip }) => clip) : session.playing.value;
+    return clips.length > 1 && clips.every((clip) => clip.options.value.loop === false);
   });
 
   const verification = await page.evaluate(async () => {
@@ -78,13 +83,15 @@ try {
     const bassA = clip(bass, 8, 0.17, 0.3);
     const bassB = clip(bass, 9, 0.13, 0.45);
     const workspace = await Workspace.create(context, project, { destination: context.destination });
-    const launch = (track, slot) => ({ trackId: track.id, clipId: slot?.id ?? null });
+    const session = () => workspace.session.value;
+    const clipOf = (track, slot) => workspace.sessionClip(track.id, slot.id);
+    session().quantize.value = "4n"; // one beat
+    const whenOf = (track) => session().queued.value.find((change) => change.track.name === track.id)?.when;
     const deadlines = [];
     const becameActive = [];
     let cancelled;
     let queuedAfterSeek;
     await workspace.play();
-    deadlines.push(workspace.launchClips([launch(drums, drumsLoop), launch(bass, bassA)])[0].when);
     async function step(time, act) {
       await context.suspend(time);
       // Explicitly pump the existing Workspace clock during accelerated offline rendering.
@@ -95,24 +102,35 @@ try {
       await offlineResume();
     }
     const steps = [
+      // A launch exactly on a boundary starts at once, so the first scene is launched just after beat 0.
+      step(0.05, () => {
+        session().launchScene([clipOf(drums, drumsLoop), clipOf(bass, bassA)]);
+        deadlines.push(whenOf(drums));
+      }),
       step(0.72, () => {
-        becameActive.push(workspace.session.value.active.map((item) => item.clipId));
-        deadlines.push(workspace.launchClips([launch(bass, bassB)])[0].when);
+        becameActive.push(session().playing.value.map((clip) => clip.name));
+        clipOf(bass, bassB).launch();
+        deadlines.push(whenOf(bass));
       }),
       step(0.82, () => {
-        cancelled = workspace.cancelClipLaunch();
+        cancelled = session().cancelQueued();
       }),
       step(1.13, () => {
-        deadlines.push(workspace.launchClips([launch(bass, bassB)])[0].when);
+        clipOf(bass, bassB).launch();
+        deadlines.push(whenOf(bass));
       }),
       step(1.62, () => {
-        becameActive.push(workspace.session.value.active.map((item) => item.clipId));
-        deadlines.push(workspace.launchClips([launch(bass, null)])[0].when);
+        becameActive.push(session().playing.value.map((clip) => clip.name));
+        session().tracks[bass.id].stop();
+        deadlines.push(whenOf(bass));
       }),
+      // The Workspace clock ticks on wall-clock time, which an accelerated offline render outruns: tick it between the actions, inside the look-ahead.
+      ...Array.from({ length: 39 }, (_, index) => step(0.113 + index * 0.1, () => {})),
       step(2.16, () => {
-        deadlines.push(workspace.launchClips([launch(bass, bassB)], 6)[0].when);
+        clipOf(bass, bassB).launch({ quantize: "2n" }); // two beats: beat 6, which the tempo change at beat 5 puts at 3.5 s
+        deadlines.push(whenOf(bass));
         workspace.seek(0);
-        queuedAfterSeek = workspace.session.value;
+        queuedAfterSeek = { playing: session().playing.value.length, queued: session().queued.value.length };
       }),
     ];
     const rendered = await context.startRendering();
@@ -139,7 +157,7 @@ try {
     [drums, bassB],
   ]);
   assert.equal(cancelled, true);
-  assert.deepEqual(queuedAfterSeek, { active: [], queued: [] });
+  assert.deepEqual(queuedAfterSeek, { playing: 0, queued: 0 });
   const expected = [
     [0.18, 0.2],
     [0.35, 0.3],
@@ -175,10 +193,10 @@ try {
     const loop = clip(right, 6, 0.33, 0.3);
     const workspace = await Workspace.create(context, project, { destination: context.destination });
     await workspace.play();
-    workspace.launchClips([
-      { trackId: left.id, clipId: finite.id, mode: "one-shot" },
-      { trackId: right.id, clipId: loop.id },
-    ]);
+    const session = () => workspace.session.value;
+    session().quantize.value = "4n";
+    const finiteClip = workspace.sessionClip(left.id, finite.id);
+    finiteClip.configure({ loop: false });
     const step = async (time, fn) => {
       await context.suspend(time);
       workspace.refresh();
@@ -187,10 +205,16 @@ try {
       await resume();
       return value;
     };
-    const overlap = step(0.61, () => workspace.launchClips([{ trackId: left.id, clipId: finite.id }])[0].when);
-    const cancel = step(0.81, () => workspace.cancelClipLaunch());
-    const ended = step(1.3, () => workspace.session.value.active.map(({ trackId }) => trackId));
+    const first = step(0.05, () => session().launchScene([finiteClip, workspace.sessionClip(right.id, loop.id)]));
+    const pumps = Array.from({ length: 19 }, (_, index) => step(0.113 + index * 0.1, () => {}));
+    const overlap = step(0.61, () => {
+      finiteClip.launch();
+      return session().queued.value.find((change) => change.track.name === left.id)?.when;
+    });
+    const cancel = step(0.81, () => session().cancelQueued());
+    const ended = step(1.3, () => session().playing.value.map((clip) => clip.track.name));
     const output = await context.startRendering();
+    await Promise.all([first, ...pumps]);
     const at = (time, ch) => output.getChannelData(ch)[Math.round(time * rate)];
     const frame = (time) => [at(time, 0), at(time, 1)];
     const active = await ended;
@@ -242,16 +266,28 @@ try {
       await resume();
       return value;
     };
+    const session = workspace.session.value;
+    const clipA = workspace.sessionClip(left.id, a.id);
+    const clipB = workspace.sessionClip(right.id, b.id);
     // Two independent queues coexist; withdrawing one leaves the other.
-    workspace.launchClips([{ trackId: left.id, clipId: a.id }], 4);
-    workspace.launchClips([{ trackId: right.id, clipId: b.id }], 1);
-    const both = workspace.session.value.queued.map(({ trackId }) => trackId);
-    const withdrew = workspace.cancelClipLaunch(left.id);
-    const remaining = workspace.session.value.queued.map(({ trackId }) => trackId);
-    const immediate = step(0.7, () => workspace.launchClips([{ trackId: left.id, clipId: a.id }], 0)[0]);
+    const queue = step(0.05, () => {
+      clipA.launch({ quantize: "1m" });
+      clipB.launch({ quantize: "4n" });
+      const both = session.queued.value.map(({ track }) => track.name);
+      const withdrew = session.tracks[left.id].cancelQueued();
+      const remaining = session.queued.value.map(({ track }) => track.name);
+      return { both, withdrew, remaining };
+    });
+    const immediate = step(0.7, () => {
+      clipA.launch({ quantize: "none" });
+      return { when: session.queued.value.find(({ track }) => track.name === left.id)?.when };
+    });
+    const pumps = Array.from({ length: 19 }, (_, index) => step(0.113 + index * 0.1, () => {}));
     const output = await context.startRendering();
+    await Promise.all(pumps);
     const at = (time, ch) => output.getChannelData(ch)[Math.round(time * rate)];
     const launched = await immediate;
+    const { both, withdrew, remaining } = await queue;
     workspace.destroy();
     project.destroy();
     return {
@@ -264,7 +300,7 @@ try {
       ids: [left.id, right.id],
     };
   });
-  assert.deepEqual(perTrack.both, perTrack.ids);
+  assert.deepEqual(perTrack.both, [perTrack.ids[1], perTrack.ids[0]]); // soonest first
   assert.ok(perTrack.withdrew);
   assert.deepEqual(perTrack.remaining, [perTrack.ids[1]]);
   assert.ok(Math.abs(perTrack.launched.when - 0.7) < 0.01, JSON.stringify(perTrack));

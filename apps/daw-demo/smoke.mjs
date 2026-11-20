@@ -965,7 +965,8 @@ try {
   assert.ok(Math.abs(runtime.playingPlacement - runtime.anchorPosition - 0.15) < 1e-6);
   assert.ok(runtime.silent < 0.005 && runtime.audible > 0.1 && runtime.silentAgain < 0.005, JSON.stringify(runtime));
   assert.ok(runtime.linear > 0.12 && runtime.linear < 0.23 && runtime.muted < 0.005 && runtime.unmuted > 0.1, JSON.stringify(runtime));
-  assert.ok(runtime.firstBuffers > 0 && runtime.replayBuffers === runtime.firstBuffers, JSON.stringify(runtime));
+  // The Session grid already copied the clips into buffers when it mounted, so playback may create none; replaying never creates more.
+  assert.ok(runtime.replayBuffers === runtime.firstBuffers, JSON.stringify(runtime));
   await page.locator(".clip.audio").first().click();
   await page.waitForFunction(() => document.querySelector("#editor-panel [data-testid='wave-path']")?.getBBox().height > 0);
   const tempoRuntime = await page.evaluate(async () => {

@@ -69,7 +69,7 @@ The UI reads and writes params directly (`useValue(synth.params.volume)`, `synth
 | `@audiorective/samples`      | `SampleLibrary`: imported sample storage and previews.                                                                                          | `references/samples.md`    |
 | `@audiorective/pads`         | `PadBank`: sample hits with choke groups.                                                                                                       | `references/pads.md`       |
 | `@audiorective/sequencer`    | `StepSequencer`: lanes of steps from one-line patterns; borrows a clock or transport.                                                           | `references/sequencer.md`  |
-| `@audiorective/launcher`     | `ClipLauncher`: quantized clip launching; borrows a transport.                                                                                  | `references/launcher.md`   |
+| `@audiorective/launcher`     | `ClipLauncher`: tracks of clips on quantized boundaries; `clock.attach(launcher)`.                                                              | `references/launcher.md`   |
 | `@audiorective/midi`         | Pure MIDI notes, sequence and playback projection; `/web` records a selected input.                                                             | `references/midi.md`       |
 | `@audiorective/daw`          | `/project` model and `/dawproject` codec (Node-safe); `/runtime` `Workspace` (browser); root joins them with `openWorkspace` / `saveWorkspace`. | `references/daw.md`        |
 | `@audiorective/host/webclap` | Browser WebCLAP instrument/effect host: reactive `params` per CLAP parameter, MIDI scheduling, `saveState`/`loadState`, editor bridge.          | `references/host.md`       |
@@ -98,7 +98,7 @@ When no capability package or widget matches, build on core with your own `Audio
 | MIDI file notes: parse, edit, select, piano roll | `@audiorective/midi` + `widgets/piano-roll` | live MIDI input |
 | Play, edit and save a DAWproject with WebCLAP devices | `daw` + `host/webclap`; `workspace.player` to `mountPlayer` | separate project or player state |
 | Read, edit or write `.dawproject` in Node (no audio) | `daw/project` + `daw/dawproject` only | `daw` root or `daw/runtime` |
-| Session view, clip launcher, scene launching | standalone `@audiorective/launcher` `ClipLauncher`; `references/launcher.md` | `daw` Session for step-pattern clips |
+| Session view, clip launcher, scenes, follow actions, pattern clips | `clock` + `@audiorective/launcher` `ClipLauncher` (it plays the clips); `references/launcher.md`; a Project session: `workspace.session` | a hand-rolled launch scheduler or a custom driver |
 | An editable curve driving a parameter, macro, or clip gain | `core/automation`; clips: `Project.setAudioClipGainAutomation` | hand-scheduled ramps |
 | A synth, custom effect, grains, anything else | your own `AudioProcessor` on core | forcing a capability to fit |
 
@@ -112,6 +112,7 @@ Open the one page the task needs; read the section, not the whole file.
 | Designing a whole app; audio layer vs UI; Cell vs Param             | `designing-audio-apps.md`, `architecture.md`           |
 | Sampler vs BufferPlayer vs FilePlayer                               | `choosing-playback.md`                                 |
 | Transport, tempo, step sequencer, drum machine                      | `clock.md` + `sequencer.md`                            |
+| Clip launcher, scenes, launch modes, follow actions, pattern clips  | `launcher.md` (+ `launcher-advanced.md`)               |
 | Writing or modifying an `AudioProcessor` subclass                   | the `audio-processor-authoring` skill                  |
 | Waveform, spectrum, EQ, plain player controls                       | `widgets.md`                                           |
 | Automation curves, bindings, macro adapters                         | `automation.md` (+ `player.md` for source-time)        |
@@ -168,7 +169,8 @@ Every other thrown message is listed, with cause and fix, in its area's referenc
 | `bpm must…`, `TempoParam…`, `Clock owned event time…`, `renderTimeline…`                          | `clock.md`                                 |
 | `EffectRack…`, `Equalizer…`, `Effect: …`, `SendBus…`, `TimeStretch…`, `Rubber Band…`              | `effects.md`                               |
 | `Piano roll…`, `MIDI…`, `MidiRecorder…`, `Invalid MIDI file.`                                     | `midi.md`                                  |
-| `Project…`, `AudioMedia…`, `Workspace …`, `Clip gain…`, `Clip Launcher…`                          | `daw.md`, `launcher.md`                    |
+| `Project…`, `AudioMedia…`, `Workspace …`, `Clip gain…`                                            | `daw.md`                                   |
+| `Clip Launcher…`                                                                                  | `launcher.md`                              |
 | `WebCLAP…`                                                                                        | `host.md`                                  |
 | `summarizePeaks:…`, `createEngine:…`, `AudioEngine destroyed…`, `registerWorklet:…`               | `core.md`                                  |
 | `measureLatency:…`, `useEngine…`, `attach:…`                                                      | `devtools.md`, `react.md`, `playcanvas.md` |
@@ -178,4 +180,4 @@ All under `references/`; each in its "Common errors" section (TimeStretch: `effe
 
 ## References
 
-[Installation](references/installation.md) · [WavePlayer](references/player.md) · [Recorder](references/recorder.md) · [Pads](references/pads.md) · [Sequencer](references/sequencer.md) · [Samples](references/samples.md) · [Launcher](references/launcher.md) · [Widgets](references/widgets.md) · [MIDI/Piano Roll](references/midi.md) · [DAW/DAWproject](references/daw.md) · [WebCLAP host](references/host.md) · [Core](references/core.md) · [Automation](references/automation.md) · [Architecture](references/architecture.md) · [Designing Audio Apps](references/designing-audio-apps.md) · [Choosing Playback](references/choosing-playback.md) · [Clock](references/clock.md) · [Effects](references/effects.md) · [Devtools](references/devtools.md) · [React](references/react.md) · [three.js](references/threejs.md) · [PlayCanvas](references/playcanvas.md) · [PixiJS](references/pixijs.md) · [Server-rendered frameworks](references/client-boundary.md) · [Overview](references/overview.md) · [Rules in depth](references/rules-in-depth.md) · [Changelog](references/changelog.md)
+[Installation](references/installation.md) · [WavePlayer](references/player.md) · [Recorder](references/recorder.md) · [Pads](references/pads.md) · [Sequencer](references/sequencer.md) · [Samples](references/samples.md) · [Launcher](references/launcher.md) · [Launcher: advanced](references/launcher-advanced.md) · [Widgets](references/widgets.md) · [MIDI/Piano Roll](references/midi.md) · [DAW/DAWproject](references/daw.md) · [WebCLAP host](references/host.md) · [Core](references/core.md) · [Automation](references/automation.md) · [Architecture](references/architecture.md) · [Designing Audio Apps](references/designing-audio-apps.md) · [Choosing Playback](references/choosing-playback.md) · [Clock](references/clock.md) · [Effects](references/effects.md) · [Devtools](references/devtools.md) · [React](references/react.md) · [three.js](references/threejs.md) · [PlayCanvas](references/playcanvas.md) · [PixiJS](references/pixijs.md) · [Server-rendered frameworks](references/client-boundary.md) · [Overview](references/overview.md) · [Rules in depth](references/rules-in-depth.md) · [Changelog](references/changelog.md)

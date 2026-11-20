@@ -23,7 +23,7 @@ Modular toolkit for web audio development. Independent, composable packages that
 ├── samples      # Headless sample import, storage and previews: SampleLibrary
 ├── pads         # Headless choke-group sample hits: PadBank
 ├── sequencer    # Headless lane-based step sequencer: StepSequencer (notation and sounds)
-├── launcher     # Headless quantized clip launching: ClipLauncher
+├── launcher     # Headless clip launcher: ClipLauncher (tracks of clips on quantized boundaries of a clock)
 ├── midi         # MIDI note data and event projection (root); browser take recording (`/web`)
 ├── host         # Browser WebCLAP plug-in host (`/webclap`)
 ├── widgets      # Browser waveform, player, piano-roll and arrangement views

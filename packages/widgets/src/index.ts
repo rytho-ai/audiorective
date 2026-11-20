@@ -25,7 +25,7 @@ export type {
   TimelineZoomOptions,
 } from "./arrangement";
 export { mountClipGrid } from "./clip-grid";
-export type { ClipGridLayout, ClipGridOptions } from "./clip-grid";
+export type { ClipGridClip, ClipGridLauncher, ClipGridLayout, ClipGridOptions, ClipGridTrack } from "./clip-grid";
 export { mountMixer } from "./mixer";
 export type { MixerOptions, MixerState, MixerStrip } from "./mixer";
 export { mountSampleBrowser } from "./sample-browser";

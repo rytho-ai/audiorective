@@ -92,7 +92,7 @@ Side     (core only)   react, threejs, playcanvas, devtools
 | Kind           | Test                                                                     | Modules                                                                                          |
 | -------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
 | **Standalone** | Imports only core; give it an `AudioContext` and it works                | `clock`, `midi`, `effects`, `host`, `player`, `recorder`, `samples`, `pads`                      |
-| **Borrowing**  | Imports only core, but cannot run until the caller supplies an interface | `sequencer` (attaches to a clock or transport), `launcher` (a transport)                         |
+| **Borrowing**  | Imports only core, but cannot run until the caller supplies an interface | `sequencer` (attaches to a clock or transport), `launcher` (attaches to a clock)                 |
 | **Composed**   | Imports a sibling capability module                                      | none; an exception needs a written reason and an edge that disappears when the feature is unused |
 
 A borrowing module names what it needs as a structural type in [core](./core.md#shared-contracts), so `Timeline`, `Clock`, `PadBank` or the DAW runtime can each satisfy it without the module importing any of them. `SampleLibrary` previews through core `BufferPlayer` for the same reason: it stays standalone.

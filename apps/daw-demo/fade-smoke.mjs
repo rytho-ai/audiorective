@@ -159,7 +159,26 @@ try {
       };
       if (kind === "file") workspace.seek(1.75);
       await workspace.play();
-      if (kind === "session") workspace.launchClips([{ trackId: track.id, clipId: clip.id }]);
+      // A launch exactly on a boundary starts at once, and the Workspace clock ticks on wall-clock time, which an accelerated offline render outruns:
+      // launch just after beat 0 (the first beat starts the clip) and tick the clock between the suspends.
+      const sessionPumps = [];
+      if (kind === "session") {
+        const sessionClip = workspace.sessionClip(track.id, clip.id);
+        const seconds = context.length / context.sampleRate;
+        for (let index = 0; index < 12; index++) {
+          const time = index === 0 ? 0.05 : 0.063 + index * 0.1;
+          if (time > seconds - 0.05) break;
+          sessionPumps.push(
+            (async () => {
+              await context.suspend(time);
+              workspace.refresh();
+              await Promise.resolve();
+              if (index === 0) sessionClip.launch({ quantize: "4n" });
+              await OfflineAudioContext.prototype.resume.call(context);
+            })(),
+          );
+        }
+      }
       const boundary = kind === "file" ? context.suspend(0.18) : undefined;
       const rendering = context.startRendering();
       if (boundary) {
@@ -171,6 +190,7 @@ try {
         await OfflineAudioContext.prototype.resume.call(context);
       }
       const data = (await rendering).getChannelData(0);
+      await Promise.all(sessionPumps);
       workspace.destroy();
       project.destroy();
       return atTimes(data, kind === "file" ? [0.1, 0.35] : [0.25, 0.55, 0.75]);
@@ -206,8 +226,28 @@ try {
       const runtime = await Workspace.create(context, project, { destination: context.destination });
       if (kind !== "session") runtime.seek(blob ? 2.2 : 0.2);
       await runtime.play();
-      if (kind === "session") runtime.launchClips([{ trackId: track.id, clipId: clip.id }]);
+      // A launch exactly on a boundary starts at once, and the Workspace clock ticks on wall-clock time, which an accelerated offline render outruns:
+      // launch just after beat 0 (the first beat starts the clip) and tick the clock between the suspends.
+      const sessionPumps = [];
+      if (kind === "session") {
+        const sessionClip = runtime.sessionClip(track.id, clip.id);
+        const seconds = context.length / context.sampleRate;
+        for (let index = 0; index < 12; index++) {
+          const time = index === 0 ? 0.05 : 0.063 + index * 0.1;
+          if (time > seconds - 0.05) break;
+          sessionPumps.push(
+            (async () => {
+              await context.suspend(time);
+              runtime.refresh();
+              await Promise.resolve();
+              if (index === 0) sessionClip.launch({ quantize: "4n" });
+              await OfflineAudioContext.prototype.resume.call(context);
+            })(),
+          );
+        }
+      }
       const data = (await context.startRendering()).getChannelData(0);
+      await Promise.all(sessionPumps);
       runtime.destroy();
       project.destroy();
       if (blob) await source.dispose();

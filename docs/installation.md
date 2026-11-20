@@ -17,7 +17,7 @@ Which `@audiorective/*` packages to install, what they pull in, and how to keep 
 | `@audiorective/samples`    | Headless `SampleLibrary`: imported sample storage and previews                                               | —                                |
 | `@audiorective/pads`       | Headless `PadBank`: sample hits with choke groups                                                            | —                                |
 | `@audiorective/sequencer`  | Headless `StepSequencer`: lanes of steps from one-line patterns                                              | —                                |
-| `@audiorective/launcher`   | Headless `ClipLauncher`: quantized clip launching                                                            | —                                |
+| `@audiorective/launcher`   | Headless `ClipLauncher`: tracks of clips on quantized boundaries                                             | —                                |
 | `@audiorective/midi`       | MIDI file parsing, shared note data, playback event projection and browser MIDI take recording               | —                                |
 | `@audiorective/daw`        | Audio/MIDI project (`daw/project`), DAWproject codec (`daw/dawproject`) and browser playback (`daw/runtime`) | —                                |
 | `@audiorective/host`       | WebCLAP plug-in hosting through the `./webclap` entry                                                        | —                                |

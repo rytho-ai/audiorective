@@ -1,76 +1,68 @@
-type Voice = { source: AudioBufferSourceNode; gate: GainNode; end?: number; released: boolean };
+import type { ScheduleHandle } from "@audiorective/launcher";
 
-function release(voice: Voice, stop = true): void {
-  if (voice.released) return;
-  voice.released = true;
-  if (stop) voice.source.stop();
-  voice.source.disconnect();
-  voice.gate.disconnect();
-}
+type Change = { when: number; playing: boolean; end: number | undefined };
 
-/** Switches one track upstream of its shared devices, effects and mixer. */
+/**
+ * Switches one track between Arrangement and Session upstream of its shared devices, effects and mixer. Session clips play through the launcher
+ * into `input`; this holds the Arrangement side: its gain is 0 from a launch until a stop or the end of a one-shot, and 1 otherwise.
+ */
 export class AudioTrackSession {
   readonly arrangementInput: GainNode;
-  private active?: Voice;
+  private changes: Change[] = [];
 
   constructor(
     private readonly context: AudioContext,
-    private readonly input: AudioNode,
+    input: AudioNode,
   ) {
     this.arrangementInput = context.createGain();
     this.arrangementInput.connect(input);
   }
 
-  schedule(buffer: AudioBuffer | null, when: number, loop = true) {
-    const previous = this.active;
-    let incoming: Voice | undefined;
-    if (buffer) {
-      const source = this.context.createBufferSource();
-      const gate = this.context.createGain();
-      source.buffer = buffer;
-      source.loop = loop;
-      gate.gain.value = 0;
-      gate.gain.setValueAtTime(1, when);
-      source.connect(gate).connect(this.input);
-      const voice: Voice = { source, gate, end: loop ? undefined : when + buffer.duration, released: false };
-      source.onended = () => {
-        release(voice, false);
-        if (this.active === voice) this.active = undefined;
-      };
-      source.start(when);
-      incoming = voice;
-    }
-
-    const arrangement = this.arrangementInput.gain;
-    arrangement.cancelScheduledValues(when);
-    arrangement.setValueAtTime(incoming ? 0 : 1, when);
-    if (incoming?.end !== undefined) arrangement.setValueAtTime(1, incoming.end);
-    previous?.gate.gain.setValueAtTime(0, when);
-    return {
-      end: incoming?.end,
-      commit: () => {
-        if (previous) release(previous);
-        this.active = incoming?.released ? undefined : incoming;
-      },
-      cancel: () => {
-        arrangement.cancelScheduledValues(when);
-        if (previous?.end !== undefined && previous.end >= when) arrangement.setValueAtTime(1, previous.end);
-        previous?.gate.gain.cancelScheduledValues(when);
-        if (incoming) release(incoming);
-      },
+  /**
+   * Follow one launcher change: from `when` the track plays a Session clip (`playing`, until `endsAt` for a one-shot) or returns to Arrangement.
+   * The returned handle withdraws the change (it was cancelled, replaced or reset); the previous change then applies again.
+   */
+  follow(when: number, playing: boolean, endsAt: number | null): ScheduleHandle {
+    const change: Change = { when, playing, end: endsAt ?? undefined };
+    this.changes.push(change);
+    this.apply();
+    const remove = () => {
+      const index = this.changes.indexOf(change);
+      if (index < 0) return;
+      this.changes.splice(index, 1);
+      this.apply();
     };
+    return { cancel: remove, reset: remove };
   }
 
-  reset(): void {
-    if (this.active) release(this.active);
-    this.active = undefined;
+  /** Arrangement gain at audio time `time`: 0 while the latest change at or before it is a clip that has not ended. */
+  private levelAt(time: number): number {
+    let level = 1;
+    for (const change of this.changes) {
+      if (change.when > time) break;
+      level = change.playing && !(change.end !== undefined && change.end <= time) ? 0 : 1;
+    }
+    return level;
+  }
+
+  private apply(): void {
     const now = this.context.currentTime;
-    this.arrangementInput.gain.cancelScheduledValues(now);
-    this.arrangementInput.gain.setValueAtTime(1, now);
+    this.changes.sort((left, right) => left.when - right.when);
+    const lastPast = this.changes.findLastIndex((change) => change.when <= now);
+    if (lastPast > 0) this.changes.splice(0, lastPast);
+    const times = new Set<number>();
+    for (const { when, end } of this.changes) {
+      if (when > now) times.add(when);
+      if (end !== undefined && end > now) times.add(end);
+    }
+    const gain = this.arrangementInput.gain;
+    gain.cancelScheduledValues(now);
+    gain.setValueAtTime(this.levelAt(now), now);
+    for (const time of [...times].sort((left, right) => left - right)) gain.setValueAtTime(this.levelAt(time), time);
   }
 
   destroy(): void {
-    this.reset();
+    this.changes = [];
     this.arrangementInput.disconnect();
   }
 }
