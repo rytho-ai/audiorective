@@ -24,7 +24,7 @@ export class SamplerSource {
       sp.output.connect(this.output);
       this._pads.set(id, sp);
     }
-    sp.buffer = buffer;
+    sp.sound = buffer;
   }
 
   /** Fire a pad one-shot. Returns null if the pad has no buffer loaded yet. */

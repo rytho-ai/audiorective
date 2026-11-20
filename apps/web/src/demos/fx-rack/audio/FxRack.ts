@@ -70,12 +70,12 @@ export class FxRack extends AudioProcessor<{}, { isReady: Cell<boolean> }> {
     this.compressor = new Compressor(ctx, { threshold: -18, ratio: 3, wet: 1 });
     this.limiter = new Limiter(ctx, { threshold: -1 });
     this.deck = new BufferPlayer(ctx, { loop: true, buffer: opts.loop ?? undefined });
-    // offline export schedules a whole bar up front, so voices must not steal each other
+    // offline export schedules a whole bar up front: the default polyphony of 32 keeps voices from stealing each other
     this.pads = {
-      kick: new Sampler(ctx, { buffer: opts.kit.kick, polyphony: 32 }),
-      snare: new Sampler(ctx, { buffer: opts.kit.snare, polyphony: 32 }),
-      hat: new Sampler(ctx, { buffer: opts.kit.hat, polyphony: 32 }),
-      clap: new Sampler(ctx, { buffer: opts.kit.clap, polyphony: 32 }),
+      kick: new Sampler(ctx, { sound: opts.kit.kick }),
+      snare: new Sampler(ctx, { sound: opts.kit.snare }),
+      hat: new Sampler(ctx, { sound: opts.kit.hat }),
+      clap: new Sampler(ctx, { sound: opts.kit.clap }),
     };
 
     const { pitchShift, filter, frequencyShifter, distortion, phaser } = this.inserts;

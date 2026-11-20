@@ -70,21 +70,21 @@ try {
         return buffer;
       }
       const kit = new PadBank(context, [
-        { id: "open", buffer: sample(0.3, 0.1), gate: true, group: "hat" },
-        { id: "closed", buffer: sample(0.1, 0.05), group: "hat" },
-        { id: "manual", buffer: sample(0.05, 0.1), gate: true },
+        { id: "open", sound: sample(0.3, 0.5), group: "hat" },
+        { id: "closed", sound: sample(0.1, 0.05), group: "hat" },
+        { id: "manual", sound: sample(0.05, 0.5) },
       ]);
-      kit.output.connect(workspace.output);
-      kit.trigger("open", 1, 0);
-      kit.trigger("manual", 1, 0.1);
+      kit.connect(workspace.output);
+      kit.trigger("open", { when: 0 });
+      kit.trigger("manual", { when: 0.1 });
       let scheduled = 0;
       const sequencer = new StepSequencer(
         { closed: { pattern: ".X..", rate: "1/8" } },
         {
           onHit: ({ lane, velocity, when }) => {
             scheduled++;
-            const hit = kit.trigger(lane, velocity, when);
-            return hit ? () => hit.cancel() : undefined;
+            const hit = kit.trigger(lane, { velocity, when });
+            return hit ? () => hit.stop() : undefined;
           },
         },
       );

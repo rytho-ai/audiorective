@@ -102,7 +102,7 @@ export class DrumMachine extends AudioProcessor<{}, {}> {
     const ids: DrumVoiceId[] = ["kick", "snare", "hat", "clap"];
     this.tracks = ids.map((id) => {
       // polyphony > 1 so a fast pattern's tail isn't cut off by its own next hit
-      const sampler = new Sampler(audioContext, { buffer: kit[id], polyphony: 4 });
+      const sampler = new Sampler(audioContext, { sound: kit[id], polyphony: 4 });
       sampler.output.connect(this._master);
       return {
         id,

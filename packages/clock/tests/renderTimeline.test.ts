@@ -31,7 +31,7 @@ describe("renderTimeline", () => {
       // a one-sample impulse so onsets are exact
       const impulse = ctx.createBuffer(1, 1, sampleRate);
       impulse.getChannelData(0)[0] = 1;
-      const sampler = new Sampler(ctx, { buffer: impulse, polyphony: 8 });
+      const sampler = new Sampler(ctx, { sound: impulse, polyphony: 8 });
       sampler.output.connect(ctx.destination);
 
       const timeline = new Timeline({ audioContext: ctx, bpm: 120 }).addRuler("bar", new LinearBarRuler({ numerator: 4, denominator: 4 }));
