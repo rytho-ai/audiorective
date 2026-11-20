@@ -24,7 +24,7 @@ const CAPABILITIES = {
     helpers: { "StepSequencer.ts": ["notation.ts", "sounds.ts"], "sounds.ts": ["notation.ts"] },
     private: ["notation.ts", "sounds.ts"],
   },
-  launcher: { entry: "ClipLauncher.ts", helpers: {}, private: [] },
+  launcher: { entry: "ClipLauncher.ts", helpers: { "ClipLauncher.ts": ["types.ts"] }, private: ["types.ts"] },
 };
 
 /** Packages that may import `@audiorective/core*` and nothing else of ours. */

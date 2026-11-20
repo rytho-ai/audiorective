@@ -1,7 +1,7 @@
 {
   "name": "@audiorective/launcher",
   "version": "2.3.2",
-  "description": "Headless clip launcher with quantised launch scheduling",
+  "description": "Headless clip launcher: tracks of clips with quantised launches, scenes, follow actions and pattern clips on a clock",
   "type": "module",
   "license": "MIT",
   "homepage": "https://github.com/audiorective/audiorective/tree/main/packages/launcher#readme",
@@ -37,6 +37,8 @@
     "@audiorective/core": "workspace:^"
   },
   "devDependencies": {
+    "@audiorective/clock": "workspace:^",
+    "@audiorective/sequencer": "workspace:^",
     "@types/node": "^24.9.1",
     "@vitest/browser": "^4.0.18",
     "@vitest/browser-playwright": "^4.0.18",
