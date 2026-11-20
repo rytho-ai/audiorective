@@ -53,7 +53,7 @@ clip.configure({ quantize: "1m", loop: false }); // every other option
 - **`quantize` per clip** overrides `launcher.quantize` for that clip's launch, stop and release. `launch({ quantize, legato })` overrides it for one call.
 - **`track.stop()` quantize:** the explicit option, else the playing clip's `quantize`, else `launcher.quantize`.
 - **`pitch` moves a buffer's playback rate live.** A `sound` factory reads it once, at the start; a `scheduler` clip ignores it.
-- **`configure(patch)`** edits any option after construction; the JSDoc says when each takes effect (`loop` at the playing clip's next wrap, `mode`, `length`, `offsetBeats`, `bpm` and `warp` at its next start). It throws `RangeError` for `chance` outside 0..1, `repeatBeats` of 0 or less, or an empty loop.
+- **`configure(patch)`** takes a writable `ClipPatch` (any subset of the options, so `const patch: ClipPatch = {}; patch.loop = true` compiles) and edits any option after construction; the JSDoc says when each takes effect (`loop` at the playing clip's next wrap, `mode`, `length`, `offsetBeats`, `bpm` and `warp` at its next start). It throws `RangeError` for `chance` outside 0..1, `repeatBeats` of 0 or less, or an empty loop.
 
 ## Layer 3: scenes, cancel and the wait
 

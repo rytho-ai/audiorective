@@ -126,6 +126,9 @@ export type ClipSettings = Readonly<{
   warp: ClipWarp;
 }>;
 
+/** What `Clip.configure` takes: any subset of `ClipSettings`, writable so a patch can be built field by field; a nullable setting accepts `null`. */
+export type ClipPatch = { -readonly [K in keyof ClipSettings]?: ClipSettings[K] };
+
 /**
  * One clip, from exactly one of `buffer`, `sound` or `scheduler`. Material is measured in beats from its first beat (a buffer's seconds x `bpm` / 60; a factory or scheduler
  * clip's beats are transport beats), and one rule relates the options: the material is [0, `length`) (a buffer's own length when `length` is not given, endless for a factory or

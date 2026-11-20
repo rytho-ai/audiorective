@@ -6,6 +6,7 @@ import type {
   ClipMode,
   ClipOptions,
   ClipScheduler,
+  ClipPatch,
   ClipSettings,
   ClipSpec,
   FollowTarget,
@@ -314,7 +315,7 @@ export class Clip {
    * `loop` at the playing buffer clip's next loop wrap (the current pass finishes first); `mode`, `length`, `offsetBeats`, `bpm` and `warp` from the clip's next start, so a playing clip keeps them.
    * Throws RangeError for `chance` outside 0..1, `repeatBeats` <= 0, or a loop with endBeat <= startBeat.
    */
-  configure(patch: Partial<ClipSettings>): void {
+  configure(patch: ClipPatch): void {
     untracked(() => {
       const next = { ...this._opts.value, ...patch };
       validate(next);
@@ -1092,7 +1093,7 @@ export class ClipLauncher extends EventTarget implements Scheduler {
       this.armEnd(inst);
     }
   }
-  /** @internal */ _configured(clip: Clip, patch: Partial<ClipSettings>): void {
+  /** @internal */ _configured(clip: Clip, patch: ClipPatch): void {
     if (!this.timeline) return;
     const now = this.now();
     for (const inst of clip.track.insts) {
