@@ -24,6 +24,7 @@ export class TempoParam extends Param<number> {
   private _synthEnd = -Infinity;
   private readonly _now: () => number;
   private readonly _raw: SignalAccessor<number>;
+  private readonly _listeners = new Set<(when: number) => void>();
   /**
    * Raw signal. Reads track like any `Param`; a write is a step at `now` on the tempo curve,
    * exactly like `.value = x`, so `$(x)` and `.value = x` cannot diverge from the curve.
@@ -42,24 +43,28 @@ export class TempoParam extends Param<number> {
       this._cutSynthetic(now);
       this._curve.setValueAtTime(args[0], now);
       raw(args[0]);
+      this._changed(now);
     }) as SignalAccessor<number>;
   }
 
   setValueAtTime(value: number, time: number): this {
     this._cutSynthetic(time);
     this._curve.setValueAtTime(value, time);
+    this._changed(time);
     return this;
   }
 
   cancelScheduledValues(time: number): this {
     this._cutSynthetic(time);
     this._curve.cancelScheduledValues(time);
+    this._changed(time);
     return this;
   }
 
   cancelAndHoldAtTime(time: number): this {
     this._cutSynthetic(time);
     this._curve.cancelAndHoldAtTime(time);
+    this._changed(time);
     return this;
   }
 
@@ -74,12 +79,14 @@ export class TempoParam extends Param<number> {
    */
   linearRampToValueAtTime(value: number, endTime: number): this {
     this._ramp("linear", value, endTime);
+    this._changed(this._now());
     return this;
   }
 
   /** Ramp exponentially in time (constant ratio per second) from the previous event's value to `value` at `endTime`. */
   exponentialRampToValueAtTime(value: number, endTime: number): this {
     this._ramp("exponential", value, endTime);
+    this._changed(this._now());
     return this;
   }
 
@@ -99,6 +106,7 @@ export class TempoParam extends Param<number> {
     const v0 = this._curve.valueAt(startTime);
     if (timeConstant === 0) {
       this._curve.setValueAtTime(target, startTime);
+      this._changed(startTime);
       return this;
     }
     const limit = this._curve.nextEventTimeAfter(startTime);
@@ -113,6 +121,7 @@ export class TempoParam extends Param<number> {
     }
     this._synthStart = startTime;
     this._synthEnd = end;
+    this._changed(startTime);
     return this;
   }
 
@@ -132,6 +141,7 @@ export class TempoParam extends Param<number> {
     for (let i = 1; i <= last; i++) this._curve.rampToValueAtTime("linear", points[i]!, startTime + (i * duration) / last);
     this._synthStart = startTime;
     this._synthEnd = startTime + duration;
+    this._changed(startTime);
     return this;
   }
 
@@ -153,6 +163,27 @@ export class TempoParam extends Param<number> {
       if (now < endTime) this._curve.setValueAtTime(this._curve.valueAt(now), now);
     }
     this._curve.rampToValueAtTime(kind, value, endTime);
+  }
+
+  /**
+   * @internal Subscribe to curve edits (every scheduling call and every `.value` write, once each). The listener gets the audio time from which the
+   * curve may differ, never earlier than now; the edit is already applied. Returns the unsubscribe function. Clocks use it for `transport({ type: "tempo" })`.
+   */
+  _onChange(listener: (when: number) => void): () => void {
+    this._listeners.add(listener);
+    return () => void this._listeners.delete(listener);
+  }
+
+  private _changed(time: number): void {
+    if (this._listeners.size === 0) return;
+    const when = Math.max(this._now(), time);
+    for (const listener of [...this._listeners]) {
+      try {
+        listener(when);
+      } catch (error) {
+        console.error("TempoParam change listener failed:", error);
+      }
+    }
   }
 
   /** @internal Pushed by the Clock tick to keep `.value` reflecting the curve at `now`. */

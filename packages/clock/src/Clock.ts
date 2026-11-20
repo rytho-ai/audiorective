@@ -1,10 +1,10 @@
-import { batch, type BeatTiming, type CancellableEvent, type ReadonlyCell } from "@audiorective/core";
+import { batch, Cell, readonlyCell, type BeatTiming, type CancellableEvent, type ReadonlyCell } from "@audiorective/core";
 import { Timeline } from "./Timeline";
 import type { Ruler } from "./rulers/Ruler";
 import type { TempoParam } from "./TempoParam";
 import { WorkerTickSource } from "./TickSource";
 import type { TickSource } from "./TickSource";
-import type { CoreTickWindow, TimeSource, TransportState } from "./types";
+import type { CoreTickWindow, TimeSignature, TimeSource, TransportState } from "./types";
 
 export type { CancellableEvent };
 
@@ -27,23 +27,57 @@ export interface SchedulerWindow {
   own(event: CancellableEvent, when: number): void;
 }
 
+/** Why a scheduler is being reset: the transport started, stopped, paused or jumped, or the scheduler is leaving (detached, or the clock was destroyed). */
+export type ResetReason = "start" | "stop" | "pause" | "seek" | "detach";
+
+export type TransportChangeType = "start" | "stop" | "pause" | "resume" | "seek" | "tempo";
+
+/**
+ * One change of the transport, reported after it is applied. `when` is the audio-context time it takes effect (`start(when)` reports that time,
+ * the others now; a tempo edit reports the time from which the curve may differ, never earlier than now). `beat` is the transport's beat position at
+ * `when`: where it starts, resumes, pauses or jumps to, `0` for a stop, and for a tempo change the beat the changed curve passes at `when`.
+ */
+export type TransportChange = Readonly<{
+  type: TransportChangeType;
+  when: number;
+  beat: number;
+}>;
+
 /**
  * A pattern, sequencer or generator that follows a clock's windows. `schedule` runs once per look-ahead window and registers its events
- * with `window.own`; `reset` runs when the transport jumps (`start`, `pause`, `stop`, `seek`, `destroy`) after owned events are cancelled.
+ * with `window.own`; `reset` runs when the transport jumps, with the reason, after owned events are cancelled.
  */
 export interface Scheduler {
   schedule(window: SchedulerWindow, timing: BeatTiming): void;
-  reset?(): void;
   /**
-   * Optional. Called once by `attach` with a handle to the transport the scheduler now follows, so it can re-queue its look-ahead after an
-   * edit (`handle.refresh()`) or leave on its own (`handle.detach()`). May return a cleanup, which runs when the scheduler is detached or the
-   * clock is destroyed, after `reset`.
+   * Called before the transport state changes, after owned events are cancelled. "start": `clock.start()` was called (the first window begins at its
+   * `offsetBeats`); "stop", "pause", "seek": the transport left or jumped; "detach": the scheduler was detached or the clock destroyed. `resume()` does
+   * not call it. A scheduler that ignores `reason` resets on every one; one that keeps work queued while stopped keeps it on "start".
+   */
+  reset?(reason: ResetReason): void;
+  /**
+   * Optional. Called after each transport change, with the timeline and state already showing it: "start", "stop", "pause", "resume", "seek", and "tempo"
+   * (the tempo curve was edited from `change.when`: re-time anything that waits on a beat). Every change is reported once, in call order; `reset` runs
+   * first for the ones it covers. `stop()` on a stopped clock and `pause()` / `resume()` that do nothing report nothing.
+   */
+  transport?(change: TransportChange): void;
+  /**
+   * Optional. Called once, synchronously inside `attach`, with a handle to the transport the scheduler now follows: its timeline, state and time
+   * signature are live at once, so commands issued right after `attach` can compute beats. It can re-queue its look-ahead after an edit
+   * (`handle.refresh()`) or leave on its own (`handle.detach()`). May return a cleanup, which runs when the scheduler is detached or the clock is
+   * destroyed, after `reset`.
    */
   attached?(handle: SchedulerHandle): void | (() => void);
 }
 
 /** What a scheduler learns about the transport it was attached to. */
 export interface SchedulerHandle {
+  /** The beat/time mapping and tempo (`timeline.bpm`) the clock plays. */
+  readonly timeline: Timeline;
+  /** The transport state, the same cell as `clock.state`. */
+  readonly state: ReadonlyCell<TransportState>;
+  /** The clock's time signature, the same cell as `clock.meter`. */
+  readonly meter: ReadonlyCell<TimeSignature>;
   /** The transport's `refresh()`: re-queue the look-ahead from now. Coalesced within one task. */
   refresh(): void;
   /** Detach this scheduler: the function `attach` returned. Idempotent. */
@@ -58,6 +92,8 @@ export interface ClockOptions<TRulers extends Record<string, Ruler<unknown, unkn
   audioContext?: TimeSource;
   /** Starting tempo of the Clock's own Timeline. Default 120. Only with `context`. */
   bpm?: number;
+  /** Time signature, `clock.meter`'s starting value. Default `[4, 4]`. */
+  meter?: TimeSignature;
   lookAhead?: number;
   tickInterval?: number;
   /** Called with every window. Optional: schedulers can instead follow the clock with `attach`. */
@@ -75,6 +111,8 @@ export interface ClockOptions<TRulers extends Record<string, Ruler<unknown, unkn
 export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Record<never, never>> {
   /** Transport state. Read-only: only `start/pause/resume/stop` change it. Shared with `timeline.state`. */
   readonly state: ReadonlyCell<TransportState>;
+  /** The time signature that bars (`"1m"`) are measured in. Default `[4, 4]`; writable. Attached schedulers read it through their handle. */
+  readonly meter: Cell<TimeSignature>;
 
   private readonly _timeline: Timeline<TRulers>;
   private readonly _lookAhead: number;
@@ -83,6 +121,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
   private readonly _attachCleanups = new Map<Scheduler, () => void>();
   private readonly _onMiss?: (gap: MissedGap) => void;
   private readonly _tickSource: TickSource;
+  private readonly _stopTempoWatch: () => void;
 
   private _previousWindowEndBeat = 0;
   // The generation `_previousWindowEndBeat` belongs to. A fresh segment
@@ -110,6 +149,12 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     this._onMiss = options.onMiss;
     this._tickSource = options.tickSource ?? new WorkerTickSource((options.tickInterval ?? 0.025) * 1000);
     this.state = this._timeline.state;
+    const meter = options.meter ?? [4, 4];
+    if (!Number.isInteger(meter[0]) || !Number.isInteger(meter[1]) || meter[0] < 1 || meter[1] < 1) {
+      throw new RangeError(`Clock meter must be [numerator, denominator] positive integers, got [${meter[0]}, ${meter[1]}].`);
+    }
+    this.meter = new Cell<TimeSignature>(meter);
+    this._stopTempoWatch = this._timeline.bpm._onChange((when) => this._notify({ type: "tempo", when, beat: this._timeline.timeToBeat(when) }));
     this._tickSource.start(() => this._tick());
   }
 
@@ -125,8 +170,9 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
 
   /**
    * Follow this clock with a scheduler: it receives every window after `onTick`, with this clock's timeline as its timing. Several schedulers
-   * share one transport and stay beat-aligned. Returns a detach function (idempotent) that calls `scheduler.reset()` and stops the windows. A scheduler with an `attached(handle)` hook
-   * learns its transport that way (to `refresh()` after its own edits) and may return a cleanup that runs on detach.
+   * share one transport and stay beat-aligned. Returns a detach function (idempotent) that calls `scheduler.reset("detach")` and stops the windows. A scheduler with an
+   * `attached(handle)` hook is called synchronously with its transport's `timeline`, `state` and `meter` (and `refresh()` after its own edits) and may return a cleanup
+   * that runs on detach. A scheduler with a `transport(change)` hook hears every start, stop, pause, resume, seek and tempo change.
    * Attaching while playing refreshes the look-ahead so the scheduler's first hits are not missed. An error thrown by a scheduler is logged
    * and does not stop the others.
    */
@@ -136,12 +182,18 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     this._schedulers.add(scheduler);
     const detach = () => {
       if (!this._schedulers.delete(scheduler)) return;
-      this._resetScheduler(scheduler);
+      this._resetScheduler(scheduler, "detach");
       this._cleanupScheduler(scheduler);
     };
     if (scheduler.attached) {
       try {
-        const cleanup = scheduler.attached({ refresh: () => this.refresh(), detach });
+        const cleanup = scheduler.attached({
+          timeline: this._timeline as unknown as Timeline,
+          state: this.state,
+          meter: readonlyCell(this.meter),
+          refresh: () => this.refresh(),
+          detach,
+        });
         if (typeof cleanup === "function") this._attachCleanups.set(scheduler, cleanup);
       } catch (error) {
         this._schedulers.delete(scheduler);
@@ -163,15 +215,27 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     }
   }
 
-  private _resetSchedulers(): void {
-    for (const scheduler of [...this._schedulers]) this._resetScheduler(scheduler);
+  private _resetSchedulers(reason: ResetReason): void {
+    for (const scheduler of [...this._schedulers]) this._resetScheduler(scheduler, reason);
   }
 
-  private _resetScheduler(scheduler: Scheduler): void {
+  private _resetScheduler(scheduler: Scheduler, reason: ResetReason): void {
     try {
-      scheduler.reset?.();
+      scheduler.reset?.(reason);
     } catch (error) {
       console.error("Clock scheduler reset failed:", error);
+    }
+  }
+
+  private _notify(change: TransportChange): void {
+    if (this._destroyed) return;
+    for (const scheduler of [...this._schedulers]) {
+      if (!scheduler.transport) continue;
+      try {
+        scheduler.transport(change);
+      } catch (error) {
+        console.error("Clock scheduler transport hook failed:", error);
+      }
     }
   }
 
@@ -202,7 +266,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     if (!Number.isFinite(atBeat)) throw new RangeError(`Clock start offset must be finite beats, got ${atBeat}`);
     this._refillPending = false;
     this._cancelOwned();
-    this._resetSchedulers();
+    this._resetSchedulers("start");
     // one change: effects watching `state` never see the new state with stale bookkeeping
     batch(() => this._timeline._start(atBeat, when));
     this._previousWindowEndBeat = atBeat;
@@ -211,6 +275,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     // recognizes this as a fresh segment and skips the miss check; _tick()
     // catches it up to the current generation once that tick has run.
     this._startedAt = Math.max(this._timeline.now, when ?? 0);
+    this._notify({ type: "start", when: this._startedAt, beat: atBeat });
   }
 
   /**
@@ -228,8 +293,9 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     if (this._timeline._transportState !== "playing") return;
     this._refillPending = false;
     this._cancelOwned();
-    this._resetSchedulers();
+    this._resetSchedulers("pause");
     this._timeline._pause();
+    this._notify({ type: "pause", when: this._timeline.now, beat: this._timeline.timeToBeat(this._timeline.now) });
   }
 
   /**
@@ -240,24 +306,28 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
   resume(): void {
     if (this._timeline._transportState !== "paused") return;
     this._timeline._resume();
+    this._notify({ type: "resume", when: this._timeline.now, beat: this._timeline.timeToBeat(this._timeline.now) });
   }
 
   /** Stops and resets position to beat 0. */
   stop(): void {
     this._refillPending = false;
     this._cancelOwned();
-    this._resetSchedulers();
+    this._resetSchedulers("stop");
+    const wasStopped = this._timeline._transportState === "stopped";
     this._timeline._stop();
     this._previousWindowEndBeat = 0;
+    if (!wasStopped) this._notify({ type: "stop", when: this._timeline.now, beat: 0 });
   }
 
   /** Jumps to `beat`. Bumps `generation`; the next window starts exactly at `beat` (beats may re-appear). */
   seek(beat: number): void {
     this._refillPending = false;
     this._cancelOwned();
-    this._resetSchedulers();
+    this._resetSchedulers("seek");
     this._timeline._seek(beat);
     this._previousWindowEndBeat = beat;
+    this._notify({ type: "seek", when: this._timeline.now, beat });
     // see start(): _previousWindowEndGeneration deliberately stays stale here too
   }
 
@@ -288,8 +358,9 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     this._destroyed = true;
     this._refillPending = false;
     this._tickSource.stop();
+    this._stopTempoWatch();
     this._cancelOwned();
-    this._resetSchedulers();
+    this._resetSchedulers("detach");
     for (const scheduler of [...this._schedulers]) this._cleanupScheduler(scheduler);
     this._schedulers.clear();
   }

@@ -26,3 +26,6 @@ export interface CoreTickWindow {
 export interface TimeSource {
   readonly currentTime: number;
 }
+
+/** Beats per bar and the beat unit: `[4, 4]` is four quarter beats, `[6, 8]` six eighths (3 beats on the quarter axis). */
+export type TimeSignature = readonly [numerator: number, denominator: number];
