@@ -27,6 +27,7 @@ export default defineConfig({
             { label: "Designing Audio Apps", slug: "docs/designing-audio-apps" },
             { label: "Choosing Playback", slug: "docs/choosing-playback" },
             { label: "Server-rendered Frameworks", slug: "docs/client-boundary" },
+            { label: "Rules in depth", slug: "docs/rules-in-depth" },
           ],
         },
         {
