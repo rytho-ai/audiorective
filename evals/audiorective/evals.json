@@ -893,7 +893,7 @@
     {
       "id": 67,
       "prompt": "In my vanilla audiorective drum machine I want the step grid to also edit a per-step filter cutoff, and a button on the grid that fills the kick lane with a euclidean rhythm. I don't want to fork the widget or the sequencer. don't run anything.",
-      "expected_output": "A lane `params` entry shown as a grid tab, and a page-local step grid plugin attached through grid.attach.",
+      "expected_output": "A lane `params` entry shown as a grid tab, and a page-local step grid plugin attached through grid.attach. Declare custom parameter IDs before mounting; the custom tab set is fixed at mount.",
       "files": [],
       "expectations": [
         "Declares the cutoff as a lane `params` entry with { min, max, default } and reads it from `hit.values` in `onHit`; mountStepGrid shows it as an extra tab with no widget change",

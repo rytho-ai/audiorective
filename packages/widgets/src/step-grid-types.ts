@@ -74,6 +74,7 @@ export type StepGridLabels = {
 };
 
 export type StepGridOptions = {
+  /** Borrowed live lanes; the custom parameter tab set is fixed from the parameters present at mount. */
   sequencer: StepGridSequencer;
   /** Display name of a lane. Defaults to the lane's name. */
   laneLabel?(name: string): string;
