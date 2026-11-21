@@ -367,9 +367,10 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
   refresh(): void {
     if (this._disposed || this._timeline._transportState !== "playing" || this._refillPending) return;
     const now = this._timeline.now;
-    this._cancelOwned(true, now);
-    this._previousWindowEndBeat = this._timeline._invalidate(now);
     this._refillPending = true;
+    this._cancelOwned(true, now);
+    if (!this._refillPending) return;
+    this._previousWindowEndBeat = this._timeline._invalidate(now);
     queueMicrotask(() => {
       if (this._refillPending) this._tick();
     });

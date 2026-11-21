@@ -170,6 +170,39 @@ test("refresh uses one captured boundary even if cancellation advances the audio
   clock.dispose();
 });
 
+test("refresh inside an event cancellation keeps the first captured refill boundary", async () => {
+  let now = 0;
+  const ticks = new ManualTickSource();
+  const starts: number[] = [];
+  const hit = event();
+  const clock = new Clock({
+    context: {
+      get currentTime() {
+        return now;
+      },
+    },
+    tickSource: ticks,
+    onTick(window) {
+      starts.push(window.beat.start);
+      if (starts.length === 1) window.own(hit.value, 0);
+    },
+  });
+  hit.cancel.mockImplementation(() => {
+    now = 0.01;
+    clock.refresh();
+  });
+  try {
+    clock.start();
+    ticks.tick();
+    clock.refresh();
+    await flushRefill();
+    expect(hit.cancel).toHaveBeenCalledTimes(1);
+    expect(starts).toEqual([0, 0]);
+  } finally {
+    clock.dispose();
+  }
+});
+
 test("a late registration from an invalidated window is cancelled instead of escaping ownership", () => {
   const timeline = new Timeline({ audioContext: { currentTime: 0 } });
   const ticks = new ManualTickSource();

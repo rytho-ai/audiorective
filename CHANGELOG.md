@@ -53,6 +53,8 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Fixed
 
+- **clock:** a `refresh()` called from an owned event’s cancellation coalesces with the outer edit, preserving its first captured audio boundary even if the audio clock advances inside the callback.
+
 - **core:** `withCancel(event, undo).cancel(time?)` forwards the optional audio-context cancellation boundary to the wrapped event instead of cancelling it immediately. Cancellation and undo still run at most once; documentation and clock-owned voice examples preserve the same boundary.
 
 - **docs / skill:** the prepared audio-stretch example executes `apply()` through the app's synchronous undo history, matching the ownership guidance; warp-editor guidance routes to that example.
