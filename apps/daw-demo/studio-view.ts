@@ -1288,7 +1288,11 @@ export class StudioView {
       });
       top.insertBefore(audition, spacer);
       this.envelopeView = mountClipEnvelopeEditor(top, {
-        duration: clip.duration,
+        duration: () => {
+          workspace.project.cells.revision.$();
+          const current = workspace.project.tracks.flatMap((track) => track.clips).find((item) => item.id === clip.id);
+          return current?.kind === "audio" ? current.duration : 0;
+        },
         envelope: readonlyCell(() => {
           workspace.project.cells.revision.$();
           const current = this.selectedClip();
@@ -1513,17 +1517,22 @@ export class StudioView {
     heading.textContent = `${track.name} · 音量自動化 · 0–${Number(duration.toFixed(2))} 秒`;
     root.append(heading);
     this.automationView = mountAutomationLane(root, {
-      duration,
+      duration: () => {
+        this.workspace.project.cells.revision.$();
+        const current = this.workspace.project.tracks.find((item) => item.id === track.id);
+        return Math.max(1, this.workspace.duration, current?.volumeAutomation.at(-1)?.time ?? 0);
+      },
       maxValue,
       defaultValue: 1,
-      points: track.volumeAutomation,
+      points: readonlyCell(() => {
+        this.workspace.project.cells.revision.$();
+        return this.workspace.project.tracks.find((item) => item.id === track.id)?.volumeAutomation ?? emptyAutomation;
+      }),
       label: `${track.name} 音量自動化`,
       labels: { time: "時間（秒）", value: "線性音量", shape: "插值", linear: "線性", hold: "保持", add: "增加點", remove: "刪除點" },
       onCommit: (points) => {
         try {
           this.history.recordVolumeAutomation(track.id, points);
-          const current = this.workspace.project.tracks.find((item) => item.id === track.id)!;
-          this.automationView?.setPoints(current.volumeAutomation);
           void this.workspace.flush().catch(this.actions.error);
         } catch (error) {
           this.actions.error(error);

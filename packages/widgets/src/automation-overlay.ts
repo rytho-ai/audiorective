@@ -3,7 +3,8 @@ import { AutomationCurve, type AutomationPoint } from "@audiorective/core/automa
 import type { TimeViewPlugin } from "./types";
 
 export interface AutomationOverlayOptions {
-  points: Readable<readonly AutomationPoint[]>;
+  /** Borrowed tracked snapshots; direct AutomationCurve and readonlyCell projections fit. */
+  points: { readonly value: readonly AutomationPoint[] };
   onCommit(points: readonly AutomationPoint[]): void;
   fromView(time: number): number;
   toView(time: number): number;
@@ -13,6 +14,8 @@ export interface AutomationOverlayOptions {
   defaultValue: number;
   snap?(time: number): number;
   label?: string;
+  /** True cancels editing and yields input to other tools. Default false. */
+  disabled?: Readable<boolean>;
 }
 
 /** Edit a borrowed curve over a time view, with a single commit at the end of each gesture. */
@@ -39,9 +42,15 @@ export function createAutomationOverlay(options: AutomationOverlayOptions): Time
       ctx.mountOverlay(root);
 
       let points: readonly AutomationPoint[] = [];
+      let disabled = false;
       let interpolate: AutomationCurve | undefined;
       const handles: HTMLButtonElement[] = [];
       let drag: { index: number; pointerId: number; point: AutomationPoint } | undefined;
+      let disposed = false;
+      ctx.onCleanup(() => {
+        disposed = true;
+        endDrag();
+      });
       const inset = 8;
       const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
       const viewTime = (time: number, alt: boolean) => clamp(!alt && options.snap ? options.snap(time) : time, 0, ctx.duration);
@@ -65,7 +74,16 @@ export function createAutomationOverlay(options: AutomationOverlayOptions): Time
       function commitPoint(index: number, point: AutomationPoint): void {
         const previous = points[index];
         if (previous.time === point.time && previous.value === point.value && previous.shape === point.shape) return;
-        options.onCommit(points.map((item, i) => (i === index ? point : item)));
+        commit(points.map((item, i) => (i === index ? point : item)));
+      }
+
+      function commit(next: readonly AutomationPoint[]): void {
+        endDrag();
+        try {
+          options.onCommit(next);
+        } finally {
+          render();
+        }
       }
 
       function makeHandle(): HTMLButtonElement {
@@ -82,6 +100,7 @@ export function createAutomationOverlay(options: AutomationOverlayOptions): Time
       }
 
       function render(): void {
+        if (disposed) return;
         const { height } = ctx.getViewport();
         if (ctx.duration <= 0) {
           for (const handle of handles) handle.hidden = true;
@@ -121,6 +140,8 @@ export function createAutomationOverlay(options: AutomationOverlayOptions): Time
         for (const [index, point] of visible.entries()) {
           const handle = handles[index] ?? (handles[index] = makeHandle());
           handle.hidden = point.time < sourceStart || point.time > sourceEnd;
+          handle.disabled = disabled;
+          handle.style.pointerEvents = disabled ? "none" : "auto";
           handle.dataset.index = String(index);
           handle.style.left = `${clamp(x(point.time), inset, ctx.timeToX(ctx.duration) - inset)}px`;
           handle.style.top = `${y(point.value)}px`;
@@ -145,7 +166,7 @@ export function createAutomationOverlay(options: AutomationOverlayOptions): Time
       ctx.listen(root, "pointerdown", (event) =>
         listenPointer(event, (pointer) => {
           const index = indexOf(pointer.target);
-          if (index < 0 || pointer.button !== 0) return;
+          if (disabled || pointer.defaultPrevented || index < 0 || pointer.button !== 0) return;
           pointer.preventDefault();
           pointer.stopPropagation();
           endDrag();
@@ -180,18 +201,23 @@ export function createAutomationOverlay(options: AutomationOverlayOptions): Time
           }),
         );
       ctx.listen(ctx.surface, "dblclick", (event) => {
-        if (!(event instanceof MouseEvent) || indexOf(event.target) >= 0 || ctx.duration <= 0) return;
+        if (!(event instanceof MouseEvent) || event.defaultPrevented || disabled || indexOf(event.target) >= 0 || ctx.duration <= 0) return;
         event.preventDefault();
         event.stopPropagation();
         const time = sourceTime(event.clientX, event.altKey);
         if (points.some((point) => Math.abs(point.time - time) < 1e-9)) return;
         const next: AutomationPoint = { time, value: pointerValue(event.clientY), shape: "linear" };
         const start: AutomationPoint = { time: fromView(0), value: defaultValue, shape: "linear" };
-        options.onCommit((!points.length && time > start.time ? [start, next] : [...points, next]).sort((a, b) => a.time - b.time));
+        commit((!points.length && time > start.time ? [start, next] : [...points, next]).sort((a, b) => a.time - b.time));
       });
       ctx.listen(root, "keydown", (event) => {
         const index = indexOf(event.target);
-        if (!(event instanceof KeyboardEvent) || index < 0) return;
+        if (!(event instanceof KeyboardEvent) || disabled || index < 0) return;
+        if (!["Escape", "Delete", "Backspace", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Enter"].includes(event.key)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        endDrag();
+        render();
         const point = points[index];
         const time = toView(point.time);
         let next: AutomationPoint;
@@ -202,7 +228,7 @@ export function createAutomationOverlay(options: AutomationOverlayOptions): Time
             break;
           case "Delete":
           case "Backspace":
-            options.onCommit(points.filter((_, i) => i !== index));
+            commit(points.filter((_, i) => i !== index));
             break;
           case "ArrowLeft":
           case "ArrowRight": {
@@ -222,31 +248,32 @@ export function createAutomationOverlay(options: AutomationOverlayOptions): Time
           default:
             return;
         }
-        event.preventDefault();
-        event.stopPropagation();
       });
       ctx.onDataChange(() => {
         endDrag();
         render();
       });
       ctx.onViewportChange(render);
-      function update(incoming: readonly AutomationPoint[]): void {
+      function update(incoming: readonly AutomationPoint[], locked: boolean): void {
         endDrag();
+        disabled = locked;
         interpolate = incoming.length ? new AutomationCurve(incoming) : undefined;
         points = interpolate?.value ?? [];
         render();
       }
       let incoming = untracked(() => options.points.value);
-      untracked(() => update(incoming));
+      untracked(() => update(incoming, options.disabled?.value ?? false));
       ctx.onCleanup(
-        effect(() => {
-          const next = options.points.value;
-          if (next === incoming) return;
-          incoming = next;
-          untracked(() => update(next));
-        }),
+        untracked(() =>
+          effect(() => {
+            const next = options.points.value;
+            const locked = options.disabled?.value ?? false;
+            if (next === incoming && locked === disabled) return;
+            incoming = next;
+            untracked(() => update(next, locked));
+          }),
+        ),
       );
-      ctx.onCleanup(endDrag);
     },
   };
 }

@@ -1,8 +1,8 @@
 import { effect } from "@audiorective/core";
 import type { Readable } from "@audiorective/core";
 
-type SampleRow = Readonly<{ id: string; name: string; status: "loading" | "ready" | "error"; duration?: number; error?: string }>;
-type SampleBrowserState = Readonly<{ rows: readonly SampleRow[]; previewId: string | null; previewPlaying: boolean }>;
+export type SampleRow = Readonly<{ id: string; name: string; status: "loading" | "ready" | "error"; duration?: number; error?: string }>;
+export type SampleBrowserState = Readonly<{ rows: readonly SampleRow[]; previewId: string | null; previewPlaying: boolean }>;
 
 export type SampleBrowserOptions = {
   library: {

@@ -2,9 +2,9 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { userEvent } from "vitest/browser";
 import { WavePlayer } from "@audiorective/player";
-import { cell } from "@audiorective/core";
-import type { AutomationPoint } from "@audiorective/core/automation";
-import { createAutomationOverlay, mountWaveformSelector, type TimeViewPlugin } from "../src";
+import { cell, readonlyCell } from "@audiorective/core";
+import { AutomationCurve, type AutomationPoint } from "@audiorective/core/automation";
+import { createAutomationOverlay, createWarpMarkers, mountWaveformSelector, type TimeViewPlugin, type TimeViewPluginContext } from "../src";
 import { mountPianoRoll, type WaveformPlugin, type WaveformPluginContext } from "../src/piano-roll";
 import { mountWaveform } from "../src/waveform";
 import { bandsFile, cleanup, element, host, own, pointer, rollModel } from "./helpers";
@@ -13,6 +13,265 @@ afterEach(async () => {
   await cleanup();
   vi.restoreAllMocks();
 });
+
+test("curve and warp extensions claim one background double click and respect an earlier claim", () => {
+  const root = host();
+  const wave = mountWaveform(root, { data: { peaks: Float32Array.of(0.2, 0.8), duration: 4 } });
+  own(() => wave.dispose());
+  let context!: TimeViewPluginContext;
+  wave.attach({
+    attach(ctx) {
+      context = ctx;
+    },
+  });
+  const curveCommit = vi.fn();
+  const markerCommit = vi.fn();
+  wave.attach(
+    createAutomationOverlay({
+      points: cell<readonly AutomationPoint[]>([]),
+      fromView: (time) => time,
+      toView: (time) => time,
+      maxValue: 2,
+      defaultValue: 1,
+      onCommit: curveCommit,
+    }),
+  );
+  wave.attach(
+    createWarpMarkers({
+      anchors: cell([]),
+      sampleRate: 48_000,
+      sourceFrames: 192_000,
+      sourceFrameAt: (time) => time * 48_000,
+      onCommit: markerCommit,
+    }),
+  );
+  const rect = context.surface.getBoundingClientRect();
+  const event = () =>
+    new MouseEvent("dblclick", {
+      bubbles: true,
+      cancelable: true,
+      clientX: rect.left + context.timeToX(2),
+      clientY: rect.top + 30,
+    });
+  const claimed = event();
+  claimed.preventDefault();
+  context.surface.dispatchEvent(claimed);
+  expect(curveCommit).not.toHaveBeenCalled();
+  expect(markerCommit).not.toHaveBeenCalled();
+  const click = event();
+  context.surface.dispatchEvent(click);
+  expect(curveCommit.mock.calls.length + markerCommit.mock.calls.length).toBe(1);
+  expect(click.defaultPrevented).toBe(true);
+});
+
+test("borrowed tool gates cancel a curve drag and yield background editing to warp without reattachment", async () => {
+  const root = host();
+  const wave = mountWaveform(root, { data: { peaks: Float32Array.of(0.2, 0.8), duration: 4 } });
+  own(() => wave.dispose());
+  let context!: TimeViewPluginContext;
+  wave.attach({
+    attach(ctx) {
+      context = ctx;
+    },
+  });
+  const tool = cell<"curve" | "warp">("curve");
+  const curve = new AutomationCurve([
+    { time: 4, value: 1, shape: "linear" },
+    { time: 6, value: 0.5, shape: "hold" },
+    { time: 12, value: 1, shape: "linear" },
+  ]);
+  const before = curve.value;
+  const curveCommit = vi.fn((next: readonly AutomationPoint[]) => {
+    curve.value = next;
+  });
+  const markerCommit = vi.fn();
+  wave.attach(
+    createAutomationOverlay({
+      points: curve,
+      fromView: (time) => 4 + 2 * time,
+      toView: (time) => (time - 4) / 2,
+      maxValue: 2,
+      defaultValue: 1,
+      disabled: readonlyCell(() => tool.value !== "curve"),
+      onCommit: curveCommit,
+    }),
+  );
+  wave.attach(
+    createWarpMarkers({
+      anchors: cell([{ sourceFrame: 96_000, outputFrame: 144_000 }]),
+      sampleRate: 48_000,
+      sourceFrames: 192_000,
+      disabled: readonlyCell(() => tool.value !== "warp"),
+      sourceFrameAt: (time) => time * 32_000,
+      onCommit: markerCommit,
+    }),
+  );
+  const handle = root.querySelector<HTMLButtonElement>('.ar-automation-point[data-index="1"]')!;
+  const rect = handle.getBoundingClientRect();
+  await pointer({ action: "down", x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+  await pointer({ action: "move", x: rect.left + rect.width / 2 + 50, y: rect.top + 30 });
+  tool.value = "warp";
+  await pointer({ action: "up" });
+  expect(curveCommit).not.toHaveBeenCalled();
+  expect(curve.value).toBe(before);
+  expect(root.querySelector('.ar-automation-point[data-index="1"]')).toBe(handle);
+  expect(handle.disabled).toBe(true);
+  const bounds = context.surface.getBoundingClientRect();
+  context.surface.dispatchEvent(
+    new MouseEvent("dblclick", {
+      bubbles: true,
+      cancelable: true,
+      clientX: bounds.left + context.timeToX(2),
+      clientY: bounds.top + 30,
+    }),
+  );
+  expect(curveCommit).not.toHaveBeenCalled();
+  expect(markerCommit).toHaveBeenCalledTimes(1);
+});
+
+test("a disabled marker yields real pointer input to the curve handle beneath it", async () => {
+  const root = host();
+  const wave = mountWaveform(root, { data: { peaks: Float32Array.of(0.2, 0.8), duration: 4 } });
+  own(() => wave.dispose());
+  let context!: TimeViewPluginContext;
+  wave.attach({
+    attach(ctx) {
+      context = ctx;
+    },
+  });
+  const curve = new AutomationCurve([{ time: 1, value: 0.5, shape: "linear" }]);
+  const commit = vi.fn((next: readonly AutomationPoint[]) => {
+    curve.value = next;
+  });
+  const warpCommit = vi.fn();
+  wave.attach(
+    createAutomationOverlay({ points: curve, fromView: (time) => time, toView: (time) => time, maxValue: 2, defaultValue: 1, onCommit: commit }),
+  );
+  wave.attach(
+    createWarpMarkers({
+      anchors: cell([{ sourceFrame: 48_000, outputFrame: 48_000 }]),
+      disabled: cell(true),
+      sampleRate: 48_000,
+      sourceFrames: 192_000,
+      sourceFrameAt: (time) => time * 48_000,
+      onCommit: warpCommit,
+    }),
+  );
+  const point = root.querySelector<HTMLButtonElement>(".ar-automation-point")!;
+  const rect = point.getBoundingClientRect();
+  const bounds = context.surface.getBoundingClientRect();
+  await pointer({ action: "down", x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+  await pointer({ action: "move", x: bounds.left + context.timeToX(2), y: rect.top + rect.height / 2 });
+  await pointer({ action: "up" });
+  expect(commit).toHaveBeenCalledTimes(1);
+  expect(curve.value[0].time).toBeCloseTo(2, 1);
+  expect(warpCommit).not.toHaveBeenCalled();
+});
+
+test("a keyboard command cancels the pointer preview even when the owner refuses the command", async () => {
+  const root = host();
+  const wave = mountWaveform(root, { data: { peaks: Float32Array.of(0.2, 0.8), duration: 4 } });
+  own(() => wave.dispose());
+  const points = cell<readonly AutomationPoint[]>([{ time: 1, value: 0.5, shape: "linear" }]);
+  const commit = vi.fn();
+  wave.attach(createAutomationOverlay({ points, fromView: (time) => time, toView: (time) => time, maxValue: 2, defaultValue: 1, onCommit: commit }));
+  const handle = root.querySelector<HTMLButtonElement>(".ar-automation-point")!;
+  const originalLeft = handle.style.left;
+  const rect = handle.getBoundingClientRect();
+  await pointer({ action: "down", x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+  await pointer({ action: "move", x: rect.left + rect.width / 2 + 50, y: rect.top + rect.height / 2 });
+  await userEvent.keyboard("{Delete}");
+  expect(handle.style.left).toBe(originalLeft);
+  await pointer({ action: "up" });
+  expect(commit).toHaveBeenCalledTimes(1);
+  expect(commit).toHaveBeenCalledWith([]);
+  expect(points.value).toEqual([{ time: 1, value: 0.5, shape: "linear" }]);
+});
+
+test("an owner command can remove its overlay without a late mapping callback", () => {
+  const root = host();
+  const wave = mountWaveform(root, { data: { peaks: Float32Array.of(0.2, 0.8), duration: 4 } });
+  own(() => wave.dispose());
+  const points = cell<readonly AutomationPoint[]>([{ time: 1, value: 0.5, shape: "linear" }]);
+  const fromView = vi.fn((time: number) => time);
+  const attachment = wave.attach(
+    createAutomationOverlay({
+      points,
+      fromView,
+      toView: (time) => time,
+      maxValue: 2,
+      defaultValue: 1,
+      onCommit() {
+        attachment.dispose();
+        fromView.mockClear();
+      },
+    }),
+  );
+  root.querySelector<HTMLButtonElement>(".ar-automation-point")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  expect(fromView).not.toHaveBeenCalled();
+  expect(root.querySelector(".ar-automation-overlay")).toBeNull();
+  expect(wave.getViewport().duration).toBe(4);
+});
+
+for (const tool of ["curve", "warp"] as const) {
+  test.each(["Escape", "pointercancel", "lostpointercapture", "replacement", "dispose"] as const)(
+    `${tool}: %s cancels pointer previews and keeps the borrowed owner usable`,
+    async (reason) => {
+      const root = host();
+      const wave = mountWaveform(root, { data: { peaks: Float32Array.of(0.2, 0.8), duration: 4 } });
+      own(() => wave.dispose());
+      let context!: TimeViewPluginContext;
+      wave.attach({
+        attach(ctx) {
+          context = ctx;
+        },
+      });
+      const points = cell<readonly AutomationPoint[]>([{ time: 1, value: 0.5, shape: "linear" }]);
+      const anchors = cell<readonly { sourceFrame: number; outputFrame: number }[]>([{ sourceFrame: 48_000, outputFrame: 48_000 }]);
+      const commit = vi.fn();
+      const attachment = wave.attach(
+        tool === "curve"
+          ? createAutomationOverlay({ points, fromView: (time) => time, toView: (time) => time, maxValue: 2, defaultValue: 1, onCommit: commit })
+          : createWarpMarkers({ anchors, sampleRate: 48_000, sourceFrames: 192_000, sourceFrameAt: (time) => time * 48_000, onCommit: commit }),
+      );
+      own(() => attachment.dispose());
+      const selector = tool === "curve" ? ".ar-automation-point" : ".ar-warp-marker";
+      const handle = root.querySelector<HTMLButtonElement>(selector)!;
+      let pointerId = -1;
+      handle.addEventListener(
+        "pointerdown",
+        (event) => {
+          pointerId = event.pointerId;
+        },
+        { once: true },
+      );
+      const rect = handle.getBoundingClientRect();
+      await pointer({ action: "down", x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+      await pointer({ action: "move", x: context.surface.getBoundingClientRect().left + context.timeToX(2), y: rect.top + rect.height / 2 });
+      if (reason === "Escape") await userEvent.keyboard("{Escape}");
+      else if (reason === "replacement") {
+        if (tool === "curve") points.value = [{ time: 1, value: 1.5, shape: "hold" }];
+        else anchors.value = [{ sourceFrame: 48_000, outputFrame: 72_000 }];
+        expect(root.querySelector(selector)).toBe(handle);
+        expect(document.activeElement).toBe(handle);
+        expect(handle.getAttribute("aria-valuenow")).toBe("1.5");
+      } else if (reason === "dispose") attachment.dispose();
+      else handle.dispatchEvent(new PointerEvent(reason, { pointerId, bubbles: true }));
+      await pointer({ action: "up" });
+      expect(commit).not.toHaveBeenCalled();
+      if (reason === "dispose") {
+        const before = handle.getAttribute("aria-valuenow");
+        points.value = [{ time: 1, value: 0.1, shape: "hold" }];
+        anchors.value = [{ sourceFrame: 48_000, outputFrame: 96_000 }];
+        handle.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+        expect(handle.getAttribute("aria-valuenow")).toBe(before);
+        expect(commit).not.toHaveBeenCalled();
+        expect(root.querySelector(selector)).toBeNull();
+        expect(wave.getViewport().duration).toBe(4);
+      }
+    },
+  );
+}
 
 test("an automation overlay edits a shared curve with output-to-source time projection and independent lifetimes", () => {
   const root = host();

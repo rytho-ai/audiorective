@@ -1,6 +1,6 @@
 import { effect, untracked, type Readable } from "@audiorective/core";
-/** A source-frame to output-frame correspondence. */
-type WaveStretchAnchor = Readonly<{ sourceFrame: number; outputFrame: number }>;
+import type { WaveStretchAnchor } from "@audiorective/player";
+export type { WaveStretchAnchor } from "@audiorective/player";
 import type { TimeViewPlugin } from "./types";
 
 export interface WarpMarkerOptions {
@@ -28,6 +28,11 @@ export function createWarpMarkers(options: WarpMarkerOptions): TimeViewPlugin {
       let disabled = false;
       const handles: HTMLButtonElement[] = [];
       let drag: { pointerId: number; index: number; outputFrame: number; grabOffset: number } | undefined;
+      let disposed = false;
+      ctx.onCleanup(() => {
+        disposed = true;
+        finish();
+      });
       const outputFrames = () => Math.round(ctx.duration * sampleRate);
       const indexOf = (event: Event) =>
         event.target instanceof HTMLButtonElement && event.target.parentElement === root ? handles.indexOf(event.target) : -1;
@@ -47,6 +52,7 @@ export function createWarpMarkers(options: WarpMarkerOptions): TimeViewPlugin {
         if (points[index].outputFrame !== outputFrame) options.onCommit(points.map((point, i) => (i === index ? { ...point, outputFrame } : point)));
       }
       function render(): void {
+        if (disposed) return;
         for (const [i, point] of points.entries()) {
           let button = handles[i];
           if (!button) {
@@ -67,6 +73,7 @@ export function createWarpMarkers(options: WarpMarkerOptions): TimeViewPlugin {
           button.dataset.sourceFrame = String(point.sourceFrame);
           button.style.left = `${ctx.timeToX(time)}px`;
           button.disabled = disabled;
+          button.style.pointerEvents = disabled ? "none" : "auto";
           button.setAttribute("aria-label", `${options.label ?? "Warp marker"} ${i + 1}`);
           button.setAttribute("aria-valuemin", String(((points[i - 1]?.outputFrame ?? 0) + 1) / sampleRate));
           button.setAttribute("aria-valuemax", String(((points[i + 1]?.outputFrame ?? outputFrames()) - 1) / sampleRate));
@@ -78,7 +85,7 @@ export function createWarpMarkers(options: WarpMarkerOptions): TimeViewPlugin {
 
       ctx.listen(root, "pointerdown", (event) => {
         const index = indexOf(event);
-        if (!(event instanceof PointerEvent) || event.button !== 0 || index < 0 || disabled) return;
+        if (!(event instanceof PointerEvent) || event.defaultPrevented || event.button !== 0 || index < 0 || disabled) return;
         event.preventDefault();
         event.stopPropagation();
         finish();
@@ -106,7 +113,7 @@ export function createWarpMarkers(options: WarpMarkerOptions): TimeViewPlugin {
           render();
         });
       ctx.listen(ctx.surface, "dblclick", (event) => {
-        if (!(event instanceof MouseEvent) || indexOf(event) >= 0 || disabled) return;
+        if (!(event instanceof MouseEvent) || event.defaultPrevented || indexOf(event) >= 0 || disabled) return;
         const time = ctx.clientXToTime(event.clientX);
         const outputFrame = Math.round(time * sampleRate);
         const sourceFrame = Math.round(options.sourceFrameAt(time));
@@ -152,13 +159,14 @@ export function createWarpMarkers(options: WarpMarkerOptions): TimeViewPlugin {
       };
       untracked(() => apply(options.anchors.value, options.disabled?.value ?? false));
       ctx.onCleanup(
-        effect(() => {
-          const next = options.anchors.value;
-          const locked = options.disabled?.value ?? false;
-          if (next !== points || locked !== disabled) untracked(() => apply(next, locked));
-        }),
+        untracked(() =>
+          effect(() => {
+            const next = options.anchors.value;
+            const locked = options.disabled?.value ?? false;
+            if (next !== points || locked !== disabled) untracked(() => apply(next, locked));
+          }),
+        ),
       );
-      ctx.onCleanup(finish);
     },
   };
 }

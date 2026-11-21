@@ -1,3 +1,4 @@
+import { effect, untracked } from "@audiorective/core";
 import type { AutomationPoint } from "@audiorective/core/automation";
 
 type LaneLabels = Readonly<{
@@ -11,18 +12,21 @@ type LaneLabels = Readonly<{
 }>;
 
 export interface AutomationLaneOptions {
-  readonly duration: number;
+  /** Positive length in timeUnit; tracked changes cancel stale previews in place. */
+  readonly duration: () => number;
   readonly maxValue: number;
   readonly defaultValue: number;
-  readonly points: readonly AutomationPoint[];
+  /** Borrowed tracked snapshots; AutomationCurve and readonlyCell projections fit directly. */
+  readonly points: { readonly value: readonly AutomationPoint[] };
+  /** Picker/input coordinates; default seconds. No unit conversion is performed. */
+  readonly timeUnit?: "seconds" | "beats";
   readonly label?: string;
   readonly labels?: LaneLabels;
-  /** Project seconds and linear gain or another caller-defined scalar. */
+  /** One owner command per finished gesture, in timeUnit and the caller's scalar unit. */
   onCommit(points: readonly AutomationPoint[]): void;
 }
 
 export interface AutomationLaneHandle {
-  setPoints(points: readonly AutomationPoint[]): void;
   dispose(): void;
 }
 
@@ -31,11 +35,14 @@ const round = (value: number) => Math.round(value * 100) / 100;
 
 /** Draw and edit a borrowed envelope, committing once per gesture. */
 export function mountAutomationLane(root: HTMLElement, options: AutomationLaneOptions): AutomationLaneHandle {
-  const { duration, maxValue, defaultValue } = options;
+  const { maxValue, defaultValue } = options;
+  let duration = untracked(() => options.duration());
+  const doc = root.ownerDocument;
+  const unit = options.timeUnit === "beats" ? "beats" : "s";
   if (!(Number.isFinite(duration) && duration > 0 && Number.isFinite(maxValue) && maxValue > 0))
     throw new RangeError("Automation lane needs a positive duration and maximum value.");
   const labels = options.labels ?? {
-    time: "Time (s)",
+    time: `Time (${unit})`,
     value: "Value",
     shape: "Shape",
     linear: "Linear",
@@ -43,19 +50,19 @@ export function mountAutomationLane(root: HTMLElement, options: AutomationLaneOp
     add: "Add point",
     remove: "Delete point",
   };
-  const view = document.createElement("div");
+  const view = doc.createElement("div");
   view.className = "ar-automation-lane";
   view.setAttribute("role", "group");
   view.setAttribute("aria-label", options.label ?? "Automation lane");
-  const graph = document.createElement("canvas");
+  const graph = doc.createElement("canvas");
   graph.className = "ar-automation-graph";
   graph.style.cssText = "display:block;width:100%;height:126px;touch-action:none;cursor:crosshair";
   const drawing = graph.getContext("2d");
   if (!drawing) throw new Error("Automation lane needs a 2D canvas.");
-  const controls = document.createElement("div");
+  const controls = doc.createElement("div");
   controls.className = "ar-automation-controls";
   const numberInput = (name: string, max: number) => {
-    const node = document.createElement("input");
+    const node = doc.createElement("input");
     node.type = "number";
     node.min = "0";
     node.max = String(max);
@@ -65,21 +72,27 @@ export function mountAutomationLane(root: HTMLElement, options: AutomationLaneOp
   };
   const time = numberInput(labels.time, duration);
   const value = numberInput(labels.value, maxValue);
-  const shape = document.createElement("select");
+  const shape = doc.createElement("select");
   shape.setAttribute("aria-label", labels.shape);
-  shape.add(new Option(labels.linear, "linear"));
-  shape.add(new Option(labels.hold, "hold"));
-  const remove = document.createElement("button");
+  const option = (text: string, value: string) => {
+    const item = doc.createElement("option");
+    item.textContent = text;
+    item.value = value;
+    return item;
+  };
+  shape.add(option(labels.linear, "linear"));
+  shape.add(option(labels.hold, "hold"));
+  const remove = doc.createElement("button");
   remove.type = "button";
   remove.textContent = labels.remove;
-  const picker = document.createElement("select");
+  const picker = doc.createElement("select");
   picker.setAttribute("aria-label", options.label ?? "Automation points");
-  const add = document.createElement("button");
+  const add = doc.createElement("button");
   add.type = "button";
   add.textContent = "+";
   add.setAttribute("aria-label", labels.add);
   const field = (name: string, input: HTMLElement) => {
-    const label = document.createElement("label");
+    const label = doc.createElement("label");
     label.append(name, input);
     return label;
   };
@@ -87,11 +100,31 @@ export function mountAutomationLane(root: HTMLElement, options: AutomationLaneOp
   view.append(graph, controls);
   root.append(view);
 
-  let points = options.points.slice().sort((a, b) => a.time - b.time);
+  let incoming = untracked(() => options.points.value);
+  let points: readonly AutomationPoint[] = incoming.slice().sort((a, b) => a.time - b.time);
+  let disposed = false;
   let selectedTime: number | undefined;
   let gesture: { pointerId: number; previous?: AutomationPoint; point: AutomationPoint } | undefined;
+  const abort = new AbortController();
+  doc.addEventListener(
+    "keydown",
+    (event) => {
+      if (event.key !== "Escape" || (!gesture && !(event.target instanceof Node && view.contains(event.target)))) return;
+      cancelGesture();
+      syncControls();
+      event.preventDefault();
+      event.stopPropagation();
+    },
+    { signal: abort.signal },
+  );
 
-  function replace(point: AutomationPoint, previous?: AutomationPoint): AutomationPoint[] {
+  function cancelGesture(): void {
+    const previous = gesture;
+    gesture = undefined;
+    if (previous && graph.hasPointerCapture(previous.pointerId)) graph.releasePointerCapture(previous.pointerId);
+  }
+
+  function replace(point: AutomationPoint, previous?: AutomationPoint): readonly AutomationPoint[] {
     const collision = points.find((item) => item.time === point.time && item !== previous);
     if (collision) return points;
     if (points.length === 0 && point.time > 0) return [{ time: 0, value: defaultValue, shape: "linear" }, point];
@@ -99,6 +132,7 @@ export function mountAutomationLane(root: HTMLElement, options: AutomationLaneOp
   }
 
   function draw(): void {
+    if (disposed) return;
     const ctx = drawing!;
     const bounds = graph.getBoundingClientRect();
     if (!bounds.width || !bounds.height) return;
@@ -144,14 +178,14 @@ export function mountAutomationLane(root: HTMLElement, options: AutomationLaneOp
     }
   }
 
-  function setPoints(next: readonly AutomationPoint[]): void {
-    gesture = undefined;
-    points = next.slice().sort((a, b) => a.time - b.time);
+  function syncControls(): void {
+    if (disposed) return;
     const selected = points.find((point) => point.time === selectedTime) ?? points[0];
     selectedTime = selected?.time;
-    const entries = points.map((point) => new Option(`${Number(point.time.toFixed(3))} s`, String(point.time)));
+    const entries = points.map((point) => option(`${Number(point.time.toFixed(3))} ${unit}`, String(point.time)));
     picker.replaceChildren(...entries);
     picker.disabled = !selected;
+    time.max = String(duration);
     time.disabled = value.disabled = shape.disabled = remove.disabled = !selected;
     time.value = selected ? String(selected.time) : "";
     value.value = selected ? String(selected.value) : "";
@@ -163,15 +197,22 @@ export function mountAutomationLane(root: HTMLElement, options: AutomationLaneOp
   function commit(point: AutomationPoint, previous?: AutomationPoint): void {
     if (previous && point.time === previous.time && point.value === previous.value && point.shape === previous.shape) {
       selectedTime = previous.time;
-      setPoints(points);
+      syncControls();
       return;
     }
     const next = replace(point, previous);
     if (next !== points) {
+      const previousTime = previous?.time ?? selectedTime;
       selectedTime = point.time;
-      options.onCommit(next);
+      try {
+        options.onCommit(next);
+      } finally {
+        if (!points.some((item) => item.time === point.time)) selectedTime = previousTime;
+        syncControls();
+      }
+    } else {
+      syncControls();
     }
-    setPoints(points);
   }
 
   function projectPoint(event: PointerEvent, mode: AutomationPoint["shape"]): AutomationPoint {
@@ -184,7 +225,8 @@ export function mountAutomationLane(root: HTMLElement, options: AutomationLaneOp
   }
 
   graph.onpointerdown = (event) => {
-    if (event.button !== 0 || gesture) return;
+    if (disposed || event.defaultPrevented || event.button !== 0 || gesture) return;
+    event.preventDefault();
     const rect = graph.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
     const previous = points.find(
@@ -194,6 +236,7 @@ export function mountAutomationLane(root: HTMLElement, options: AutomationLaneOp
           event.clientY - rect.bottom + (point.value / maxValue) * rect.height,
         ) < 10,
     );
+    graph.focus({ preventScroll: true });
     graph.setPointerCapture(event.pointerId);
     gesture = { pointerId: event.pointerId, previous, point: previous ?? projectPoint(event, "linear") };
     draw();
@@ -206,18 +249,18 @@ export function mountAutomationLane(root: HTMLElement, options: AutomationLaneOp
   graph.onpointerup = (event) => {
     if (gesture?.pointerId !== event.pointerId) return;
     const { point, previous } = gesture;
-    gesture = undefined;
+    cancelGesture();
     commit(point, previous);
   };
   const cancel = (event: PointerEvent) => {
     if (gesture?.pointerId !== event.pointerId) return;
-    gesture = undefined;
+    cancelGesture();
     draw();
   };
   graph.onpointercancel = graph.onlostpointercapture = cancel;
   picker.onchange = () => {
     selectedTime = Number(picker.value);
-    setPoints(points);
+    syncControls();
   };
   const edit = () => {
     const previous = points.find((point) => point.time === selectedTime);
@@ -228,7 +271,7 @@ export function mountAutomationLane(root: HTMLElement, options: AutomationLaneOp
       !Number.isFinite(time.valueAsNumber) ||
       !Number.isFinite(value.valueAsNumber)
     ) {
-      setPoints(points);
+      syncControls();
       return;
     }
     commit({ time: time.valueAsNumber, value: value.valueAsNumber, shape: shape.value === "hold" ? "hold" : "linear" }, previous);
@@ -249,15 +292,42 @@ export function mountAutomationLane(root: HTMLElement, options: AutomationLaneOp
     commit({ time: t, value: v, shape: left?.shape ?? "linear" });
   };
   remove.onclick = () => {
-    options.onCommit(points.filter((point) => point.time !== selectedTime));
-    setPoints(points);
+    try {
+      options.onCommit(points.filter((point) => point.time !== selectedTime));
+    } finally {
+      syncControls();
+    }
   };
+  graph.tabIndex = 0;
   const resize = new ResizeObserver(draw);
   resize.observe(graph);
-  setPoints(points);
+  syncControls();
+  const stop = untracked(() =>
+    effect(() => {
+      const next = options.points.value;
+      const nextDuration = options.duration();
+      if (next === incoming && nextDuration === duration) return;
+      untracked(() => {
+        cancelGesture();
+        if (!(Number.isFinite(nextDuration) && nextDuration > 0))
+          throw new RangeError("Automation lane needs a positive duration and maximum value.");
+        incoming = next;
+        points = next.slice().sort((a, b) => a.time - b.time);
+        duration = nextDuration;
+        syncControls();
+      });
+    }),
+  );
   return {
-    setPoints,
     dispose() {
+      if (disposed) return;
+      disposed = true;
+      cancelGesture();
+      abort.abort();
+      stop();
+      graph.onpointerdown = graph.onpointermove = graph.onpointerup = graph.onpointercancel = graph.onlostpointercapture = null;
+      picker.onchange = time.onchange = value.onchange = shape.onchange = null;
+      add.onclick = remove.onclick = null;
       resize.disconnect();
       view.remove();
     },
