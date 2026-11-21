@@ -181,6 +181,32 @@ describe("Sampler hits", () => {
     sampler.dispose();
   });
 
+  test("noteOff releases only held voices started by `when`: a later noteOff keeps an earlier voice's release", async () => {
+    const data = await render(4, (context) => {
+      const sampler = new Sampler(context, { sound: constant(0.5), release: 0.01 });
+      sampler.connect(context.destination);
+      sampler.noteOn(60, { when: 0 });
+      sampler.noteOff(60, 1);
+      sampler.noteOn(60, { when: 2 });
+      sampler.noteOff(60, 3);
+    });
+    expect(at(data, 0.5)).toBeCloseTo(0.5, 3);
+    expect(at(data, 1.5)).toBe(0);
+    expect(at(data, 2.5)).toBeCloseTo(0.5, 3);
+    expect(at(data, 3.5)).toBe(0);
+  });
+
+  test("noteOff does not release a voice whose noteOn is scheduled after `when`", async () => {
+    const data = await render(4, (context) => {
+      const sampler = new Sampler(context, { sound: constant(0.5), release: 0.01 });
+      sampler.connect(context.destination);
+      sampler.noteOn(60, { when: 2 });
+      sampler.noteOff(60, 1);
+    });
+    expect(at(data, 2.5)).toBeCloseTo(0.5, 3);
+    expect(at(data, 3.5)).toBeCloseTo(0.5, 3);
+  });
+
   test("notes outside lowNote..highNote are ignored", () => {
     const sampler = new Sampler(context, { sound: constant(0.1), lowNote: 48, highNote: 72 });
     expect(sampler.noteOn(47)).toBeNull();

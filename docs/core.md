@@ -683,7 +683,7 @@ voice?.stop(); // fade out over `release`
 const piano = new Sampler(ctx, { sound: pianoC4, rootNote: 60, lowNote: 36, highNote: 96 });
 piano.connect(ctx.destination);
 piano.noteOn("E4"); // transposed +4 semitones from rootNote
-piano.noteOff("E4"); // releases every voice of that note
+piano.noteOff("E4"); // releases the held voices of that note
 ```
 
 **Constructor options** (`SamplerOptions`):
@@ -712,7 +712,7 @@ sampler.trigger(options?: PlayOptions): Voice | null
 // null when there is no sound, or steal:"none" dropped the hit.
 sampler.noteOn(note: number | NoteName, options?: PlayOptions): Voice | null
 // pitch = note - rootNote + options.pitch. A note struck again adds a voice. null outside lowNote..highNote.
-sampler.noteOff(note: number | NoteName, when?: number): void // releases every voice of that note
+sampler.noteOff(note: number | NoteName, when?: number): void // releases the held voices of `note` started by `when`
 sampler.stopAll(when?: number): void
 sampler.dispose(): void
 ```

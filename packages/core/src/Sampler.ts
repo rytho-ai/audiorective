@@ -41,6 +41,8 @@ export class Sampler extends AudioProcessor<{ volume: SchedulableParam }, { acti
   private readonly _signal: AbortSignal | undefined;
   private readonly _onAbort = () => this.dispose();
   private _voices: Voice[] = [];
+  /** Voices a `noteOff` already released, so a later `noteOff` does not move their stop. */
+  private readonly _released = new WeakSet<Voice>();
   private _closed = false;
 
   constructor(context: BaseAudioContext, options: SamplerOptions = {}) {
@@ -93,10 +95,15 @@ export class Sampler extends AudioProcessor<{ volume: SchedulableParam }, { acti
     return this.start(number, number - this._rootNote + (options.pitch ?? 0), options);
   }
 
-  /** Release every voice of `note` at `when` (default now) over `release`; other notes keep sounding. */
+  /** Releases the held voices of `note` started by `when` (default now) over `release`; other notes keep sounding. */
   noteOff(note: number | NoteName, when?: number): void {
     const number = noteNumber(note);
-    for (const voice of [...this._voices]) if (voice.note === number) voice.stop(when);
+    const time = when ?? this.context.currentTime;
+    for (const voice of [...this._voices]) {
+      if (voice.note !== number || this._released.has(voice) || voice.when > time) continue;
+      this._released.add(voice);
+      voice.stop(when);
+    }
   }
 
   /** Release every voice at `when` (default now). */
