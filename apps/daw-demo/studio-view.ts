@@ -86,7 +86,13 @@ export class StudioView {
   private selectedNote?: { clipId: string; noteId: string };
   private noteHighlightObserver?: MutationObserver;
   private editorPitchRange?: { low: number; high: number };
-  pixelsPerSecond = 55;
+  private readonly viewScale = cell(55);
+  get pixelsPerSecond(): number {
+    return this.viewScale.value;
+  }
+  set pixelsPerSecond(value: number) {
+    this.viewScale.value = value;
+  }
   private readonly timelineZoom: TimelineZoomHandle;
   private readonly overview: ArrangementOverview;
   private readonly clipWaveforms: ClipWaveforms;
@@ -640,8 +646,14 @@ export class StudioView {
     this.clipGestures.push(
       attachClipGesture(element, {
         clipId: clip.id,
-        trackId: track.id,
-        time: clip.time,
+        origin: () => {
+          const project = this.workspace.project;
+          project.cells.revision.$();
+          for (const currentTrack of project.tracks) {
+            const current = currentTrack.clips.find((item) => item.id === clip.id);
+            if (current) return { trackId: currentTrack.id, time: current.time };
+          }
+        },
         timeUnit: clip.kind === "midi" ? "beats" : "seconds",
         timeMap: this.workspace.project.tempoMap,
         pixelsPerSecond: () => this.pixelsPerSecond,
@@ -650,11 +662,13 @@ export class StudioView {
           return this.workspace.project.tracks.find((item) => item.id === lane?.dataset.trackId && item.kind === clip.kind)?.id;
         },
         onSelect: () => {
-          this.selectedTrackId = track.id;
+          const currentTrack = this.workspace.project.tracks.find((item) => item.clips.some((current) => current.id === clip.id));
+          if (!currentTrack) return;
+          this.selectedTrackId = currentTrack.id;
           this.selectedClipId = clip.id;
           if (this.selectedNote?.clipId !== clip.id) this.selectedNote = undefined;
           element.classList.add("selected");
-          $("selection-caption").textContent = track.name;
+          $("selection-caption").textContent = currentTrack.name;
         },
         onOpen: () => {
           this.showPanel("editor");
