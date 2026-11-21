@@ -130,7 +130,7 @@ type ParamRange = ValueRange & Readonly<{ default: number; step?: number }>; // 
 type ParamSpec = ParamRange & Readonly<{ id: string; label?: string }>; // a named numeric parameter
 ```
 
-A `StepSequencer` lane declares per-step numbers as `params: Record<string, ParamRange>` (a `ParamSpec` without the `id`). `ValueRange` alone types ranges with no default or id: the `EffectRack` macro mappings, and the CLAP parameter info in `host.parameterInfo`. To declare your own numeric parameter, write a `ParamSpec` (`{ id: "cutoff", label: "Cutoff", min: 0, max: 1, default: 0.5, step: 0.01 }`) and import the type from `@audiorective/core`.
+A `StepSequencer` lane declares per-step numbers as `params: Record<string, ParamRange>` (a `ParamSpec` without the `id`). `ValueRange` alone types ranges with no default or id: the DAW rack's macro mappings, and the CLAP parameter info in `host.parameterInfo`. To declare your own numeric parameter, write a `ParamSpec` (`{ id: "cutoff", label: "Cutoff", min: 0, max: 1, default: 0.5, step: 0.01 }`) and import the type from `@audiorective/core`.
 
 ### Param\<T\>
 
@@ -157,6 +157,7 @@ interface SchedulableParamOptions extends ParamOptions<number> {
   audioParam: AudioParam;
   audioContext: AudioContext;
   syncInterval?: number; // ms, default 100 (~10Hz)
+  smoothing?: number; // seconds a .value write takes to settle; default 0 (jump)
 }
 ```
 
@@ -183,7 +184,7 @@ class SchedulableParam extends Param<number> {
 }
 ```
 
-**Raw writes.** `$(x)` and `.value = x` are the same write: both update the signal and the backing `AudioParam`. `$()` reads are unchanged. Only `syncFromAudio()` updates the signal without writing back, so a ParamSync read-back never overwrites a value you set through `$`.
+**Raw writes.** `$(x)` and `.value = x` are the same write: both update the signal and the backing `AudioParam`. With `smoothing > 0` (an option, or the writable `param.smoothing`) that write moves the `AudioParam` with `setTargetAtTime(x, currentTime + 0.01, smoothing / 5)` instead of jumping, so a dragged control does not click; the first value (the `default`), `rebind()` and the scheduling methods are never smoothed. The default is `0`, the native `AudioParam` behaviour. The `param` and `schedulableParam` build helpers accept `smoothing` too. `$()` reads are unchanged. Only `syncFromAudio()` updates the signal without writing back, so a ParamSync read-back never overwrites a value you set through `$`.
 
 **`read()` vs `.value`:** `.value` returns the signal's last-synced value (updated by `ParamSync` at ~10Hz). `read()` returns the live `AudioParam.value` directly — more accurate during active automations, but doesn't trigger reactive updates.
 

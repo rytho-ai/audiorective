@@ -144,7 +144,7 @@ Observe `workspace.cells.auditioningRange` (also `workspace.auditioningRange`) f
 ```ts
 import { TimeStretch } from "@audiorective/effects/time-stretch";
 
-const processor = new TimeStretch(compatibleWasmModule);
+const processor = await TimeStretch.load({ wasmUrl: "/wasm/rubberband.wasm" });
 try {
   const edit = await workspace.prepareAudioClipStretch(clipId, 1.5, processor);
   edit.apply();
@@ -339,13 +339,52 @@ grid.dispose();
 
 ## Effect rack
 
-`ProjectTrack.effects` is the ordered snapshot of built-in inserts. Use `project.setTrackEffects(trackId, slots)` for headless project edits and await `workspace.flush()` when you need to wait for the rack to reflect that edit. For an already loaded track, `workspace.setTrackEffects(trackId, slots)` applies the change synchronously to the rack and Project, preserving transport and loaded WebCLAP hosts. The signal runs from the track's source through its hosted devices, then the rack, then the mixer. `workspace.trackEffectOutput(trackId)` borrows the rack's pre-mixer output for an analyser. Disconnect only the analyser you connected, or remount it if a structural edit rebuilt that track.
+`ProjectTrack.effects` is the ordered snapshot of built-in inserts (Filter, PingPongDelay and Equalizer slots). The track's runtime rack is a data-driven layer over an [`EffectChain`](./effects.md#effectchain): it owns its effects, keeps processors with the same slot ID and type across edits, and reorders, adds and removes them with the chain's click-free crossfades. An empty rack passes audio through. Bypass (`enabled: false`) sets the effective mix to dry while preserving the configured mix. Filter accepts lowpass or highpass, 20–20,000 Hz and Q 0.1–20. Delay accepts 0.01–1 second and feedback 0–0.95. Both accept a mix from 0–1. An EQ slot is `{ id, type: "eq", enabled, wet, bands }`; each band uses `{ frequency, gain, q }` and follows the [Equalizer ranges](./effects.md#parametric-equalizer), and edits retain a slot's Equalizer when its band count stays the same.
 
-`project.setTrackRackPreset(trackId, { effects, macros })` replaces a track's insert setup and macro settings in one edit. Macro settings are in `track.effectMacros` and use the [standalone rack mapping contract](./effects.md#rack-macros-and-presets). Await `workspace.flush()` after structural rack edits. Bind a UI knob to `workspace.trackMacroValue(trackId, macroId)` for reads and `workspace.setTrackMacroValue(trackId, macroId, value)` for immediate edits. The latter updates the graph and Project together. Use the Project setter for headless editing. Project archives preserve mappings and positions in Audiorective metadata. The rendered audio fallback carries the audible settings to other DAWs.
+```typescript
+project.setTrackEffects(track.id, [
+  { id: "filter", type: "filter", enabled: true, wet: 1, mode: "lowpass", frequency: 1200, q: 0.7 },
+  { id: "delay", type: "delay", enabled: true, wet: 0.35, delayTime: 0.25, feedback: 0.25 },
+]);
+```
+
+Use `project.setTrackEffects(trackId, slots)` for headless project edits and await `workspace.flush()` when you need to wait for the rack to reflect that edit. For an already loaded track, `workspace.setTrackEffects(trackId, slots)` applies the change synchronously to the rack and Project, preserving transport and loaded WebCLAP hosts. The signal runs from the track's source through its hosted devices, then the rack, then the mixer. `workspace.trackEffectOutput(trackId)` borrows the rack's pre-mixer output for an analyser. Disconnect only the analyser you connected, or remount it if a structural edit rebuilt that track.
+
+`project.setTrackRackPreset(trackId, { effects, macros })` replaces a track's insert setup and macro settings in one edit. Macro settings are in `track.effectMacros` (see [Rack macros](#rack-macros)). Await `workspace.flush()` after structural rack edits. Bind a UI knob to `workspace.trackMacroValue(trackId, macroId)` for reads and `workspace.setTrackMacroValue(trackId, macroId, value)` for immediate edits. The latter updates the graph and Project together. Use the Project setter for headless editing. Project archives preserve mappings and positions in Audiorective metadata. The rendered audio fallback carries the audible settings to other DAWs.
 
 The DAW's Devices panel inserts, adjusts, bypasses, reorders and removes Filter, Delay and EQ slots. DAWproject uses vendor-specific `BuiltinDevice` entries in order and versioned JSON settings in `plugins/`. Open the project in Audiorective to edit the inserts. Use the audio fallback when sharing the processed sound with another DAW.
 
 Use `workspace.trackEffectOutput(trackId)` to connect a borrowed spectrum analyser. Use `workspace.trackFilterResponse(trackId, slotId, frequencies, magnitudes, phases)` to draw the live response for a Filter or Equalizer slot. Apply editor mutations with `setTrackEffects()` so the controls, audio and saved settings share one owner.
+
+### Rack macros
+
+Each macro owns one normalized control and one or more built-in parameter targets. Set its mappings in a complete preset.
+
+```typescript
+project.setTrackRackPreset(track.id, {
+  effects: track.effects,
+  macros: [
+    {
+      id: "tone",
+      label: "Tone",
+      value: 0.5,
+      targets: [
+        { slotId: "filter", parameter: "frequency", min: 200, max: 8000, scale: "exponential" },
+        { slotId: "delay", parameter: "feedback", min: 0.05, max: 0.65 },
+      ],
+    },
+  ],
+});
+await workspace.flush();
+workspace.trackMacroValue(track.id, "tone")!.value; // bind a knob here
+workspace.setTrackMacroValue(track.id, "tone", 0.7);
+```
+
+Writing a macro moves the native macro timeline and every mapped target together, and its value is what the Project keeps. The control stays valid across `setTrackEffects`. For audio-clock automation, pass `workspace.trackMacroAutomation(trackId, macroId)` to [AutomationBinding](./automation.md). Linear or hold segments in the normalized curve produce native ramps or steps on the mapped parameters. Exponential targets require positive endpoints. Stop a running binding before taking manual control so subsequent curve edits do not reprogram the target.
+
+Only one macro can own a given slot parameter. Use `rackMacroRange(slot, parameter)` (from `@audiorective/daw/project`) for ranges. Supported targets are mix (`wet`) on every insert, Filter `frequency` and `q`, and Delay `delayTime` and `feedback`. Removing a slot drops its mappings. Bypassing a slot keeps its macro phase and makes that insert dry.
+
+A preset carries version 1, the ordered slots, mappings and current macro positions. Authored curves belong to their caller. A successful recall resets the recalled positions and cancels their old schedules. Existing controls retain identity when their IDs and labels match.
 
 ## File contents and fidelity
 
@@ -397,7 +436,13 @@ A small [Cubase 14 export shared on the Steinberg forum](https://forums.steinber
 | `Project built-in effect state is missing or reused.` / `Project built-in effect state is invalid.`     | Restore the matching, versioned insert state entries.                                                                |
 | `Project macro needs an existing track and macro.`                                                      | Use IDs from the track's current effectMacros.                                                                       |
 | `Flush the project before setting a live track macro.`                                                  | Wait for the pending rack edit, then look up the current macro ID.                                                   |
-| `EffectRack needs unique slot IDs and valid Filter, Delay or EQ settings.`                              | Follow the [rack settings ranges](./effects.md#effectrack-inserts).                                                  |
+| `TrackRack needs unique slot IDs and valid Filter, Delay or EQ settings.`                               | Use distinct nonempty slot IDs and settings inside the [rack ranges](#effect-rack).                                  |
+| `TrackRack preset version must be 1.`                                                                   | Pass a version 1 snapshot or omit the version when authoring a preset.                                               |
+| `TrackRack macros need unique IDs, normalized values, and distinct valid targets.`                      | Use positions from 0 to 1 and assign a supported slot parameter to at most one macro.                                |
+| `TrackRack macro target is unavailable.`                                                                | Rebuild the preset against the current rack slots and supported ranges.                                              |
+| `TrackRack macro value needs a number from 0 to 1.`                                                     | Pass a finite normalized position.                                                                                   |
+| `TrackRack macro automation needs a time and a normalized curve starting at zero.`                      | Use absolute audio seconds for the start and a relative curve beginning at zero.                                     |
+| `TrackRack macro is disposed.`                                                                          | Look up the replacement control on the live rack.                                                                    |
 
 | Message                                                                                                                                                                                                                   | Cause and fix                                                                                                                                                 |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |

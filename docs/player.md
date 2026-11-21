@@ -168,7 +168,7 @@ Built-in HTTP loading rejects unsuccessful responses, text/SPA fallback content,
 
 ## Committed versions and offline stretch
 
-Construct `new WavePlayer(context, { stretch })` with any structural `WaveStretchProcessor` exposing `process(input: PCMData, options: { ratio: number; signal?: AbortSignal }): Promise<PCMData>`. The player borrows that processor; the application owns its lifetime. A custom processor must leave the borrowed source PCM unchanged. [`TimeStretch`](./effects.md#timestretch) implements this interface and takes private copies before processing.
+Construct `new WavePlayer(context, { stretch })` with any structural `WaveStretchProcessor` exposing `process(input: AudioBuffer, options: { ratio: number; signal?: AbortSignal }): Promise<AudioBuffer>`. The player borrows that processor; the application owns its lifetime. A custom processor must leave the borrowed source buffer unchanged and return a new `AudioBuffer`. [`TimeStretch`](./effects.md#timestretch) implements this interface and takes private copies before processing.
 
 `sourceBuffer: AudioBuffer | null` keeps the original loaded buffer. Treat its channel data as immutable while loaded. `cells.version: ReadonlyCell<PlaybackVersion | null>` publishes one committed revision:
 
@@ -190,13 +190,13 @@ The metadata object is frozen. Its borrowed buffer and peak arrays are read-only
 
 `sourceToOutput(seconds)` and `outputToSource(seconds)` map uniformly between the original and committed timelines using their actual durations. They clamp finite input to the relevant duration, return zero without a source, and reject nonfinite time. This is uniform offline editing, with no seamless live warp or arbitrary warp-marker map.
 
-| Error                                          | Fix                                                                                                                                                                                             |
-| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Stretch ratio must be finite and positive.`   | Supply a finite ratio greater than zero.                                                                                                                                                        |
-| `No audio source is loaded.`                   | Await a successful load before editing.                                                                                                                                                         |
-| `WavePlayer needs a stretch processor.`        | Supply `{ stretch }` at construction for a ratio other than 1.                                                                                                                                  |
-| `Stretch processor returned incompatible PCM.` | Return the original sample rate and channel count, with exactly the rounded target frames in every channel. Samples must also satisfy the [PCM summary contract](./core.md#pcm-peak-summaries). |
-| `Time must be finite seconds.`                 | Pass finite time to the mapping helpers.                                                                                                                                                        |
+| Error                                                     | Fix                                                                                                                                                                            |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Stretch ratio must be finite and positive.`              | Supply a finite ratio greater than zero.                                                                                                                                       |
+| `No audio source is loaded.`                              | Await a successful load before editing.                                                                                                                                        |
+| `WavePlayer needs a stretch processor.`                   | Supply `{ stretch }` at construction for a ratio other than 1.                                                                                                                 |
+| `Stretch processor returned an incompatible AudioBuffer.` | Return the original sample rate and channel count, with exactly the rounded target frames. Samples must also satisfy the [PCM summary contract](./core.md#pcm-peak-summaries). |
+| `Time must be finite seconds.`                            | Pass finite time to the mapping helpers.                                                                                                                                       |
 
 ## Compose offline stretch and a selector
 
@@ -208,10 +208,7 @@ import { WavePlayer } from "@audiorective/player";
 import { mountWaveformSelector } from "@audiorective/widgets";
 
 async function createEditor(context: AudioContext, root: HTMLElement, wasmURL: string) {
-  const response = await fetch(wasmURL);
-  if (!response.ok) throw new Error(`WASM request failed: HTTP ${response.status}`);
-  const module = await WebAssembly.compile(await response.arrayBuffer());
-  const stretch = new TimeStretch(module);
+  const stretch = await TimeStretch.load({ wasmUrl: wasmURL });
   const player = new WavePlayer(context, { stretch });
   const gain = new GainNode(context, { gain: 0.8 });
   player.output.connect(gain);

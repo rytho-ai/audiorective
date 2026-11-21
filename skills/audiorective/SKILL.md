@@ -62,7 +62,7 @@ The UI reads and writes params directly (`useValue(synth.params.volume)`, `synth
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------- |
 | `@audiorective/core`         | Reactive audio primitives, `AudioProcessor`, engine, `defineGraph`, `Spatial`, `Analyser`, `Sampler`, `BufferPlayer`, `FilePlayer`.                                      | `references/core.md`       |
 | `@audiorective/clock`        | Timing/scheduling engine — transport, tempo, look-ahead tick windows, rulers (bars, cycles/loops, seconds).                                                              | `references/clock.md`      |
-| `@audiorective/effects`      | DSP effects, Channel strip + SendBus; `/rack` `EffectRack`, `/rack-preset` pure rack data, `/time-stretch`.                                                              | `references/effects.md`    |
+| `@audiorective/effects`      | DSP effects (every one with `params.bypass`), `Ducker`, `EffectChain`, Channel strip + SendBus; `/time-stretch` (`AudioBuffer` in and out).                              | `references/effects.md`    |
 | `@audiorective/widgets`      | Player, waveform, piano-roll and caller-owned arrangement clip gestures.                                                                                                 | `references/widgets.md`    |
 | `@audiorective/player`       | `WavePlayer`: range playback, selection, loading, offline stretch.                                                                                                       | `references/player.md`     |
 | `@audiorective/recorder`     | `AudioRecorder`, `MicrophoneInput`: AudioWorklet PCM take capture.                                                                                                       | `references/recorder.md`   |
@@ -107,31 +107,34 @@ When no capability package or widget matches, build on core with your own `Audio
 | Read, edit or write `.dawproject` in Node (no audio) | `daw/project` + `daw/dawproject` only | `daw` root or `daw/runtime` |
 | Session view, clip launcher, scenes, follow actions, pattern clips | `clock` + `@audiorective/launcher` `ClipLauncher` (it plays the clips); `references/launcher.md`; a Project session: `workspace.session` | a hand-rolled launch scheduler or a custom driver |
 | An editable curve driving a parameter, macro, or clip gain | `core/automation`; clips: `Project.setAudioClipGainAutomation` | hand-scheduled ramps |
+| A user-editable effect chain: add, remove, reorder, bypass, save and load | `EffectChain` (`add`/`remove`/`move`, `toJSON`/`restore`); each effect's `params.bypass` | hand-wired `connect`/`disconnect` or a bypass gain per effect |
+| Duck music under a voice or a kick | `Ducker` (`voice.connect(ducker.sidechain)`; `cells.reduction`) | a hand-written envelope follower worklet |
+| A level meter on a strip; a send to a shared reverb | `Channel` `cells.level`; `channel.send(bus, name)` | a splitter + analyser + rAF loop |
 | A synth, custom effect, grains, anything else | your own `AudioProcessor` on core | forcing a capability to fit |
 
 ## What to read next
 
 Open the one page the task needs; read the section, not the whole file.
 
-| If you're doing…                                                    | Read                                                   |
-| ------------------------------------------------------------------- | ------------------------------------------------------ |
-| Params, `bind`, automation gotchas, `defineGraph`, engine lifecycle | `core.md` (section list: `rules-in-depth.md`)          |
-| Designing a whole app; audio layer vs UI; Cell vs Param             | `designing-audio-apps.md`, `architecture.md`           |
-| Sampler vs BufferPlayer vs FilePlayer                               | `choosing-playback.md`                                 |
-| Transport, tempo, step sequencer, drum machine                      | `clock.md` + `sequencer.md`                            |
-| Clip launcher, scenes, launch modes, follow actions, pattern clips  | `launcher.md` (+ `launcher-advanced.md`)               |
-| Writing or modifying an `AudioProcessor` subclass                   | the `audio-processor-authoring` skill                  |
-| Waveform, spectrum, EQ, plain player controls                       | `widgets.md`                                           |
-| Automation curves, bindings, macro adapters                         | `automation.md` (+ `player.md` for source-time)        |
-| Stretching PCM, pitch-preserving render                             | `effects.md` → TimeStretch                             |
-| MIDI clips, files, piano roll, recording a take, a live keyboard    | `midi.md`                                              |
-| Project, takes, clips, Session, DAWproject, live edits (`sync()`)   | `daw.md`                                               |
-| WebCLAP device, CLAP ID, patch save                                 | `host.md` + `daw.md`                                   |
-| Player state (`cells`), loading, cancel, audition                   | `player.md` + `widgets.md`                             |
-| React, three.js, PlayCanvas, PixiJS                                 | `react.md`, `threejs.md`, `playcanvas.md`, `pixijs.md` |
-| Next.js / Remix / Astro / any server-rendered app                   | `client-boundary.md`                                   |
-| Effects, FX rack, replacing Tone.js effects, offline export         | `effects.md`                                           |
-| Rationale ("why does this exist?")                                  | `overview.md`                                          |
+| If you're doing…                                                                   | Read                                                   |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Params, `bind`, automation gotchas, `defineGraph`, engine lifecycle                | `core.md` (section list: `rules-in-depth.md`)          |
+| Designing a whole app; audio layer vs UI; Cell vs Param                            | `designing-audio-apps.md`, `architecture.md`           |
+| Sampler vs BufferPlayer vs FilePlayer                                              | `choosing-playback.md`                                 |
+| Transport, tempo, step sequencer, drum machine                                     | `clock.md` + `sequencer.md`                            |
+| Clip launcher, scenes, launch modes, follow actions, pattern clips                 | `launcher.md` (+ `launcher-advanced.md`)               |
+| Writing or modifying an `AudioProcessor` subclass                                  | the `audio-processor-authoring` skill                  |
+| Waveform, spectrum, EQ, plain player controls                                      | `widgets.md`                                           |
+| Automation curves, bindings, macro adapters                                        | `automation.md` (+ `player.md` for source-time)        |
+| Stretching audio, pitch-preserving render, seamless loops                          | `effects.md` → TimeStretch                             |
+| MIDI clips, files, piano roll, recording a take, a live keyboard                   | `midi.md`                                              |
+| Project, takes, clips, Session, DAWproject, live edits (`sync()`)                  | `daw.md`                                               |
+| WebCLAP device, CLAP ID, patch save                                                | `host.md` + `daw.md`                                   |
+| Player state (`cells`), loading, cancel, audition                                  | `player.md` + `widgets.md`                             |
+| React, three.js, PlayCanvas, PixiJS                                                | `react.md`, `threejs.md`, `playcanvas.md`, `pixijs.md` |
+| Next.js / Remix / Astro / any server-rendered app                                  | `client-boundary.md`                                   |
+| Effects, bypass, ducking, effect chains, replacing Tone.js effects, offline export | `effects.md`                                           |
+| Rationale ("why does this exist?")                                                 | `overview.md`                                          |
 
 The complete task-to-reference table, with sections, is in `references/rules-in-depth.md`.
 
@@ -175,7 +178,7 @@ Every other thrown message is listed, with cause and fix, in its area's referenc
 | `Step Sequencer…`                                                                                                                                                                           | `sequencer.md`                             |
 | `Sample Library…`, `Sample lease…`                                                                                                                                                          | `samples.md`                               |
 | `bpm must…`, `TempoParam…`, `Clock owned event time…`, `renderTimeline…`                                                                                                                    | `clock.md`                                 |
-| `EffectRack…`, `Equalizer…`, `Effect: …`, `SendBus…`, `TimeStretch…`, `Rubber Band…`                                                                                                        | `effects.md`                               |
+| `EffectChain…`, `Equalizer…`, `Effect…`, `SendBus…`, `TimeStretch…`, `Rubber Band…`                                                                                                         | `effects.md`                               |
 | `Piano roll…`, `MIDI…`, `MidiClip…`, `MidiRecorder…`, `MidiKeyboard…`, `Web MIDI…`, `Invalid MIDI file.`                                                                                    | `midi.md`                                  |
 | `Project…`, `AudioMedia…`, `Workspace …`, `Clip gain…`                                                                                                                                      | `daw.md`                                   |
 | `Clip Launcher…`                                                                                                                                                                            | `launcher.md`                              |

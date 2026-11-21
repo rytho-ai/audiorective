@@ -79,7 +79,7 @@ Side     (core only)   react, threejs, playcanvas, devtools
 | `widgets`           | core; the pure `midi` root (values and types); types of `player`; or local structural contracts | `daw`; capability runtime classes, other capability packages |
 | `daw/runtime`       | `daw/project`, core, the capability modules it needs                                            | `widgets`, `daw/dawproject`                                  |
 | `daw/dawproject`    | `daw/project`, core                                                                             | the runtime, anything needing an `AudioContext`              |
-| `daw/project`       | core (including `PCMData`), `midi` root, `effects/rack-preset`                                  | the runtime, the codec, `AudioContext`, the DOM              |
+| `daw/project`       | core (including `PCMData`), `midi` root, `effects/equalizer-bands`                              | the runtime, the codec, `AudioContext`, the DOM              |
 | A capability module | core                                                                                            | other capability modules, layer 3                            |
 | `core`              | nothing                                                                                         | everything                                                   |
 
@@ -132,7 +132,7 @@ The piano roll, arrangement, automation lanes, clip grid and step grid split the
 | Application                         | Needs                                   | Optional                                                | Never loaded                                                             |
 | ----------------------------------- | --------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------ |
 | A drum machine with its own buffers | `core`, `clock`, `sequencer`, `pads`    | `widgets` (step grid), `samples` (load or browse sound) | `daw`, `player`, `host`, `effects`, `midi`, `recorder`, `launcher`       |
-| A `.dawproject` tool in Node        | `core`, `daw/project`, `daw/dawproject` | `effects/rack-preset`, `midi`                           | `daw/runtime`, `clock`, `host`, `widgets`, the other capability packages |
+| A `.dawproject` tool in Node        | `core`, `daw/project`, `daw/dawproject` | `effects/equalizer-bands`, `midi`                       | `daw/runtime`, `clock`, `host`, `widgets`, the other capability packages |
 
 Keep the dependency direction downward. Bind widgets to the module that already owns the value. Store project data once, and keep temporary runtime state where it is used.
 

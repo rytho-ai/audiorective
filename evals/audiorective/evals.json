@@ -124,11 +124,11 @@
     },
     {
       "id": 9,
-      "prompt": "Build a full pitch-preserving time-stretch waveform selector with the current Audiorective repository packages. Host supplies AudioContext, output gain and a compiled compatible Rubber Band WebAssembly.Module. Load a File, use two shared selectors with SVG/Canvas and source beat snapping, preserve original PCM, render from original for each ratio, show pending/errors, keep waveform/audio same revision, audition the output selection, handle stale jobs and cleanup without closing context. Do not run anything.",
+      "prompt": "Build a full pitch-preserving time-stretch waveform selector with the current Audiorective repository packages. Host supplies AudioContext, output gain and the URL of a compatible Rubber Band WebAssembly build. Load a File, use two shared selectors with SVG/Canvas and source beat snapping, preserve original PCM, render from original for each ratio, show pending/errors, keep waveform/audio same revision, audition the output selection, handle stale jobs and cleanup without closing context. Do not run anything.",
       "expected_output": "TimeStretch from pure effects/time-stretch is injected into WavePlayer; setStretch commits a complete buffer/peaks version consumed by both selectors.",
       "files": [],
       "expectations": [
-        "Uses new TimeStretch(module) from @audiorective/effects/time-stretch with caller-supplied WASM, without bundling a GPL binary or inventing a default WASM URL",
+        "Uses await TimeStretch.load({ wasmUrl }) from @audiorective/effects/time-stretch with the caller-supplied WASM URL, without bundling a GPL binary or inventing a default WASM URL",
         "Injects the processor via new WavePlayer(context, {stretch}) and connects player.output to the caller gain once",
         "Mounts two selectors with the same player, separate renderers and source-coordinate grids",
         "Awaits player.load before editing and calls player.setStretch(ratio) rather than rebuilding transport or rewriting original PCM",
@@ -712,12 +712,12 @@
     },
     {
       "id": 52,
-      "prompt": "In a vanilla Audiorective editor, update the total duration and source preview after replacing or stretching the loaded audio, and list effect slots as I add or reorder them. Keep audio state on its owners.",
-      "expected_output": "Observes WavePlayer playback and source getters and the EffectRack settings snapshot directly.",
+      "prompt": "In a vanilla Audiorective editor, update the total duration and source preview after replacing or stretching the loaded audio, and list the effects in a user-editable EffectChain as I add or reorder them. Keep audio state on its owners.",
+      "expected_output": "Observes WavePlayer playback and source getters and the EffectChain cells.effects order directly.",
       "files": [],
       "expectations": [
         "Reads WavePlayer.buffer, duration and sourceBuffer in an effect, or reads the tracked version and distinguishes the original source from committed output",
-        "Reads rack.cells.effects or rack.effects in an effect, edits from a snapshot via setEffects and never assigns the read-only cell",
+        "Reads chain.cells.effects in an effect, edits through chain.add, remove and move and never assigns the read-only cell",
         "Disposes the UI observers, preserves caller audio ownership and avoids a duplicate state store"
       ]
     },
@@ -793,25 +793,25 @@
     },
     {
       "id": 59,
-      "prompt": "Make a Tone knob automate Filter frequency and Delay feedback on an EffectRack, and add a second independent macro. Take a preset snapshot and show how to keep both knobs when saving a Workspace track.",
-      "expected_output": "Uses one standalone rack with macro Params, native automation fanout, whole-rack preset recall and Project-owned track settings.",
+      "prompt": "Make a Tone knob automate Filter frequency and Delay feedback on a Workspace track's effect rack, and add a second independent macro. Show how to keep both knobs when saving the track.",
+      "expected_output": "Uses a track rack with macro Params, native automation fanout, whole-rack preset recall and Project-owned track settings.",
       "files": [],
       "expectations": [
-        "Declares two distinct macro IDs with nonoverlapping slot parameter targets and reads or writes rack.macro(id).param.value",
-        "Targets AutomationBinding at macro.automation and uses positive endpoints for exponential mappings",
-        "Uses capturePreset and setPreset with the entire rack and explains that a recalled position and mapping are distinct from the authored automation curve",
-        "Uses Project.setTrackRackPreset and Workspace.setTrackMacroValue to retain track macro settings in saved projects"
+        "Declares two distinct macro IDs with nonoverlapping slot parameter targets and reads or writes workspace.trackMacroValue(trackId, id) or setTrackMacroValue",
+        "Targets AutomationBinding at workspace.trackMacroAutomation(trackId, id) and uses positive endpoints for exponential mappings",
+        "Uses Project.setTrackRackPreset with the entire rack (effects and macros) and explains that a recalled position and mapping are distinct from the authored automation curve",
+        "Uses Workspace.setTrackMacroValue (or Project.setTrackMacroValue) to retain track macro positions in saved projects"
       ]
     },
     {
       "id": 60,
-      "prompt": "Move a transient from 1.0 to 1.3 seconds inside a two-second 48 kHz PCM asset. Keep its pitch, total duration and original samples.",
-      "expected_output": "Uses the data-only TimeStretch entry point and an interior frame mapping with ratio 1 and a compatible borrowed WASM module.",
+      "prompt": "Move a transient from 1.0 to 1.3 seconds inside a two-second 48 kHz AudioBuffer. Keep its pitch, total duration and original samples.",
+      "expected_output": "Uses the TimeStretch entry point and an interior frame mapping with ratio 1 and a compatible WASM build loaded by URL.",
       "files": [],
       "expectations": [
         "Passes ratio 1 and anchors [{ sourceFrame: 48000, outputFrame: 62400 }] to TimeStretch.process",
         "Uses implicit endpoints and requires strictly increasing interior frame pairs",
-        "Passes a caller-supplied compiled WASM module supporting rb_set_key_frame_map and keeps the original buffer intact"
+        "Loads a caller-supplied WASM build supporting rb_set_key_frame_map with TimeStretch.load({ wasmUrl }) and keeps the original buffer intact"
       ]
     },
     {
@@ -1007,6 +1007,58 @@
         "Overdubs with the recorder package's overdub(...) and punches with punch(...), then applies the result with clip.configure({ buffer })",
         "Reads the loop's current audio from clip.buffer.value instead of keeping a second PCM copy",
         "Does not sum or replace frames by hand"
+      ]
+    },
+    {
+      "id": 77,
+      "prompt": "A radio-show page plays a music bed into an AudioNode `music` and the host's microphone into `mic`. Duck the music about 8 dB within 10 ms when the host talks and recover over 300 ms, send the mic to the speakers unchanged, and show the current ducking in dB, with an Auto-duck switch. Use the audiorective packages from the repository; do not write an envelope follower. Do not run anything.",
+      "expected_output": "Uses Ducker with depth, attack and release, mic connected to ducker.sidechain and separately to the destination, cells.reduction for the readout and params.bypass for the switch.",
+      "files": [],
+      "expectations": [
+        "Builds new Ducker(context, { depth: 8, attack: 0.01, release: 0.3 }) from @audiorective/effects and connects music through ducker.input and ducker.output",
+        "Connects mic to ducker.sidechain and, separately, to the destination, so the mic never reaches the music path",
+        "Reads ducker.cells.reduction (dB, at most 0) for the number, through an effect or subscribe, not a hand-written meter",
+        "Turns Auto-duck off with ducker.params.bypass.value rather than disconnecting nodes or writing gain steps",
+        "Does not write a custom AudioWorklet or setInterval detector"
+      ]
+    },
+    {
+      "id": 78,
+      "prompt": "A guitar pedalboard starts with a low-pass filter followed by a delay. The player adds a filter, delay or distortion pedal from a menu, removes any pedal, moves a pedal up or down, bypasses each one, and saves and loads the board as JSON; none of that may click, drop out or reset the other pedals, and a malformed save must leave the running board unchanged. Use the audiorective packages from the repository. Do not run anything.",
+      "expected_output": "Uses EffectChain add, remove and move, each effect's params.bypass, toJSON and EffectChain.restore with a types map and its issues.",
+      "files": [],
+      "expectations": [
+        "Builds the board as one EffectChain over the effect instances and edits it only with chain.add, chain.remove and chain.move, not with manual connect and disconnect",
+        "Toggles bypass with effect.params.bypass.value and keeps the same instances when moving or bypassing",
+        "Saves with JSON.stringify(chain) or chain.toJSON() and loads with EffectChain.restore(context, json, { types }) where types maps names to effect classes",
+        "Shows the returned issues for malformed data and keeps the running chain when issues make the load unacceptable, then disposes the replaced chain",
+        "Observes the pedal order through chain.cells.effects rather than a second array"
+      ]
+    },
+    {
+      "id": 79,
+      "prompt": "In a loop tool the user drops a 4-bar drum loop, types its tempo (say 92 BPM) and the project tempo is 120 BPM. Stretch the loop to the project tempo without changing pitch, using the Rubber Band wasm served at /wasm/rubberband.wasm, preview it looping seamlessly, abandon a running job on Cancel or a tempo change, and never show an error for an abandoned job. Use the audiorective packages from the repository. Do not run anything.",
+      "expected_output": "Uses TimeStretch.load({ wasmUrl }), process(AudioBuffer, { ratio: fromBpm / toBpm, loop: true, signal }) and tells an AbortError from a real failure.",
+      "files": [],
+      "expectations": [
+        "Loads the stretcher once with await TimeStretch.load({ wasmUrl: \"/wasm/rubberband.wasm\" }) from @audiorective/effects/time-stretch and reuses it across jobs",
+        "Computes ratio as sourceBpm / projectBpm (output length over input length), so 92 to 120 BPM gives about 0.767",
+        "Passes the decoded AudioBuffer and loop: true to process and plays the AudioBuffer result with an AudioBufferSourceNode whose loop is true, with no seam crossfade written by hand",
+        "Cancels with an AbortController signal and ignores rejections whose name is AbortError, showing other errors",
+        "Calls stretch.dispose() when the tool closes"
+      ]
+    },
+    {
+      "id": 80,
+      "prompt": "Build the mixer for four stems already playing into AudioNodes: a fader, pan, mute, solo, a post-fader level meter in dBFS and a reverb send per track, one shared reverb return from an impulse response at /ir/hall.wav, and a lookahead limiter on the vocal that keeps all tracks sample-aligned. Use the audiorective packages from the repository. Do not run anything.",
+      "expected_output": "Uses one Channel per stem with cells.level for the meter, channel.send into a SendBus whose receive point feeds a Convolver, and a Limiter whose declared latency is compensated through connect.",
+      "files": [],
+      "expectations": [
+        "Builds each strip as a Channel and reads channel.cells.level for the post-fader meter instead of an analyser and animation-frame loop of its own",
+        "Sends with channel.send(bus, name, gain) into a SendBus and connects bus.receive(name) to a Convolver whose params.wet or return Channel is the return fader",
+        "Connects the vocal's Limiter and the channels with processor.connect so delay compensation covers the dry paths and the sends, without hand-written matching delays",
+        "Shows the reverb as loading until Convolver cells.status is ready and reports cells.error when the impulse response fails",
+        "Implements solo with the strips' own mute or gain params without changing the stored fader values"
       ]
     }
   ]
