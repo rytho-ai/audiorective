@@ -97,3 +97,56 @@ test("pure waveform accepts a structural selection model; disposing or clearing 
   await player.audition();
   expect(player.cells.isPlaying.value).toBe(true);
 });
+
+test("a neutral selector borrows selection and seeks without auditioning while its controls are hidden", async () => {
+  const { player } = await fixture();
+  const root = host();
+  const play = vi.spyOn(player, "play");
+  const audition = vi.spyOn(player, "audition");
+  const view = mountWaveformSelector(root, { player, controls: false, audition: false });
+  own(() => view.dispose());
+  expect(root.querySelector<HTMLElement>(".ar-source")!.hidden).toBe(true);
+  expect(root.querySelector<HTMLElement>(".ar-selector > .ar-toolbar")!.hidden).toBe(true);
+  expect(root.querySelector<HTMLElement>(".ar-status")!.hidden).toBe(false);
+  expect(element(root, "zoom-in").getBoundingClientRect().width).toBeGreaterThan(0);
+
+  await drag(element(root, "waveform"), 6, 1, 2);
+  expect(player.cells.selection.value!.start).toBeCloseTo(1, 1);
+  expect(player.cells.selection.value!.end).toBeCloseTo(2, 1);
+  await drag(element(root, "waveform"), 6, 4, 4);
+  expect(player.position).toBeCloseTo(4, 1);
+  expect(player.cells.isPlaying.value).toBe(false);
+  expect(player.cells.isLooping.value).toBe(false);
+  expect(play).not.toHaveBeenCalled();
+  expect(audition).not.toHaveBeenCalled();
+});
+
+test("selector viewport operations affect only that view and detachment preserves running playback", async () => {
+  const { context, player } = await fixture();
+  const buffer = player.buffer;
+  const first = mountWaveformSelector(host(), { player, controls: false, audition: false });
+  const peer = mountWaveformSelector(host(), { player, audition: false });
+  own(() => first.dispose());
+  own(() => peer.dispose());
+  await expect.poll(() => first.getViewport().width).toBeGreaterThan(0);
+  const before = first.getViewport();
+  const peerBefore = peer.getViewport();
+  first.setZoom(4);
+  first.setAmplitudeZoom(2);
+  first.scrollTo(3);
+  expect(first.getViewport().pixelsPerSecond).toBeCloseTo(before.pixelsPerSecond * 4, 2);
+  expect(first.getViewport().scrollLeft / first.getViewport().pixelsPerSecond).toBeCloseTo(3, 1);
+  expect(first.getAmplitudeZoom()).toBe(2);
+  expect(peer.getAmplitudeZoom()).toBe(1);
+  expect(peer.getViewport().pixelsPerSecond).toBeCloseTo(peerBefore.pixelsPerSecond, 2);
+  expect(player.buffer).toBe(buffer);
+
+  player.setSelection({ start: 1, end: 2 });
+  await player.play();
+  first.dispose();
+  const position = player.position;
+  await expect.poll(() => player.position).toBeGreaterThan(position + 0.02);
+  expect(player.cells.isPlaying.value).toBe(true);
+  expect(peer.getState().selection).toEqual({ start: 1, end: 2 });
+  expect(context.state).not.toBe("closed");
+});

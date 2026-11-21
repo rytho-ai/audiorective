@@ -25,6 +25,13 @@ export const mountWaveformSelector: MountWaveformSelector = (root, options) => {
     <div class="ar-footer"><output data-testid="selection-readout">No selection</output><output class="ar-position">0:00.00 / 0:00.00</output></div>
     <p class="ar-help">Click to play · Drag either direction to loop · Grips: ← / →, Shift for 0.1s${options.grid ? " · Alt bypasses snap" : ""}</p>`;
   root.append(container);
+  if (options.controls === false) {
+    container.querySelectorAll<HTMLElement>(":scope > .ar-source, :scope > .ar-toolbar").forEach((controls) => (controls.hidden = true));
+  }
+  if (options.audition === false) {
+    container.querySelector<HTMLElement>(".ar-help")!.textContent =
+      `Click to seek · Drag either direction to select · Grips: ← / →, Shift for 0.1s${options.grid ? " · Alt bypasses snap" : ""}`;
+  }
   const query = <T extends HTMLElement = HTMLElement>(id: string) => container.querySelector<T>(`[data-testid="${id}"]`)!;
   const url = query<HTMLInputElement>("source-url"),
     file = query<HTMLInputElement>("source-file");
@@ -53,10 +60,10 @@ export const mountWaveformSelector: MountWaveformSelector = (root, options) => {
     model: player,
     grid: options.grid,
     onCommit(event) {
-      if (event.kind === "pointer" && event.selection) run(() => player.audition());
+      if (event.kind === "pointer" && event.selection && options.audition !== false) run(() => player.audition());
       if (event.kind === "click" && event.time !== undefined) {
         player.seek(event.time);
-        run(() => player.play());
+        if (options.audition !== false) run(() => player.play());
       }
       render();
     },
@@ -224,6 +231,20 @@ export const mountWaveformSelector: MountWaveformSelector = (root, options) => {
   const handle: WaveformSelectorHandle = {
     ready,
     output: player.output,
+    getViewport: () => waveform.getViewport(),
+    setZoom(factor) {
+      if (disposed) throw new Error("Waveform selector is disposed.");
+      waveform.setZoom(factor);
+    },
+    setAmplitudeZoom(factor) {
+      if (disposed) throw new Error("Waveform selector is disposed.");
+      waveform.setAmplitudeZoom(factor);
+    },
+    getAmplitudeZoom: () => waveform.getAmplitudeZoom(),
+    scrollTo(seconds) {
+      if (disposed) throw new Error("Waveform selector is disposed.");
+      waveform.scrollTo(seconds);
+    },
     load: (source) => loadSource(source),
     cancelLoad() {
       if (disposed) throw new Error("Waveform selector is disposed.");

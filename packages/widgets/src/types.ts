@@ -66,6 +66,10 @@ export type WaveformSelectorOptions = (
 ) & {
   /** Optional initial URL or local file. No audio is loaded when omitted. */
   source?: string | File;
+  /** Show source and playback controls; default true. False retains waveform navigation and status. */
+  controls?: boolean;
+  /** Pointer selections audition and clicks seek/play by default; false selects and seeks without starting playback. */
+  audition?: boolean;
   onSelectionChange?: (selection: Selection | null) => void;
   grid?: { beats: number[]; downbeats: number[] };
   /** Replace waveform drawing while retaining the selector's interaction and audio. */
@@ -76,6 +80,15 @@ export interface WaveformSelectorHandle extends PluginTarget<TimeViewPluginConte
   /** Settles after the initial load; resolves immediately without an initial source. */
   readonly ready: Promise<void>;
   readonly output: AudioNode;
+  /** Current geometry in output seconds and CSS pixels. */
+  getViewport(): WaveformViewport;
+  /** A factor of 1 fits the source; preserves the viewport center. */
+  setZoom(factor: number): void;
+  /** Visual waveform height, 1x to 32x; audio remains unchanged. */
+  setAmplitudeZoom(factor: number): void;
+  getAmplitudeZoom(): number;
+  /** Scroll this view to output seconds. */
+  scrollTo(seconds: number): void;
   /** Replace the source. Only the latest request may update the widget. */
   load(source: string | File): Promise<void>;
   cancelLoad(): void;
