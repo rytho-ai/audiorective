@@ -12,7 +12,7 @@ type LaneLabels = Readonly<{
 }>;
 
 export interface AutomationLaneOptions {
-  /** Positive length in timeUnit; tracked changes cancel stale previews in place. */
+  /** Positive length in timeUnit at mount. Tracked changes cancel previews; later non-positive/non-finite lengths disable input until valid. */
   readonly duration: () => number;
   readonly maxValue: number;
   readonly defaultValue: number;
@@ -103,6 +103,7 @@ export function mountAutomationLane(root: HTMLElement, options: AutomationLaneOp
   let incoming = untracked(() => options.points.value);
   let points: readonly AutomationPoint[] = incoming.slice().sort((a, b) => a.time - b.time);
   let disposed = false;
+  let enabled = true;
   let selectedTime: number | undefined;
   let gesture: { pointerId: number; previous?: AutomationPoint; point: AutomationPoint } | undefined;
   const abort = new AbortController();
@@ -148,6 +149,7 @@ export function mountAutomationLane(root: HTMLElement, options: AutomationLaneOp
     const color = getComputedStyle(graph).color;
     const preview = gesture ? replace(gesture.point, gesture.previous) : points;
     ctx.clearRect(0, 0, width, height);
+    if (!enabled) return;
     ctx.strokeStyle = color;
     ctx.fillStyle = color;
     ctx.lineWidth = scale;
@@ -184,9 +186,13 @@ export function mountAutomationLane(root: HTMLElement, options: AutomationLaneOp
     selectedTime = selected?.time;
     const entries = points.map((point) => option(`${Number(point.time.toFixed(3))} ${unit}`, String(point.time)));
     picker.replaceChildren(...entries);
-    picker.disabled = !selected;
+    picker.disabled = !enabled || !selected;
+    add.disabled = !enabled;
+    graph.setAttribute("aria-disabled", String(!enabled));
+    graph.tabIndex = enabled ? 0 : -1;
+    graph.style.cursor = enabled ? "crosshair" : "default";
     time.max = String(duration);
-    time.disabled = value.disabled = shape.disabled = remove.disabled = !selected;
+    time.disabled = value.disabled = shape.disabled = remove.disabled = !enabled || !selected;
     time.value = selected ? String(selected.time) : "";
     value.value = selected ? String(selected.value) : "";
     shape.value = selected?.shape ?? "linear";
@@ -195,6 +201,10 @@ export function mountAutomationLane(root: HTMLElement, options: AutomationLaneOp
   }
 
   function commit(point: AutomationPoint, previous?: AutomationPoint): void {
+    if (disposed || !enabled) {
+      syncControls();
+      return;
+    }
     if (previous && point.time === previous.time && point.value === previous.value && point.shape === previous.shape) {
       selectedTime = previous.time;
       syncControls();
@@ -225,7 +235,7 @@ export function mountAutomationLane(root: HTMLElement, options: AutomationLaneOp
   }
 
   graph.onpointerdown = (event) => {
-    if (disposed || event.defaultPrevented || event.button !== 0 || gesture) return;
+    if (disposed || !enabled || event.defaultPrevented || event.button !== 0 || gesture) return;
     event.preventDefault();
     const rect = graph.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
@@ -292,6 +302,7 @@ export function mountAutomationLane(root: HTMLElement, options: AutomationLaneOp
     commit({ time: t, value: v, shape: left?.shape ?? "linear" });
   };
   remove.onclick = () => {
+    if (disposed || !enabled) return;
     try {
       options.onCommit(points.filter((point) => point.time !== selectedTime));
     } finally {
@@ -306,14 +317,14 @@ export function mountAutomationLane(root: HTMLElement, options: AutomationLaneOp
     effect(() => {
       const next = options.points.value;
       const nextDuration = options.duration();
-      if (next === incoming && nextDuration === duration) return;
+      const nextEnabled = Number.isFinite(nextDuration) && nextDuration > 0;
+      if (next === incoming && nextDuration === duration && nextEnabled === enabled) return;
       untracked(() => {
         cancelGesture();
-        if (!(Number.isFinite(nextDuration) && nextDuration > 0))
-          throw new RangeError("Automation lane needs a positive duration and maximum value.");
+        enabled = nextEnabled;
         incoming = next;
         points = next.slice().sort((a, b) => a.time - b.time);
-        duration = nextDuration;
+        if (enabled) duration = nextDuration;
         syncControls();
       });
     }),

@@ -219,3 +219,55 @@ test("generic owners may clear all points while AutomationCurve keeps its nonemp
   expect(points.value).toEqual([]);
   expect(arrayRoot.querySelector<HTMLInputElement>('[aria-label="Value"]')!.disabled).toBe(true);
 });
+
+test.each([0, -1, NaN, Infinity])("an invalid live duration (%s) cancels input without throwing and recovers in place", async (invalid) => {
+  const curve = new AutomationCurve([{ time: 1, value: 0.5, shape: "linear" }]);
+  const duration = cell(4);
+  const commit = vi.fn((next) => {
+    curve.value = next;
+  });
+  const root = host();
+  const lane = mountAutomationLane(root, { duration: () => duration.value, points: curve, maxValue: 2, defaultValue: 1, onCommit: commit });
+  own(() => lane.dispose());
+  const graph = root.querySelector("canvas")!;
+  const time = root.querySelector<HTMLInputElement>('[aria-label="Time (s)"]')!;
+  const value = root.querySelector<HTMLInputElement>('[aria-label="Value"]')!;
+  const controls = [...root.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>("input, select, button")];
+  const rect = graph.getBoundingClientRect();
+  await pointer({ action: "down", x: rect.left + rect.width / 4, y: rect.top + rect.height * 0.75 });
+  await pointer({ action: "move", x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+  expect(() => {
+    duration.value = invalid;
+  }).not.toThrow();
+  expect(controls.every((control) => control.disabled)).toBe(true);
+  expect(graph.getAttribute("aria-disabled")).toBe("true");
+  await pointer({ action: "up" });
+  value.value = "1.9";
+  value.dispatchEvent(new Event("change"));
+  expect(commit).not.toHaveBeenCalled();
+  expect(curve.value).toEqual([{ time: 1, value: 0.5, shape: "linear" }]);
+  curve.value = [{ time: 1.5, value: 1.25, shape: "hold" }];
+  duration.value = 2;
+  expect(root.querySelector('[aria-label="Time (s)"]')).toBe(time);
+  expect(root.querySelector('[aria-label="Value"]')).toBe(value);
+  expect(controls.every((control) => !control.disabled)).toBe(true);
+  expect(graph.getAttribute("aria-disabled")).toBe("false");
+  expect(time.max).toBe("2");
+  expect(time.valueAsNumber).toBe(1.5);
+  expect(value.valueAsNumber).toBe(1.25);
+  value.value = "1.75";
+  value.dispatchEvent(new Event("change"));
+  expect(commit).toHaveBeenCalledTimes(1);
+  expect(curve.value).toEqual([{ time: 1.5, value: 1.75, shape: "hold" }]);
+});
+
+test("invalid mount duration is rejected before the lane creates its controls", () => {
+  const root = host();
+  const curve = new AutomationCurve([{ time: 0, value: 1, shape: "linear" }]);
+  for (const duration of [0, -1, NaN, Infinity]) {
+    expect(() => mountAutomationLane(root, { duration: () => duration, points: curve, maxValue: 2, defaultValue: 1, onCommit() {} })).toThrowError(
+      new RangeError("Automation lane needs a positive duration and maximum value."),
+    );
+    expect(root.children).toHaveLength(0);
+  }
+});

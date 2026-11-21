@@ -44,6 +44,8 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Changed
 
+- **widgets:** automation lanes retain validation at mount, then cancel previews and disable input when live duration becomes non-positive or non-finite. Valid durations restore the same controls and latest owner points without throwing from the owner edit.
+
 - **widgets:** level-meter dBFS callbacks are sampled every animation frame without requiring tracked state. `NaN` and `-Infinity` display silence; `+Infinity` displays full scale with overload. Disposal stops sampling for standalone and mixer-strip meters.
 
 - **clock:** `refresh()` and an attached scheduler's `handle.refresh()` return `Promise<void>`. Await the coalesced refill, including synchronous callback edits, before dependent offline work. Transport changes settle cancelled work; inactive/detached owners complete without scheduling.
