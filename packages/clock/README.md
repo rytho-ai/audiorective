@@ -24,10 +24,10 @@ const timeline = new Timeline({ audioContext: ctx, bpm: 120 }).addRuler("bar", n
 const clock = new Clock({
   timeline,
   onTick(window) {
-    for (const { time, index } of window.rulers.bar.grid(16)) {
-      // `time` is already an absolute AudioContext time, which is what
+    for (const { when, index } of window.rulers.bar.grid(16)) {
+      // `when` is already an absolute AudioContext time, which is what
       // core's Sampler takes as `when`
-      if (pattern[index % 16]) sampler.trigger({ when: time });
+      if (pattern[index % 16]) sampler.trigger({ when });
     }
   },
 });
@@ -83,11 +83,11 @@ Four built-ins, crossed along two axes — **unit** (bar vs. raw time) × **topo
 
 `CycleBarRuler` is how **looping** is expressed: the beat axis never jumps — it's read modulo the cycle region, so scheduling across a loop boundary needs no special case. Its window reading exposes `spans` (the window's cycle-relative sub-ranges, for note content that isn't grid-snapped) alongside `grid()`.
 
-Its grid points fold too. A linear ruler yields `{ beat, time, index }` counting forever; a cycle ruler yields `{ beat, time, step, cycle }` where `step` is cycle-relative and `division` means steps _per cycle_. Pass a pattern's length and `step` indexes it directly:
+Its grid points fold too. A linear ruler yields `{ beat, when, index }` counting forever; a cycle ruler yields `{ beat, when, step, cycle }` where `step` is cycle-relative and `division` means steps _per cycle_. Pass a pattern's length and `step` indexes it directly:
 
 ```typescript
-for (const { time, step } of window.rulers.pattern.grid(steps.length)) {
-  if (steps[step]) sampler.trigger({ when: time });
+for (const { when, step } of window.rulers.pattern.grid(steps.length)) {
+  if (steps[step]) sampler.trigger({ when });
 }
 ```
 

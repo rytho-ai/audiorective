@@ -43,9 +43,9 @@ const timeline = new Timeline({ audioContext: ctx, bpm: 120 }).addRuler("bar", n
 const clock = new Clock({
   timeline,
   onTick(window) {
-    for (const { time, index } of window.rulers.bar.grid(16)) {
-      // `time` is absolute AudioContext time -- exactly what Sampler's `when` wants
-      if (pattern.value[index % 16]) sampler.trigger({ when: time });
+    for (const { when, index } of window.rulers.bar.grid(16)) {
+      // `when` is absolute AudioContext time -- exactly what Sampler's `when` wants
+      if (pattern.value[index % 16]) sampler.trigger({ when });
     }
   },
 });
@@ -82,16 +82,16 @@ Keep `tickInterval` below `lookAhead`. `tickInterval` has no effect when you pas
 
 ### Handing a grid point to a core player
 
-The names differ across the package boundary, and that is the single easiest thing to get wrong here: the clock gives you **`time`**, core's players take **`when`**. Both are absolute `AudioContext` seconds, so the value passes straight through — only the key changes.
+A grid point's **`when`** is an absolute `AudioContext` timestamp in seconds. Pass it directly to core's players: `trigger({ when })` or `start(when)`.
 
 ```typescript
-for (const { time } of window.rulers.bar.grid(16)) {
-  sampler.trigger({ when: time }); // Sampler
-  bufferPlayer.start(time); // BufferPlayer takes it positionally
+for (const { when } of window.rulers.bar.grid(16)) {
+  sampler.trigger({ when }); // Sampler
+  bufferPlayer.start(when); // BufferPlayer takes it positionally
 }
 ```
 
-Writing `trigger({ time })` is the natural first draft and it does not compile — TypeScript rejects it (`'time' does not exist in type 'PlayOptions'`). That error is the fix instruction: rename the key, don't reshape the call.
+The point's `beat` is its musical position; `when` is the audio-clock instant at which it sounds. Use `when` to schedule audio, and `beat` or the ruler's index to select pattern content.
 
 ### Typing the window
 
@@ -106,8 +106,8 @@ type Rulers = typeof timeline extends Timeline<infer R> ? R : never;
 
 class Machine {
   schedule(window: TickWindow<Rulers>): void {
-    for (const { time, step } of window.rulers.loop.grid(16)) {
-      // schedule a hit at `time`
+    for (const { when, step } of window.rulers.loop.grid(16)) {
+      // schedule a hit at `when`
     }
   }
 }
@@ -271,12 +271,12 @@ The default remains unchanged: `Clock` does not cancel sound scheduled by `onTic
 const clock = new Clock({
   timeline,
   onTick(window) {
-    for (const { time, step } of window.rulers.pattern.grid(16)) {
+    for (const { when, step } of window.rulers.pattern.grid(16)) {
       if (!pattern.value[step]) continue;
-      const voice = instruments.trigger("closed-hat", { when: time });
+      const voice = instruments.trigger("closed-hat", { when });
       if (voice) {
         // this sequencer owns this hit and its choke
-        window.own({ cancel: (time) => voice.stop(time), onEnded: (done) => void voice.playing.subscribe((playing) => playing || done()) }, time);
+        window.own({ cancel: (when) => voice.stop(when), onEnded: (done) => void voice.playing.subscribe((playing) => playing || done()) }, when);
       }
     }
   },
@@ -330,14 +330,14 @@ The two kinds of ruler yield different grid points, and the difference is the wh
 
 | Ruler            | Grid point                               | `division` means    |
 | ---------------- | ---------------------------------------- | ------------------- |
-| `LinearBarRuler` | `{ beat, time, index }` — counts forever | steps per **bar**   |
-| `CycleBarRuler`  | `{ beat, time, step, cycle }`            | steps per **cycle** |
+| `LinearBarRuler` | `{ beat, when, index }` — counts forever | steps per **bar**   |
+| `CycleBarRuler`  | `{ beat, when, step, cycle }`            | steps per **cycle** |
 
 Pass a pattern's length as `division` on a cycle ruler and `step` indexes that pattern directly — the cycle region holds exactly one pass, so no `% length` is needed at the call site:
 
 ```typescript
-for (const { time, step } of window.rulers.pattern.grid(steps.length)) {
-  if (steps[step]) sampler.trigger({ when: time });
+for (const { when, step } of window.rulers.pattern.grid(steps.length)) {
+  if (steps[step]) sampler.trigger({ when });
 }
 ```
 
@@ -405,7 +405,7 @@ const wav = await renderTimeline({ seconds: 8, channels: 2, sampleRate: 44100 },
     timeline,
     tickSource, // the one injection -- everything else is the live code
     onTick(window) {
-      for (const { time, step } of window.rulers.pattern.grid(16)) if (pattern[step]) kick.trigger({ when: time });
+      for (const { when, step } of window.rulers.pattern.grid(16)) if (pattern[step]) kick.trigger({ when });
     },
   });
   clock.start(); // inside setup: the first window is emitted as soon as setup returns

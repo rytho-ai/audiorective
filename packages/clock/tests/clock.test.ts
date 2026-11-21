@@ -294,7 +294,7 @@ describe("Clock — over a tempo ramp", () => {
     timeline.bpm.setValueAtTime(120, 0);
     timeline.bpm.linearRampToValueAtTime(200, 6);
     const tickSource = new ManualTickSource();
-    const grid: Array<{ beat: number; time: number; index: number }> = [];
+    const grid: Array<{ beat: number; when: number; index: number }> = [];
     const clock = new Clock({
       timeline,
       lookAhead: 0.1,
@@ -312,8 +312,8 @@ describe("Clock — over a tempo ramp", () => {
     grid.forEach((point, i) => {
       expect(point.index).toBe(i);
       expect(point.beat).toBe(i * 0.25);
-      expect(timeline.timeToBeat(point.time)).toBeCloseTo(point.beat, 9);
-      if (i > 0) expect(point.time).toBeGreaterThan(grid[i - 1]!.time);
+      expect(timeline.timeToBeat(point.when)).toBeCloseTo(point.beat, 9);
+      if (i > 0) expect(point.when).toBeGreaterThan(grid[i - 1]!.when);
     });
     clock.dispose();
   });

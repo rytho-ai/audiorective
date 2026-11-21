@@ -40,7 +40,7 @@ describe("renderTimeline", () => {
         tickSource,
         onTick: (window) => {
           windows.push(window);
-          for (const { time } of window.rulers.bar.grid(4)) sampler.trigger({ when: time });
+          for (const { when } of window.rulers.bar.grid(4)) sampler.trigger({ when });
         },
         onMiss: (gap) => misses.push(gap),
       });

@@ -71,9 +71,9 @@ describe("gridPoints — index and time", () => {
     expect(points.map((p) => p.index)).toEqual([1_000_000, 1_000_001, 1_000_002, 1_000_003]);
   });
 
-  test("time comes from timeline.beatToTime", () => {
+  test("when is absolute audio seconds from timeline.beatToTime", () => {
     const points = collect(gridPoints(0, 2, 1, 0, identityTimeline));
-    expect(points.map((p) => p.time)).toEqual([0, 0.5]);
+    expect(points.map((p) => p.when)).toEqual([0, 0.5]);
   });
 
   test("a non-zero origin offsets the grid", () => {
@@ -156,7 +156,7 @@ describe("CycleBarRuler", () => {
     const points = collect(reading.grid(16)); // 1 step per beat (16 steps/16-beat cycle)
     expect(points.map((p) => p.beat)).toEqual([15, 16]);
     for (let i = 1; i < points.length; i++) {
-      expect(points[i]!.time).toBeGreaterThan(points[i - 1]!.time);
+      expect(points[i]!.when).toBeGreaterThan(points[i - 1]!.when);
     }
   });
 
@@ -333,6 +333,6 @@ describe("CycleTimeRuler", () => {
 describe("gridPoints — scheduler timing", () => {
   test("takes the BeatTiming a scheduler's schedule(window, timing) receives", () => {
     const timing: BeatTiming = { beatToTime: (beat) => 10 + beat / 2, timeToBeat: (time) => (time - 10) * 2 };
-    expect(collect(gridPoints(0, 1, 0.25, 0, timing)).map((p) => p.time)).toEqual([10, 10.125, 10.25, 10.375]);
+    expect(collect(gridPoints(0, 1, 0.25, 0, timing)).map((p) => p.when)).toEqual([10, 10.125, 10.25, 10.375]);
   });
 });

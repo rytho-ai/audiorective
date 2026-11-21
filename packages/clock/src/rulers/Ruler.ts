@@ -32,8 +32,9 @@ export interface Ruler<TWindow, TPoint> {
 
 export interface GridPoint {
   beat: number;
-  time: number;
-  /** Step number counted from the grid's origin, increasing forever. */
+  /** Absolute AudioContext seconds: pass directly to start(when) or trigger({ when }). */
+  when: number;
+  /** Zero-based step number from the grid's origin, increasing forever. */
   index: number;
 }
 
@@ -45,8 +46,9 @@ export interface GridPoint {
  */
 export interface CycleGridPoint {
   beat: number;
-  time: number;
-  /** Position within the cycle, in [0, division). */
+  /** Absolute AudioContext seconds: pass directly to start(when) or trigger({ when }). */
+  when: number;
+  /** Zero-based position within the cycle, in [0, division): step 0 is the first step. */
   step: number;
   /** Which repetition of the region this point falls in. */
   cycle: number;
@@ -107,7 +109,7 @@ export function* gridPoints(startBeat: number, endBeat: number, stepBeats: numbe
     const beat = originBeat + index * stepBeats;
     if (beat >= endBeat) return;
     if (beat >= startBeat) {
-      yield { beat, time: timeline.beatToTime(beat), index };
+      yield { beat, when: timeline.beatToTime(beat), index };
     }
   }
 }
@@ -129,13 +131,13 @@ export function* cycleGridPoints(
   division: number,
   timeline: TimelineLike,
 ): Generator<CycleGridPoint> {
-  for (const { beat, time, index } of gridPoints(startBeat, endBeat, stepBeats, originBeat, timeline)) {
+  for (const { beat, when, index } of gridPoints(startBeat, endBeat, stepBeats, originBeat, timeline)) {
     // Floored division, not `%`: JS's remainder keeps the sign of the
     // dividend, so `-1 % 16` is -1, not 15. Indices go negative for beats
     // before the origin -- legal here, since `from` may be positive and
     // seek() accepts negative beats -- and a negative step would silently
     // read past the start of a pattern array.
     const cycle = Math.floor(index / division);
-    yield { beat, time, step: index - cycle * division, cycle };
+    yield { beat, when, step: index - cycle * division, cycle };
   }
 }

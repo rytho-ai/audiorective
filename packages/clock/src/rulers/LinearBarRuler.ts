@@ -8,7 +8,9 @@ export interface LinearBarRulerOptions {
 }
 
 export interface LinearBarPoint {
+  /** Zero-based bar offset: bar 0 is the first bar. */
   bar: number;
+  /** Quarter-note axis beats since the bar began, regardless of the meter denominator. */
   beatInBar: number;
   numerator: number;
   denominator: number;

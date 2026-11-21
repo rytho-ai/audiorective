@@ -47,7 +47,7 @@ describe("Clock integration (real AudioContext, default WorkerTickSource)", () =
         // drifts past the look-ahead and fails on a perfectly good point.
         const scheduledAt = window.time.current;
         for (const point of window.rulers.bar.grid(16)) {
-          collected.push({ index: point.index, time: point.time, scheduledAt });
+          collected.push({ index: point.index, time: point.when, scheduledAt });
         }
       },
       onMiss: (m) => misses.push(m),

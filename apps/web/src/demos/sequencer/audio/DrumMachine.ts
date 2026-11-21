@@ -128,11 +128,11 @@ export class DrumMachine extends AudioProcessor<{}, {}> {
       onTick: (window) => {
         // `step` is already folded into the cycle, so it indexes the pattern
         // directly -- and it stays in range across the loop wrap and any seek.
-        for (const { time, step } of window.rulers.pattern.grid(patternLength)) {
+        for (const { when, step } of window.rulers.pattern.grid(patternLength)) {
           for (const track of this.tracks) {
             if (track.mute.value) continue;
             if (!track.pattern.value[step]) continue;
-            track.sampler.trigger({ when: time });
+            track.sampler.trigger({ when });
           }
         }
       },

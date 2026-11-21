@@ -40,8 +40,8 @@ test("a Clock-owned future choke is cancellable while a manual pad hit keeps sou
     onTick(window) {
       for (const point of window.rulers.bar.grid(16)) {
         if (point.index !== 1 || !closedEnabled) continue;
-        const hit = bank.trigger("closed", { when: point.time });
-        if (hit) window.own(owned(hit), point.time);
+        const hit = bank.trigger("closed", { when: point.when });
+        if (hit) window.own(owned(hit), point.when);
       }
     },
   });
@@ -96,8 +96,8 @@ test("refresh at a hit's exact audio time renders one hit, not two", async () =>
       onTick(window) {
         for (const point of window.rulers.bar.grid(16)) {
           if (point.index !== 0) continue;
-          const hit = bank.trigger("hit", { when: point.time });
-          if (hit) window.own(owned(hit), point.time);
+          const hit = bank.trigger("hit", { when: point.when });
+          if (hit) window.own(owned(hit), point.when);
         }
       },
     });

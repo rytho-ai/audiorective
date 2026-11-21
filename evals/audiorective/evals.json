@@ -342,7 +342,7 @@
       "expectations": [
         "Chooses PadBank from @audiorective/pads for grouped sample hits instead of scheduling an irreversible voice.stop(when) on the open hat",
         "Creates open and closed pads with different IDs in one group; routes the block output once and keeps context ownership with the caller",
-        "Schedules a hit in a Clock tick window using absolute point.time and registers its returned handle with window.own(hit, point.time)",
+        "Schedules a hit in a Clock tick window using the grid point’s absolute audio-context timestamp and registers its returned handle with window.own at that same timestamp",
         "Leaves a manually triggered pad event unregistered with Clock so sequencer transport changes do not cancel it",
         "After a pattern edit, calls clock.refresh() to retract owned hits at or after the captured audio time and refill the horizon; explains that a hit exactly at now is reissued once while earlier hits remain active",
         "Explains that pause, stop, seek, start and dispose cancel owned events, while unowned events retain Clock's prior tail behavior",

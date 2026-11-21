@@ -42,6 +42,15 @@ predates that API. See the "Version mismatches" note in the skill.
 - **midi/web:** `MidiKeyboard.press(note, { velocity, when, channel })`, `release(note, when)` and `setSustain(down, when)` for on-screen keys on the hardware path; `MidiKeyboard.open(context, { access })` takes a `MIDIAccess` or `null` (on-screen only, no permission prompt); `MidiKeyboard` is a `MidiSource` and `MidiRecorder` records any `MidiSource` (`new MidiRecorder(context, keyboard)`).
 - **core:** `resolveHitEdit`, `Random` and `HitTiming`, the per-event transform merge shared by `StepSequencer` and `MidiClip`.
 
+### Changed
+
+- **clock:** grid-point absolute audio timestamps use `when`, consistently with Web Audio scheduling. All current callers migrate together; no `time` alias remains. Curve coordinates and project-file positions retain `time`.
+
+  | Before                          | After                           |
+  | ------------------------------- | ------------------------------- |
+  | `point.time` / `{ time, step }` | `point.when` / `{ when, step }` |
+  | `trigger({ when: point.time })` | `trigger({ when: point.when })` |
+
 ### Fixed
 
 - **core:** `withCancel(event, undo).cancel(time?)` forwards the optional audio-context cancellation boundary to the wrapped event instead of cancelling it immediately. Cancellation and undo still run at most once; documentation and clock-owned voice examples preserve the same boundary.

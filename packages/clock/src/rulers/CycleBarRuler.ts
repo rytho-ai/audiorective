@@ -12,8 +12,11 @@ export interface CycleBarRulerOptions {
 }
 
 export interface CycleBarPoint {
+  /** Zero-based repetition: cycle 0 is the first pass. */
   cycle: number;
+  /** Zero-based bar offset within the cycle. */
   barInCycle: number;
+  /** Quarter-note axis beats since this bar began, regardless of the meter denominator. */
   beatInBar: number;
   /** Position within the cycle, in [0, 1). */
   phase: number;

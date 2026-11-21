@@ -131,7 +131,7 @@ The same wiring runs in `packages/sequencer/tests/drum-machine-doc.browser.test.
 
 ## When not to use it
 
-`StepSequencer` fits lanes of steps with per-step velocity, offset, length, repeat, pitch and chance. For per-lane state machines, polyrhythm rules of your own or note logic that is not a step edit, schedule directly: iterate `window.rulers.<name>.grid(division)` in a `Clock` `onTick`, trigger the sound at each point's `time`, and register the handle with `window.own(hit, time)` so transport edits cut it. See [Clock](./clock.md#own-cancellable-events-when-transport-edits-must-cut-queued-sound).
+`StepSequencer` fits lanes of steps with per-step velocity, offset, length, repeat, pitch and chance. For per-lane state machines, polyrhythm rules of your own or note logic that is not a step edit, schedule directly: iterate `window.rulers.<name>.grid(division)` in a `Clock` `onTick`, trigger the sound at each point's `when`, and register the handle with `window.own(hit, when)` so transport edits cut it. See [Clock](./clock.md#own-cancellable-events-when-transport-edits-must-cut-queued-sound).
 
 ## Common errors
 
