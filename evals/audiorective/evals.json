@@ -1133,6 +1133,17 @@
         "Uses the lane commit callback to update the existing owner once per completed gesture and disposes only the view on close.",
         "Delegates Escape interaction to the lane: active drags cancel, while an idle numeric field restores its owner value and permits native dialog dismissal, without a caller-written global key handler."
       ]
+    },
+    {
+      "id": 87,
+      "prompt": "In an Audiorective app I want one error-handling policy across sequencer, pads, Clock and WebCLAP. Show how to distinguish a callback or options shape mistake, an out-of-range pattern length or unknown pad ID, an operation after dispose or duplicate attachment/editor mounting, and a WebCLAP request timeout. Keep the original messages for diagnostics, and preserve isolation so a failing callback or cleanup does not stop unrelated audio. Use current repository APIs; do not run anything.",
+      "expected_output": "Uses TypeError/RangeError and the platform DOMException names InvalidStateError/TimeoutError, while preserving ordinary external failures and callback isolation.",
+      "files": [],
+      "expectations": [
+        "Distinguishes invalid argument/callback shapes with TypeError from invalid numeric ranges or unknown declared lane/pad values with RangeError, without classifying solely by message text.",
+        "Handles disposed or duplicate Clock/scheduler/editor operations by InvalidStateError and WebCLAP timeout or state-confirmation exhaustion by TimeoutError, retaining original diagnostic messages.",
+        "Leaves external HTTP/plug-in errors and internal invariants as ordinary Error, and does not remove callback or cleanup isolation merely to surface a failure."
+      ]
     }
   ]
 }

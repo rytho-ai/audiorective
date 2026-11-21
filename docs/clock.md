@@ -97,6 +97,8 @@ Read [advanced rulers](./clock-advanced.md#rulers--reading-the-beat-axis) for co
 
 ## Common errors
 
+Invalid constructor option combinations throw `TypeError`; numeric scheduling and meter limits throw `RangeError`. Attaching to a disposed Clock or attaching the same scheduler twice throws `DOMException` with `name === "InvalidStateError"`.
+
 | Message                                                                                                                                                                | Cause                                                                                                              | Fix                                                                                                                          |
 | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
 | `Clock owned event time must be finite, non-negative seconds.`                                                                                                         | `window.own(event, when)` received an invalid audio time; the event is cancelled before the error is thrown.       | Pass the same absolute `AudioContext` time used to schedule that event.                                                      |

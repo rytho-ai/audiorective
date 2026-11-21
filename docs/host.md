@@ -63,6 +63,8 @@ This first host covers one AudioWorklet instance per plug-in, MIDI note/control 
 
 ## Common errors
 
+Repeated editor mounting, state requests after disposal, pending requests interrupted by disposal and MIDI scheduling after disposal use `DOMException` with `name === "InvalidStateError"`. Worklet response expiry and state-confirmation exhaustion use `name === "TimeoutError"`. Numeric MIDI limits retain `RangeError`; HTTP and plug-in failures remain ordinary `Error`. In the MIDI error row, the same message also reports an already disposed host; create a new host before scheduling.
+
 | Message                                                                                                                                                             | Cause and fix                                                                                                                                                                         |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `WebCLAP bundle HTTP …`                                                                                                                                             | `module.wasm` was not served at `<bundle URL>/module.wasm`; check the URL and deployment assets.                                                                                      |

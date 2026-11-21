@@ -138,7 +138,7 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
       if (!response.ok) throw new Error(`WebCLAP bundle HTTP ${response.status}.`);
       const bytes = await response.arrayBuffer();
       const loaded = new Promise<LoadedMessage>((resolve, reject) => {
-        timer = setTimeout(() => reject(new Error("WebCLAP host response timed out.")), 10_000);
+        timer = setTimeout(() => reject(new DOMException("WebCLAP host response timed out.", "TimeoutError")), 10_000);
         node.port.onmessage = (event: MessageEvent<HostMessage>) => {
           const message = event.data;
           if (message.type === "loaded") resolve(message as LoadedMessage);
@@ -197,7 +197,8 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
 
   /** Sends raw MIDI bytes other than notes (controllers, program change) at `when`; `noteOn` and `noteOff` play notes. */
   scheduleMidi(data: Uint8Array | readonly number[], when: number): WebClapEvent {
-    if (this.disposed || !Number.isFinite(when) || when < 0) throw new RangeError("WebCLAP MIDI needs a finite non-negative audio time.");
+    if (this.disposed) throw new DOMException("WebCLAP MIDI needs a finite non-negative audio time.", "InvalidStateError");
+    if (!Number.isFinite(when) || when < 0) throw new RangeError("WebCLAP MIDI needs a finite non-negative audio time.");
     const id = this.nextId++;
     const listeners = new Set<() => void>();
     this.pending.set(id, listeners);
@@ -238,12 +239,12 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
       if (sameBytes(await this.saveState(), bytes)) return;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    throw new Error("WebCLAP state did not settle after load.");
+    throw new DOMException("WebCLAP state did not settle after load.", "TimeoutError");
   }
 
   async mountEditor(frame: HTMLIFrameElement): Promise<() => void> {
     if (!this.hasEditor) throw new Error("WebCLAP plug-in has no editor.");
-    if (this.editor) throw new Error("WebCLAP editor is already mounted.");
+    if (this.editor) throw new DOMException("WebCLAP editor is already mounted.", "InvalidStateError");
     this.editor = frame;
     const origin = new URL(this.bundleUrl, document.baseURI).origin;
     this.editorListener = (event: MessageEvent) => {
@@ -275,7 +276,7 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
   }
 
   private wait<T>(register: (waiter: Waiter<T>) => void): Promise<T> {
-    if (this.disposed) return Promise.reject(new Error("WebCLAP host is disposed."));
+    if (this.disposed) return Promise.reject(new DOMException("WebCLAP host is disposed.", "InvalidStateError"));
     return new Promise<T>((resolve, reject) => {
       const waiter: Waiter<T> = {
         resolve,
@@ -283,7 +284,7 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
         timer: setTimeout(() => {
           // Drop the dead waiter, or the next reply would settle it instead of the next real caller.
           this.dropWaiter(waiter);
-          reject(new Error("WebCLAP host response timed out."));
+          reject(new DOMException("WebCLAP host response timed out.", "TimeoutError"));
         }, 10_000),
       };
       register(waiter);
@@ -370,7 +371,7 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
   override dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    this.rejectWaiters(new Error("WebCLAP host is disposed."));
+    this.rejectWaiters(new DOMException("WebCLAP host is disposed.", "InvalidStateError"));
     if (this.editor) this.unmountEditor();
     this.allNotesOff();
     this.node.port.postMessage({ type: "dispose" });

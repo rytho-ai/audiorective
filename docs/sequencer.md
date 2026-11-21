@@ -135,6 +135,8 @@ The same wiring runs in `packages/sequencer/tests/drum-machine-doc.browser.test.
 
 ## Common errors
 
+Invalid argument types, callback shapes and parameter specifications throw `TypeError`; numeric limits, unsupported pattern characters, directions and missing lane IDs throw `RangeError`. Attaching a disposed sequencer or requesting audio output from a headless lane throws `DOMException` with `name === "InvalidStateError"`. A missing context in the constructor is an invalid options shape (`TypeError`). Error messages remain the keys in the table. Internal invariant failures remain ordinary `Error`.
+
 <!-- prettier-ignore -->
 | Step Sequencer message | Cause and fix |
 | --- | --- |

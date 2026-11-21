@@ -24,19 +24,20 @@ export function parsePattern(pattern: Pattern): number[] {
       position++;
       if (/\s/.test(char)) continue;
       const velocity = charVelocity(char);
-      if (velocity === undefined) throw new Error(PATTERN_ERROR(char, position));
+      if (velocity === undefined) throw new RangeError(PATTERN_ERROR(char, position));
       out.push(velocity);
     }
   } else if (Array.isArray(pattern)) {
     for (const velocity of pattern) {
-      if (typeof velocity !== "number" || !Number.isFinite(velocity) || velocity < 0 || velocity > 1)
-        throw new Error("Step Sequencer pattern velocities need numbers from 0 to 1.");
+      if (typeof velocity !== "number") throw new TypeError("Step Sequencer pattern velocities need numbers from 0 to 1.");
+      if (!Number.isFinite(velocity) || velocity < 0 || velocity > 1)
+        throw new RangeError("Step Sequencer pattern velocities need numbers from 0 to 1.");
       out.push(velocity);
     }
   } else {
-    throw new Error('Step Sequencer pattern needs a string like "X...x..." or an array of velocities from 0 to 1.');
+    throw new TypeError('Step Sequencer pattern needs a string like "X...x..." or an array of velocities from 0 to 1.');
   }
-  if (out.length === 0 || out.length > 128) throw new Error("Step Sequencer pattern needs from 1 to 128 steps.");
+  if (out.length === 0 || out.length > 128) throw new RangeError("Step Sequencer pattern needs from 1 to 128 steps.");
   return out;
 }
 
@@ -67,18 +68,18 @@ const TIME_ERROR = () => 'Step Sequencer needs a Time such as "16n", "16n.", "8t
  */
 export function parseTime(time: Time): ParsedTime {
   if (typeof time === "number") {
-    if (!Number.isFinite(time)) throw new Error(TIME_ERROR());
+    if (!Number.isFinite(time)) throw new RangeError(TIME_ERROR());
     return { unit: "seconds", value: time };
   }
-  if (typeof time !== "string") throw new Error(TIME_ERROR());
+  if (typeof time !== "string") throw new TypeError(TIME_ERROR());
   const match = /^(\d+(?:\.\d+)?|\.\d+)(n\.?|t|m|ms|s)$/.exec(time.trim());
-  if (!match) throw new Error(TIME_ERROR());
+  if (!match) throw new TypeError(TIME_ERROR());
   const n = Number(match[1]);
   switch (match[2]) {
     case "n":
     case "n.":
     case "t": {
-      if (n <= 0) throw new Error(TIME_ERROR());
+      if (n <= 0) throw new RangeError(TIME_ERROR());
       const straight = 4 / n;
       return { unit: "beats", value: match[2] === "n" ? straight : match[2] === "t" ? (straight * 2) / 3 : straight * 1.5 };
     }
@@ -102,8 +103,8 @@ export function parseSwing(swing: number | `${number}%`): number {
   let value: number;
   if (typeof swing === "number") value = swing;
   else if (typeof swing === "string" && /^\d+(?:\.\d+)?%$/.test(swing.trim())) value = Number.parseFloat(swing) / 100;
-  else value = Number.NaN;
+  else throw new TypeError('Step Sequencer swing needs a number from 0 to 1 or a percentage like "30%".');
   if (!Number.isFinite(value) || value < 0 || value > 1)
-    throw new Error('Step Sequencer swing needs a number from 0 to 1 or a percentage like "30%".');
+    throw new RangeError('Step Sequencer swing needs a number from 0 to 1 or a percentage like "30%".');
   return value;
 }

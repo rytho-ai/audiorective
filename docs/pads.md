@@ -50,6 +50,8 @@ Choke is carried by a per-event gain gate, so stopping an unstarted hit retracts
 
 ## Common errors
 
+Empty or duplicate pad IDs throw `TypeError`; an unknown ID passed to `assign` or `routePad` throws `RangeError`. Commands after disposal throw `DOMException` with `name === "InvalidStateError"`.
+
 | Message                                         | Cause                                                     | Fix                                         |
 | ----------------------------------------------- | --------------------------------------------------------- | ------------------------------------------- |
 | `Pad Bank pad IDs must be nonempty and unique.` | Empty or repeated pad ID                                  | Give each pad a stable unique ID.           |

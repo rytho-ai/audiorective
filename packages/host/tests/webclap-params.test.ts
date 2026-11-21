@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { effect } from "@audiorective/core";
 import { WebClapHost } from "../src/webclap";
 
+let hasGui = false;
+let respondToLoad = true;
+
 const info = (id: number, value: number) => ({ id, name: `p${id}`, min: 0, max: 1, defaultValue: 0, value, text: "" });
 
 class FakeGain {
@@ -15,14 +18,14 @@ class FakePort {
   onmessage?: (event: { data: unknown }) => void;
   postMessage(message: { type: string }) {
     this.sent.push(message);
-    if (message.type === "load") {
+    if (message.type === "load" && respondToLoad) {
       queueMicrotask(() =>
         this.onmessage?.({
           data: {
             type: "loaded",
             descriptor: { id: "x", name: "x", vendor: "", version: "", features: [] },
             params: [info(7, 0.25), info(9, 0.5)],
-            hasGui: false,
+            hasGui,
             latencySamples: 48,
             audioInputs: [],
             audioOutputs: [],
@@ -41,12 +44,17 @@ class FakeNode {
 
 describe("WebClapHost params", () => {
   beforeEach(() => {
+    hasGui = false;
+    respondToLoad = true;
     vi.stubGlobal("GainNode", FakeGain);
     vi.stubGlobal("AudioParam", FakeAudioParam);
     vi.stubGlobal("AudioWorkletNode", FakeNode);
     vi.stubGlobal("fetch", async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) }));
   });
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
 
   const load = async () => {
     const context = { sampleRate: 48000, currentTime: 3, destination: {}, audioWorklet: { addModule: async () => {} } } as unknown as AudioContext;
@@ -211,6 +219,7 @@ describe("WebClapHost params", () => {
       for (const r of settled) {
         expect(r.status).toBe("rejected");
         expect((r as PromiseRejectedResult).reason.message).toBe("WebCLAP host is disposed.");
+        expect((r as PromiseRejectedResult).reason.name).toBe("InvalidStateError");
       }
     } finally {
       vi.useRealTimers();
@@ -240,14 +249,89 @@ describe("WebClapHost params", () => {
       const { host } = await load();
       const port = host.node.port as unknown as FakePort;
       const first = host.saveState();
-      const firstResult = expect(first).rejects.toThrow("timed out");
-      await vi.advanceTimersByTimeAsync(10_000);
-      await firstResult;
+      const firstResult = expect(first).rejects.toMatchObject({ name: "TimeoutError", message: "WebCLAP host response timed out." });
+      await Promise.all([vi.advanceTimersByTimeAsync(10_000), firstResult]);
       const second = host.saveState();
       port.onmessage?.({ data: { type: "state", bytes: new Uint8Array([7]).buffer } });
       await expect(second).resolves.toEqual(new Uint8Array([7]));
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  describe("WebClapHost platform error names", () => {
+    it("initial worklet response expiry uses TimeoutError", async () => {
+      vi.useFakeTimers();
+      respondToLoad = false;
+      try {
+        const context = {
+          sampleRate: 48000,
+          currentTime: 0,
+          destination: {},
+          audioWorklet: { addModule: async () => {} },
+        } as unknown as AudioContext;
+        const pending = WebClapHost.load(context, { url: "http://localhost/silent.wclap", workletUrl: "http://localhost/w.js" });
+        const assertion = expect(pending).rejects.toMatchObject({ name: "TimeoutError", message: "WebCLAP host response timed out." });
+        await Promise.all([vi.advanceTimersByTimeAsync(10_000), assertion]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("new state requests after disposal use InvalidStateError", async () => {
+      const context = { sampleRate: 48000, currentTime: 0, destination: {}, audioWorklet: { addModule: async () => {} } } as unknown as AudioContext;
+      const host = await WebClapHost.load(context, { url: "http://localhost/bundle.wclap", workletUrl: "http://localhost/w.js" });
+      host.dispose();
+      await expect(host.saveState()).rejects.toMatchObject({ name: "InvalidStateError", message: "WebCLAP host is disposed." });
+    });
+
+    it("MIDI scheduling after disposal uses InvalidStateError", async () => {
+      const { host } = await load();
+      host.dispose();
+      expect(() => host.scheduleMidi([0xb0, 1, 0], 0)).toThrowError(
+        expect.objectContaining({ name: "InvalidStateError", message: "WebCLAP MIDI needs a finite non-negative audio time." }),
+      );
+    });
+
+    it("an already mounted editor uses InvalidStateError", async () => {
+      hasGui = true;
+      vi.stubGlobal("window", new EventTarget());
+      vi.stubGlobal("document", { baseURI: "http://localhost/" });
+      const context = { sampleRate: 48000, currentTime: 0, destination: {}, audioWorklet: { addModule: async () => {} } } as unknown as AudioContext;
+      const host = await WebClapHost.load(context, { url: "http://localhost/bundle.wclap", workletUrl: "http://localhost/w.js" });
+      const frame = { src: "", contentWindow: null, removeAttribute() {} } as unknown as HTMLIFrameElement;
+      const first = Promise.allSettled([host.mountEditor(frame)]);
+      try {
+        await expect(host.mountEditor(frame)).rejects.toMatchObject({ name: "InvalidStateError", message: "WebCLAP editor is already mounted." });
+        (host.node.port as unknown as FakePort).onmessage?.({ data: { type: "gui", uri: "/editor/index.html" } });
+        expect((await first)[0].status).toBe("fulfilled");
+      } finally {
+        host.dispose();
+        await first;
+      }
+    });
+
+    it("an acknowledged state which never settles uses TimeoutError", async () => {
+      vi.useFakeTimers();
+      const context = { sampleRate: 48000, currentTime: 0, destination: {}, audioWorklet: { addModule: async () => {} } } as unknown as AudioContext;
+      const host = await WebClapHost.load(context, { url: "http://localhost/bundle.wclap", workletUrl: "http://localhost/w.js" });
+      const port = host.node.port as unknown as FakePort;
+      const send = port.postMessage.bind(port);
+      vi.spyOn(port, "postMessage").mockImplementation((message) => {
+        send(message);
+        if (message.type === "loadState") queueMicrotask(() => port.onmessage?.({ data: { type: "stateLoaded" } }));
+        if (message.type === "saveState") queueMicrotask(() => port.onmessage?.({ data: { type: "state", bytes: new Uint8Array([0]).buffer } }));
+      });
+      try {
+        const assertion = expect(host.loadState(new Uint8Array([1]))).rejects.toMatchObject({
+          name: "TimeoutError",
+          message: "WebCLAP state did not settle after load.",
+        });
+        await Promise.all([vi.advanceTimersByTimeAsync(1000), assertion]);
+      } finally {
+        host.dispose();
+        vi.useRealTimers();
+      }
+    });
   });
 });

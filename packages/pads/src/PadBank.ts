@@ -73,7 +73,7 @@ export class PadBank extends AudioProcessor<
   constructor(context: BaseAudioContext, pads: readonly PadSpec[], options: PadBankOptions = {}) {
     const ids = new Set<string>();
     for (const pad of pads) {
-      if (!pad.id || ids.has(pad.id)) throw new Error("Pad Bank pad IDs must be nonempty and unique.");
+      if (!pad.id || ids.has(pad.id)) throw new TypeError("Pad Bank pad IDs must be nonempty and unique.");
       assertSound(pad.sound);
       ids.add(pad.id);
     }
@@ -110,7 +110,7 @@ export class PadBank extends AudioProcessor<
   }
 
   private assertAlive(): void {
-    if (this.disposed) throw new Error("PadBank is disposed.");
+    if (this.disposed) throw new DOMException("PadBank is disposed.", "InvalidStateError");
   }
 
   /** Seconds a hit fades out when released, read when it is released. */
@@ -267,7 +267,7 @@ export class PadBank extends AudioProcessor<
   routePad(id: string, destination: AudioNode | null): void {
     this.assertAlive();
     const node = this.padNodes.get(id);
-    if (!node) throw new Error("Unknown pad.");
+    if (!node) throw new RangeError("Unknown pad.");
     node.disconnect();
     node.connect(destination ?? this.outputNode);
   }
@@ -276,7 +276,7 @@ export class PadBank extends AudioProcessor<
   assign(id: string, sound: Sound): void {
     this.assertAlive();
     const pad = this.pad(id);
-    if (!pad) throw new Error("Unknown pad.");
+    if (!pad) throw new RangeError("Unknown pad.");
     assertSound(sound);
     this.settle();
     for (const hit of [...this.hits]) if (hit.pad.id === id) this.finish(hit);

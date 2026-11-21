@@ -44,6 +44,8 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Changed
 
+- **sequencer / pads / clock / host:** argument-shape failures use `TypeError`, invalid values and ranges use `RangeError`, and disposed or duplicate attachment/editor operations use `DOMException` with `InvalidStateError`. WebCLAP response timeouts and state-confirmation exhaustion use `TimeoutError`. Messages are unchanged. External resource/plug-in failures and internal invariants remain ordinary `Error`; launcher validation already uses range/type errors and is unchanged.
+
 - **widgets / docs:** `StepGridOptions.sequencer` documents that lane rows update live while the custom parameter tab set is fixed at mount.
 
 - **widgets:** automation lanes intercept Escape only during an active drag; an idle numeric field restores its owner value without blocking native dialog dismissal. Document-level listeners exist only during the drag.

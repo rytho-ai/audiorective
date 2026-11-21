@@ -260,13 +260,13 @@ const isStepRate = (rate: unknown): rate is StepRate => typeof rate === "string"
 function checkRate(rate: unknown): Time | StepRate {
   if (isStepRate(rate)) return rate;
   const parsed = parseTime(rate as Time);
-  if (!(parsed.value > 0) || (parsed.unit === "beats" && parsed.value < MIN_RATE_BEATS)) throw new Error(RATE_ERROR);
+  if (!(parsed.value > 0) || (parsed.unit === "beats" && parsed.value < MIN_RATE_BEATS)) throw new RangeError(RATE_ERROR);
   return rate as Time;
 }
 
 function toParamSpecs(params: LaneOptions["params"]): readonly ParamSpec[] {
   if (params === undefined) return [];
-  if (typeof params !== "object" || params === null) throw new Error(PARAM_RANGE_ERROR);
+  if (typeof params !== "object" || params === null) throw new TypeError(PARAM_RANGE_ERROR);
   return Object.entries(params).map(([id, range]) => {
     if (
       !id ||
@@ -278,8 +278,20 @@ function toParamSpecs(params: LaneOptions["params"]): readonly ParamSpec[] {
       !(range.min < range.max) ||
       !inRange(range.default, range.min, range.max) ||
       (range.step !== undefined && !(Number.isFinite(range.step) && range.step > 0))
-    )
-      throw new Error(PARAM_RANGE_ERROR);
+    ) {
+      if (
+        !id ||
+        id === "custom" ||
+        (FIELD_IDS as readonly string[]).includes(id) ||
+        !range ||
+        typeof range.min !== "number" ||
+        typeof range.max !== "number" ||
+        typeof range.default !== "number" ||
+        (range.step !== undefined && typeof range.step !== "number")
+      )
+        throw new TypeError(PARAM_RANGE_ERROR);
+      throw new RangeError(PARAM_RANGE_ERROR);
+    }
     return Object.freeze({ id, min: range.min, max: range.max, default: range.default, ...(range.step !== undefined ? { step: range.step } : {}) });
   });
 }
@@ -288,14 +300,21 @@ function makeCell(base: StepCell, patch: StepCellPatch, specs: readonly ParamSpe
   const next: Record<string, unknown> = { ...base };
   for (const id of FIELD_IDS) if (patch[id] !== undefined) next[id] = patch[id];
   for (const { id, min, max, integer } of FIELDS) {
-    if (!(integer ? inRangeInt : inRange)(next[id] as number, min, max)) throw new Error(CELL_ERROR);
+    if (!(integer ? inRangeInt : inRange)(next[id] as number, min, max)) {
+      if (typeof next[id] !== "number") throw new TypeError(CELL_ERROR);
+      throw new RangeError(CELL_ERROR);
+    }
   }
   if (patch.custom !== undefined) {
     if (typeof patch.custom !== "object" || patch.custom === null) throw new Error(CUSTOM_ERROR);
     const custom: Record<string, number> = { ...base.custom };
     for (const [id, value] of Object.entries(patch.custom)) {
       const spec = specs.find((item) => item.id === id);
-      if (!spec || !inRange(value, spec.min, spec.max)) throw new Error(CUSTOM_ERROR);
+      if (!spec) throw new Error(CUSTOM_ERROR);
+      if (!inRange(value, spec.min, spec.max)) {
+        if (typeof value !== "number") throw new TypeError(CUSTOM_ERROR);
+        throw new RangeError(CUSTOM_ERROR);
+      }
       custom[id] = value;
     }
     next.custom = Object.freeze(custom);
@@ -307,10 +326,16 @@ const sameCell = (a: StepCell, b: StepCell) =>
   FIELD_IDS.every((id) => a[id] === b[id]) && Object.keys(a.custom).every((id) => a.custom[id] === b.custom[id]);
 
 function checkFields(patch: LaneFields): void {
-  if (patch.steps !== undefined && !inRangeInt(patch.steps, 1, MAX_STEPS)) throw new Error(LANE_ERROR);
-  if (patch.direction !== undefined && !DIRECTIONS.includes(patch.direction)) throw new Error(LANE_ERROR);
-  if (patch.mute !== undefined && typeof patch.mute !== "boolean") throw new Error(LANE_ERROR);
-  if (patch.solo !== undefined && typeof patch.solo !== "boolean") throw new Error(LANE_ERROR);
+  if (patch.steps !== undefined && !inRangeInt(patch.steps, 1, MAX_STEPS)) {
+    if (typeof patch.steps !== "number") throw new TypeError(LANE_ERROR);
+    throw new RangeError(LANE_ERROR);
+  }
+  if (patch.direction !== undefined && !DIRECTIONS.includes(patch.direction)) {
+    if (typeof patch.direction !== "string") throw new TypeError(LANE_ERROR);
+    throw new RangeError(LANE_ERROR);
+  }
+  if (patch.mute !== undefined && typeof patch.mute !== "boolean") throw new TypeError(LANE_ERROR);
+  if (patch.solo !== undefined && typeof patch.solo !== "boolean") throw new TypeError(LANE_ERROR);
 }
 
 /** Cell index played by lane step counter `k`. */
@@ -364,7 +389,7 @@ export class StepSequencer extends EventTarget {
   constructor(lanes: Readonly<Record<string, Pattern | LaneOptions>>, options: StepSequencerOptions = {}) {
     super();
     if (typeof options !== "object" || options === null || typeof lanes !== "object" || lanes === null || Array.isArray(lanes))
-      throw new Error(ARGUMENTS_ERROR);
+      throw new TypeError(ARGUMENTS_ERROR);
     this.seed = options.seed ?? 0;
     this.random = options.random ?? Math.random;
     this.drawChance = options.random ? undefined : (lane, loop, count) => hash01(this.seed, "chance", lane, loop, count);
@@ -372,7 +397,7 @@ export class StepSequencer extends EventTarget {
       (options.onHit !== undefined && typeof options.onHit !== "function") ||
       (options.transform !== undefined && typeof options.transform !== "function")
     )
-      throw new Error(CALLBACK_ERROR);
+      throw new TypeError(CALLBACK_ERROR);
     this.onHitOption = options.onHit;
     this.context = options.context;
     this.abortSignal = options.signal;
@@ -380,7 +405,7 @@ export class StepSequencer extends EventTarget {
     for (const [name, definition] of Object.entries(lanes)) {
       const lane: LaneOptions =
         typeof definition === "string" || Array.isArray(definition) ? { pattern: definition as Pattern } : (definition as LaneOptions);
-      if (!name || !lane || typeof lane !== "object" || lane.pattern === undefined) throw new Error(LANE_RECORD_ERROR);
+      if (!name || !lane || typeof lane !== "object" || lane.pattern === undefined) throw new TypeError(LANE_RECORD_ERROR);
       const velocities = parsePattern(lane.pattern);
       const specs = toParamSpecs(lane.params);
       const fields: LaneFields = {
@@ -393,10 +418,10 @@ export class StepSequencer extends EventTarget {
       const swing = lane.swing === undefined ? 0 : parseSwing(lane.swing);
       if (lane.sound !== undefined) {
         assertSound(lane.sound);
-        if (!this.context) throw new Error(CONTEXT_ERROR);
+        if (!this.context) throw new TypeError(CONTEXT_ERROR);
       }
       if (lane.onHit !== undefined) {
-        if (typeof lane.onHit !== "function") throw new Error(CALLBACK_ERROR);
+        if (typeof lane.onHit !== "function") throw new TypeError(CALLBACK_ERROR);
         this.laneHits.set(name, lane.onHit);
       }
       const blank: StepCell = Object.freeze({
@@ -497,7 +522,7 @@ export class StepSequencer extends EventTarget {
   /** Lane view by name; throws for an unknown lane. */
   lane(name: string): Lane {
     const lane = Object.prototype.hasOwnProperty.call(this.lanes, name) ? this.lanes[name] : undefined;
-    if (!lane) throw new Error(LANE_TARGET_ERROR);
+    if (!lane) throw new RangeError(LANE_TARGET_ERROR);
     return lane;
   }
 
@@ -678,7 +703,7 @@ export class StepSequencer extends EventTarget {
   }
 
   private outputFor(name: string): GainNode {
-    if (!this.context) throw new Error(CONTEXT_ERROR);
+    if (!this.context) throw new DOMException(CONTEXT_ERROR, "InvalidStateError");
     let output = this.outputs.get(name);
     if (!output) {
       output = new GainNode(this.context);
@@ -733,7 +758,7 @@ export class StepSequencer extends EventTarget {
    * queues them again; several edits in one task re-queue once. Returns the cleanup the transport runs on detach.
    */
   attached(handle: TransportHandle): () => void {
-    if (this.disposed) throw new Error(DISPOSED_ERROR);
+    if (this.disposed) throw new DOMException(DISPOSED_ERROR, "InvalidStateError");
     this.handles.add(handle);
     if (!this.stopWatching) {
       let armed = false;

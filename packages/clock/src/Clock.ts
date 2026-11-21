@@ -150,9 +150,9 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
 
   constructor(options: ClockOptions<TRulers>) {
     const source = options.context ?? options.audioContext;
-    if (options.timeline && source) throw new Error("Clock takes either timeline or context, not both.");
-    if (!options.timeline && !source) throw new Error("Clock needs a timeline or a context.");
-    if (options.timeline && options.bpm !== undefined) throw new Error("Clock bpm only applies with context; set it on the timeline you pass.");
+    if (options.timeline && source) throw new TypeError("Clock takes either timeline or context, not both.");
+    if (!options.timeline && !source) throw new TypeError("Clock needs a timeline or a context.");
+    if (options.timeline && options.bpm !== undefined) throw new TypeError("Clock bpm only applies with context; set it on the timeline you pass.");
     this._timeline = options.timeline ?? (new Timeline({ audioContext: source!, bpm: options.bpm }) as Timeline<TRulers>);
     this._lookAhead = options.lookAhead ?? 0.1;
     this._onTick = options.onTick;
@@ -196,8 +196,8 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
    * and does not stop the others.
    */
   attach(scheduler: Scheduler): () => void {
-    if (this._disposed) throw new Error("Clock is disposed.");
-    if (this._schedulers.has(scheduler)) throw new Error("Clock already has this scheduler attached.");
+    if (this._disposed) throw new DOMException("Clock is disposed.", "InvalidStateError");
+    if (this._schedulers.has(scheduler)) throw new DOMException("Clock already has this scheduler attached.", "InvalidStateError");
     this._schedulers.add(scheduler);
     let detached = false;
     const detach = () => {
