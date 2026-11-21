@@ -192,18 +192,21 @@ describe("Sampler hits", () => {
     sampler.dispose();
   });
 
-  test("a voice scheduled ahead is not playing, counted or held until its start time", async () => {
+  test("a voice scheduled ahead is not started, counted or held until its start time", async () => {
     const sampler = new Sampler(context, { sound: constant(0.1) });
     const voice = sampler.noteOn(60, { when: context.currentTime + 0.3 })!;
-    expect(voice.playing.value).toBe(false);
+    expect(voice.started.value).toBe(false);
+    expect(voice.playing.value).toBe(true);
     expect(sampler.cells.activeVoices.value).toBe(0);
     expect(sampler.cells.heldNotes.value).toEqual([]);
-    await expect.poll(() => voice.playing.value).toBe(true);
+    await expect.poll(() => voice.started.value).toBe(true);
     expect(context.currentTime).toBeGreaterThanOrEqual(voice.when);
     expect(sampler.cells.activeVoices.value).toBe(1);
     expect(sampler.cells.heldNotes.value).toEqual([60]);
     const dropped = sampler.noteOn(62, { when: context.currentTime + 5 })!;
     dropped.stop();
+    expect(dropped.playing.value).toBe(false);
+    expect(dropped.started.value).toBe(false);
     expect(sampler.cells.activeVoices.value).toBe(1);
     sampler.dispose();
     expect(sampler.cells.heldNotes.value).toEqual([]);

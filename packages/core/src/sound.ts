@@ -54,8 +54,10 @@ export interface Voice {
   readonly note: number | null;
   /** Audio-context seconds it starts. */
   readonly when: number;
-  /** True from `when` until it has ended (stopped, stolen, choked, or ran out); false while it is still scheduled. */
+  /** True until it has ended (stopped, stolen, choked, or ran out), including while it is still scheduled ahead. */
   readonly playing: ReadonlyCell<boolean>;
+  /** False while the voice is scheduled ahead, true once the context clock has reached `when`; a voice stopped before it starts stays false. */
+  readonly started: ReadonlyCell<boolean>;
   /** Fades out over the player's `release` from `when` (default now), then ends. Stopping a voice that has not started yet drops it silently. Idempotent. */
   stop(when?: number): void;
 }
@@ -111,8 +113,6 @@ export type PlaySoundOptions = Readonly<{
   span?: number;
   /** Called once when every node of the voice is disconnected, after a release has rung out. */
   onFree?: () => void;
-  /** Called once when the voice is over for its callers (`playing` is false for good), including a voice stopped before it started. */
-  onEnd?: () => void;
 }>;
 
 const isSourceNode = (value: unknown): value is AudioScheduledSourceNode =>
@@ -177,13 +177,14 @@ class PlayedVoice implements Voice {
   readonly when: number;
   private readonly state: Cell<boolean> = cell(true);
   readonly playing: ReadonlyCell<boolean> = readonlyCell(this.state);
+  private readonly begun: Cell<boolean> = cell(true);
+  readonly started: ReadonlyCell<boolean> = readonlyCell(this.begun);
   private readonly gain: GainNode;
   private readonly output: AudioNode;
   private readonly sources: readonly AudioScheduledSourceNode[];
   private readonly velocity: number;
   private readonly release: () => number;
   private readonly onFree: (() => void) | undefined;
-  private readonly onEnd: (() => void) | undefined;
   private startTimer: ReturnType<typeof setTimeout> | undefined;
   private freed = false;
   private readonly context: BaseAudioContext;
@@ -196,7 +197,6 @@ class PlayedVoice implements Voice {
   constructor(context: BaseAudioContext, sound: Sound, destination: AudioNode, hit: SoundHit, release: () => number, options: PlaySoundOptions) {
     const hold = options.hold ?? true;
     this.onFree = options.onFree;
-    this.onEnd = options.onEnd;
     this.context = context;
     this.note = options.note ?? null;
     this.when = hit.when;
@@ -209,9 +209,9 @@ class PlayedVoice implements Voice {
     this.gain = new GainNode(context, { gain: hit.velocity });
     output.connect(this.gain);
     this.gain.connect(destination);
-    // A voice scheduled ahead is not playing until its start time; a timer aligned to audio time, like PadBank's cleanup timer, flips the cell.
+    // A voice scheduled ahead has not started until its time; a timer aligned to audio time, like PadBank's cleanup timer, flips the cell.
     if (hit.when > context.currentTime) {
-      this.state.value = false;
+      this.begun.value = false;
       this.awaitStart();
     }
     this.open = sources.length;
@@ -245,13 +245,13 @@ class PlayedVoice implements Voice {
     }
   }
 
-  /** Wait for the context clock to reach `when`, then mark the voice playing. */
+  /** Wait for the context clock to reach `when`, then mark the voice started. */
   private awaitStart(): void {
     const wait = Math.max(1, Math.ceil((this.when - this.context.currentTime) * 1000));
     this.startTimer = setTimeout(() => {
       this.startTimer = undefined;
       if (this.done) return;
-      if (this.context.currentTime >= this.when) this.state.value = true;
+      if (this.context.currentTime >= this.when) this.begun.value = true;
       else this.awaitStart();
     }, wait);
   }
@@ -300,7 +300,6 @@ class PlayedVoice implements Voice {
     if (this.startTimer !== undefined) clearTimeout(this.startTimer);
     this.startTimer = undefined;
     this.state.value = false;
-    this.onEnd?.();
   }
 }
 
