@@ -91,11 +91,11 @@ try {
   await page.waitForFunction(() => document.querySelector("#status")?.textContent?.includes("MIDI take：1 個音符"));
   assert.equal(await page.locator(".clip.midi").count(), 1);
   await page.locator(".clip.midi").click();
-  const recordedNote = await page.evaluate(() => window.__daw.project.tracks[0].clips[0].sequence.getState().notes[0]);
+  const recordedNote = await page.evaluate(() => window.__daw.project.tracks[0].clips[0].midi.notes.value[0]);
   await page.locator(`.ar-pr-note[data-note-id="${recordedNote.id}"]`).click();
   await page.locator('#editor-panel input[aria-label="音高"]').fill("64");
   await page.keyboard.press("Tab");
-  assert.equal(await page.evaluate(() => window.__daw.project.tracks[0].clips[0].sequence.getState().notes[0].pitch), 64);
+  assert.equal(await page.evaluate(() => window.__daw.project.tracks[0].clips[0].midi.notes.value[0].pitch), 64);
 
   await page.locator("#add-audio").click();
   await page.locator("#record-audio").click();
@@ -168,7 +168,7 @@ try {
       volume: track.volume,
       pan: track.pan,
       automation: track.volumeAutomation,
-      notes: track.kind === "midi" ? track.clips[0].sequence.getState().notes.map(({ pitch, velocity }) => ({ pitch, velocity })) : [],
+      notes: track.kind === "midi" ? track.clips[0].midi.notes.value.map(({ pitch, velocity }) => ({ pitch, velocity })) : [],
       frames: track.kind === "audio" ? track.clips.reduce((sum, clip) => sum + clip.frameCount, 0) : 0,
     })),
   }));
@@ -195,7 +195,7 @@ try {
       volume: track.volume,
       pan: track.pan,
       automation: track.volumeAutomation,
-      notes: track.kind === "midi" ? track.clips[0].sequence.getState().notes.map(({ pitch, velocity }) => ({ pitch, velocity })) : [],
+      notes: track.kind === "midi" ? track.clips[0].midi.notes.value.map(({ pitch, velocity }) => ({ pitch, velocity })) : [],
       frames: track.kind === "audio" ? track.clips.reduce((sum, clip) => sum + clip.frameCount, 0) : 0,
     })),
   }));

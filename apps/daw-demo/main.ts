@@ -18,6 +18,7 @@ import { mountStudioSession } from "./session-view";
 import { mountRhythmView } from "./rhythm-view";
 import { StudioView } from "./studio-view";
 import { MidiRecorder } from "@audiorective/midi/web";
+import type { MidiTake } from "@audiorective/midi";
 import { effect } from "@audiorective/core";
 import type { Quantize } from "@audiorective/launcher";
 import { WebClapHost } from "@audiorective/host/webclap";
@@ -54,7 +55,14 @@ let looping = false;
 let loopClipId: string | undefined;
 let loopBeats: TimelineRange | undefined;
 let midiRecording:
-  | { recorder: MidiRecorder; input: MIDIInput; monitor: (event: MIDIMessageEvent) => void; trackId: string; anchor: TakeAnchor; latency: number }
+  | {
+      recorder: MidiRecorder;
+      input: MIDIInput;
+      monitor: (event: MIDIMessageEvent) => void;
+      trackId: string;
+      anchor: TakeAnchor;
+      latency: number;
+    }
   | undefined;
 let audioRecording:
   | {
@@ -184,24 +192,25 @@ function demoProject(): Project {
   const audioClips = (trackId: string, samples: Float32Array, times: readonly number[]) =>
     times.forEach((time) => project.addAudioClip(trackId, { sampleRate: 48_000, channels: [samples] }, time));
 
+  // MIDI is placed in beats; the demo song is written in seconds at 120 BPM.
+  const beatsPerSecond = project.bpm / 60;
   const keys = project.addTrack("Keys", "midi", { volume: 0.48 });
   sections.forEach((time, section) => {
     const pitches = [60, 64, 67, 72, 67].map((pitch) => pitch + [0, 2, 5, 0][section]);
     project.addMidiClip(
       keys.id,
       {
-        duration: 4,
+        duration: 4 * beatsPerSecond,
         notes: pitches.map((pitch, index) => ({
           id: `keys${section}_${index}`,
-          start: [0.25, 0.75, 1.25, 1.75, 2.5][index],
-          end: [0.6, 1.1, 1.6, 2.1, 3.4][index],
+          start: [0.25, 0.75, 1.25, 1.75, 2.5][index] * beatsPerSecond,
+          duration: ([0.6, 1.1, 1.6, 2.1, 3.4][index] - [0.25, 0.75, 1.25, 1.75, 2.5][index]) * beatsPerSecond,
           pitch,
-          velocity: [110, 105, 105, 115, 100][index],
+          velocity: [110, 105, 105, 115, 100][index] / 127,
           channel: 0,
-          track: 0,
         })),
       },
-      time,
+      time * beatsPerSecond,
     );
   });
   instrument(keys.id);
@@ -219,18 +228,17 @@ function demoProject(): Project {
     project.addMidiClip(
       bass.id,
       {
-        duration: 4,
+        duration: 4 * beatsPerSecond,
         notes: [0, 1, 2, 3].map((index) => ({
           id: `bass${section}_${index}`,
-          start: index,
-          end: index + 0.8,
+          start: index * beatsPerSecond,
+          duration: 0.8 * beatsPerSecond,
           pitch: root + (index === 2 ? 7 : 0),
-          velocity: 90,
+          velocity: 90 / 127,
           channel: 0,
-          track: 0,
         })),
       },
-      time,
+      time * beatsPerSecond,
     );
   });
   instrument(bass.id);
@@ -243,18 +251,17 @@ function demoProject(): Project {
     project.addMidiClip(
       lead.id,
       {
-        duration: 4,
+        duration: 4 * beatsPerSecond,
         notes: [72, 76, 79, 84, 79].map((pitch, index) => ({
           id: `lead${section}_${index}`,
-          start: index * 0.65,
-          end: index * 0.65 + 0.47,
+          start: index * 0.65 * beatsPerSecond,
+          duration: 0.47 * beatsPerSecond,
           pitch: pitch - section * 2,
-          velocity: 98,
+          velocity: 98 / 127,
           channel: 0,
-          track: 0,
         })),
       },
-      time,
+      time * beatsPerSecond,
     ),
   );
   instrument(lead.id);
@@ -265,22 +272,18 @@ function demoProject(): Project {
 }
 
 function addNote(clip: MidiClip, placement?: { start: number; pitch: number }): string {
-  const state = clip.sequence.getState();
-  const map = workspace.project.tempoMap;
-  const position = clip.timeUnit === "beats" ? map.secondsToBeat(workspace.position) : workspace.position;
-  const proposedStart =
-    placement?.start ??
-    (clip.timeUnit === "beats"
-      ? Math.max(0, Math.floor(Math.max(clip.time, position)) - clip.time)
-      : Math.max(0, map.beatToSeconds(Math.floor(map.secondsToBeat(Math.max(clip.time, position)))) - clip.time));
-  const start = Math.max(0, Math.min(Math.max(0, state.duration - 0.01), proposedStart));
-  const beatAtNote = clip.timeUnit === "beats" ? clip.time + start : map.secondsToBeat(clip.time + start);
-  const length = Math.min(state.duration - start, clip.timeUnit === "beats" ? 1 : map.beatToSeconds(beatAtNote + 1) - (clip.time + start));
-  const pitch = placement?.pitch ?? state.notes[Math.floor(state.notes.length / 2)]?.pitch ?? 60;
-  const note = { id: `note${crypto.randomUUID().replace(/-/g, "")}`, start, end: start + length, pitch, velocity: 100, channel: 0, track: 0 };
-  clip.sequence.setData({ duration: state.duration, notes: [...state.notes, note] });
-  status(`已新增 ${pitch} 音符 · ${start.toFixed(2)} ${clip.timeUnit === "beats" ? "拍" : "s"}`);
-  return note.id;
+  const notes = clip.midi.notes.value;
+  const position = workspace.project.tempoMap.secondsToBeat(workspace.position);
+  const proposedStart = placement?.start ?? Math.max(0, Math.floor(Math.max(clip.time, position)) - clip.time);
+  const start = Math.max(0, Math.min(Math.max(0, clip.duration - 0.01), proposedStart));
+  const duration = Math.min(clip.duration - start, 1);
+  const pitch = placement?.pitch ?? notes[Math.floor(notes.length / 2)]?.pitch ?? 60;
+  const id = `note${crypto.randomUUID().replace(/-/g, "")}`;
+  clip.midi.edit((draft) => {
+    draft.push({ id, start, duration, pitch, velocity: 100 / 127, channel: 0 });
+  });
+  status(`已新增 ${pitch} 音符 · ${start.toFixed(2)} 拍`);
+  return id;
 }
 
 async function addSynth(track: ProjectTrack): Promise<void> {
@@ -512,16 +515,16 @@ async function recordMidi(): Promise<void> {
     const { recorder, input, monitor, trackId, anchor, latency } = midiRecording;
     midiRecording = undefined;
     input.removeEventListener("midimessage", monitor);
-    let take;
+    let take: MidiTake;
     try {
-      take = recorder.stop();
+      take = await recorder.stop();
     } finally {
       recorder.dispose();
-      for (const device of workspace.project.tracks.find((item) => item.id === trackId)?.devices ?? []) workspace.host(device.id)?.panic();
+      for (const device of workspace.project.tracks.find((item) => item.id === trackId)?.devices ?? []) workspace.host(device.id)?.allNotesOff();
       $("record-midi").textContent = "錄 MIDI";
     }
     studio.recordClipEdit("錄製 MIDI", () =>
-      workspace.project.addMidiTake(trackId, take, workspace.takePosition(anchor, take, latency), { timeUnit: "beats" }),
+      workspace.project.addMidiTake(trackId, take, workspace.project.tempoMap.secondsToBeat(workspace.takePosition(anchor, take, latency))),
     );
     await workspace.flush();
     renderTracks();
@@ -546,7 +549,8 @@ async function recordMidi(): Promise<void> {
   const monitor = (event: MIDIMessageEvent) => {
     if (event.data && deviceId) workspace.host(deviceId)?.scheduleMidi(event.data, context.currentTime);
   };
-  const anchor = workspace.takeAnchor(recorder.start());
+  recorder.record().catch(() => undefined);
+  const anchor = workspace.takeAnchor(recorder.cells.startedAt.value ?? context.currentTime);
   input.addEventListener("midimessage", monitor);
   midiRecording = { recorder, input, monitor, trackId: track.id, anchor, latency };
   $("record-midi").textContent = "停止 MIDI 錄製";

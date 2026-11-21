@@ -1,4 +1,4 @@
-import type { AudioClip, MidiTimeUnit, Project, ProjectClip, ProjectMidiEvent, ProjectTrack } from "@audiorective/daw";
+import type { AudioClip, Project, ProjectClip, ProjectMidiEvent, ProjectTrack } from "@audiorective/daw";
 import type { MidiNote } from "@audiorective/midi";
 
 type ClipSnapshot =
@@ -8,7 +8,6 @@ type ClipSnapshot =
       id: string;
       trackId: string;
       time: number;
-      timeUnit: MidiTimeUnit;
       source: ProjectClip;
       duration: number;
       notes: readonly MidiNote[];
@@ -33,10 +32,9 @@ const capture = (project: Project): Map<string, ClipSnapshot> => {
               id: clip.id,
               trackId: track.id,
               time: clip.time,
-              timeUnit: clip.timeUnit,
               source: clip,
               duration: clip.duration,
-              notes: clip.sequence.getState().notes,
+              notes: clip.midi.notes.value,
               events: clip.events,
             },
       );
@@ -128,11 +126,7 @@ export class EditHistory {
             stretch: audio.stretch,
             gainAutomation: audio.gainAutomation,
           });
-      } else
-        project.addMidiClip(clip.trackId, { duration: clip.duration, notes: clip.notes, events: clip.events }, clip.time, {
-          id: clip.id,
-          timeUnit: clip.timeUnit,
-        });
+      } else project.addMidiClip(clip.trackId, { duration: clip.duration, notes: clip.notes, events: clip.events }, clip.time, { id: clip.id });
     }
     this.changed();
   }

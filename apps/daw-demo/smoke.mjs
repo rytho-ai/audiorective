@@ -125,7 +125,7 @@ try {
     const context = window.__daw.workspace.context;
     const project = new Project();
     const track = project.addTrack("Player duration", "midi");
-    const clip = project.addMidiClip(track.id, { duration: 4, notes: [] }, 0, { timeUnit: "beats" });
+    const clip = project.addMidiClip(track.id, { duration: 4, notes: [] }, 0);
     const workspace = await Workspace.create(context, project, { destination: context.destination });
     const container = document.createElement("div");
     document.body.append(container);
@@ -137,7 +137,8 @@ try {
       project.setTempoChanges([{ beat: 2, bpm: 60 }]);
       await workspace.flush();
       const afterTempo = Number(seek.max);
-      clip.sequence.setData({ duration: 6, notes: [] });
+      project.moveClip(clip.id, track.id, 2); // the clip now ends at beat 6
+      await workspace.flush();
       const afterClip = Number(seek.max);
       await workspace.play();
       const playingLabel = toggle.textContent;
@@ -334,7 +335,7 @@ try {
   await page.mouse.down();
   await page.mouse.move(clipBox.x + 75, clipBox.y + 25, { steps: 8 });
   await page.mouse.up();
-  assert.equal(await page.evaluate((id) => window.__daw.project.tracks[0].clips.find((clip) => clip.id === id).time, firstClipId), 1);
+  assert.equal(await page.evaluate((id) => window.__daw.project.tracks[0].clips.find((clip) => clip.id === id).time, firstClipId), 2); // beats: 1 s at 120 BPM
   const originalMidiClipCount = await page.locator(".clip.midi").count();
   await page.locator("#duplicate").click();
   assert.equal(await page.locator(".clip.midi").count(), originalMidiClipCount + 1);
@@ -358,7 +359,9 @@ try {
     .evaluate((band) => ({ left: parseFloat(band.style.left), width: parseFloat(band.style.width) }));
   const selectedClipRange = await page.evaluate((id) => {
     const clip = window.__daw.project.tracks[0].clips.find((item) => item.id === id);
-    return { time: clip.time, duration: clip.duration };
+    const project = window.__daw.project;
+    const start = project.clipTimeSeconds(clip);
+    return { time: start, duration: project.clipTimeSeconds(clip, clip.duration) - start };
   }, firstClipId);
   assert.ok(Math.abs(loopBand.left - selectedClipRange.time * pixelsPerSecond) < 1);
   assert.ok(Math.abs(loopBand.width - selectedClipRange.duration * pixelsPerSecond) < 1);
@@ -403,16 +406,13 @@ try {
   await page.locator("#skin").selectOption("slate");
   const [editedNoteId, deletedNoteId] = await page.evaluate((id) => {
     const clip = window.__daw.project.tracks[0].clips.find((item) => item.id === id);
-    return clip.sequence
-      .getState()
-      .notes.slice(0, 2)
-      .map((note) => note.id);
+    return clip.midi.notes.value.slice(0, 2).map((note) => note.id);
   }, firstClipId);
   await page.locator(`.ar-pr-note[data-note-id="${editedNoteId}"]`).click();
   for (const [field, value] of [
     ["音高", "65"],
-    ["起點 (秒)", "0.5"],
-    ["長度 (秒)", "0.75"],
+    ["起點 (拍)", "0.5"],
+    ["長度 (拍)", "0.75"],
     ["力度", "80"],
   ]) {
     await page.locator(`#editor-panel input[aria-label="${field}"]`).fill(value);
@@ -421,7 +421,7 @@ try {
   const editedNote = await page.evaluate(
     ({ clipId, noteId }) => {
       const clip = window.__daw.project.tracks[0].clips.find((item) => item.id === clipId);
-      return clip.sequence.getState().notes.find((note) => note.id === noteId);
+      return clip.midi.notes.value.find((note) => note.id === noteId);
     },
     { clipId: firstClipId, noteId: editedNoteId },
   );
@@ -430,10 +430,9 @@ try {
   assert.notEqual(
     await page.evaluate(
       ({ clipId, noteId }) =>
-        window.__daw.project.tracks[0].clips
-          .find((clip) => clip.id === clipId)
-          .sequence.getState()
-          .notes.find((note) => note.id === noteId).velocity,
+        Math.round(
+          window.__daw.project.tracks[0].clips.find((clip) => clip.id === clipId).midi.notes.value.find((note) => note.id === noteId).velocity * 127,
+        ),
       { clipId: firstClipId, noteId: editedNoteId },
     ),
     80,
@@ -442,15 +441,14 @@ try {
   assert.equal(
     await page.evaluate(
       ({ clipId, noteId }) =>
-        window.__daw.project.tracks[0].clips
-          .find((clip) => clip.id === clipId)
-          .sequence.getState()
-          .notes.find((note) => note.id === noteId).velocity,
+        Math.round(
+          window.__daw.project.tracks[0].clips.find((clip) => clip.id === clipId).midi.notes.value.find((note) => note.id === noteId).velocity * 127,
+        ),
       { clipId: firstClipId, noteId: editedNoteId },
     ),
     80,
   );
-  assert.deepEqual([editedNote.pitch, editedNote.start, editedNote.end, editedNote.velocity], [65, 0.5, 1.25, 80]);
+  assert.deepEqual([editedNote.pitch, editedNote.start, editedNote.duration, Math.round(editedNote.velocity * 127)], [65, 0.5, 0.75, 80]);
   await page.locator(`.ar-pr-note[data-note-id="${editedNoteId}"]`).click();
   assert.equal(await page.locator(`.ar-pr-note.selected[data-note-id="${editedNoteId}"]`).count(), 1);
   await page.locator(`.ar-pr-note[data-note-id="${deletedNoteId}"]`).click();
@@ -460,7 +458,7 @@ try {
     await page.evaluate(
       ({ clipId, noteId }) => {
         const clip = window.__daw.project.tracks[0].clips.find((item) => item.id === clipId);
-        return clip.sequence.getState().notes.some((note) => note.id === noteId);
+        return clip.midi.notes.value.some((note) => note.id === noteId);
       },
       { clipId: firstClipId, noteId: deletedNoteId },
     ),
@@ -793,20 +791,23 @@ try {
   assert.equal(await page.locator("#undo").isDisabled(), true);
   assert.equal(await page.locator("#tracks > section").count(), 8);
   assert.equal(await page.locator(".marker-block").count(), 4);
-  assert.equal(await page.evaluate((id) => window.__daw.project.tracks[0].clips.find((clip) => clip.id === id).time, firstClipId), 1);
+  assert.equal(await page.evaluate((id) => window.__daw.project.tracks[0].clips.find((clip) => clip.id === id).time, firstClipId), 2); // beats: 1 s at 120 BPM
   assert.equal(await page.evaluate(() => window.__daw.project.tracks[0].pan), -0.5);
   const reopenedEdit = await page.evaluate(
     ({ clipId, noteId, removedId }) => {
       const clip = window.__daw.project.tracks[0].clips.find((item) => item.id === clipId);
       return {
-        note: clip.sequence.getState().notes.find((item) => item.id === noteId),
-        deleted: clip.sequence.getState().notes.some((item) => item.id === removedId),
+        note: clip.midi.notes.value.find((item) => item.id === noteId),
+        deleted: clip.midi.notes.value.some((item) => item.id === removedId),
         played: clip.playbackEvents().some((event) => event.data[0] === 0x90 && event.data[1] === 65 && event.data[2] === 80),
       };
     },
     { clipId: firstClipId, noteId: editedNoteId, removedId: deletedNoteId },
   );
-  assert.deepEqual([reopenedEdit.note.pitch, reopenedEdit.note.start, reopenedEdit.note.end, reopenedEdit.note.velocity], [65, 0.5, 1.25, 80]);
+  assert.deepEqual(
+    [reopenedEdit.note.pitch, reopenedEdit.note.start, reopenedEdit.note.duration, Math.round(reopenedEdit.note.velocity * 127)],
+    [65, 0.5, 0.75, 80],
+  );
   assert.equal(reopenedEdit.deleted, false);
   assert.equal(reopenedEdit.played, true);
 
@@ -830,10 +831,10 @@ try {
   const surface = page.locator("#editor-panel .ar-pr-surface");
   const surfaceBox = await surface.boundingBox();
   await surface.dblclick({ position: { x: surfaceBox.width * 0.25, y: surfaceBox.height * 0.25 } });
-  const placed = await page.evaluate(() => window.__daw.project.tracks[8].clips[0].sequence.getState().notes[0]);
+  const placed = await page.evaluate(() => window.__daw.project.tracks[8].clips[0].midi.notes.value[0]);
   assert.ok(placed.start > 0 && placed.pitch > 60, JSON.stringify(placed));
   await page.locator("#editor-panel button").filter({ hasText: "加音符" }).click();
-  assert.equal(await page.evaluate(() => window.__daw.project.tracks[8].clips[0].sequence.getState().notes.length), 2);
+  assert.equal(await page.evaluate(() => window.__daw.project.tracks[8].clips[0].midi.notes.value.length), 2);
   const newTrackPeak = await page.evaluate(async () => {
     const workspace = window.__daw.workspace;
     const tracks = workspace.project.tracks;
@@ -1000,7 +1001,7 @@ try {
   const tempoNoteClipId = await page.evaluate(async () => {
     const { project, workspace } = window.__daw;
     const track = project.addTrack("Tempo note", "midi");
-    const clip = project.addMidiClip(track.id, { duration: 4, notes: [] }, 3);
+    const clip = project.addMidiClip(track.id, { duration: 4, notes: [] }, 5); // beat 5 is 3 s in after the tempo change
     await workspace.sync();
     return clip.id;
   });
@@ -1015,8 +1016,8 @@ try {
   await page.locator("#editor-panel button").filter({ hasText: "＋ 加音符" }).click();
   const tempoNote = await page.evaluate((id) => {
     const clip = window.__daw.project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === id);
-    const note = clip.sequence.getState().notes[0];
-    return { start: note.start, duration: note.end - note.start };
+    const note = clip.midi.notes.value[0];
+    return { start: note.start, duration: note.duration };
   }, tempoNoteClipId);
   assert.ok(Math.abs(tempoNote.start - 2) < 0.01 && Math.abs(tempoNote.duration - 1) < 0.01, JSON.stringify(tempoNote));
   const beatClipId = await page.evaluate(async () => {
@@ -1026,11 +1027,10 @@ try {
       track.id,
       {
         duration: 2,
-        notes: [{ id: "beat-smoke", start: 0, end: 1, pitch: 109, velocity: 90, channel: 0, track: 0 }],
+        notes: [{ id: "beat-smoke", start: 0, duration: 1, pitch: 109, velocity: 90 / 127, channel: 0 }],
         events: [{ time: 1, data: new Uint8Array([0xb0, 64, 127]) }],
       },
       6,
-      { timeUnit: "beats" },
     );
     await workspace.flush();
     return clip.id;
@@ -1042,7 +1042,6 @@ try {
       const element = document.querySelector(`.clip[data-clip-id="${id}"]`);
       const scale = parseFloat(document.querySelectorAll(".ruler-row .ruler-mark")[1].style.left) / 2;
       return {
-        unit: clip.timeUnit,
         start: project.clipTimeSeconds(clip),
         end: project.clipTimeSeconds(clip, clip.duration),
         left: parseFloat(element.style.left) / scale,
@@ -1063,10 +1062,7 @@ try {
   };
   await page.locator("#zoom-in").click();
   const beforeStretch = await awaitBeatGeometry();
-  assert.ok(
-    beforeStretch.unit === "beats" && Math.abs(beforeStretch.left - 4) < 0.02 && Math.abs(beforeStretch.width - 2) < 0.02,
-    JSON.stringify(beforeStretch),
-  );
+  assert.ok(Math.abs(beforeStretch.left - 4) < 0.02 && Math.abs(beforeStretch.width - 2) < 0.02, JSON.stringify(beforeStretch));
   await page.locator(`.clip[data-clip-id="${beatClipId}"]`).click();
   assert.match(await page.locator('#editor-panel .ar-pr-note[data-note-id="beat-smoke"]').getAttribute("aria-label"), /beats/);
   await page.locator("#loop").click();
@@ -1115,7 +1111,7 @@ try {
   await page.locator('#editor-panel input[aria-label="起點 (拍)"]').press("Tab");
   const editedBeat = await page.evaluate((id) => {
     const clip = window.__daw.project.tracks.flatMap((track) => track.clips).find((item) => item.id === id);
-    return clip.sequence.getState().notes[0].start;
+    return clip.midi.notes.value[0].start;
   }, beatClipId);
   assert.equal(editedBeat, 0.25);
   await page.locator(`.clip[data-clip-id="${beatClipId}"]`).focus();
@@ -1127,7 +1123,7 @@ try {
   await page.locator("#undo").click();
   await page.waitForFunction((id) => {
     const clip = window.__daw.project.tracks.flatMap((track) => track.clips).find((item) => item.id === id);
-    return clip?.time === 6 && clip?.timeUnit === "beats";
+    return clip?.time === 6;
   }, beatClipId);
   await page.evaluate(async () => {
     const { project, workspace } = window.__daw;

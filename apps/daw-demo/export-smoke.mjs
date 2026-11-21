@@ -138,8 +138,8 @@ try {
     project.addMidiClip(
       track.id,
       {
-        duration: 0.5,
-        notes: [{ id: "note1", start: 0, end: 0.4, pitch: 60, velocity: 100, channel: 0, track: 0 }],
+        duration: 1, // beats: 0.5 s at the project's 120 BPM
+        notes: [{ id: "note1", start: 0, duration: 0.8, pitch: 60, velocity: 100 / 127, channel: 0 }],
       },
       0,
     );
