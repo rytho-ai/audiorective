@@ -21,11 +21,13 @@ type Gesture = {
 export function createSelectionPlugin(options: SelectionPluginOptions = {}): SelectionPlugin {
   let range: Selection | null = null,
     context: WaveformPluginContext | null = null;
+  let preview: Selection | undefined;
+  let cancelGesture = () => {};
   let snap: SnapMode = options.snap ?? "off";
   let redraw = () => {};
   const grid = prepareGrid(options.grid);
   const copy = (): Selection | null => {
-    const value = options.model ? options.model.cells.selection.value : range;
+    const value = preview ?? (options.model ? options.model.cells.selection.value : range);
     return value ? { ...value } : null;
   };
   function change(next: Selection | null): void {
@@ -52,6 +54,7 @@ export function createSelectionPlugin(options: SelectionPluginOptions = {}): Sel
       ) {
         throw new RangeError("Selection must satisfy 0 <= start < end <= duration (finite seconds).");
       }
+      cancelGesture();
       change(selection);
       commit("programmatic");
     },
@@ -110,10 +113,13 @@ export function createSelectionPlugin(options: SelectionPluginOptions = {}): Sel
         const g = gesture;
         gesture = null;
         if (!g) return;
+        preview = undefined;
         stop();
         if (ctx.surface.hasPointerCapture(g.id)) ctx.surface.releasePointerCapture(g.id);
-        if (revert && g.moved) change(g.original);
+        redraw();
+        if (revert && g.moved) options.onChange?.(copy());
       }
+      cancelGesture = cancel;
       function update(): void {
         const g = gesture;
         if (!g?.moved) return;
@@ -130,13 +136,14 @@ export function createSelectionPlugin(options: SelectionPluginOptions = {}): Sel
               b = Math.min(ctx.duration, a + min);
             }
           }
-          change({ start: a, end: b });
+          preview = { start: a, end: b };
         } else if (g.original)
-          change(
+          preview =
             g.kind === "start"
               ? { start: clamp(time, 0, g.original.end - min), end: g.original.end }
-              : { start: g.original.start, end: clamp(time, g.original.start + min, ctx.duration) },
-          );
+              : { start: g.original.start, end: clamp(time, g.original.start + min, ctx.duration) };
+        redraw();
+        options.onChange?.(copy());
       }
       ctx.listen(ctx.surface, "pointerdown", (event) => {
         const e = event as PointerEvent;
@@ -176,9 +183,12 @@ export function createSelectionPlugin(options: SelectionPluginOptions = {}): Sel
         update();
         if (!gesture || disposed) return;
         const g = gesture;
+        const selected = copy();
         cancel(false);
-        if (g.moved) commit("pointer");
-        else if (g.kind === "new") {
+        if (g.moved) {
+          change(selected);
+          if (!disposed) commit("pointer");
+        } else if (g.kind === "new") {
           const time = timeAt(e.clientX, e.altKey);
           const range = copy();
           if (range && (time < range.start || time >= range.end)) change(null);
@@ -191,6 +201,15 @@ export function createSelectionPlugin(options: SelectionPluginOptions = {}): Sel
       ctx.listen(ctx.surface, "lostpointercapture", (event) => {
         if (gesture?.id === (event as PointerEvent).pointerId) cancel();
       });
+      const escape = (event: KeyboardEvent) => {
+        if (event.key !== "Escape" || !gesture) return;
+        event.preventDefault();
+        event.stopPropagation();
+        cancel();
+      };
+      const doc = ctx.surface.ownerDocument;
+      doc.addEventListener("keydown", escape, true);
+      ctx.onCleanup(() => doc.removeEventListener("keydown", escape, true));
       for (const [grip, boundary] of [
         [start, "start"],
         [end, "end"],
@@ -221,7 +240,10 @@ export function createSelectionPlugin(options: SelectionPluginOptions = {}): Sel
           untracked(() =>
             effect(() => {
               void model.cells.selection.value;
-              untracked(redraw);
+              untracked(() => {
+                cancel();
+                redraw();
+              });
             }),
           ),
         );
@@ -257,6 +279,7 @@ export function createSelectionPlugin(options: SelectionPluginOptions = {}): Sel
         range = null;
         redraw = () => {};
         context = null;
+        cancelGesture = () => {};
         if (surface[ownerKey] === plugin) delete surface[ownerKey];
       };
       ctx.onCleanup(dispose);

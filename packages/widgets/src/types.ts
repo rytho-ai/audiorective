@@ -199,10 +199,11 @@ export type SelectionCommit = Readonly<{
   time?: number;
 }>;
 export type SelectionPluginOptions = {
-  /** Optional headless owner. Detaching the view does not clear this model. */
+  /** Borrowed committed owner; drags preview locally and write once on release. Detaching leaves it intact. */
   model?: SelectionModel;
   grid?: { beats: number[]; downbeats: number[] };
   snap?: SnapMode;
+  /** Displayed selection, including local preview and cancellation; not an owner commit. */
   onChange?: (selection: Selection | null) => void;
   onCommit?: (event: SelectionCommit) => void;
 };
@@ -212,6 +213,7 @@ export interface SelectionModel {
   setSelection(selection: Selection | null): void;
 }
 export interface SelectionPlugin extends WaveformPlugin {
+  /** Displayed selection, including a local drag preview; the borrowed model remains committed. */
   getSelection(): Selection | null;
   setSelection(selection: Selection | null): void;
   setSnap(mode: SnapMode): void;

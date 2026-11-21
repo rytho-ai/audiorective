@@ -1,8 +1,9 @@
 import { afterEach, expect, test, vi } from "vitest";
+import { userEvent } from "vitest/browser";
 import { WavePlayer } from "@audiorective/player";
 import { mountWaveformSelector } from "../src";
 import { mountWaveform, createSelectionPlugin } from "../src/waveform";
-import { bandsFile, cleanup, host, own, element, drag, delay } from "./helpers";
+import { bandsFile, cleanup, host, own, element, drag, delay, pointer } from "./helpers";
 afterEach(async () => {
   await cleanup();
   vi.restoreAllMocks();
@@ -149,4 +150,101 @@ test("selector viewport operations affect only that view and detachment preserve
   expect(player.cells.isPlaying.value).toBe(true);
   expect(peer.getState().selection).toEqual({ start: 1, end: 2 });
   expect(context.state).not.toBe("closed");
+});
+
+test("a selection drag previews locally and writes the borrowed player once on release", async () => {
+  const { player } = await fixture();
+  const root = host();
+  const view = mountWaveform(root, { data: player.buffer! });
+  own(() => view.dispose());
+  const onCommit = vi.fn();
+  const onChange = vi.fn();
+  view.attach(createSelectionPlugin({ model: player, onCommit, onChange }));
+  const write = vi.spyOn(player, "setSelection");
+  const surface = element(root, "waveform");
+  const rect = surface.getBoundingClientRect();
+  const y = rect.y + rect.height * 0.6;
+  await pointer({ action: "down", x: rect.x + rect.width / 6, y });
+  await pointer({ action: "move", x: rect.x + rect.width / 2, y });
+  expect(element(root, "selection").hidden).toBe(false);
+  expect(player.cells.selection.value).toBeNull();
+  expect(write).not.toHaveBeenCalled();
+  expect(onCommit).not.toHaveBeenCalled();
+  expect(onChange).toHaveBeenCalled();
+  await pointer({ action: "up" });
+  expect(player.cells.selection.value!.start).toBeCloseTo(1, 1);
+  expect(player.cells.selection.value!.end).toBeCloseTo(3, 1);
+  expect(write).toHaveBeenCalledOnce();
+  expect(onCommit).toHaveBeenCalledOnce();
+});
+
+test("Escape discards a borrowed selection preview before a late release", async () => {
+  const { player } = await fixture();
+  player.setSelection({ start: 4, end: 5 });
+  const root = host();
+  const view = mountWaveform(root, { data: player.buffer! });
+  own(() => view.dispose());
+  const onCommit = vi.fn();
+  const plugin = createSelectionPlugin({ model: player, onCommit });
+  view.attach(plugin);
+  const write = vi.spyOn(player, "setSelection");
+  const surface = element(root, "waveform");
+  const rect = surface.getBoundingClientRect();
+  const y = rect.y + rect.height * 0.6;
+  await pointer({ action: "down", x: rect.x + rect.width / 6, y });
+  await pointer({ action: "move", x: rect.x + rect.width / 2, y });
+  expect(plugin.getSelection()!.start).toBeCloseTo(1, 1);
+  await userEvent.keyboard("{Escape}");
+  expect(plugin.getSelection()).toEqual({ start: 4, end: 5 });
+  await pointer({ action: "move", x: rect.x + rect.width * 0.6, y });
+  await pointer({ action: "up" });
+  expect(player.cells.selection.value).toEqual({ start: 4, end: 5 });
+  expect(write).not.toHaveBeenCalled();
+  expect(onCommit).not.toHaveBeenCalled();
+});
+
+test("an external borrowed selection replacement cancels an active preview", async () => {
+  const { player } = await fixture();
+  const root = host();
+  const view = mountWaveform(root, { data: player.buffer! });
+  own(() => view.dispose());
+  const onCommit = vi.fn();
+  const plugin = createSelectionPlugin({ model: player, onCommit });
+  view.attach(plugin);
+  const surface = element(root, "waveform");
+  const rect = surface.getBoundingClientRect();
+  const y = rect.y + rect.height * 0.6;
+  await pointer({ action: "down", x: rect.x + rect.width / 6, y });
+  await pointer({ action: "move", x: rect.x + rect.width / 2, y });
+  player.setSelection({ start: 4, end: 5 });
+  expect(plugin.getSelection()).toEqual({ start: 4, end: 5 });
+  await pointer({ action: "move", x: rect.x + rect.width * 0.6, y });
+  await pointer({ action: "up" });
+  expect(player.cells.selection.value).toEqual({ start: 4, end: 5 });
+  expect(onCommit).not.toHaveBeenCalled();
+});
+
+test.each(["pointercancel", "capture loss", "detach"] as const)("%s discards a preview without writing the borrowed player", async (reason) => {
+  const { player } = await fixture();
+  const root = host();
+  const view = mountWaveform(root, { data: player.buffer! });
+  own(() => view.dispose());
+  const onCommit = vi.fn();
+  const attachment = view.attach(createSelectionPlugin({ model: player, onCommit }));
+  const write = vi.spyOn(player, "setSelection");
+  const surface = element(root, "waveform");
+  let pointerId = 0;
+  surface.addEventListener("pointerdown", (event) => (pointerId = event.pointerId), { once: true });
+  const rect = surface.getBoundingClientRect();
+  const y = rect.y + rect.height * 0.6;
+  await pointer({ action: "down", x: rect.x + rect.width / 6, y });
+  await pointer({ action: "move", x: rect.x + rect.width / 2, y });
+  if (reason === "pointercancel") surface.dispatchEvent(new PointerEvent("pointercancel", { pointerId, bubbles: true }));
+  else if (reason === "capture loss") surface.releasePointerCapture(pointerId);
+  else attachment.dispose();
+  await pointer({ action: "move", x: rect.x + rect.width * 0.6, y });
+  await pointer({ action: "up" });
+  expect(player.cells.selection.value).toBeNull();
+  expect(write).not.toHaveBeenCalled();
+  expect(onCommit).not.toHaveBeenCalled();
 });
