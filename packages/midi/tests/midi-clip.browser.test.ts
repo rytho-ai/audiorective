@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { Clock, ManualTickSource } from "@audiorective/clock";
+import { Sampler } from "@audiorective/core";
 import { ClipLauncher } from "@audiorective/launcher";
 import { StepSequencer } from "@audiorective/sequencer";
 import { MidiClip, type Instrument, type NoteInit } from "../src";
@@ -229,15 +230,10 @@ describe("MidiClip on a Clock", () => {
     expect(releases.find((c) => c.pitch === 60)!.when).toBeGreaterThan(1.1);
     expect(releases.find((c) => c.pitch === 60)!.when).toBeLessThanOrEqual(1.25);
     expect(releases.find((c) => c.pitch === 64)!.when).toBeCloseTo(1.5, 3);
-    // a revocable instrument has the pending natural note-offs and the not-yet-started note-on revoked
+    // a revocable instrument has the not-yet-started note-on revoked; no natural note-off was ever sent, so no stray late one follows the cut
     expect(cancels).toContainEqual({ kind: "on", pitch: 64 });
     expect(cancels).not.toContainEqual({ kind: "on", pitch: 60 });
-    expect(
-      cancels
-        .filter((c) => c.kind === "off")
-        .map((c) => c.pitch)
-        .sort(),
-    ).toEqual([60, 64]);
+    expect(calls.filter((c) => c.kind === "off")).toHaveLength(2);
   });
 
   test("pause, seek and detach release sounding notes", async () => {
@@ -380,8 +376,32 @@ describe("a launched MidiClip is cut where the launcher stops or replaces it", (
   }
   const releasesAfter = (calls: Call[], mark: number, pitch: number) => calls.slice(mark).filter((c) => c.kind === "off" && c.pitch === pitch);
 
+  test("a launcher clip's loop and length decide the repeats; the MidiClip needs neither option", async () => {
+    const { inst, calls } = instrument();
+    const a = new MidiClip([note(60, 0, 1), note(62, 3, 8)], { instrument: inst });
+    const ctx = new OfflineAudioContext(1, 6 * SR, SR);
+    const ticks = new ManualTickSource();
+    const clock = new Clock({ context: ctx, tickSource: ticks, bpm: 120, lookAhead: 0.1 });
+    disposers.push(() => clock.dispose());
+    const launcher = new ClipLauncher({ lead: [{ scheduler: a, loop: true, length: "1m" }] }, { context: ctx });
+    disposers.push(() => launcher.dispose());
+    clock.attach(launcher);
+    await driveOffline(ctx, ticks, [{ at: 0, run: () => launcher.tracks.lead!.clips[0]!.launch({ quantize: "none" }) }], () => clock.start());
+    expect(ons(calls).map(([pitch, when]) => [pitch, Math.round(when * 100) / 100])).toEqual([
+      [60, 0],
+      [62, 1.5],
+      [60, 2],
+      [62, 3.5],
+      [60, 4],
+      [62, 5.5],
+      [60, 6],
+    ]);
+    // the note longer than the pass is cut where the launcher's pass ends
+    expect(offs(calls.filter((c) => c.pitch === 62)).map(([, when]) => Math.round(when * 100) / 100)).toEqual([2, 4, 6]);
+  });
+
   test("a quantized stop releases the sounding note at the boundary and cancels its natural note-off", async () => {
-    const { inst, calls, cancels } = instrument(true);
+    const { inst, calls } = instrument(true);
     const a = new MidiClip([note(60, 0, 16), note(64, 0.5, 16)], { instrument: inst });
     const { track, run } = launched([a]);
     let mark = 0;
@@ -400,7 +420,7 @@ describe("a launched MidiClip is cut where the launcher stops or replaces it", (
       const released = releasesAfter(calls, mark, pitch);
       expect(released, `pitch ${pitch}`).toHaveLength(1);
       expect(released[0].when).toBeCloseTo(2, 2);
-      expect(cancels.filter((c) => c.kind === "off" && c.pitch === pitch)).toHaveLength(1);
+      expect(calls.filter((c) => c.kind === "off" && c.pitch === pitch)).toHaveLength(1);
     }
   });
 
@@ -460,7 +480,7 @@ describe("a launched MidiClip is cut where the launcher stops or replaces it", (
       [60, 0],
       [62, 1],
     ]);
-    expect(calls.slice(mark).filter((c) => c.kind === "off" && c.pitch === 60)).toHaveLength(0);
+    expect(calls.slice(mark).filter((c) => c.kind === "off" && c.pitch === 60 && c.when < 1.9)).toHaveLength(0);
     expect(offs(calls).filter(([pitch]) => pitch === 60)).toEqual([[60, 2]]);
   });
 
@@ -493,5 +513,125 @@ describe("a launched MidiClip is cut where the launcher stops or replaces it", (
     );
     expect([...hits].every((when) => when < 2 - 1e-6)).toBe(true);
     expect(hits.size).toBeGreaterThanOrEqual(4);
+  });
+});
+
+describe("a MidiClip into a bare Sampler", () => {
+  const sampler = (ctx: BaseAudioContext) => {
+    const s = new Sampler(ctx, { sound: (context) => new ConstantSourceNode(context, { offset: 0.5 }), release: 0.001 });
+    s.connect(ctx.destination);
+    return s;
+  };
+  const level = (buffer: AudioBuffer, seconds: number) => Math.abs(buffer.getChannelData(0)[Math.round(seconds * SR)] ?? 0);
+
+  test("a note the clock revokes inside the look-ahead never sounds", async () => {
+    const { ctx, clock, run } = rig(3, 0.5);
+    const clip = new MidiClip([note(60, 3, 2)], { instrument: sampler(ctx) }); // sounds at 1.5 s, sent at about 1.0 s
+    disposers.push(() => clip.dispose());
+    clock.attach(clip);
+    const buffer = await run([{ at: 1.2, run: () => clock.stop() }]);
+    for (const t of [1.51, 1.8, 2.2, 2.8]) expect(level(buffer, t), `${t}`).toBeLessThan(1e-4);
+  });
+
+  test("a launcher stop cuts a sounding note at the boundary", async () => {
+    const ctx = new OfflineAudioContext(1, 4 * SR, SR);
+    const ticks = new ManualTickSource();
+    const clock = new Clock({ context: ctx, tickSource: ticks, bpm: 120, lookAhead: 0.1 });
+    disposers.push(() => clock.dispose());
+    const clip = new MidiClip([note(60, 0, 16)], { instrument: sampler(ctx) });
+    const launcher = new ClipLauncher({ lead: [{ scheduler: clip, length: "4m" }] }, { context: ctx });
+    disposers.push(() => launcher.dispose());
+    clock.attach(launcher);
+    const buffer = await driveOffline(
+      ctx,
+      ticks,
+      [
+        { at: 0.01, run: () => launcher.tracks.lead!.clips[0]!.launch({ quantize: "none" }) },
+        { at: 0.7, run: () => launcher.tracks.lead!.stop({ quantize: "1m" }) },
+      ],
+      () => clock.start(),
+    );
+    expect(level(buffer, 1.0)).toBeGreaterThan(0.1);
+    expect(level(buffer, 1.95)).toBeGreaterThan(0.1);
+    expect(level(buffer, 2.1)).toBeLessThan(1e-4);
+    expect(level(buffer, 3)).toBeLessThan(1e-4);
+  });
+});
+
+describe("MidiClip transform", () => {
+  const notes = [note(60, 0, 1, { id: "a" }), note(62, 1, 1, { id: "b" }), note(64, 2, 1, { id: "c" })];
+  const play = async (clip: MidiClip, calls: Call[], seconds = 5) => {
+    const { clock, run } = rig(seconds);
+    clock.attach(clip);
+    await run();
+    return calls;
+  };
+
+  test("moves a note by beats, by milliseconds, changes velocity and drops a note", async () => {
+    const { inst, calls } = instrument();
+    const clip = new MidiClip(notes, {
+      instrument: inst,
+      transform: (hit) => {
+        if (hit.id === "a") return { ...hit, beat: hit.beat + 0.5, velocity: 0.25 }; // half a beat later: 0.25 s at 120 bpm
+        if (hit.id === "b") return { ...hit, when: hit.when + 0.04 }; // 40 ms later
+        return null;
+      },
+    });
+    await play(clip, calls, 3);
+    expect(ons(calls)).toEqual([
+      [60, 0.25],
+      [62, 0.54],
+    ]);
+    expect(calls.find((c) => c.kind === "on" && c.pitch === 60)!.velocity).toBe(0.25);
+    expect(offs(calls)).toEqual([
+      [60, 0.75],
+      [62, 1.04],
+    ]);
+  });
+
+  test("random is stable per seed and note: every loop pass is identical, another seed differs", async () => {
+    const run = async (seed: number) => {
+      const { inst, calls } = instrument();
+      const clip = new MidiClip(notes, {
+        instrument: inst,
+        loop: true,
+        length: "1m",
+        seed,
+        transform: (hit, random) => ({ ...hit, when: hit.when + random() * 0.02, velocity: 0.5 + random("v") * 0.5 }),
+      });
+      await play(clip, calls, 6);
+      return calls.filter((c) => c.kind === "on" && c.when < 6);
+    };
+    const first = await run(1);
+    const perPass = (pass: number) =>
+      first
+        .filter((c) => c.when >= pass * 2 && c.when < pass * 2 + 2)
+        .map((c) => [c.pitch, +(c.when - pass * 2).toFixed(6), +(c.velocity ?? 0).toFixed(6)]);
+    expect(perPass(0)).toHaveLength(3);
+    expect(perPass(1)).toEqual(perPass(0));
+    expect(perPass(2)).toEqual(perPass(0));
+    expect((await run(1)).map((c) => c.when)).toEqual(first.map((c) => c.when));
+    expect((await run(2)).map((c) => c.when)).not.toEqual(first.map((c) => c.when));
+  });
+
+  test("the hit carries the pass in `loop`, and a moved note never outlives the pass", async () => {
+    const { inst, calls } = instrument();
+    const seen: number[] = [];
+    const clip = new MidiClip([note(60, 3, 1)], {
+      instrument: inst,
+      loop: true,
+      length: "1m",
+      transform: (hit) => {
+        seen.push(hit.loop);
+        return { ...hit, durationBeats: 4 };
+      },
+    });
+    await play(clip, calls, 5);
+    expect([...new Set(seen)]).toEqual([0, 1, 2].slice(0, new Set(seen).size));
+    expect(offs(calls.filter((c) => c.when <= 2))).toEqual([[60, 2]]);
+  });
+
+  test("a transform that returns a bad value throws the transform error, and a non-function is rejected", () => {
+    expect(() => new MidiClip([], { transform: 5 as never })).toThrow("MidiClip transform needs a function.");
   });
 });

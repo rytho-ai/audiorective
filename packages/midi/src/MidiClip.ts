@@ -1,7 +1,18 @@
 /** MIDI notes in beats that play into an instrument in time with a clock; the one note model for playback and editing.
  * Reads: ./midi-data for note validation and the beat/length helpers. Layering: core only; the clock contract is structural.
  */
-import { batch, cell, readonlyCell, untracked, type BeatTiming, type CancellableEvent, type ReadonlyCell } from "@audiorective/core";
+import {
+  batch,
+  cell,
+  hash01,
+  readonlyCell,
+  resolveHitEdit,
+  untracked,
+  type BeatTiming,
+  type CancellableEvent,
+  type Random,
+  type ReadonlyCell,
+} from "@audiorective/core";
 import { noteBeats, normalizeNotes, type DraftNote, type Instrument, type MidiNote, type NoteInit } from "./midi-data";
 
 /** A clip length in beats, or a note value of the clock's meter: "2m" two bars, "4n" one beat. */
@@ -18,18 +29,46 @@ export type ClipWindow = Readonly<{
 export type ClipTransport = Readonly<{
   refresh(): void;
   detach(): void;
+  /** A ClipLauncher's answer for the clip: the beats its `loop` and `length` repeat every, or null when the launcher clip does not loop. Present only in a launcher. */
+  loopBeats?(): number | null;
   /** The clock's time signature, when the transport has one: bars ("1m") are measured in it. */
   meter?: Readonly<{ value: readonly [number, number] }>;
 }>;
 /** One change of the transport, reported after it is applied. */
 export type ClipTransportChange = Readonly<{ type: string; when: number; beat: number }>;
 
+/** One note as `transform` sees it, in beats and seconds. `when` and `duration` follow `beat` and `durationBeats` through the transport's timing. */
+export type NoteHit = Readonly<{
+  id: string;
+  /** Read-only: a changed `pitch` or `channel` is ignored. */
+  pitch: number;
+  channel: number;
+  /** 0..1. */
+  velocity: number;
+  /** Beat position in the transport's beats (the loop pass's start plus the note's `start`); move it to shift the note and stay on the grid when the tempo changes. */
+  beat: number;
+  /** Length in beats; change it to resize the note tempo-locked. */
+  durationBeats: number;
+  /** Audio-context seconds; move it for millisecond nudges. */
+  when: number;
+  /** Seconds. */
+  duration: number;
+  /** The loop pass the note plays in (0 when the clip does not loop). */
+  loop: number;
+}>;
+/** Returns the note to play, or `null` to drop it. `random(key?)` is in [0, 1) and fixed by `seed`, the note's id and `key`, so every pass and every re-queue draws the same numbers. */
+export type NoteTransform = (note: NoteHit, random: Random) => NoteHit | null;
+
 export interface MidiClipOptions {
+  /** Adjust or drop each note just before it is scheduled: move `beat` (tempo-locked) or `when` (ms), change `velocity` or `durationBeats`, or return `null`. The same shape as `StepSequencer`'s `transform`. */
+  transform?: NoteTransform;
+  /** Seeds `transform`'s `random`. Default 0. */
+  seed?: number;
   /** Where the notes play. Assignable later through `clip.instrument`. */
   instrument?: Instrument;
-  /** Repeat every `length` while attached to a clock directly. Default false. In a ClipLauncher the launcher clip's `loop` and `length` decide instead. */
+  /** Repeat every `length` while attached to a clock directly (`clock.attach(clip)`). Default false. In a ClipLauncher only the launcher clip's `loop` and `length` apply and this is ignored. */
   loop?: boolean;
-  /** Where a loop wraps. Default: the end of the last note, rounded up to a whole bar. */
+  /** Where a loop wraps when attached to a clock directly. Default: the end of the last note, rounded up to a whole bar. In a ClipLauncher the launcher clip's `length` applies and this is ignored. */
   length?: ClipLength;
   /** Aborting the signal calls `dispose()`. */
   signal?: AbortSignal;
@@ -48,6 +87,10 @@ type Sent = {
   off: number;
   cancelOn?: () => void;
   cancelOff?: () => void;
+  /** The beat transport the note was scheduled on: its off is sent in the window that contains it, at whatever tempo then. */
+  timing: BeatTiming;
+  /** False until the natural note-off is sent; a cut before then sends only the cut. */
+  offSent: boolean;
   done: boolean;
   ended: Array<() => void>;
 };
@@ -74,6 +117,8 @@ export class MidiClip {
   private readonly revisionStore = cell(0);
   private readonly loop: boolean;
   private readonly length: ClipLength | undefined;
+  private readonly transform: NoteTransform | undefined;
+  private readonly seed: number;
   private readonly sent = new Set<Sent>();
   private readonly handles = new Set<ClipTransport>();
   private readonly signal: AbortSignal | undefined;
@@ -87,6 +132,9 @@ export class MidiClip {
     this.instrument = options.instrument ?? null;
     this.loop = options.loop ?? false;
     this.length = options.length;
+    if (options.transform !== undefined && typeof options.transform !== "function") throw new TypeError("MidiClip transform needs a function.");
+    this.transform = options.transform;
+    this.seed = options.seed ?? 0;
     if (typeof this.length === "string") noteBeats(this.length, 4);
     else if (this.length !== undefined && !(Number.isFinite(this.length) && this.length > 0))
       throw new RangeError("MidiClip length must be positive beats or a note value.");
@@ -133,6 +181,12 @@ export class MidiClip {
     return 4;
   }
 
+  /** The beats a loop wraps at, or null when the clip does not loop. A launcher clip's `loop` and `length` decide in a launcher; the clip's own options when attached to a clock directly. */
+  private loopLength(notes: readonly MidiNote[]): number | null {
+    for (const handle of this.handles) if (handle.loopBeats) return handle.loopBeats();
+    return this.loop ? this.loopBeats(notes) : null;
+  }
+
   private loopBeats(notes: readonly MidiNote[]): number {
     if (typeof this.length === "number") return this.length;
     const bar = this.barBeats();
@@ -148,34 +202,82 @@ export class MidiClip {
       if (this.disposed) return;
       const now = window.time.current;
       this.lastNow = now;
-      for (const sent of [...this.sent]) if (sent.off <= now) this.finish(sent);
+      for (const sent of [...this.sent]) if (sent.offSent && sent.off <= now) this.finish(sent);
       const instrument = this.instrument;
       if (!instrument) return;
       const notes = this.store.value;
       const from = window.beat.start - EPS;
       const to = window.beat.end - EPS;
       this.adopt(window, notes, timing);
-      const play = (note: MidiNote, onBeat: number, offBeat: number) => {
+      const play = (note: MidiNote, onBeat: number, offBeat: number, pass: number, end: number) => {
         if (!(offBeat > onBeat) || onBeat < from || onBeat >= to) return;
-        const on = Math.max(timing.beatToTime(onBeat), now);
+        let velocity = note.velocity;
+        let when = timing.beatToTime(onBeat);
+        if (this.transform) {
+          const hit: NoteHit = Object.freeze({
+            id: note.id,
+            pitch: note.pitch,
+            channel: note.channel,
+            velocity,
+            beat: onBeat,
+            durationBeats: offBeat - onBeat,
+            when,
+            duration: timing.beatToTime(offBeat) - when,
+            loop: pass,
+          });
+          const result = this.transform(hit, (key = 0) => hash01(this.seed, note.id, key));
+          if (result === null) return;
+          const moved = resolveHitEdit(hit, result, timing);
+          if (!(Number.isFinite(result.velocity) && result.velocity >= 0 && result.velocity <= 1))
+            throw new Error('Event transform "transform" returned an event whose "velocity" is not a finite number from 0 to 1.');
+          if (result.velocity === 0) return;
+          velocity = result.velocity;
+          when = moved.when;
+          onBeat = moved.beat;
+          offBeat = Math.min(moved.beat + moved.durationBeats, end);
+          if (!(offBeat > onBeat)) return;
+        }
+        const on = Math.max(when, now);
         const off = Math.max(timing.beatToTime(offBeat), on);
-        const sent: Sent = { instrument, noteId: note.id, onBeat, offBeat, cutAt: null, pitch: note.pitch, on, off, done: false, ended: [] };
-        sent.cancelOn = cancelOf(instrument.noteOn(note.pitch, { velocity: note.velocity, when: on, channel: note.channel }));
-        sent.cancelOff = cancelOf(instrument.noteOff(note.pitch, off));
+        const sent: Sent = {
+          instrument,
+          noteId: note.id,
+          onBeat,
+          offBeat,
+          cutAt: null,
+          pitch: note.pitch,
+          on,
+          off,
+          done: false,
+          ended: [],
+          timing,
+          offSent: false,
+        };
+        sent.cancelOn = cancelOf(instrument.noteOn(note.pitch, { velocity, when: on, channel: note.channel }));
         this.sent.add(sent);
         this.own(window, sent);
       };
-      if (this.loop) {
-        const length = this.loopBeats(notes);
+      const length = this.loopLength(notes);
+      if (length !== null && length > 0) {
         for (let pass = Math.max(0, Math.floor(from / length)); pass * length < to; pass++) {
           const base = pass * length;
           if (this.pass?.index !== pass) this.pass = { index: pass, notes };
           for (const note of this.pass.notes) {
             if (note.start >= length) break;
-            play(note, base + note.start, base + Math.min(note.start + note.duration, length));
+            play(note, base + note.start, base + Math.min(note.start + note.duration, length), pass, base + length);
           }
         }
-      } else for (const note of notes) play(note, note.start, note.start + note.duration);
+      } else for (const note of notes) play(note, note.start, note.start + note.duration, 0, Infinity);
+      // a note's note-off is sent in the window that contains it, so a cut before that window sends only the cut
+      const windowEnd = timing.beatToTime(window.beat.end);
+      for (const sent of [...this.sent]) {
+        if (sent.offSent || sent.done) continue;
+        const off = sent.timing.beatToTime(sent.offBeat);
+        if (!(off < windowEnd)) continue;
+        sent.offSent = true;
+        sent.off = Math.max(off, sent.on);
+        sent.cancelOff = cancelOf(sent.instrument.noteOff(sent.pitch, sent.off));
+      }
     });
   }
 
@@ -227,12 +329,13 @@ export class MidiClip {
    */
   private release(sent: Sent, at = Math.max(this.lastNow, sent.on), final = false): void {
     if (sent.done) return;
-    if (sent.off <= at) return final ? this.finish(sent) : undefined;
+    if (sent.offSent && sent.off <= at) return final ? this.finish(sent) : undefined;
     sent.cancelOff?.();
     if (sent.on > this.lastNow) sent.cancelOn?.();
     sent.cancelOn = undefined;
-    const when = Math.max(at, sent.on);
+    const when = Math.max(sent.offSent ? at : Math.min(at, sent.off), sent.on);
     sent.off = when;
+    sent.offSent = true;
     sent.cutAt = null;
     try {
       sent.cancelOff = cancelOf(sent.instrument.noteOff(sent.pitch, when));

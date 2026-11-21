@@ -291,7 +291,14 @@ export class Clip {
       }
       if (!sched.lanes) sched.connect?.(this._out);
       // live edits of a pattern re-queue just this launcher's look-ahead
-      const cleanup = sched.attached?.({ refresh: () => launcher._reseedSoon(), detach: () => {} });
+      const cleanup = sched.attached?.({
+        refresh: () => launcher._reseedSoon(),
+        detach: () => {},
+        loopBeats: () => {
+          const cfg = this._opts.value;
+          return cfg.loop && cfg.length != null ? launcher._materialBeats(this, cfg) : null;
+        },
+      });
       if (typeof cleanup === "function") stopScheduler = cleanup;
     }
     this._stop = () => {

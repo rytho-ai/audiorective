@@ -33,11 +33,13 @@ export type {
   TimedBeatEvent,
   SecondsOf,
   EventTransformUnit,
+  Random,
+  HitTiming,
   EventTransformContext,
   EventTransformInput,
   EventTransform,
 } from "./contracts";
-export { applyEventTransforms, withCancel } from "./contracts";
+export { applyEventTransforms, resolveHitEdit, withCancel } from "./contracts";
 export { hash01 } from "./hash";
 export { renderOffline } from "./renderOffline";
 export type { RenderOfflineOptions } from "./renderOffline";

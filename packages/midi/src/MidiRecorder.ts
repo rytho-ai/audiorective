@@ -3,6 +3,7 @@
  */
 import { batch, cell, readonlyCell, untracked, type BeatTiming, type Cell, type ReadonlyCell } from "@audiorective/core";
 import { noteBeats, type MidiNote, type MidiTake, type MidiTakeEvent } from "./midi-data";
+import type { MidiSource } from "./MidiKeyboard";
 
 export type { MidiTake, MidiTakeEvent } from "./midi-data";
 
@@ -65,7 +66,7 @@ type Session = {
 let nextRecorderId = 0;
 
 /**
- * Records one Web MIDI input. Note-on with velocity 0 counts as note-off; each message's Web MIDI timestamp (performance.now() based) is mapped onto the AudioContext clock.
+ * Records one `MidiSource`: a Web MIDI input, or a `MidiKeyboard` (every input and the on-screen keys). Note-on with velocity 0 counts as note-off; each message's Web MIDI timestamp (performance.now() based) is mapped onto the AudioContext clock.
  * It is also a clock scheduler: `clock.attach(recorder)` lets `record({ quantize, length })` start on a bar line and run for bars, like `AudioRecorder`.
  */
 export class MidiRecorder {
@@ -90,7 +91,7 @@ export class MidiRecorder {
 
   constructor(
     readonly context: AudioContext,
-    readonly input: MIDIInput,
+    readonly input: MidiSource,
     options: { signal?: AbortSignal } = {},
   ) {
     this.cells = Object.freeze({
@@ -233,7 +234,7 @@ export class MidiRecorder {
       session.reject = reject;
     });
     this.active = session;
-    this.input.addEventListener("midimessage", this.onMessage);
+    this.input.addEventListener("midimessage", this.onMessage as EventListener);
     const immediate = startTime <= heard + EPS;
     batch(() => {
       this.startsAtStore.value = immediate ? null : startTime;
@@ -298,7 +299,7 @@ export class MidiRecorder {
     clearTimeout(session.endTimer);
     if (session.signal && session.onAbort) session.signal.removeEventListener("abort", session.onAbort);
     if (this.active === session) {
-      this.input.removeEventListener("midimessage", this.onMessage);
+      this.input.removeEventListener("midimessage", this.onMessage as EventListener);
       this.active = null;
       batch(() => {
         this.startsAtStore.value = null;

@@ -6,4 +6,13 @@ export { midiGrid } from "./midi-grid";
 export { compileMidiPlaybackEvents } from "./midi-playback";
 export type { MidiPlaybackSource, MidiPlaybackSourceEvent, MidiPlaybackEvent } from "./midi-playback";
 export { MidiClip } from "./MidiClip";
-export type { MidiClipOptions, ClipLength, ClipResetReason, ClipWindow, ClipTransport, ClipTransportChange } from "./MidiClip";
+export type {
+  MidiClipOptions,
+  NoteHit,
+  NoteTransform,
+  ClipLength,
+  ClipResetReason,
+  ClipWindow,
+  ClipTransport,
+  ClipTransportChange,
+} from "./MidiClip";

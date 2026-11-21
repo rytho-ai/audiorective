@@ -150,6 +150,34 @@ describe("Sampler hits", () => {
     expect(at(data, 3.5)).toBe(0);
   });
 
+  test("an earlier noteOff moves a pending release earlier; a later one is ignored", async () => {
+    const data = await render(3, (context) => {
+      const sampler = new Sampler(context, { sound: constant(1), release: 0.001 });
+      sampler.connect(context.destination);
+      sampler.noteOn(60, { when: 0 });
+      sampler.noteOff(60, 2); // the natural release, sent ahead
+      sampler.noteOff(60, 1); // a cut: earlier wins
+      sampler.noteOff(60, 2.5); // later: ignored
+      sampler.noteOn(62, { when: 0 });
+      sampler.noteOff(62, 0.5);
+      sampler.noteOff(62, 2); // later than the pending one: ignored
+    });
+    expect(at(data, 0.25)).toBeCloseTo(2, 3);
+    expect(at(data, 0.75)).toBeCloseTo(1, 3);
+    expect(at(data, 1.25)).toBeCloseTo(0, 3);
+    expect(at(data, 2.2)).toBeCloseTo(0, 3);
+  });
+
+  test("a noteOff at a voice's own start silences a voice that has not started", async () => {
+    const data = await render(2, (context) => {
+      const sampler = new Sampler(context, { sound: constant(1), release: 0.001 });
+      sampler.connect(context.destination);
+      sampler.noteOn(60, { when: 1 });
+      sampler.noteOff(60, 1);
+    });
+    expect(Math.max(...data)).toBeCloseTo(0, 3);
+  });
+
   test("sustain keeps noteOff'd voices sounding until it is turned off", () => {
     const sampler = new Sampler(context, { sound: constant(0.1) });
     expect(sampler.params.sustain.value).toBe(false);

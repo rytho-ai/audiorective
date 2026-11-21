@@ -1,4 +1,5 @@
 import { describe, test, expect } from "vitest";
+import type { BeatTiming } from "@audiorective/core";
 import { gridPoints } from "../src/rulers/Ruler";
 import type { TimelineLike } from "../src/rulers/Ruler";
 import { LinearBarRuler } from "../src/rulers/LinearBarRuler";
@@ -326,5 +327,12 @@ describe("CycleTimeRuler", () => {
     const ruler = new CycleTimeRuler({ seconds: 10, from: 5 });
     expect(ruler.at(0, makeTimeline(5))).toMatchObject({ cycle: 0, secondsInCycle: 0 });
     expect(ruler.at(0, makeTimeline(15))).toMatchObject({ cycle: 1, secondsInCycle: 0 });
+  });
+});
+
+describe("gridPoints — scheduler timing", () => {
+  test("takes the BeatTiming a scheduler's schedule(window, timing) receives", () => {
+    const timing: BeatTiming = { beatToTime: (beat) => 10 + beat / 2, timeToBeat: (time) => (time - 10) * 2 };
+    expect(collect(gridPoints(0, 1, 0.25, 0, timing)).map((p) => p.time)).toEqual([10, 10.125, 10.25, 10.375]);
   });
 });

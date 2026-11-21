@@ -47,8 +47,8 @@ export class Sampler extends AudioProcessor<
   private _voices: Voice[] = [];
   /** Voices a `noteOff` kept sounding because `params.sustain` was on; they release when it turns off. */
   private readonly _sustained = new Set<Voice>();
-  /** Voices a `noteOff` already released, so a later `noteOff` does not move their stop. */
-  private readonly _released = new WeakSet<Voice>();
+  /** When a `noteOff` released each voice: a later `noteOff` does not move it, an earlier one does. */
+  private readonly _released = new WeakMap<Voice, number>();
   private _closed = false;
 
   constructor(context: BaseAudioContext, options: SamplerOptions = {}) {
@@ -115,21 +115,33 @@ export class Sampler extends AudioProcessor<
   private releaseSustained(): void {
     for (const voice of [...this._sustained]) {
       this._sustained.delete(voice);
-      this._released.add(voice);
+      this._released.set(voice, this.context.currentTime);
       voice.stop();
     }
   }
 
-  /** Releases the held voices of `note` started by `when` (default now) over `params.release`; other notes keep sounding. With `params.sustain` on, the voices keep sounding until it turns off. */
+  /**
+   * Releases the held voices of `note` started by `when` (default now) over `params.release`; other notes keep sounding. A voice already released keeps its release,
+   * unless this `when` is earlier: the earlier release wins, a later one is ignored. With `params.sustain` on, the voices keep sounding until it turns off.
+   */
   noteOff(note: number | NoteName, when?: number): void {
     const number = noteNumber(note);
     const time = when ?? this.context.currentTime;
     const sustain = untracked(() => this.params.sustain.value);
     for (const voice of [...this._voices]) {
-      if (voice.note !== number || this._released.has(voice) || this._sustained.has(voice) || voice.when > time) continue;
+      if (voice.note !== number || this._sustained.has(voice)) continue;
+      const released = this._released.get(voice);
+      if (released !== undefined) {
+        if (time < released) {
+          this._released.set(voice, time);
+          voice.stop(time);
+        }
+        continue;
+      }
+      if (voice.when > time) continue;
       if (sustain) this._sustained.add(voice);
       else {
-        this._released.add(voice);
+        this._released.set(voice, time);
         voice.stop(when);
       }
     }

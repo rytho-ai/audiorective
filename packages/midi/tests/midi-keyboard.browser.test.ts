@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { effect } from "@audiorective/core";
-import { MidiKeyboard } from "../src/web";
+import { MidiKeyboard, MidiRecorder } from "../src/web";
 import type { Instrument } from "../src";
 
 class MockInput extends EventTarget {
@@ -10,7 +10,7 @@ class MockInput extends EventTarget {
   }
   send(...data: number[]) {
     const event = new Event("midimessage");
-    Object.defineProperty(event, "data", { value: new Uint8Array(data) });
+    Object.defineProperties(event, { data: { value: new Uint8Array(data) }, timeStamp: { value: performance.now() } });
     this.dispatchEvent(event);
   }
 }
@@ -181,5 +181,92 @@ describe("MidiKeyboard", () => {
     await expect(MidiKeyboard.open(context, {} as never)).rejects.toThrow("MidiKeyboard needs an instrument.");
     Object.defineProperty(navigator, "requestMIDIAccess", { value: undefined, configurable: true });
     await expect(open(instrument().inst)).rejects.toMatchObject({ name: "NotSupportedError" });
+  });
+
+  test("access: null is on-screen only and never asks for permission", async () => {
+    const asked = vi.fn();
+    Object.defineProperty(navigator, "requestMIDIAccess", { value: asked, configurable: true });
+    const { inst, log } = instrument();
+    const keyboard = await open(inst, { access: null });
+    expect(asked).not.toHaveBeenCalled();
+    expect(keyboard.access).toBeNull();
+    expect(keyboard.inputs.value).toEqual([]);
+    keyboard.dispose();
+    expect(log).toEqual([]);
+  });
+
+  test("press, release and setSustain take the hardware path: instrument at `when`, held and sustain cells, sustain deferral", async () => {
+    const { inst, log } = instrument();
+    const keyboard = await open(inst, { access: null });
+    keyboard.press(60, { velocity: 0.5, when: 5.25, channel: 2 });
+    keyboard.press(64);
+    expect(log).toEqual(["on 60 v0.504 c2 @5.25", "on 64 v1.000 c0 @5"]);
+    expect(keyboard.held.value).toEqual([60, 64]);
+    keyboard.setSustain(true);
+    expect(keyboard.sustain.value).toBe(true);
+    keyboard.release(60, 6);
+    expect(log.at(-1)).toBe("on 64 v1.000 c0 @5");
+    expect(keyboard.held.value).toEqual([60, 64]);
+    now = 7;
+    keyboard.setSustain(false, 7.5);
+    expect(log.slice(-1)).toEqual(["off 60 @7.5"]);
+    expect(keyboard.sustain.value).toBe(false);
+    expect(keyboard.held.value).toEqual([64]);
+    keyboard.release(64, 8);
+    expect(log.at(-1)).toBe("off 64 @8");
+    expect(keyboard.held.value).toEqual([]);
+    keyboard.release(99); // never pressed: ignored
+    keyboard.dispose();
+  });
+
+  test("on-screen keys and sustain: false", async () => {
+    const { inst, log } = instrument();
+    const keyboard = await open(inst, { access: null, sustain: false });
+    keyboard.press(60);
+    keyboard.setSustain(true);
+    keyboard.release(60, 6);
+    expect(log.at(-1)).toBe("off 60 @6");
+    expect(keyboard.sustain.value).toBe(false);
+    keyboard.press(61);
+    keyboard.dispose();
+    expect(log.at(-1)).toBe("off 61 @5");
+    keyboard.press(62); // after dispose: ignored
+    expect(log.at(-1)).toBe("off 61 @5");
+  });
+
+  test("press validates note, velocity and channel", async () => {
+    const keyboard = await open(instrument().inst, { access: null });
+    expect(() => keyboard.press(128)).toThrow("MidiKeyboard note must be an integer 0-127.");
+    expect(() => keyboard.release(-1)).toThrow("MidiKeyboard note must be an integer 0-127.");
+    expect(() => keyboard.press(60, { velocity: 2 })).toThrow("MidiKeyboard velocity must be 0..1.");
+    expect(() => keyboard.press(60, { channel: 16 })).toThrow("MidiKeyboard channel must be an integer 0-15.");
+    keyboard.dispose();
+  });
+
+  test("a recorder records the keyboard: on-screen keys and hardware together", async () => {
+    const { inst } = instrument();
+    const piano = new MockInput("a");
+    access.inputs.set("a", piano);
+    const keyboard = await open(inst);
+    let time = 10;
+    const ctx = { state: "running", currentTime: time, getOutputTimestamp: () => ({ contextTime: time, performanceTime: time * 1000 }) };
+    vi.spyOn(performance, "now").mockImplementation(() => time * 1000);
+    const recorder = new MidiRecorder(ctx as unknown as AudioContext, keyboard);
+    const take = recorder.record();
+    keyboard.press(60, { velocity: 1 });
+    time = 10.5;
+    ctx.currentTime = time;
+    keyboard.release(60);
+    piano.send(0x90, 64, 127);
+    time = 11;
+    ctx.currentTime = time;
+    await recorder.stop();
+    const result = await take;
+    expect(result.notes.map((n) => [n.pitch, +n.start.toFixed(3), +n.duration.toFixed(3)])).toEqual([
+      [60, 0, 1],
+      [64, 1, 1],
+    ]);
+    vi.restoreAllMocks();
+    keyboard.dispose();
   });
 });

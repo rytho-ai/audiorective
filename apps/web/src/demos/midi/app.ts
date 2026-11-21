@@ -208,7 +208,7 @@ export function mountMidiApp(root: HTMLElement, deps: Dependencies): MidiApp {
       }),
     );
     if (inputs.some((input) => input.id === previous)) midiInput.value = previous;
-    if (recorder && !inputs.some((input) => input.id === recorder?.input.id)) {
+    if (recorder && !inputs.some((input) => input.id === (recorder?.input as MIDIInput | undefined)?.id)) {
       cancelRecording();
       status.textContent = "MIDI input disconnected; take discarded.";
     }

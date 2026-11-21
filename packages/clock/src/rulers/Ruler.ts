@@ -1,3 +1,4 @@
+import type { BeatTiming } from "@audiorective/core";
 import type { CoreTickWindow } from "../types";
 
 /**
@@ -94,9 +95,9 @@ export function beatsPerBar(numerator: number, denominator: number): number {
  * with no consumer reset logic (spec ST-2).
  *
  * Half-open per segment: a grid point exactly at `endBeat` is excluded, one
- * exactly at `startBeat` is included.
+ * exactly at `startBeat` is included. `timeline` is any `BeatTiming`: a clock's `timeline`, or the `timing` a scheduler's `schedule(window, timing)` receives.
  */
-export function* gridPoints(startBeat: number, endBeat: number, stepBeats: number, originBeat: number, timeline: TimelineLike): Generator<GridPoint> {
+export function* gridPoints(startBeat: number, endBeat: number, stepBeats: number, originBeat: number, timeline: BeatTiming): Generator<GridPoint> {
   // Non-finite guards are load-bearing, not defensive noise: with a NaN step
   // or origin every `beat` is NaN, so the `beat >= endBeat` return below never
   // fires and this generator spins forever in the scheduling hot path.

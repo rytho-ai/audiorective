@@ -19,10 +19,17 @@ predates that API. See the "Version mismatches" note in the skill.
 - **core:** `Sampler.params.sustain` (`Param<boolean>`, default `false`) is a sustain pedal (MIDI CC64): while true, `noteOff` keeps the held voices sounding, and setting it to `false` releases them at the current time.
 - **core / pads:** `Sampler.cells.heldNotes` (notes with a sounding voice, ascending) and `PadBank.cells.playing` (pad ids with a sounding voice, in pad order) replace page-side counters.
 
+- **midi:** `MidiClip` option `transform(note, random)` and `seed`, the same shape as `StepSequencer`'s `transform` (`NoteHit`, `NoteTransform`); `random` is stable per seed, note id and key, so every loop pass is identical.
+- **midi/web:** `MidiKeyboard.press(note, { velocity, when, channel })`, `release(note, when)` and `setSustain(down, when)` for on-screen keys on the hardware path; `MidiKeyboard.open(context, { access })` takes a `MIDIAccess` or `null` (on-screen only, no permission prompt); `MidiKeyboard` is a `MidiSource` and `MidiRecorder` records any `MidiSource` (`new MidiRecorder(context, keyboard)`).
+- **core:** `resolveHitEdit`, `Random` and `HitTiming`, the per-event transform merge shared by `StepSequencer` and `MidiClip`.
+
 ### Fixed
 
 - **core:** `Sampler.noteOff` releases only the held voices of the note that start by `when`. A later `noteOff` no longer moves the stop of a voice an earlier `noteOff` released, and a `noteOff` does not release a voice scheduled after it.
 - **core / pads:** `Sampler.cells.activeVoices` and `PadBank.cells.activeVoices` count only started voices: a voice scheduled for the future joins at its start time, where before it counted at scheduling, one look-ahead early. `voice.playing` is unchanged (true until the voice ends); read `voice.started` for whether it has begun.
+- **core:** `Sampler.noteOff(note, when)` moves a voice's pending release earlier when `when` is earlier; a later `when` is still ignored. A `noteOff` at a voice's own start silences a voice that has not started.
+- **midi:** a `MidiClip` in a `ClipLauncher` loops per the launcher clip's `loop` and `length` alone (the `MidiClip`'s own `loop` and `length` apply when attached to a clock directly), and sends each note-off in the window that contains it, so a cut sends no stray late note-off.
+- **clock:** `gridPoints` takes a `BeatTiming`, so a scheduler can pass the `timing` its `schedule(window, timing)` receives.
 
 - **blocks:** `StepSequencer` `transform` is beat-aware. `Hit` (what `transform` receives and returns, and what `onHit`, the `hit` event and a sound get) gains `beat` (absolute beat after offset, swing and repeat) and `durationBeats`. After `transform`, a changed `beat` or `durationBeats` is mapped through the transport's timing, so the hit stays on the grid under tempo automation (`beat: hit.beat + 0.125` is always a 32nd late); a hit that changes neither keeps the returned `when` and `duration`, as before, for millisecond nudges. If both `beat` and `when` changed, the hit sounds at `beatToTime(beat)` plus the `when` delta, and `duration` gets its delta added to the beat-derived length. A non-finite `beat` or a `durationBeats` not above 0 throws `Event transform "transform" ...`. A transform that shifts only `when` by a fixed amount is not tempo-locked.
 - **widgets:** the step grid plugin context's lanes include the writable `pattern`, `rate`, `swing`, `direction`, `mute`, `solo` and `length` members of the real `Lane`.

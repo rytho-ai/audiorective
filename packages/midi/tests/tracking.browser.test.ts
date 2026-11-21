@@ -148,6 +148,12 @@ describe("MidiKeyboard readers are tracked", () => {
       () => send(0xb0, 64, 127),
     );
     expect(keyboard.access).toBe(access);
+    expectTracked(
+      () => keyboard.held.value,
+      () => keyboard.press(72),
+    );
+    keyboard.release(72);
+    keyboard.setSustain(false);
     keyboard.dispose();
     delete (navigator as unknown as Record<string, unknown>).requestMIDIAccess;
   });
