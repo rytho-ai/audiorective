@@ -5,7 +5,7 @@ import { cleanup, host, own } from "./helpers";
 
 afterEach(cleanup);
 
-test("a tracked dBFS peak is displayed directly without inventing RMS", () => {
+test("a tracked dBFS peak is displayed directly without inventing RMS", async () => {
   const peak = cell(-20);
   const meter = mountLevelMeter(host(), { source: () => peak.value });
   own(() => meter.dispose());
@@ -16,14 +16,17 @@ test("a tracked dBFS peak is displayed directly without inventing RMS", () => {
   expect(meter.element.textContent).not.toContain("RMS");
 
   peak.value = -Infinity;
+  await new Promise(requestAnimationFrame);
   expect(meter.getLevel()).toEqual({ peak: 0, rms: null });
   expect(meter.element.dataset.overload).toBe("false");
 
   peak.value = 0;
+  await new Promise(requestAnimationFrame);
   expect(meter.getLevel()).toEqual({ peak: 1, rms: null });
   expect(meter.element.dataset.overload).toBe("true");
 
   peak.value = 6.020599913279624;
+  await new Promise(requestAnimationFrame);
   expect(meter.getLevel().peak).toBeCloseTo(2, 12);
   expect(meter.element.querySelector("meter")!.value).toBe(1);
 });
@@ -57,7 +60,7 @@ test("genuine rendered PCM retains measured RMS and unclipped float peaks", asyn
   expect(buffer.getChannelData(0)[0]).toBe(-1.25);
 });
 
-test("a dBFS view owns its observer and releases it without disposing the source", async () => {
+test("a dBFS view owns its sampling loop and releases it without disposing the source", async () => {
   const peak = cell(-20);
   const trigger = cell(0);
   const read = vi.fn(() => peak.value);
@@ -72,6 +75,7 @@ test("a dBFS view owns its observer and releases it without disposing the source
   trigger.value = 1;
   stopMount();
   peak.value = 0;
+  await new Promise(requestAnimationFrame);
   expect(meter!.getLevel()).toEqual({ peak: 1, rms: null });
   meter!.dispose();
   const before = read.mock.calls.length;
@@ -91,4 +95,34 @@ test("PCM readers receive their requested buffer size and invalid sizes retain t
     expect(() => mountLevelMeter(host(), { source: { read: () => {}, sampleCount } })).toThrow(
       "Level meter sample count must be a positive integer.",
     );
+});
+
+test("an ordinary dBFS callback is sampled on each frame and stops after disposal", async () => {
+  let peak = -20;
+  const read = vi.fn(() => peak);
+  const meter = mountLevelMeter(host(), { source: read });
+  own(() => meter.dispose());
+  expect(meter.getLevel()).toEqual({ peak: 0.1, rms: null });
+  peak = 0;
+  await new Promise(requestAnimationFrame);
+  expect(meter.getLevel()).toEqual({ peak: 1, rms: null });
+  const before = read.mock.calls.length;
+  await new Promise(requestAnimationFrame);
+  expect(read.mock.calls.length).toBeGreaterThan(before);
+  meter.dispose();
+  const after = read.mock.calls.length;
+  await new Promise(requestAnimationFrame);
+  expect(read).toHaveBeenCalledTimes(after);
+});
+
+test.each([
+  { dbfs: NaN, peak: 0, overload: "false" },
+  { dbfs: Infinity, peak: 1, overload: "true" },
+  { dbfs: -Infinity, peak: 0, overload: "false" },
+])("a non-finite dBFS callback ($dbfs) has a safe visible level", ({ dbfs, peak, overload }) => {
+  const meter = mountLevelMeter(host(), { source: () => dbfs });
+  own(() => meter.dispose());
+  expect(meter.getLevel()).toEqual({ peak, rms: null });
+  expect(meter.element.querySelector("meter")!.value).toBe(peak);
+  expect(meter.element.dataset.overload).toBe(overload);
 });

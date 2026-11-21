@@ -1110,6 +1110,17 @@
         "Clip envelope controls follow external envelope and tracked duration changes in place, updating valid fade limits without remounting or mirrored state.",
         "Releases views and observers without disposing borrowed owners."
       ]
+    },
+    {
+      "id": 85,
+      "prompt": "Our browser audio app already supplies readPeakDb(): number from an existing analyser. It is a plain function with no reactive cells; while input changes it can temporarily return NaN, -Infinity or +Infinity. Add an Audiorective peak meter that updates while the app runs, with cleanup that leaves the analyser and shared audio alive. Use current repository packages; do not run anything.",
+      "expected_output": "A borrowed level-meter view reads the plain dBFS callback each animation frame and owns its sampling lifetime.",
+      "files": [],
+      "expectations": [
+        "Passes the existing plain dBFS callback directly to the toolkit meter rather than adding an analyser, fabricated PCM, a second state owner or a caller-written sampling loop.",
+        "Explains that the view samples once per animation frame without requiring reactive cells; NaN and -Infinity display silence, +Infinity displays full scale with overload.",
+        "Disposes the meter to stop callback sampling, while preserving the borrowed analyser and app-owned audio context."
+      ]
     }
   ]
 }

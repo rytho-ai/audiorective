@@ -90,7 +90,7 @@ const peak = mountLevelMeter(meters, {
 });
 ```
 
-Use the callback for an existing dBFS peak such as Channel's `cells.level`; `-Infinity` means silence. It reads the tracked value without creating an analyser or synthesizing samples. `getLevel()` returns **linear amplitude** `{ peak, rms }`; `rms` is `null` when the source supplies only a scalar peak.
+Use the callback for an existing dBFS peak such as Channel's `cells.level`; `-Infinity` means silence. The view samples the callback once per animation frame; it need not read tracked state and creates no analyser or synthetic samples. `NaN` displays silence; `+Infinity` displays full scale with overload. `getLevel()` returns **linear amplitude** `{ peak, rms }`; `rms` is `null` when the source supplies only a scalar peak.
 
 When the app already has genuine PCM to analyse, pass a PCM source:
 
@@ -105,7 +105,7 @@ const pcm = mountLevelMeter(meters, {
 });
 ```
 
-`sampleCount` defaults to 2048. PCM snapshots measure mono sample peak and RMS, including values above full scale. The caller owns the analyser and route. `dispose()` releases the view's observer or sampling loop and leaves the audio owner alive.
+`sampleCount` defaults to 2048. PCM snapshots measure mono sample peak and RMS, including values above full scale. The caller owns the analyser and route. `dispose()` stops the view's sampling loop and leaves the audio owner alive.
 
 ## Mixer controls
 
@@ -132,7 +132,7 @@ const mixer = mountMixer(root, {
 });
 ```
 
-`MixerStripSettings` is `{ volume, pan, muted?, solo? }`; `MixerStrip` adds stable `id` and `name`; `MixerState` has `tracks` and optional `masterVolume`. `meter(id)` receives a track ID, or `null` for a mounted master, and returns `{ source, dispose? }`. The source is the same tracked dBFS callback or genuine PCM reader accepted by `mountLevelMeter`. Optional caller cleanup runs when that meter is removed. Rows and controls keep their identity across owner updates and reorder. `onSelect`, tracked `selected`, labels and `appendControls` support app-specific controls; [markup and extension lifetime](./widgets-advanced.md#mixer-markup-and-extension-controls) list the public styling hooks.
+`MixerStripSettings` is `{ volume, pan, muted?, solo? }`; `MixerStrip` adds stable `id` and `name`; `MixerState` has `tracks` and optional `masterVolume`. `meter(id)` receives a track ID, or `null` for a mounted master, and returns `{ source, dispose? }`. The source is the same per-animation-frame dBFS callback or genuine PCM reader accepted by `mountLevelMeter`. Optional caller cleanup runs when that meter is removed. Rows and controls keep their identity across owner updates and reorder. `onSelect`, tracked `selected`, labels and `appendControls` support app-specific controls; [markup and extension lifetime](./widgets-advanced.md#mixer-markup-and-extension-controls) list the public styling hooks.
 
 ## Automation lane
 

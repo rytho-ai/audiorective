@@ -1,4 +1,4 @@
-import { effect, untracked } from "@audiorective/core";
+import { untracked } from "@audiorective/core";
 
 /** Borrowed mono PCM. The view measures genuine sample peak and RMS. */
 export type LevelMeterPCMSource = Readonly<{
@@ -7,7 +7,7 @@ export type LevelMeterPCMSource = Readonly<{
   sampleCount?: number;
 }>;
 
-/** Tracked peak in dBFS (-Infinity is silence), or genuine linear PCM. */
+/** Peak in dBFS, read once per animation frame; no tracked state is required. NaN/-Infinity mean silence; +Infinity is full scale with overload. Or genuine linear PCM. */
 export type LevelMeterSource = (() => number) | LevelMeterPCMSource;
 /** Linear amplitudes; RMS is unknown for a peak-only dBFS source. */
 export type LevelSnapshot = Readonly<{ peak: number; rms: number | null }>;
@@ -22,7 +22,7 @@ export interface LevelMeterHandle {
   dispose(): void;
 }
 
-/** Display borrowed peak data. Disposal releases only this view's observer or PCM sampling loop. */
+/** Display borrowed peak data. Disposal releases only this view's animation-frame sampling loop. */
 export function mountLevelMeter(root: HTMLElement, options: LevelMeterOptions): LevelMeterHandle {
   const source = options.source;
   const count = typeof source === "function" ? 0 : (source.sampleCount ?? 2048);
@@ -39,39 +39,39 @@ export function mountLevelMeter(root: HTMLElement, options: LevelMeterOptions): 
   let level: LevelSnapshot | undefined;
   let frame = 0;
   let disposed = false;
-  let stop = () => {};
   const db = (amplitude: number) => (amplitude > 0 ? (20 * Math.log10(amplitude)).toFixed(1) : "−∞");
   function publish(peak: number, rms: number | null) {
+    peak = Number.isFinite(peak) ? Math.max(0, peak) : peak === Infinity ? 1 : 0;
     if (level?.peak === peak && level.rms === rms) return;
     level = Object.freeze({ peak, rms });
     meter.value = Math.min(1, peak);
     text.textContent = rms === null ? `Peak ${db(peak)} dBFS` : `Peak ${db(peak)} · RMS ${db(rms)} dBFS`;
     element.dataset.overload = String(peak >= 1);
   }
-  if (typeof source === "function") {
-    // The view owns its observer even when mounted inside a caller's reactive effect.
-    stop = untracked(() => effect(() => publish(10 ** (source() / 20), null)));
-  } else {
-    const samples = new Float32Array(count);
-    const update = () => {
-      source.read(samples);
-      let peak = 0,
-        squares = 0;
-      for (const sample of samples) {
-        if (!Number.isFinite(sample)) continue;
-        peak = Math.max(peak, Math.abs(sample));
-        squares += sample * sample;
-      }
-      publish(peak, Math.sqrt(squares / count));
-    };
-    const tick = () => {
-      if (disposed) return;
-      update();
-      frame = requestAnimationFrame(tick);
-    };
+  const samples = new Float32Array(count);
+  const update = () => {
+    if (typeof source === "function") {
+      publish(10 ** (source() / 20), null);
+      return;
+    }
+    source.read(samples);
+    let peak = 0,
+      squares = 0;
+    for (const sample of samples) {
+      if (!Number.isFinite(sample)) continue;
+      peak = Math.max(peak, Math.abs(sample));
+      squares += sample * sample;
+    }
+    publish(peak, Math.sqrt(squares / count));
+  };
+  const tick = () => {
+    if (disposed) return;
     update();
-    frame = requestAnimationFrame(tick);
-  }
+    if (!disposed) frame = requestAnimationFrame(tick);
+  };
+  // A borrowed source must not become a dependency of the caller's mount effect.
+  untracked(update);
+  frame = requestAnimationFrame(tick);
   root.append(element);
   return {
     element,
@@ -79,7 +79,6 @@ export function mountLevelMeter(root: HTMLElement, options: LevelMeterOptions): 
     dispose() {
       if (disposed) return;
       disposed = true;
-      stop();
       cancelAnimationFrame(frame);
       element.remove();
     },
