@@ -530,7 +530,7 @@
         "Lets the widget own pointer preview, cancellation and keyboard nudge but applies Project.moveClip and undo history in onMove",
         "Applies the Project clip move without a commit call (the Workspace applies it) and disposes the gesture before removing its clip element",
         "Keeps zoom as a view scale in pixels per second and anchors the visible time while it changes",
-        "Distinguishes legacy seconds clips from new beat-locked MIDI clips; only beat MIDI placement, notes and controls stretch after tempo edits"
+        "Uses current Project units: audio placement is seconds; MIDI placement, notes and controls are beats and follow tempo edits. Seconds-unit imported MIDI is normalized through the file tempo map, rather than represented as a separate legacy-seconds Project clip type."
       ]
     },
     {
@@ -564,7 +564,7 @@
       "expected_output": "Sets ordered built-in rack slots through Workspace and binds reusable parameter controls to authored settings without creating another audio owner.",
       "files": [],
       "expectations": [
-        "Uses workspace.setTrackEffects with ordered Filter and Delay slot settings and shows stable IDs and a bypass flag",
+        "Uses workspace.setTrackEffects with ordered Filter and Delay slot settings, stable IDs and the supported enablement/bypass state (enabled in current Project slots).",
         "Uses mountParameter with rotary and log for cutoff, and a vertical control for mix",
         "Uses workspace.trackEffectOutput with an analyser and mountLevelMeter, then cleans up views and its own connection",
         "Saves and reopens the rack through Workspace's DAWproject API and identifies the built-in inserts as Audiorective-specific"
@@ -786,7 +786,7 @@
       "files": [],
       "expectations": [
         "Calls Project.setAudioClipGainAutomation with linear or hold points in original source seconds; uses workspace.flush for a dependent runtime operation or lets save wait automatically",
-        "Attaches createAutomationOverlay to the waveform and projects times using gainAutomation.sourceStart and the source-duration to output-duration ratio",
+        "Attaches createAutomationOverlay to the waveform and maps between original-source and playback seconds using gainAutomation.sourceStart with audioClipTimeMap outputToSource/sourceToOutput, or an equivalent source-duration/output-duration ratio for uniform stretch.",
         "Explains trim, stretch and playback behavior and keeps clip gain distinct from track volume automation",
         "Saves the editable curve in Audiorective metadata and uses the rendered audio fallback for other DAWs that need to hear the result"
       ]
