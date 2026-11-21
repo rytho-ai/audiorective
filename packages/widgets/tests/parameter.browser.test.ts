@@ -36,10 +36,12 @@ test("a slider, fader and knob edit one Param and follow writes from elsewhere",
 test("the mono meter reports float overs and stops reading when detached", async () => {
   let reads = 0;
   const meter = mountLevelMeter(host(), {
-    sampleCount: 4,
-    read: (samples) => {
-      reads++;
-      samples.set([1.25, 0, -0.5, 0]);
+    source: {
+      sampleCount: 4,
+      read: (samples) => {
+        reads++;
+        samples.set([1.25, 0, -0.5, 0]);
+      },
     },
   });
   own(() => meter.dispose());
@@ -65,7 +67,7 @@ test("widgets create their elements in the mount root's own document", () => {
   });
   const slider = mountParameter(root, { param });
   const knob = mountParameter(root, { param, orientation: "rotary" });
-  const meter = mountLevelMeter(root, { sampleCount: 4, read: () => undefined });
+  const meter = mountLevelMeter(root, { source: { sampleCount: 4, read: () => undefined } });
   vi.restoreAllMocks();
   for (const handle of [slider, knob, meter]) own(() => handle.dispose());
   for (const element of [slider.element, knob.element, ...root.querySelectorAll("meter, span, input")]) {

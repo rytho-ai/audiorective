@@ -1391,8 +1391,10 @@ export class StudioView {
         analyser.fftSize = 512;
         node.connect(analyser);
         return {
-          sampleCount: analyser.fftSize,
-          read: (samples) => analyser.getFloatTimeDomainData(samples),
+          source: {
+            sampleCount: analyser.fftSize,
+            read: (samples) => analyser.getFloatTimeDomainData(samples),
+          },
           dispose() {
             try {
               node.disconnect(analyser);

@@ -465,13 +465,13 @@ try {
     false,
   );
   await page.locator("#tab-mixer").click();
-  await page.locator(".mixer-strip").first().locator(".mute").click();
+  await page.locator(".mixer-strip[data-track-id]").first().locator(".mute").click();
   assert.equal(await page.evaluate(() => window.__daw.project.tracks[0].muted), true);
-  await page.locator(".mixer-strip").first().locator(".mute").click();
-  await page.locator(".mixer-strip").first().locator(".solo").click();
+  await page.locator(".mixer-strip[data-track-id]").first().locator(".mute").click();
+  await page.locator(".mixer-strip[data-track-id]").first().locator(".solo").click();
   assert.equal(await page.evaluate(() => window.__daw.project.tracks[0].solo), true);
-  await page.locator(".mixer-strip").first().locator(".solo").click();
-  await page.locator(".mixer-strip").first().locator('input[aria-label="Keys pan"]').fill("-0.5");
+  await page.locator(".mixer-strip[data-track-id]").first().locator(".solo").click();
+  await page.locator(".mixer-strip[data-track-id]").first().locator('input[aria-label="Keys pan"]').fill("-0.5");
   assert.equal(await page.evaluate(() => window.__daw.project.tracks[0].pan), -0.5);
 
   await page.evaluate(() => {

@@ -111,8 +111,10 @@ export function mountEffectRackView(root: HTMLElement, workspace: Workspace, tra
     analyser &&
     mountLevelMeter(header, {
       label: "效果鏈輸出峰值",
-      sampleCount: analyser.fftSize,
-      read: (samples) => analyser.getFloatTimeDomainData(samples),
+      source: {
+        sampleCount: analyser.fftSize,
+        read: (samples) => analyser.getFloatTimeDomainData(samples),
+      },
     });
 
   const frequencyView = document.createElement("div");
