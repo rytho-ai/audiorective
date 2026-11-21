@@ -566,7 +566,7 @@
       "expectations": [
         "Uses workspace.setTrackEffects with ordered Filter and Delay slot settings, stable IDs and the supported enablement/bypass state (enabled in current Project slots).",
         "Uses mountParameter with rotary and log for cutoff, and a vertical control for mix",
-        "Uses workspace.trackEffectOutput with an analyser and mountLevelMeter, then cleans up views and its own connection",
+        "Meters genuine post-insert audio with an analyser and mountLevelMeter, using either the track post-insert output from workspace.trackEffectOutput or the final workspace.output for the requested output meter, then cleans up views and only its own analyser connection without interrupting playback",
         "Saves and reopens the rack through Workspace's DAWproject API and identifies the built-in inserts as Audiorective-specific"
       ]
     },
