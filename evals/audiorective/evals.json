@@ -897,7 +897,7 @@
       "files": [],
       "expectations": [
         "Declares the cutoff as a lane `params` entry with { min, max, default } and reads it from `hit.values` in `onHit`; mountStepGrid shows it as an extra tab with no widget change",
-        "Writes the euclidean button as a plugin object with attach(context) passed to grid.attach, using context.addToolbarItem and writing `context.sequencer.lanes.kick.steps[i].velocity`, not by querying the widget's internal markup",
+        "Writes the euclidean button as a plugin object with attach(context) passed to grid.attach, using context.addToolbarItem and the public sequencer owner: either per-step velocity writes or a same-length lane.pattern replacement that preserves existing custom step values; does not query the widget's internal markup",
         "Registers the button and any other listener through `context.listen` or `context.onCleanup` rather than a bare `addEventListener` the plugin never removes, and does not import @audiorective/daw"
       ]
     },
