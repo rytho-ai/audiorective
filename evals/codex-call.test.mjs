@@ -45,6 +45,7 @@ else {
     let code = 'export const answer: number = 42;' + (scenario === 'dom-iterable' ? '\\ndeclare const parameters: AudioParamMap; const gain = parameters.get("gain"); for (const [name, param] of parameters) { void name; void param.value; }' : '');
     if (scenario === 'host-binding') code += '\\nconst borrowed: AudioNode = synthOut;';
     if (scenario === 'jsx-const' || scenario === 'jsx-wrong-prop') code = 'import { View } from "@trial/view"; export const view = <View value={' + (scenario === 'jsx-const' ? '42' : '"wrong"') + '} />;';
+    if (scenario === 'jsx-fragment') code = 'export const view = <>42</>;';
     const text = prompt.includes('You are grading code') ? JSON.stringify({expectations:[{met:false,evidence:'deliberately false; deterministic check must win'}],errors:[]}) : '\x60\x60\x60ts\\n' + code + '\\n\x60\x60\x60';
     item({type:'agent_message',text:scenario==='reader-denied'?'MCP tool call requires approval, but approval policy is never.':text});
   }
@@ -414,7 +415,7 @@ test("guess compiler supplies only explicitly typed task host bindings", async (
   }
 });
 
-test("guess compiler checks self-closing JSX assignments with real React types and rejects wrong props", async () => {
+test("guess compiler checks JSX assignments and fragments with real React types and rejects wrong props", async () => {
   const suite = join(scratch, "jsx-suite.json");
   const variant = join(scratch, "jsx-variant.d.ts");
   writeFileSync(suite, JSON.stringify({ area: "jsx", tasks: [{ id: "J1", prompt: "Render View with value 42.", expectations: ["Uses View."] }] }));
@@ -422,6 +423,7 @@ test("guess compiler checks self-closing JSX assignments with real React types a
   for (const [scenario, expected] of [
     ["jsx-const", 1],
     ["jsx-wrong-prop", 0],
+    ["jsx-fragment", 1],
   ]) {
     const output = join(scratch, `${scenario}.json`);
     const result = await runGuess(

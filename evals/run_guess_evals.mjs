@@ -291,9 +291,9 @@ function countLoc(code) {
 
 // React's own types, so a solver's `import ... from "react"` and JSX type-check like in a real app.
 const reactTypes = [join(repoRoot, "packages/react/node_modules/@types/react"), join(repoRoot, "node_modules/@types/react")].find(existsSync);
-// An opening/closing JSX tag, including self-closing tags in variable assignments.
+// A JSX tag or fragment, including self-closing tags in variable assignments.
 // Valid TypeScript still returns before this hint is consulted.
-const JSX_HINT = /<\/?[A-Za-z][\w.-]*(?=[\s/>])/;
+const JSX_HINT = /<\/?[A-Za-z][\w.-]*(?=[\s/>])|<>/;
 
 // Type-checks as main.ts. Code that fails to parse as .ts and looks like JSX is checked again as
 // main.tsx (react-jsx transform) and that result is kept, so valid .ts code keeps its .ts meaning.
