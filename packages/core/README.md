@@ -8,8 +8,8 @@ Reactive primitives for Web Audio. The foundation package — everything else bu
 npm install @audiorective/core
 ```
 
-For immutable reactive curves and finite native automation scheduling, import
-`AutomationCurve`, `AutomationBinding` and `audioParamTarget` from the optional
+For editable curves, finite native schedules and transport beat loops, import
+`AutomationCurve`, `AutomationBinding`, `AutomationClip` and `audioParamTarget` from the optional
 `@audiorective/core/automation` entry. See [Automation](../../docs/automation.md)
 for live edits, cancellation, time mapping and target ownership.
 

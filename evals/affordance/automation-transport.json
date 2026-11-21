@@ -1,0 +1,37 @@
+{
+  "area": "automation-transport",
+  "description": "Focused transport-automation affordance checks prompted by the effects console: repeat a beat-domain curve through tempo changes and edits, and attach or detach automation without stale events. Expectations describe behavior; review also counts caller-written timing, scheduling and cancellation glue.",
+  "tasks": [
+    {
+      "id": "A1-loop-tempo-edit",
+      "prompt": "A browser mix console already has a running AudioContext `ctx`, a transport `clock` at 120 BPM and an audio GainNode `gain` on the pad track. Make a drawn volume curve repeat every 4 beats: 0.2 at beat 0, linearly up to 0.8 at beat 2, hold 0.8 until beat 3, then jump to 0.4 and hold until the loop wraps back to 0.2. Beat 0 of the curve is beat 0 of the transport. Add a button that ramps the song tempo from its current tempo to 180 BPM over 4 seconds; the same automation must follow the tempo throughout the ramp and subsequent loops, without restarting its musical phase. Let an editor replace the curve's points while playing and have the running automation pick the edit up without leaving an old scheduled ramp behind. Seeking the transport to beat 6 must resume at the curve's beat-2 value. Write the audio wiring and small handlers for the tempo button, curve editor and seek button using the library. Do not drive gain values from a UI timer.",
+      "expectations": [
+        "The curve repeats every four transport beats with the requested linear segment, hold segment, beat-3 jump and loop-wrap jump.",
+        "The curve's beat-zero origin agrees with the transport rather than restarting at the time the view or handler happens to run.",
+        "Automation follows the transport's changing beat-to-audio-time relation during the tempo ramp and later loops, retaining its musical phase.",
+        "Editing points while playing replaces the relevant future automation and retracts stale scheduled values rather than merely replacing a view's copy.",
+        "Seeking to transport beat six puts the repeating curve at beat two and retracts automation from the old position.",
+        "The audio thread receives scheduled parameter changes; no setInterval or requestAnimationFrame loop writes the gain."
+      ],
+      "checks": [
+        {
+          "expectation": 5,
+          "label": "audio scheduling is not a UI timer",
+          "none": ["setInterval\\s*\\(", "requestAnimationFrame\\s*\\("]
+        }
+      ]
+    },
+    {
+      "id": "A2-attach-detach-lifecycle",
+      "prompt": "Build the automation toggle for a browser filter panel. The app owns an AudioContext `ctx`, a `clock` transport and an audio GainNode `gain`; they may be shared with other tracks. The drawn automation is a repeating 8-beat linear curve from gain 0.1 at beat 0 to 0.9 at beat 8. When the user enables the panel, let the toolkit apply that curve in transport beats. Show whether this automation is attached by observing the actual automation owner, with no second boolean store. Starting the clock 0.5 seconds in the future must leave the gain alone until that start time. Pause, disable, detach or close must cancel future changes and hold the current audio value; re-enable must follow the transport's present position. Another track's scheduling must keep running when this panel changes or closes. The close handler can run twice and must release this panel's observers and automation without closing the app's context or disposing its shared clock. Write the small DOM panel and audio setup.",
+      "expectations": [
+        "The eight-beat automation follows the shared transport, and enabling it mid-song uses the transport's current musical position.",
+        "The displayed attachment state comes from observable owner state, with observation cleaned up on close.",
+        "A future transport start schedules automation at that future boundary without changing the current gain before it.",
+        "Pause, disable, detach and disposal retract the panel's pending automation and hold the current target value rather than letting stale ramps continue.",
+        "Closing the panel releases its own automation and subscriptions, is safe twice, and leaves the app-owned context and clock alive.",
+        "The panel does not cancel or replace unrelated schedulers or automation targets on the shared transport."
+      ]
+    }
+  ]
+}

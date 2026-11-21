@@ -221,3 +221,5 @@ export class AutomationBinding {
     this.stop();
   }
 }
+
+export { AutomationClip, type AutomationClipOptions, type AutomationClipWindow, type AutomationClipTransport } from "./AutomationClip";

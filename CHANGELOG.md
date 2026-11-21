@@ -15,6 +15,8 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Added
 
+- **core/automation:** `AutomationClip(curve, { target, loop?, length?, signal? })` follows `clock.attach(clip)`: curve times are beats, with tempo ramps, seeks, live edits and loop seams handled by the owner. `cells.attached` is read-only; detach and dispose cancel queued changes while holding current audio. `AutomationBinding` remains the finite owner for fixed caller-chosen units.
+
 - **effects:** `Ducker`, a sidechain ducker: `new Ducker(context, { depth, attack, release, threshold })` lowers its audio by `depth` dB (default 8) while the signal connected to `ducker.sidechain` is above `threshold`; `cells.reduction` is the live reduction in dB. `attack` and `release` are the seconds a full-depth change takes.
 - **effects:** `EffectChain`, an ordered chain of any effect instances: `new EffectChain(context, effects?, { signal })`, `add(effect, index?)`, `remove(effect)`, `move(effect, index)`, `cells.effects`. Every edit is a short crossfade that never clicks, drops out or opens a feedback loop, and the other effects keep their state. `toJSON()` and `EffectChain.restore(context, json, { types })` return `{ chain, issues }`; bad data becomes issues, not throws.
 - **effects:** every effect has `params.bypass: Param<boolean>` (option `bypass`), a click-free fade that keeps the effect's settings, and `cells.status` (`"loading" | "ready" | "error"`), `cells.error` and `ready`. While loading or after failure, the wet arm is muted and the dry share stays at `1 − wet`; a fully wet return stays silent instead of leaking dry audio. Bypass still passes full dry.

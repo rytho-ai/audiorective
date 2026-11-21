@@ -1055,10 +1055,23 @@
       "files": [],
       "expectations": [
         "Builds each strip as a Channel and reads channel.cells.level for the post-fader meter instead of an analyser and animation-frame loop of its own",
-        "Sends with channel.send(bus, name, gain) into a SendBus and connects bus.receive(name) to a Convolver whose params.wet or return Channel is the return fader",
+        "Sends with channel.send(bus, name, gain) into a SendBus whose receive point connects to a fully wet Convolver; the return fader uses a separate gain or Channel, so the reverb never duplicates the dry stems while loading or failing",
         "Connects the vocal's Limiter and the channels with processor.connect so delay compensation covers the dry paths and the sends, without hand-written matching delays",
         "Shows the reverb as loading until Convolver cells.status is ready and reports cells.error when the impulse response fails",
         "Implements solo with the strips' own mute or gain params without changing the stored fader values"
+      ]
+    },
+    {
+      "id": 81,
+      "prompt": "In an Audiorective mix console, draw a four-beat gain automation curve that repeats on a shared Clock, follows a live tempo ramp, survives seeking, and applies point edits while playing. Show an automation toggle that observes the actual attachment state and detaches safely on close without stopping the shared clock. Use the repository APIs; do not run anything.",
+      "expected_output": "Uses AutomationClip from core/automation, attached to Clock, with a shared AutomationCurve and an exclusive native target; the owner handles musical scheduling and cancellation.",
+      "files": [],
+      "expectations": [
+        "Imports AutomationClip, AutomationCurve and audioParamTarget from @audiorective/core/automation",
+        "Constructs the clip over the curve with target: audioParamTarget(gain.gain) or a valid domain AutomationTarget, loop: true and length: 4",
+        "Uses clock.attach(clip) and the returned detach cleanup so beat position, tempo ramps, seeks and reactive curve edits need no caller-written scheduling window or native cancellation engine",
+        "Observes clip.cells.attached for the toggle state and cleans up its observer",
+        "Disposes the clip before its target and leaves the app-owned shared context and clock alive"
       ]
     }
   ]

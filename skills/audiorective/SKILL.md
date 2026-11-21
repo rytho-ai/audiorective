@@ -106,6 +106,7 @@ When no capability package or widget matches, build on core with your own `Audio
 | Play, edit and save a DAWproject with WebCLAP devices | `daw` + `host/webclap`; `workspace.player` to `mountPlayer` | separate project or player state |
 | Read, edit or write `.dawproject` in Node (no audio) | `daw/project` + `daw/dawproject` only | `daw` root or `daw/runtime` |
 | Session view, clip launcher, scenes, follow actions, pattern clips | `clock` + `@audiorective/launcher` `ClipLauncher` (it plays the clips); `references/launcher.md`; a Project session: `workspace.session` | a hand-rolled launch scheduler or a custom driver |
+| A repeating automation curve that follows tempo ramps and transport seeks | `core/automation` `AutomationClip` + `clock.attach(clip)`; `references/automation.md` | page-owned beat mapping and native cancellation |
 | An editable curve driving a parameter, macro, or clip gain | `core/automation`; clips: `Project.setAudioClipGainAutomation` | hand-scheduled ramps |
 | A user-editable effect chain: add, remove, reorder, bypass, save and load | `EffectChain` (`add`/`remove`/`move`, `toJSON`/`restore`); each effect's `params.bypass` | hand-wired `connect`/`disconnect` or a bypass gain per effect |
 | Duck music under a voice or a kick | `Ducker` (`voice.connect(ducker.sidechain)`; `cells.reduction`) | a hand-written envelope follower worklet |
@@ -125,7 +126,7 @@ Open the one page the task needs; read the section, not the whole file.
 | Clip launcher, scenes, launch modes, follow actions, pattern clips                 | `launcher.md` (+ `launcher-advanced.md`)               |
 | Writing or modifying an `AudioProcessor` subclass                                  | the `audio-processor-authoring` skill                  |
 | Waveform, spectrum, EQ, plain player controls                                      | `widgets.md`                                           |
-| Automation curves, bindings, macro adapters                                        | `automation.md` (+ `player.md` for source-time)        |
+| Automation curves, beat loops, bindings, macro adapters                            | `automation.md` (+ `player.md` for source-time)        |
 | Stretching audio, pitch-preserving render, seamless loops                          | `effects.md` → TimeStretch                             |
 | MIDI clips, files, piano roll, recording a take, a live keyboard                   | `midi.md`                                              |
 | Project, takes, clips, Session, DAWproject, live edits (`sync()`)                  | `daw.md`                                               |
@@ -177,6 +178,7 @@ Every other thrown message is listed, with cause and fix, in its area's referenc
 | `Pad Bank…`, `Pad hit…`                                                                                                                                                                     | `pads.md`                                  |
 | `Step Sequencer…`                                                                                                                                                                           | `sequencer.md`                             |
 | `Sample Library…`, `Sample lease…`                                                                                                                                                          | `samples.md`                               |
+| `AutomationCurve…`, `AutomationBinding…`, `AutomationClip…`                                                                                                                                 | `automation.md`                            |
 | `bpm must…`, `TempoParam…`, `Clock owned event time…`, `renderTimeline…`                                                                                                                    | `clock.md`                                 |
 | `EffectChain…`, `Equalizer…`, `Effect…`, `SendBus…`, `TimeStretch…`, `Rubber Band…`                                                                                                         | `effects.md`                               |
 | `Piano roll…`, `MIDI…`, `MidiClip…`, `MidiRecorder…`, `MidiKeyboard…`, `Web MIDI…`, `Invalid MIDI file.`                                                                                    | `midi.md`                                  |

@@ -2,9 +2,65 @@
 title: Automation
 ---
 
-`@audiorective/core/automation` provides reactive finite curves and audio-clock
-scheduling. Import this optional entry explicitly. It does not import the capability packages,
+`@audiorective/core/automation` provides editable curves, finite native bindings and
+beat-domain transport automation. Import this optional entry explicitly. It does not import the capability packages,
 effects, a DOM, or create an AudioContext. Curve data and sampling work in Node.
+
+## Choose the automation owner
+
+| Job                                                                 | Owner                                  |
+| ------------------------------------------------------------------- | -------------------------------------- |
+| Store, draw or sample numeric points                                | `AutomationCurve`                      |
+| Play a finite range in seconds, source coordinates or a fixed scale | `AutomationBinding`                    |
+| Play a curve in transport beats, with tempo changes or repetition   | `AutomationClip` attached to a `Clock` |
+
+## Follow the transport
+
+`AutomationClip` treats curve times as beats. Its beat 0 is the transport's beat 0;
+attaching during playback uses the current position. `loop: true` repeats at
+`length` beats. An explicit length is positive and fixed; without it, length
+follows the last point, including after edits. A shorter length truncates the
+curve; a longer one holds its last value before wrapping. A looping curve needs
+a positive length. A finite single-point curve holds its constant value.
+
+```typescript
+import { Clock } from "@audiorective/clock";
+import { AutomationClip, AutomationCurve, audioParamTarget } from "@audiorective/core/automation";
+
+const clock = new Clock({ context, bpm: 120 });
+const curve = new AutomationCurve([
+  { time: 0, value: 0.2, shape: "linear" },
+  { time: 2, value: 0.8, shape: "hold" },
+  { time: 3, value: 0.4, shape: "hold" },
+]);
+const clip = new AutomationClip(curve, {
+  target: audioParamTarget(gain.gain),
+  loop: true,
+  length: 4,
+});
+const detach = clock.attach(clip);
+const unsubscribe = clip.cells.attached.subscribe(showAttached, { immediate: true });
+// From a user gesture:
+await context.resume();
+clock.start(context.currentTime + 0.1);
+// A tempo edit, clock.seek(), or curve.value replacement keeps the beat mapping.
+// Cleanup: unsubscribe(); detach(); clip.dispose();
+```
+
+The clip schedules ahead on the audio timeline and follows tempo ramps and live
+curve edits. Linear curves in beats become short linear segments in audio time
+(up to 1 ms each under a changing tempo); knots, hold jumps and loop seams retain
+their mapped event times. A future start leaves the target unchanged until it.
+Pause, stop, seek and detach cancel queued automation while holding the actual
+current target value. Resume and seek then continue at the transport's position.
+
+`cells.attached` is read-only owner state. The function returned by `clock.attach`
+detaches the clip; attach again to enable it at the current position. One clip
+follows one clock at a time; a second attachment rejects and preserves the first.
+`dispose()` and `[Symbol.dispose]()` detach and release the clip's curve watcher,
+and are safe twice. An optional constructor `signal` disposes on abort. The clip
+borrows its target and clock; dispose it before its target, and leave a shared
+clock alive when closing one panel.
 
 ## Automate a native parameter
 
@@ -84,7 +140,7 @@ Each `AutomationPoint` contains `{ time, value, shape }`:
 Read `curve.value`/`curve.$()` inside an `alien-signals` effect or a framework
 binding to redraw editors and previews. An editor can attach its own stable IDs
 outside this numeric schedule. The curve has no audio resources or dispose
-method. Each binding owns and disposes its own reactive subscription.
+method. Each binding or clip owns and disposes its own reactive subscription.
 
 ## Binding contract
 
@@ -120,8 +176,8 @@ the stopped position. A later start replaces the old run.
 All finite events are scheduled up front. Live edits replace events from now
 onward using the same anchor, without restarting sources. There is no JS timer,
 fixed scheduling lead, loop, tempo map or transport. Choose a common future
-`when` if a source and automation need a shared start. Musical-time conversion,
-repeat windows and tempo-driven re-anchoring belong to the caller/clock.
+`when` if a source and automation need a shared start. Use `AutomationClip` for musical-time conversion, repeat windows and
+tempo-driven re-anchoring through a `Clock`.
 
 ## Native targets, observation and ownership
 
@@ -135,7 +191,7 @@ A plain `Param<number>` supports immediate values only. A macro implemented by
 a SchedulableParam subclass may have additional fanout semantics; exposing its
 native backing here would bypass those semantics. Use a domain adapter instead.
 
-The binding exclusively owns its target's scheduled events from its start time
+A binding or clip exclusively owns its target's scheduled events from its start time
 onward. Coordinate other writers yourself: stop the binding before a manual
 `.value` write, target rebind, preset restore, bypass/reconnection, or processor
 destruction. Bindings borrow targets and contexts; they dispose neither. Dispose
@@ -214,9 +270,14 @@ presets and mappings stay there. The private Rack probe is not a published packa
 
 ## Common errors
 
-| Message                                                                                              | Cause                                 | Fix                                                                                                                          |
-| ---------------------------------------------------------------------------------------------------- | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `AutomationCurve needs nonempty finite points with nonnegative unique times and linear/hold shapes.` | Invalid curve replacement             | Supply finite `{ time, value, shape }` points with unique times >= 0; replace `.value` instead of mutating frozen snapshots. |
-| `AutomationCurve sample time must be finite.`                                                        | Nonfinite query                       | Pass finite curve coordinates to `valueAt`.                                                                                  |
-| `AutomationBinding needs finite nonnegative times, to >= from, and positive secondsPerUnit.`         | Invalid start/range/scale or overflow | Correct start options; current run is preserved.                                                                             |
-| `AutomationBinding is disposed.`                                                                     | Reusing disposed binding              | Create a new binding; dispose bindings before their borrowed targets.                                                        |
+| Message                                                                                              | Cause                                              | Fix                                                                                                                          |
+| ---------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `AutomationCurve needs nonempty finite points with nonnegative unique times and linear/hold shapes.` | Invalid curve replacement                          | Supply finite `{ time, value, shape }` points with unique times >= 0; replace `.value` instead of mutating frozen snapshots. |
+| `AutomationCurve sample time must be finite.`                                                        | Nonfinite query                                    | Pass finite curve coordinates to `valueAt`.                                                                                  |
+| `AutomationBinding needs finite nonnegative times, to >= from, and positive secondsPerUnit.`         | Invalid start/range/scale or overflow              | Correct start options; current run is preserved.                                                                             |
+| `AutomationClip target needs program and hold methods.`                                              | Invalid target adapter                             | Supply an `AutomationTarget`, or wrap a native parameter with `audioParamTarget`.                                            |
+| `AutomationClip length must be positive finite beats.`                                               | Invalid explicit length                            | Supply a finite length greater than zero, or omit it to follow the last point.                                               |
+| `AutomationClip loop needs a positive length in beats.`                                              | A looping curve has no positive endpoint or length | Supply a positive `length` or a curve whose last point is after beat zero.                                                   |
+| `AutomationClip is disposed.`                                                                        | Attaching a disposed clip                          | Create a new clip.                                                                                                           |
+| `AutomationClip is already attached to a clock.`                                                     | One clip was attached to two clocks                | Detach it from the first clock before attaching elsewhere.                                                                   |
+| `AutomationBinding is disposed.`                                                                     | Reusing disposed binding                           | Create a new binding; dispose bindings before their borrowed targets.                                                        |
