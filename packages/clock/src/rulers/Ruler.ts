@@ -8,20 +8,18 @@ import type { CoreTickWindow } from "../types";
  */
 export interface TimelineLike extends BeatTiming {
   /**
-   * Pause-aware played seconds (a stopwatch, not tempo-scaled). Time rulers
-   * read this directly rather than deriving from `beat`: transport pauses
-   * break the beat<->wallclock correspondence in a way the tempo curve
-   * alone can't recover (tempo events are anchored to absolute audio-clock
-   * time, not elapsed play time). A deliberate, documented exception to
-   * "every reading is a pure function of the beat position".
+   * Pause-aware seconds position. Start/seek seeds it from beat × 60 / BPM
+   * there; while playing it advances by real seconds, independent of tempo
+   * edits. Pauses and future starts hold it. Time rulers read this directly:
+   * the tempo curve alone cannot recover pause-aware seconds from a beat.
    */
   readonly position: number;
 }
 
 /**
- * A ruler interprets the beat axis into another coordinate system. Rulers
- * hold no position state: every reading is a pure function of the beat
- * position (and, for window reads, the window bounds) passed in.
+ * A ruler projects a beat and the shared timeline into another coordinate system.
+ * Rulers hold no playback position: musical readings derive from the beat,
+ * time readings from timeline.position, and window readings also use the bounds.
  */
 export interface Ruler<TWindow, TPoint> {
   /** A window-scoped reading; grid()/spans close over the window's beat range. */

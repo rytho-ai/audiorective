@@ -78,8 +78,8 @@ export interface SchedulerHandle {
   readonly state: ReadonlyCell<TransportState>;
   /** The clock's time signature, the same cell as `clock.meter`. */
   readonly meter: ReadonlyCell<TimeSignature>;
-  /** The transport's `refresh()`: re-queue the look-ahead from now. Coalesced within one task. It retracts the events of every scheduler from now and re-emits their windows, so use it instead of `cancelFrom`, not after it. */
-  refresh(): void;
+  /** Re-queue the transport's look-ahead from now; resolves after its coalesced refills, including synchronous callback edits, or transport cancellation. Detached: resolves without touching the host. Use instead of cancelFrom, not after it. */
+  refresh(): Promise<void>;
   /**
    * Retract the events this scheduler registered with `window.own` whose start time is `time` (audio-context seconds) or later, and only those: other schedulers' events, `onTick` events and this
    * scheduler's earlier events stay. Each is cancelled as on a transport change (`event.cancel(time)`, an error is logged), synchronously; an event already ended is gone already. It does not re-emit any window
@@ -145,7 +145,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
   // which scheduler's window registered an owned event; onTick events have no entry
   private readonly _owners = new Map<CancellableEvent, Scheduler>();
   private _ticking = false;
-  private _refillPending = false;
+  private _refill: { queued: boolean; promise: Promise<void>; resolve: () => void } | undefined;
   private _cancelling = 0;
 
   constructor(options: ClockOptions<TRulers>) {
@@ -175,7 +175,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
 
   /**
    * The transport's current beat, read live from the audio clock (a plain getter, not tracked: read it per frame). It advances while playing, holds the paused beat,
-   * is 0 when stopped, and is negative during a count-in started with `start(when, -4)`; a `start(when)` still ahead reads its start beat.
+   * is reset to 0 by stop(), and is negative during a count-in started with `start(when, -4)`; a `start(when)` still ahead reads its start beat.
    */
   get beat(): number {
     return this._timeline.timeToBeat(this._timeline.now);
@@ -211,7 +211,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
           timeline: this._timeline as unknown as Timeline,
           state: this.state,
           meter: readonlyCell(this.meter),
-          refresh: () => this.refresh(),
+          refresh: () => (this._schedulers.has(scheduler) ? this.refresh() : Promise.resolve()),
           cancelFrom: (time: number) => {
             if (!detached) this._cancelSchedulerFrom(scheduler, time);
           },
@@ -287,7 +287,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     }
     if (when !== undefined && !Number.isFinite(when)) throw new RangeError(`Clock start time must be finite seconds, got ${when}`);
     if (!Number.isFinite(atBeat)) throw new RangeError(`Clock start offset must be finite beats, got ${atBeat}`);
-    this._refillPending = false;
+    this._finishRefill();
     this._cancelOwned();
     this._resetSchedulers("start");
     // one change: effects watching `state` never see the new state with stale bookkeeping
@@ -314,7 +314,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
    */
   pause(): void {
     if (this._timeline._transportState !== "playing") return;
-    this._refillPending = false;
+    this._finishRefill();
     this._cancelOwned();
     this._resetSchedulers("pause");
     this._timeline._pause();
@@ -334,7 +334,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
 
   /** Stops and resets position to beat 0. */
   stop(): void {
-    this._refillPending = false;
+    this._finishRefill();
     this._cancelOwned();
     this._resetSchedulers("stop");
     const wasStopped = this._timeline._transportState === "stopped";
@@ -345,7 +345,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
 
   /** Jumps to `beat`. Bumps `generation`; the next window starts exactly at `beat` (beats may re-appear). */
   seek(beat: number): void {
-    this._refillPending = false;
+    this._finishRefill();
     this._cancelOwned();
     this._resetSchedulers("seek");
     this._timeline._seek(beat);
@@ -363,24 +363,45 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
    * microtask are no-ops: nothing has been refilled yet, so there is nothing new to retract, and the
    * first boundary stays the refill's start so no beat is skipped. Any transport call (`start`, `pause`,
    * `stop`, `seek`, `dispose`) cancels the pending refill; a tick that runs first performs it.
+   *
+   * Resolves after the coalesced refill, including any further refresh requested synchronously by its
+   * callbacks, or when a transport call cancels it. Stopped, paused or disposed: already resolved, no refill.
+   * Await it before starting an offline render; no manual tick or microtask fence is needed.
    */
-  refresh(): void {
-    if (this._disposed || this._timeline._transportState !== "playing" || this._refillPending) return;
+  refresh(): Promise<void> {
+    if (this._disposed || this._timeline._transportState !== "playing") return Promise.resolve();
+    if (this._refill?.queued) return this._refill.promise;
     const now = this._timeline.now;
-    this._refillPending = true;
+    let refill = this._refill;
+    if (!refill) {
+      let resolve!: () => void;
+      const promise = new Promise<void>((done) => {
+        resolve = done;
+      });
+      refill = { queued: false, promise, resolve };
+      this._refill = refill;
+    }
+    refill.queued = true;
     this._cancelOwned(true, now);
-    if (!this._refillPending) return;
+    if (this._refill !== refill) return refill.promise;
     this._previousWindowEndBeat = this._timeline._invalidate(now);
     queueMicrotask(() => {
-      if (this._refillPending) this._tick();
+      if (this._refill === refill && refill.queued) this._tick();
     });
+    return refill.promise;
+  }
+
+  private _finishRefill(): void {
+    const refill = this._refill;
+    this._refill = undefined;
+    refill?.resolve();
   }
 
   /** Stops the tick loop for good (terminates the underlying worker/timer). */
   dispose(): void {
     if (this._disposed) return;
     this._disposed = true;
-    this._refillPending = false;
+    this._finishRefill();
     this._tickSource.stop();
     this._stopTempoWatch();
     this._cancelOwned();
@@ -457,8 +478,8 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     if (this._disposed) return;
     if (this._ticking) return;
     this._ticking = true;
-    // this tick is the refill a pending refresh() asked for
-    this._refillPending = false;
+    // Keep its completion open if a refill callback requests another pass.
+    if (this._refill) this._refill.queued = false;
     try {
       const now = this._timeline.now;
 
@@ -514,6 +535,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
       }
     } finally {
       this._ticking = false;
+      if (this._refill && !this._refill.queued) this._finishRefill();
     }
   }
 }

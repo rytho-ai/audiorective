@@ -67,6 +67,7 @@ export default defineConfig({
             { label: "Core", slug: "docs/core" },
             { label: "Automation", slug: "docs/automation" },
             { label: "Clock", slug: "docs/clock" },
+            { label: "Clock: advanced", slug: "docs/clock-advanced" },
             { label: "React", slug: "docs/react" },
             { label: "Three.js", slug: "docs/threejs" },
             { label: "PlayCanvas", slug: "docs/playcanvas" },

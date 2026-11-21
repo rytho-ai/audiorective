@@ -5,7 +5,7 @@ import type { Ruler, TimelineLike } from "./Ruler";
 export interface CycleTimeRulerOptions {
   /** Cycle length, in seconds. */
   seconds: number;
-  /** Played-seconds offset where the cycle region starts. Default 0. */
+  /** Seconds-position offset where the cycle region starts. Default 0. */
   from?: number;
 }
 
@@ -17,7 +17,7 @@ export interface CycleTimePoint {
 }
 
 /**
- * A repeating N-second region of played time — for visuals that repeat on a
+ * A repeating N-second region of seconds position — for visuals that repeat on a
  * wall-clock period rather than a musical one. Reads `timeline.position`
  * directly, same rationale as LinearTimeRuler.
  */

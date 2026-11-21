@@ -63,7 +63,7 @@ export class Timeline<TRulers extends Record<string, Ruler<unknown, unknown>> = 
     return this._generation;
   }
 
-  /** Pause-aware played seconds — a stopwatch, not tempo-scaled. Stays at the start position until a future `start(when)` is reached. */
+  /** Seconds position: start/seek seeds beat × 60 / BPM there; advances by real playing seconds, freezes while paused or before a future start. */
   get position(): number {
     return this._transport === "playing" ? this._positionAtAnchor + Math.max(0, this._now() - this._timeAtAnchor) : this._positionAtAnchor;
   }

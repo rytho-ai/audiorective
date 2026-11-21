@@ -6,8 +6,8 @@ export interface LinearTimePoint {
 }
 
 /**
- * Absolute seconds played since transport start — pause-aware, mirrors
- * `timeline.position` directly. Not derivable from `beat` alone: pauses
+ * Pause-aware seconds position, including the offset chosen by start/seek;
+ * reads `timeline.position` directly. Not derivable from `beat` alone: pauses
  * break the beat<->wallclock correspondence (see TimelineLike.position).
  */
 export class LinearTimeRuler implements Ruler<LinearTimePoint, LinearTimePoint> {

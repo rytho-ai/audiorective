@@ -44,6 +44,15 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Changed
 
+- **clock:** `refresh()` and an attached scheduler's `handle.refresh()` return `Promise<void>`. Await the coalesced refill, including synchronous callback edits, before dependent offline work. Transport changes settle cancelled work; inactive/detached owners complete without scheduling.
+
+  | Before                                          | After                    |
+  | ----------------------------------------------- | ------------------------ |
+  | Caller microtask fence after `clock.refresh()`  | `await clock.refresh()`  |
+  | Caller microtask fence after `handle.refresh()` | `await handle.refresh()` |
+
+- **docs / skill:** Clock starts with a Vanilla pattern, lifecycle, units and refill completion; Clock: advanced carries custom rulers, event ownership, offline rendering and deterministic test recipes.
+
 - **clock:** grid-point absolute audio timestamps use `when`, consistently with Web Audio scheduling. All current callers migrate together; no `time` alias remains. Curve coordinates and project-file positions retain `time`.
 
   | Before                          | After                           |
@@ -52,6 +61,8 @@ predates that API. See the "Version mismatches" note in the skill.
   | `trigger({ when: point.time })` | `trigger({ when: point.when })` |
 
 ### Fixed
+
+- **clock docs:** seconds-based rulers report transport position: start/seek seeds from the chosen beat and BPM, playback advances real seconds, and pauses hold it. Type hints distinguish this from cumulative listening duration across seeks; runtime position behavior is unchanged.
 
 - **clock:** a `refresh()` called from an owned event’s cancellation coalesces with the outer edit, preserving its first captured audio boundary even if the audio clock advances inside the callback.
 

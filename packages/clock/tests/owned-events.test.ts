@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vitest";
-import { Clock, type CancellableEvent } from "../src/Clock";
+import { Clock, type CancellableEvent, type SchedulerHandle } from "../src/Clock";
 import { ManualTickSource } from "../src/TickSource";
 import { Timeline } from "../src/Timeline";
 
@@ -270,6 +270,35 @@ test("refresh called during onTick does not re-enter it; the refill runs once af
   clock.dispose();
 });
 
+test("refresh completion waits for synchronous edits requested by refill callbacks", async () => {
+  const ticks = new ManualTickSource();
+  let windows = 0;
+  let inside = false;
+  let reentered = false;
+  const clock = new Clock({
+    context: { currentTime: 0 },
+    tickSource: ticks,
+    onTick() {
+      if (inside) reentered = true;
+      inside = true;
+      windows++;
+      if (windows === 2) clock.refresh();
+      inside = false;
+    },
+  });
+  try {
+    clock.start();
+    ticks.tick();
+    const completion = clock.refresh();
+    expect(windows).toBe(1);
+    await completion;
+    expect(windows).toBe(3);
+    expect(reentered).toBe(false);
+  } finally {
+    clock.dispose();
+  }
+});
+
 test("refresh from a plain synchronous caller does not run onTick before it returns", async () => {
   const timeline = new Timeline({ audioContext: { currentTime: 0 } });
   const ticks = new ManualTickSource();
@@ -310,13 +339,13 @@ test("N refreshes in one task coalesce into one refill; retraction is still imme
   clock.start();
   ticks.tick();
   now = 0.01;
-  clock.refresh();
+  const first = clock.refresh();
   expect(hits[0]!.cancel).toHaveBeenCalledTimes(1); // retracted before any refill
   now = 0.02; // the audio clock moves between calls in the same task
-  clock.refresh();
-  clock.refresh();
+  const second = clock.refresh();
+  const third = clock.refresh();
   expect(hits).toHaveLength(1);
-  await flushRefill();
+  await Promise.all([first, second, third]);
   expect(hits).toHaveLength(2); // one refill, not three
   expect(starts[1]).toBeCloseTo(0.02, 9); // from the first boundary (0.01 s = 0.02 beats): no beat skipped
   expect(hits[0]!.cancel).toHaveBeenCalledTimes(1);
@@ -326,19 +355,30 @@ test("N refreshes in one task coalesce into one refill; retraction is still imme
   clock.dispose();
 });
 
-test("stop, pause, seek, start or dispose before the microtask: no refill from the stale refresh", async () => {
-  for (const act of ["stop", "pause", "dispose"] as const) {
-    const timeline = new Timeline({ audioContext: { currentTime: 0 } });
+test("transport changes settle pending refreshes without refilling the stale window", async () => {
+  for (const act of ["stop", "pause", "seek", "start", "dispose"] as const) {
     const ticks = new ManualTickSource();
     let windows = 0;
-    const clock = new Clock({ timeline, tickSource: ticks, onTick: () => void windows++ });
-    clock.start();
-    ticks.tick();
-    clock.refresh();
-    clock[act]();
-    await flushRefill();
-    expect(windows, act).toBe(1);
-    clock.dispose();
+    const clock = new Clock({ context: { currentTime: 0 }, tickSource: ticks, onTick: () => void windows++ });
+    try {
+      clock.start();
+      ticks.tick();
+      const completion = clock.refresh();
+      let completed = false;
+      completion.then(() => {
+        completed = true;
+      });
+      if (act === "seek") clock.seek(32);
+      else if (act === "start") clock.start(undefined, 8);
+      else clock[act]();
+      await Promise.resolve();
+      expect(completed, act).toBe(true);
+      expect(windows, act).toBe(1);
+      if (act === "seek") expect(clock.beat).toBe(32);
+      if (act === "start") expect(clock.beat).toBe(8);
+    } finally {
+      clock.dispose();
+    }
   }
 });
 
@@ -365,10 +405,10 @@ test("a tick that runs before the microtask performs the refill; the microtask d
   const clock = new Clock({ timeline, tickSource: ticks, onTick: () => void windows++ });
   clock.start();
   ticks.tick();
-  clock.refresh();
+  const completion = clock.refresh();
   ticks.tick();
   expect(windows).toBe(2);
-  await flushRefill();
+  await completion;
   expect(windows).toBe(2);
   clock.dispose();
 });
@@ -379,13 +419,63 @@ test("restart then refresh before the old microtask runs refills once", async ()
   let windows = 0;
   const clock = new Clock({ timeline, tickSource: ticks, onTick: () => void windows++ });
   clock.start();
-  clock.refresh();
+  const stale = clock.refresh();
   clock.stop();
   clock.start();
-  clock.refresh();
-  await flushRefill();
+  const current = clock.refresh();
+  await Promise.all([stale, current]);
   expect(windows).toBe(1);
   clock.dispose();
+});
+
+test("refresh on an inactive clock is already completed without emitting windows", async () => {
+  const ticks = new ManualTickSource();
+  const onTick = vi.fn();
+  const clock = new Clock({ context: { currentTime: 0 }, tickSource: ticks, onTick });
+  for (const state of ["stopped", "paused", "disposed"] as const) {
+    if (state === "paused") {
+      clock.start();
+      clock.pause();
+    } else if (state === "disposed") clock.dispose();
+    let completed = false;
+    clock.refresh().then(() => {
+      completed = true;
+    });
+    await Promise.resolve();
+    expect(completed, state).toBe(true);
+    expect(onTick, state).not.toHaveBeenCalled();
+  }
+});
+
+test("a detached handle's refresh completes without retracting another scheduler's events", async () => {
+  const ticks = new ManualTickSource();
+  const clock = new Clock({ context: { currentTime: 0 }, tickSource: ticks });
+  let handle!: SchedulerHandle;
+  let survivorWindows = 0;
+  const hit = event();
+  clock.attach({
+    attached(value) {
+      handle = value;
+    },
+    schedule() {},
+  });
+  clock.attach({
+    schedule(window) {
+      survivorWindows++;
+      window.own(hit.value, 0.05);
+    },
+  });
+  try {
+    clock.start();
+    ticks.tick();
+    handle.detach();
+    await handle.refresh();
+    expect(hit.cancel).not.toHaveBeenCalled();
+    expect(survivorWindows).toBe(1);
+    expect(clock.state.value).toBe("playing");
+  } finally {
+    clock.dispose();
+  }
 });
 
 test("invalid owned-event time cancels the event before rejecting registration", () => {
