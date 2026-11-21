@@ -15,14 +15,14 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Added
 
-- **core / pads:** `Sampler.params.release` and `PadBank.params.release` (`Param<number>`, seconds, default 0.005, set by the `release` option) are read when a voice is released, so a release knob needs no rebuild. `PlaySoundOptions.release` also accepts a function, and `PlaySoundOptions.onEnd` is called once when the voice is over, including one stopped before it started.
+- **core / pads:** `Sampler.params.release` and `PadBank.params.release` (`Param<number>`, seconds, default 0.005, set by the `release` option) are read when a voice is released, so a release knob needs no rebuild. `PlaySoundOptions.release` also accepts a function. `Voice` gains `started` (false while scheduled ahead, true once its `when` has passed).
 - **core:** `Sampler.params.sustain` (`Param<boolean>`, default `false`) is a sustain pedal (MIDI CC64): while true, `noteOff` keeps the held voices sounding, and setting it to `false` releases them at the current time.
 - **core / pads:** `Sampler.cells.heldNotes` (notes with a sounding voice, ascending) and `PadBank.cells.playing` (pad ids with a sounding voice, in pad order) replace page-side counters.
 
 ### Fixed
 
 - **core:** `Sampler.noteOff` releases only the held voices of the note that start by `when`. A later `noteOff` no longer moves the stop of a voice an earlier `noteOff` released, and a `noteOff` does not release a voice scheduled after it.
-- **core / pads:** a voice scheduled for the future is not `playing`, and not in `activeVoices`, until its start time. Before, both turned true at scheduling, one look-ahead early. A voice stopped before it starts keeps `playing` at `false` and no longer emits a change; use `PlaySoundOptions.onEnd` to observe its end.
+- **core / pads:** `Sampler.cells.activeVoices` and `PadBank.cells.activeVoices` count only started voices: a voice scheduled for the future joins at its start time, where before it counted at scheduling, one look-ahead early. `voice.playing` is unchanged (true until the voice ends); read `voice.started` for whether it has begun.
 
 - **blocks:** `StepSequencer` `transform` is beat-aware. `Hit` (what `transform` receives and returns, and what `onHit`, the `hit` event and a sound get) gains `beat` (absolute beat after offset, swing and repeat) and `durationBeats`. After `transform`, a changed `beat` or `durationBeats` is mapped through the transport's timing, so the hit stays on the grid under tempo automation (`beat: hit.beat + 0.125` is always a 32nd late); a hit that changes neither keeps the returned `when` and `duration`, as before, for millisecond nudges. If both `beat` and `when` changed, the hit sounds at `beatToTime(beat)` plus the `when` delta, and `duration` gets its delta added to the beat-derived length. A non-finite `beat` or a `durationBeats` not above 0 throws `Event transform "transform" ...`. A transform that shifts only `when` by a fixed amount is not tempo-locked.
 - **widgets:** the step grid plugin context's lanes include the writable `pattern`, `rate`, `swing`, `direction`, `mute`, `solo` and `length` members of the real `Lane`.

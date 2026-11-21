@@ -151,7 +151,7 @@ export class Sampler extends AudioProcessor<
 
   /** Commit the sounding-voice count and held notes together; a voice scheduled ahead counts from its start time. */
   private publish(): void {
-    const sounding = this._voices.filter((voice) => untracked(() => voice.playing.value));
+    const sounding = this._voices.filter((voice) => untracked(() => voice.started.value && voice.playing.value));
     const notes = [...new Set(sounding.map((voice) => voice.note).filter((note): note is number => note !== null))].sort((a, b) => a - b);
     batch(() => {
       this._active.value = sounding.length;
@@ -179,19 +179,21 @@ export class Sampler extends AudioProcessor<
         note,
         offset: options.offset,
         span: options.duration,
-        onEnd: () => {
-          const index = this._voices.indexOf(voice);
-          if (index !== -1) this._voices.splice(index, 1);
-          this._sustained.delete(voice);
-          this.publish();
-        },
       },
     );
     // The new voice joins before the victim leaves and the counts are published once afterwards, so a steal never shows a count above the cap.
     batch(() => {
       if (victim) this._voices.shift();
       this._voices.push(voice);
-      voice.playing.subscribe(() => this.publish());
+      voice.started.subscribe(() => this.publish());
+      const off = voice.playing.subscribe((playing) => {
+        if (playing) return;
+        off();
+        const index = this._voices.indexOf(voice);
+        if (index !== -1) this._voices.splice(index, 1);
+        this._sustained.delete(voice);
+        this.publish();
+      });
       victim?.stop();
       this.publish();
     });

@@ -41,6 +41,7 @@ function instrumentSource(context: AudioContext) {
   ]);
   disposers.push(() => bank.dispose());
   const played: Played[] = [];
+  let pending = 0;
   const spy = vi.spyOn(bank, "trigger");
   return {
     played: () => {
@@ -48,10 +49,23 @@ function instrumentSource(context: AudioContext) {
       for (const [lane, options] of spy.mock.calls) played.push({ lane, velocity: options!.velocity!, when: options!.when! });
       return played;
     },
-    live: () => bank.cells.activeVoices.value,
+    // `activeVoices` counts only started voices, and every hit here is scheduled ahead, so the bank reports 0 sounding.
+    // `live` counts hits still pending (scheduled and not cancelled) and requires the cancel to reach the voice.
+    live: () => {
+      expect(bank.cells.activeVoices.value).toBe(0);
+      return pending;
+    },
     onHit: (hit: Hit) => {
       const played = bank.trigger(hit.lane, { velocity: hit.velocity, when: hit.when });
-      return () => played?.stop();
+      pending++;
+      let cancelled = false;
+      return () => {
+        if (cancelled) return;
+        cancelled = true;
+        pending--;
+        played?.stop();
+        expect(played?.playing.value).toBe(false);
+      };
     },
   };
 }

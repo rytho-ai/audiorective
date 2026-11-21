@@ -37,6 +37,8 @@ type Hit = {
   gate: GainNode;
   voice: Voice;
   state: Cell<boolean>;
+  /** False while the hit is scheduled ahead; the sounding count and `cells.playing` skip it until its start time. */
+  begun: Cell<boolean>;
   /** Time the gate starts closing: the earliest of a later same-group hit and the hit's own scheduled stop. */
   chokeAt: number;
   /** Scheduled stop time from `voice.stop(when)`; Infinity when the hit has none. */
@@ -121,7 +123,7 @@ export class PadBank extends AudioProcessor<
 
   /** Commit the sounding-hit count and pad ids together; a hit scheduled ahead counts from its start time. */
   private publish(): void {
-    const sounding = [...this.hits].filter((hit) => untracked(() => hit.state.value));
+    const sounding = [...this.hits].filter((hit) => untracked(() => hit.begun.value));
     const ids = new Set(sounding.map((hit) => hit.pad.id));
     const playing = untracked(() => this.padStore.value)
       .map((pad) => pad.id)
@@ -140,6 +142,7 @@ export class PadBank extends AudioProcessor<
     hit.voice.stop();
     batch(() => {
       hit.state.value = false;
+      hit.begun.value = false;
       this.publish();
     });
   }
@@ -227,18 +230,19 @@ export class PadBank extends AudioProcessor<
       gate.disconnect();
       throw error;
     }
-    const state = cell(voice.playing.value);
-    const created: Hit = { pad, when: at, order: ++this.nextOrder, gate, voice, state, chokeAt: Infinity, stopAt: Infinity, done: false };
+    const state = cell(true);
+    const begun = cell(voice.started.value);
+    const created: Hit = { pad, when: at, order: ++this.nextOrder, gate, voice, state, begun, chokeAt: Infinity, stopAt: Infinity, done: false };
     this.hits.add(created);
+    voice.started.subscribe((started) => {
+      if (!started || created.done) return;
+      batch(() => {
+        begun.value = true;
+        this.publish();
+      });
+    });
     voice.playing.subscribe((playing) => {
-      if (created.done) return;
-      if (playing) {
-        batch(() => {
-          state.value = true;
-          this.publish();
-        });
-        return;
-      }
+      if (playing || created.done) return;
       this.settle();
       this.finish(created);
       this.rebuild();
@@ -250,6 +254,7 @@ export class PadBank extends AudioProcessor<
       note: null,
       when: at,
       playing: view,
+      started: readonlyCell(begun),
       stop: (when) => this.stopHit(created, when),
     };
   }
