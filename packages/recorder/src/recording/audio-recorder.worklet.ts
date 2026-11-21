@@ -8,6 +8,8 @@ class AudioRecorderProcessor extends AudioWorkletProcessor {
   constructor(options) {
     super();
     this.channels = options.processorOptions.channels;
+    this.startFrame = options.processorOptions.startFrame || 0;
+    this.length = options.processorOptions.length ?? null;
     this.firstFrame = null;
     this.endFrame = null;
     this.chunkStart = 0;
@@ -32,7 +34,8 @@ class AudioRecorderProcessor extends AudioWorkletProcessor {
     const capture = parameters.capture;
     for (let index = 0; index < count; index++) {
       const frame = currentFrame + index;
-      const enabled = (capture.length === 1 ? capture[0] : capture[index]) >= 0.5;
+      const gate = (capture.length === 1 ? capture[0] : capture[index]) >= 0.5;
+      const enabled = gate && frame >= this.startFrame && (this.length === null || this.firstFrame === null || frame < this.firstFrame + this.length);
       if (!enabled) {
         if (this.firstFrame !== null) {
           this.flush();
@@ -46,6 +49,8 @@ class AudioRecorderProcessor extends AudioWorkletProcessor {
         this.firstFrame = frame;
         this.port.postMessage({ type: "begin", frame });
       }
+      // A render quantum repeated by the browser (a frame already captured) is skipped, so chunks stay contiguous.
+      if (this.endFrame !== null && frame < this.endFrame) continue;
       if (this.endFrame !== null && frame > this.endFrame) {
         const missing = frame - this.endFrame;
         if (missing > sampleRate * 2) {

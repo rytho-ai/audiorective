@@ -322,6 +322,22 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
         when = clock.timeline.beatToTime(boundaryBeat);
       }
       if (!Number.isFinite(when) || when < 0) throw new RangeError("AudioRecorder time must be finite, non-negative seconds.");
+      // The start frame, beat and length are fixed before the worklet exists: the worklet counts a `length` from its own first captured frame,
+      // so a take is exactly `length` frames however late the gate opens or the render thread runs.
+      const planned = Math.ceil(Math.max(when, this.context.currentTime) * this.context.sampleRate);
+      const plannedTime = planned / this.context.sampleRate;
+      const clock = this.follow;
+      const startBeat = boundaryBeat ?? (clock && untracked(() => clock.state.value) === "playing" ? clock.timeline.timeToBeat(plannedTime) : null);
+      let lengthFrames: number | null = null;
+      if (session.length !== undefined) {
+        if (typeof session.length === "number") lengthFrames = Math.max(1, Math.round(session.length * this.context.sampleRate));
+        else {
+          if (startBeat === null) throw new DOMException("AudioRecorder length needs a playing clock.", "InvalidStateError");
+          const end = clock!.timeline.beatToTime(startBeat + noteBeats(session.length, this.barBeats(clock!)));
+          lengthFrames = Math.round((end - clock!.timeline.beatToTime(startBeat)) * this.context.sampleRate);
+          if (lengthFrames < 1) throw new RangeError("AudioRecorder stop must follow its start time.");
+        }
+      }
       const node = new AudioWorkletNode(this.context, AUDIO_RECORDER_WORKLET_NAME, {
         numberOfInputs: 1,
         numberOfOutputs: 1,
@@ -329,7 +345,7 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
         channelCount: this.channels,
         channelCountMode: "explicit",
         channelInterpretation: "discrete",
-        processorOptions: { channels: this.channels },
+        processorOptions: { channels: this.channels, startFrame: planned, length: lengthFrames },
       });
       const sink = new GainNode(this.context, { gain: 0 });
       const capture = (node.parameters as unknown as ReadonlyMap<string, AudioParam>).get("capture")!;
@@ -348,20 +364,10 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
       this.source.connect(node);
       node.connect(sink);
       sink.connect(this.context.destination);
-      const effectiveWhen = Math.max(when, this.context.currentTime);
-      session.startFrame = Math.ceil(effectiveWhen * this.context.sampleRate);
-      capture.setValueAtTime(1, Math.max(this.context.currentTime, (session.startFrame - 0.5) / this.context.sampleRate));
-      const startTime = session.startFrame / this.context.sampleRate;
-      const clock = this.follow;
-      session.startBeat = boundaryBeat ?? (clock && untracked(() => clock.state.value) === "playing" ? clock.timeline.timeToBeat(startTime) : null);
-      this.startsAtStore.value = startTime;
-      if (session.length !== undefined) {
-        if (typeof session.length !== "number" && session.startBeat === null) {
-          throw new DOMException("AudioRecorder length needs a playing clock.", "InvalidStateError");
-        }
-        if (typeof session.length === "number") this.scheduleEnd(session, 0, Math.max(1, Math.round(session.length * this.context.sampleRate)));
-        else this.scheduleEnd(session, clock!.timeline.beatToTime(session.startBeat! + noteBeats(session.length!, this.barBeats(clock!))));
-      }
+      session.startFrame = planned;
+      capture.setValueAtTime(1, Math.max(this.context.currentTime, (planned - 0.5) / this.context.sampleRate));
+      session.startBeat = startBeat;
+      this.startsAtStore.value = plannedTime;
       if (session.pendingStop) this.scheduleEnd(session, session.pendingStop.when ?? this.context.currentTime);
     } catch (error) {
       if (this.active === session) this.fail(session, error);
@@ -393,8 +399,8 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
   }
 
   /** Writes the capture gate's closing edge for a frame after the take's start. */
-  private scheduleEnd(session: Session, when: number, frames?: number): void {
-    const frame = frames === undefined ? Math.ceil(Math.max(when, this.context.currentTime) * this.context.sampleRate) : session.startFrame + frames;
+  private scheduleEnd(session: Session, when: number): void {
+    const frame = Math.ceil(Math.max(when, this.context.currentTime) * this.context.sampleRate);
     if (frame <= session.startFrame) throw new RangeError("AudioRecorder stop must follow its start time.");
     session.capture!.setValueAtTime(0, (frame - 0.5) / this.context.sampleRate);
   }

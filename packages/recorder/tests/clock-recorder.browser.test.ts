@@ -39,7 +39,7 @@ test("record({ quantize: '1m', length: '1m' }) starts on a bar line and lasts on
   expect(take.startBeat).toBeGreaterThan(0);
   const rate = context.sampleRate;
   expect(take.startFrame).toBe(Math.ceil(clock.timeline.beatToTime(take.startBeat!) * rate));
-  expect(take.endFrame).toBe(Math.ceil(clock.timeline.beatToTime(take.startBeat! + 4) * rate));
+  expect(take.endFrame).toBe(take.startFrame + rate); // a bar at 240 bpm is exactly one second: the length is exact in frames, whatever float noise the boundary times carry
   expect(take.startTime).toBe(startsAt);
   expect(take.endFrame - take.startFrame).toBe(rate);
   expect(take.channels[0]).toHaveLength(take.endFrame - take.startFrame);
@@ -54,9 +54,20 @@ test("a note-value quantize follows the beat, and a stopped clock rejects quanti
     message: "AudioRecorder quantize needs a playing clock.",
   });
   clock.start();
+  await new Promise((done) => setTimeout(done, 120));
   const take = await recorder.record({ quantize: "4n", length: 0.25 });
   expect(Number.isInteger(take.startBeat)).toBe(true);
   expect(take.endFrame - take.startFrame).toBe(Math.round(0.25 * take.sampleRate));
+});
+
+test("a take is exactly `length` frames even when its boundary is already past or the gate opens late", async () => {
+  const { clock, recorder } = await rig(240);
+  clock.start();
+  // Called on beat 0 itself: the boundary is at or before the first available frame, so the capture starts late.
+  const take = await recorder.record({ quantize: "4n", length: 0.25 });
+  expect(take.endFrame - take.startFrame).toBe(Math.round(0.25 * take.sampleRate));
+  const noted = await recorder.record({ quantize: "4n", length: "4n" });
+  expect(noted.endFrame - noted.startFrame).toBe(Math.round(0.25 * noted.sampleRate));
 });
 
 test("leaving the transport before a quantized start cancels the take; a recording in progress continues", async () => {

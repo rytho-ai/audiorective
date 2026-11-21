@@ -95,3 +95,27 @@ test("stop() and leaving the transport cancel a queued quantized start", async (
   expect(player.cells.startsAt.value).toBeNull();
   expect(player.cells.isPlaying.value).toBe(false);
 });
+
+test.each([
+  ["clock.pause()", (r: Awaited<ReturnType<typeof rig>>) => r.clock.pause()],
+  ["clock.seek()", (r: Awaited<ReturnType<typeof rig>>) => r.clock.seek(2)],
+  ["clock.stop()", (r: Awaited<ReturnType<typeof rig>>) => r.clock.stop()],
+  ["detach", (r: Awaited<ReturnType<typeof rig>> & { detach: () => void }) => r.detach()],
+  ["player.stop()", (r: Awaited<ReturnType<typeof rig>>) => r.player.stop()],
+  ["player.pause()", (r: Awaited<ReturnType<typeof rig>>) => r.player.pause()],
+])("a queued quantized start stays cancellable after seek(): %s", async (_name, cancel) => {
+  const r = await rig(30); // a bar is eight seconds, so the boundary is far away
+  const detach = r.clock.attach(r.player);
+  r.clock.start();
+  await wait(100);
+  const started = r.player.play({ quantize: "1m" });
+  await vi.waitFor(() => expect(r.player.cells.startsAt.value).not.toBeNull());
+  const at = r.player.cells.startsAt.value;
+  r.player.seek(1);
+  expect(r.player.cells.startsAt.value).toBe(at);
+  expect(r.player.position).toBe(1);
+  cancel({ ...r, detach });
+  await started;
+  expect(r.player.cells.startsAt.value).toBeNull();
+  expect(r.player.cells.isPlaying.value).toBe(false);
+});

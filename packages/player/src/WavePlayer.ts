@@ -472,10 +472,14 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
     if (!Number.isFinite(position)) throw new RangeError("Position must be finite seconds.");
     this.change(() => {
       const playing = this.running,
-        when = this.startTime();
+        when = this.startTime(),
+        quantized = this.quantized; // a queued clock-boundary start stays one across the re-issue
       this.halt();
       this.held = Math.max(0, Math.min(this.length, position));
-      if (playing) this.begin(this.held, when);
+      if (playing) {
+        this.begin(this.held, when);
+        this.quantized = quantized && untracked(() => this.store.startsAt.value) !== null;
+      }
     });
   }
   /**
