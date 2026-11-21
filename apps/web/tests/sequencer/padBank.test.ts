@@ -103,7 +103,12 @@ test("refresh at a hit's exact audio time renders one hit, not two", async () =>
     });
     clock.start();
     ticks.tick();
-    if (refresh) clock.refresh(); // the same AudioContext time: 0
+    if (refresh) {
+      clock.refresh(); // the same AudioContext time: 0
+      // The refill runs in a microtask. Let it finish before rendering starts: once startRendering() is
+      // running, a hit scheduled at time 0 from a later microtask races the render thread and can be lost.
+      await Promise.resolve();
+    }
     const output = await context.startRendering();
     clock.dispose();
     bank.dispose();
