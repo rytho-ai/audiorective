@@ -3,17 +3,17 @@ import { DynamicsCore } from "./dynamics/DynamicsCore";
 import { Effect, type EffectOptions } from "./Effect";
 
 export interface LimiterOptions extends EffectOptions {
+  /** Ceiling, dBFS. Default -1. */
   threshold?: number;
+  /** Seconds to let go of the reduction. Default 0.05. */
   release?: number;
+  /** Peak-detection window, seconds; the effect declares it as latency. Default 0.005. */
   lookahead?: number;
 }
 
-/** Brickwall: infinite ratio, hard knee, windowed-peak detection over `lookahead`. */
-export class Limiter extends Effect<
-  { threshold: SchedulableParam; release: SchedulableParam },
-  { reduction: ReadonlyCell<number>; isReady: ReadonlyCell<boolean> }
-> {
-  readonly ready: Promise<void>;
+/** Brickwall: infinite ratio, hard knee, windowed-peak detection over `lookahead`. The worklet loads asynchronously; the effect passes dry until `cells.status` is `"ready"`. */
+export class Limiter extends Effect<{ threshold: SchedulableParam; release: SchedulableParam }, { reduction: ReadonlyCell<number> }> {
+  static override readonly type = "Limiter";
   private readonly core: DynamicsCore;
 
   constructor(ctx: BaseAudioContext, opts: LimiterOptions = {}) {
@@ -28,11 +28,11 @@ export class Limiter extends Effect<
     });
     super(
       ctx,
-      { input: core, output: core },
-      () => ({ params: { threshold: core.params.threshold, release: core.params.release }, cells: { ...core.cells } }),
+      { input: core, output: core, loading: true },
+      () => ({ params: { threshold: core.params.threshold, release: core.params.release }, cells: { reduction: core.cells.reduction } }),
       opts,
     );
-    this.ready = core.ready;
+    this.track(core.ready);
     this.core = core;
   }
 

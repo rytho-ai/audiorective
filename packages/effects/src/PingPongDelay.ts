@@ -1,6 +1,7 @@
 import type { SchedulableParam } from "@audiorective/core";
 import { Effect, type EffectOptions } from "./Effect";
 import { fanout } from "./internal/fanout";
+import { SMOOTHING } from "./internal/smoothing";
 
 export interface PingPongDelayOptions extends EffectOptions {
   delayTime?: number;
@@ -15,6 +16,7 @@ export interface PingPongDelayOptions extends EffectOptions {
  * one render quantum (128 samples) later than `delayTime`.
  */
 export class PingPongDelay extends Effect<{ delayTime: SchedulableParam; feedback: SchedulableParam }> {
+  static override readonly type = "PingPongDelay";
   private readonly sources: ConstantSourceNode[];
 
   constructor(ctx: BaseAudioContext, opts: PingPongDelayOptions = {}) {
@@ -48,8 +50,8 @@ export class PingPongDelay extends Effect<{ delayTime: SchedulableParam; feedbac
       { input: entry, output: merger },
       ({ param }) => ({
         params: {
-          delayTime: param({ default: opts.delayTime ?? 0.25, bind: time.offset, min: 0, max: maxDelay }),
-          feedback: param({ default: opts.feedback ?? 0.2, bind: fb.offset, min: 0, max: 0.99 }),
+          delayTime: param({ default: opts.delayTime ?? 0.25, bind: time.offset, min: 0, max: maxDelay, smoothing: SMOOTHING }),
+          feedback: param({ default: opts.feedback ?? 0.2, bind: fb.offset, min: 0, max: 0.99, smoothing: SMOOTHING }),
         },
         cells: {},
         latency: 0,

@@ -1,6 +1,7 @@
 import type { SchedulableParam } from "@audiorective/core";
 import { Effect, type EffectOptions } from "./Effect";
 import { fanout } from "./internal/fanout";
+import { SMOOTHING } from "./internal/smoothing";
 import { phasedWave } from "./internal/lfo";
 
 export interface FrequencyShifterOptions extends EffectOptions {
@@ -26,6 +27,7 @@ function allpassChain(ctx: BaseAudioContext, coefficients: number[]): { input: A
  * sign and so selects the lower sideband instead of the upper.
  */
 export class FrequencyShifter extends Effect<{ frequency: SchedulableParam }> {
+  static override readonly type = "FrequencyShifter";
   private readonly oscillators: OscillatorNode[];
   private readonly freqSource: ConstantSourceNode;
 
@@ -58,7 +60,7 @@ export class FrequencyShifter extends Effect<{ frequency: SchedulableParam }> {
       ctx,
       { input: entry, output: sum },
       ({ param }) => ({
-        params: { frequency: param({ default: opts.frequency ?? 0, bind: freq.offset, min: -5000, max: 5000 }) },
+        params: { frequency: param({ default: opts.frequency ?? 0, bind: freq.offset, min: -5000, max: 5000, smoothing: SMOOTHING }) },
         cells: {},
         latency: 0,
       }),

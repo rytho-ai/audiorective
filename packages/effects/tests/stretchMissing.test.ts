@@ -21,12 +21,13 @@ describe("without the signalsmith-stretch peer", () => {
     const f = await renderShift((ctx) => new PitchShift(ctx, { pitch: 12 }));
     expect(Math.abs(dominantHz(f, 44100) - 880)).toBeLessThanOrEqual(15);
   });
-  it("the stretch engine rejects ready with an install hint and stays not ready", async () => {
+  it("the stretch engine rejects ready with an install hint and reports the error", async () => {
     const ctx = new OfflineAudioContext(2, 4096, 44100);
     const fx = new PitchShift(ctx, { engine: "stretch" });
     await expect(fx.ready).rejects.toThrow(
       'PitchShift stretch engine needs the optional peer dependency "signalsmith-stretch": install it (npm i signalsmith-stretch).',
     );
-    expect(fx.cells.isReady.value).toBe(false);
+    expect(fx.cells.status.value).toBe("error");
+    expect(fx.cells.error.value?.message).toContain("signalsmith-stretch");
   });
 });

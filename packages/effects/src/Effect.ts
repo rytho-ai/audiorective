@@ -1,4 +1,15 @@
-import { AudioProcessor, type BuildHelpers, type BuildResult, type Param, type SchedulableParam } from "@audiorective/core";
+import {
+  AudioProcessor,
+  cell,
+  readonlyCell,
+  type BuildHelpers,
+  type BuildResult,
+  type Cell,
+  type Param,
+  type ReadonlyCell,
+  type SchedulableParam,
+} from "@audiorective/core";
+import { fadeTo, SMOOTHING } from "./internal/smoothing";
 
 // Registry constraints mirror core's (invariant Param<T>/Cell<T> need `any`).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -6,28 +17,52 @@ type ParamRegistry = Record<string, Param<any>>;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type CellRegistry = Record<string, import("@audiorective/core").Cell<any> | import("@audiorective/core").ReadonlyCell<any>>;
 
+/** `"loading"` until the effect can process audio (an impulse response, worklet or wasm engine still arriving), `"error"` when that failed. */
+export type EffectStatus = "loading" | "ready" | "error";
+
 export interface WetArm {
   input: AudioNode | AudioProcessor;
   output: AudioNode | AudioProcessor;
+  /** Start in `"loading"` and pass dry until `track()` resolves. Default false. */
+  loading?: boolean;
 }
 
 export interface EffectOptions {
   /** Initial wet mix 0..1. Default 1. */
   wet?: number;
+  /** Start bypassed. Default false. */
+  bypass?: boolean;
 }
+
+type EffectParams<P> = P & { wet: SchedulableParam; bypass: Param<boolean> };
+type EffectCells<C> = C & { status: ReadonlyCell<EffectStatus>; error: ReadonlyCell<Error | null> };
+
+/** Time constant of the bypass/ready gate, seconds: about 15 ms to settle. */
+const GATE = 0.003;
 
 /**
  * Base for every effect: stable `input`/`output` gains and a linear wet/dry
  * crossfade. `wet` is one automation signal that drives the wet gain directly
  * and the dry gain as `1 − wet`, so ramps land sample-accurately on both arms.
+ * `params.bypass` fades the effect out of the sound without a click and keeps its settings;
+ * while `cells.status` is not `"ready"` the effect also passes the dry signal.
  * The graph is compensated, so a latent wet arm delays the dry arm to match and
  * the effect's own latency (when not declared) derives to the wet arm's.
  */
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export abstract class Effect<P extends ParamRegistry = {}, C extends CellRegistry = {}> extends AudioProcessor<P & { wet: SchedulableParam }, C> {
+export abstract class Effect<P extends ParamRegistry = {}, C extends CellRegistry = {}> extends AudioProcessor<EffectParams<P>, EffectCells<C>> {
+  /** Name `toJSON()` writes and `EffectChain.restore` looks up. Built-in effects set it; a custom subclass falls back to its class name. */
+  static readonly type: string | undefined = undefined;
+
   private readonly _input: GainNode;
   private readonly _output: GainNode;
   private readonly _sources: ConstantSourceNode[];
+  private readonly _status: Cell<EffectStatus>;
+  private readonly _error: Cell<Error | null>;
+  private _ready: Promise<void> = Promise.resolve();
+  private _resolveReady: (() => void) | undefined;
+  private _token = 0;
+  private _gone = false;
 
   protected constructor(
     ctx: BaseAudioContext,
@@ -37,27 +72,36 @@ export abstract class Effect<P extends ParamRegistry = {}, C extends CellRegistr
   ) {
     const input = new GainNode(ctx);
     const output = new GainNode(ctx);
-    const dry = new GainNode(ctx, { gain: 0 }); // driven by 1 − wet
-    const wetGain = new GainNode(ctx, { gain: 0 }); // driven by wet
+    const dry = new GainNode(ctx, { gain: 0 }); // driven by 1 − wet·active
+    const wetGain = new GainNode(ctx, { gain: 0 }); // driven by wet·active
     const one = new ConstantSourceNode(ctx, { offset: 1 });
     const negate = new GainNode(ctx, { gain: -1 });
     const wetSignal = new ConstantSourceNode(ctx, { offset: opts.wet ?? 1 });
+    const active = new ConstantSourceNode(ctx, { offset: opts.bypass || arm.loading ? 0 : 1 });
+    const wetScaled = new GainNode(ctx, { gain: 0 });
     one.start();
     wetSignal.start();
+    active.start();
+    const status = cell<EffectStatus>(arm.loading ? "loading" : "ready");
+    const error = cell<Error | null>(null);
 
     super(ctx, (h) => {
       const built = build(h);
-      const wet = h.param({ default: opts.wet ?? 1, bind: wetSignal.offset, min: 0, max: 1 });
-      const result: { params: P & { wet: SchedulableParam }; cells: C; latency?: number | Param<number> } = {
-        params: { ...built.params, wet },
-        cells: built.cells,
+      const wet = h.param({ default: opts.wet ?? 1, bind: wetSignal.offset, min: 0, max: 1, smoothing: SMOOTHING });
+      const bypass = h.param<boolean>({ default: opts.bypass ?? false });
+      const result: { params: EffectParams<P>; cells: EffectCells<C>; latency?: number | Param<number> } = {
+        params: { ...built.params, wet, bypass },
+        cells: { ...built.cells, status: readonlyCell(status), error: readonlyCell(error) },
       };
       if (built.latency !== undefined) result.latency = built.latency;
-      return result as unknown as BuildResult<P & { wet: SchedulableParam }, C>;
+      return result as unknown as BuildResult<EffectParams<P>, EffectCells<C>>;
     });
 
     this._input = input;
     this._output = output;
+    this._status = status;
+    this._error = error;
+    if (arm.loading) this.setReady(false);
 
     // `arm.input` may be an AudioProcessor; as a sink it must resolve to a concrete
     // node here (the processor itself still appears as the `arm.output` source below,
@@ -72,15 +116,22 @@ export abstract class Effect<P extends ParamRegistry = {}, C extends CellRegistr
         [input, armInput],
         [arm.output, wetGain],
         [wetGain, output],
-        [wetSignal, wetGain.gain],
-        [wetSignal, negate],
+        [wetSignal, wetScaled],
+        [active, wetScaled.gain],
+        [wetScaled, wetGain.gain],
+        [wetScaled, negate],
         [negate, dry.gain],
         [one, dry.gain],
       ],
       { compensate: true },
     );
 
-    this._sources = [one, wetSignal];
+    this.effect(() => {
+      const on = !this.params.bypass.value && status.value === "ready";
+      fadeTo(ctx, active.offset, on ? 1 : 0, GATE);
+    });
+
+    this._sources = [one, wetSignal, active];
   }
 
   override get input(): GainNode {
@@ -91,7 +142,48 @@ export abstract class Effect<P extends ParamRegistry = {}, C extends CellRegistr
     return this._output;
   }
 
+  /** Resolves once `cells.status` is `"ready"`; rejects with the cause when loading failed. Already resolved for an effect that never loads. */
+  get ready(): Promise<void> {
+    return this._ready;
+  }
+
+  /** Marks the effect `"loading"` until `work` settles, then `"ready"` or `"error"`. The latest call wins. */
+  protected track(work: Promise<unknown>): void {
+    const token = ++this._token;
+    this._status.value = "loading";
+    this._error.value = null;
+    const done = work.then(
+      () => {
+        if (token === this._token && !this._gone) this._status.value = "ready";
+      },
+      (cause: unknown) => {
+        if (token === this._token && !this._gone) {
+          this._error.value = cause instanceof Error ? cause : new Error("Effect failed to load.", { cause });
+          this._status.value = "error";
+        }
+        throw cause;
+      },
+    );
+    done.catch(() => {});
+    this._ready = done;
+  }
+
+  /** Sets `"ready"` or `"loading"` directly, for effects whose readiness is a state rather than a promise. */
+  protected setReady(ready: boolean): void {
+    this._token++;
+    this._error.value = null;
+    this._status.value = ready ? "ready" : "loading";
+    if (ready) {
+      this._resolveReady?.();
+      this._resolveReady = undefined;
+      this._ready = Promise.resolve();
+    } else if (!this._resolveReady) {
+      this._ready = new Promise<void>((resolve) => (this._resolveReady = resolve));
+    }
+  }
+
   override dispose(): void {
+    this._gone = true;
     for (const s of this._sources) {
       s.stop();
       s.disconnect();

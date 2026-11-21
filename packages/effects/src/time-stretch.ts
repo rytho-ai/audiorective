@@ -1,2 +1,2 @@
 export { TimeStretch } from "./TimeStretch";
-export type { TimeStretchAnchor, TimeStretchOptions, TimeStretchResult } from "./TimeStretch";
+export type { TimeStretchAnchor, TimeStretchLoadOptions, TimeStretchOptions } from "./TimeStretch";

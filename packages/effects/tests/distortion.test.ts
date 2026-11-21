@@ -61,3 +61,24 @@ describe("Distortion", () => {
     expect(bestErr).toBeLessThan(1e-2);
   });
 });
+
+describe("Distortion drive changes", () => {
+  it("a drive change crossfades instead of stepping the output", async () => {
+    const ctx = new OfflineAudioContext(1, 22050, 44100);
+    const fx = new Distortion(ctx, { distortion: 0.05 });
+    const dc = new ConstantSourceNode(ctx, { offset: 0.4 });
+    dc.connect(fx.input);
+    fx.output.connect(ctx.destination);
+    dc.start();
+    ctx.suspend(0.25).then(() => {
+      fx.params.distortion.value = 1;
+      ctx.resume();
+    });
+    const out = (await ctx.startRendering()).getChannelData(0);
+    let step = 0;
+    for (let i = 8000; i < out.length; i++) step = Math.max(step, Math.abs(out[i]! - out[i - 1]!));
+    const change = out[20000]! - out[8000]!;
+    expect(change).toBeGreaterThan(0.2); // a hard step would be the whole change in one sample
+    expect(step).toBeLessThan(change / 20);
+  });
+});

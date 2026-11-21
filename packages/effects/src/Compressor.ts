@@ -3,12 +3,19 @@ import { DynamicsCore } from "./dynamics/DynamicsCore";
 import { Effect, type EffectOptions } from "./Effect";
 
 export interface CompressorOptions extends EffectOptions {
+  /** dBFS above which gain reduction starts. Default -24. */
   threshold?: number;
+  /** Input:output slope above the threshold. Default 4. */
   ratio?: number;
+  /** Soft-knee width, dB. Default 6. */
   knee?: number;
+  /** Seconds to reach the reduction. Default 0.003. */
   attack?: number;
+  /** Seconds to let go of the reduction. Default 0.25. */
   release?: number;
+  /** Output gain after compression, dB. Default 0. */
   makeup?: number;
+  /** Detector lookahead, seconds; the effect declares it as latency. Default 0. */
   lookahead?: number;
 }
 
@@ -21,8 +28,9 @@ type P = {
   makeup: SchedulableParam;
 };
 
-export class Compressor extends Effect<P, { reduction: ReadonlyCell<number>; isReady: ReadonlyCell<boolean> }> {
-  readonly ready: Promise<void>;
+/** Feedforward compressor. The worklet loads asynchronously; the effect passes dry until `cells.status` is `"ready"`. `cells.reduction` is the live gain reduction in dB (<= 0). */
+export class Compressor extends Effect<P, { reduction: ReadonlyCell<number> }> {
+  static override readonly type = "Compressor";
   private readonly core: DynamicsCore;
 
   constructor(ctx: BaseAudioContext, opts: CompressorOptions = {}) {
@@ -35,8 +43,13 @@ export class Compressor extends Effect<P, { reduction: ReadonlyCell<number>; isR
       makeup: opts.makeup ?? 0,
       lookahead: opts.lookahead ?? 0,
     });
-    super(ctx, { input: core, output: core }, () => ({ params: { ...core.params }, cells: { ...core.cells } }), opts);
-    this.ready = core.ready;
+    super(
+      ctx,
+      { input: core, output: core, loading: true },
+      () => ({ params: { ...core.params }, cells: { reduction: core.cells.reduction } }),
+      opts,
+    );
+    this.track(core.ready);
     this.core = core;
   }
 

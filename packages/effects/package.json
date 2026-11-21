@@ -1,7 +1,7 @@
 {
   "name": "@audiorective/effects",
   "version": "2.3.2",
-  "description": "DSP effects for audiorective — filter, distortion, phaser, frequency shifter, ping-pong delay, convolver, compressor, limiter, pitch shift, channel strip and send bus",
+  "description": "DSP effects for audiorective — filter, distortion, phaser, frequency shifter, ping-pong delay, convolver, compressor, limiter, ducker, pitch shift, effect chain, channel strip and send bus",
   "type": "module",
   "license": "MIT",
   "homepage": "https://github.com/audiorective/audiorective/tree/main/packages/effects#readme",
@@ -23,8 +23,7 @@
   "exports": {
     ".": "./dist/index.js",
     "./time-stretch": "./dist/time-stretch.js",
-    "./rack": "./dist/rack.js",
-    "./rack-preset": "./dist/rack-preset.js",
+    "./equalizer-bands": "./dist/equalizer-bands.js",
     "./package.json": "./package.json"
   },
   "scripts": {

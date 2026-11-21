@@ -2,11 +2,20 @@ export { dbToGain, gainToDb } from "./db";
 export { registerWorklet, WorkletUnavailableError } from "@audiorective/core";
 export { Effect } from "./Effect";
 export { TimeStretch } from "./TimeStretch";
-export type { TimeStretchAnchor, TimeStretchOptions, TimeStretchResult } from "./TimeStretch";
-export type { WetArm, EffectOptions } from "./Effect";
-export { SendBus } from "./SendBus";
-export { Channel } from "./Channel";
-export type { ChannelOptions, Send } from "./Channel";
+export type { TimeStretchAnchor, TimeStretchLoadOptions, TimeStretchOptions } from "./TimeStretch";
+export type { WetArm, EffectOptions, EffectStatus } from "./Effect";
+export { EffectChain } from "./EffectChain";
+export type {
+  EffectChainIssue,
+  EffectChainJSON,
+  EffectChainJSONEffect,
+  EffectChainOptions,
+  EffectChainRestoreOptions,
+  EffectType,
+} from "./EffectChain";
+export { SendBus, SendReceive } from "./SendBus";
+export { Channel, Send } from "./Channel";
+export type { ChannelOptions } from "./Channel";
 export { Filter } from "./Filter";
 export type { FilterOptions } from "./Filter";
 export { Equalizer, normalizeEqualizerBands } from "./Equalizer";
@@ -25,5 +34,7 @@ export { PitchShift } from "./PitchShift";
 export type { PitchShiftOptions, PitchShiftEngine, StretchOptions } from "./PitchShift";
 export { Compressor } from "./Compressor";
 export type { CompressorOptions } from "./Compressor";
+export { Ducker } from "./Ducker";
+export type { DuckerOptions } from "./Ducker";
 export { Limiter } from "./Limiter";
 export type { LimiterOptions } from "./Limiter";

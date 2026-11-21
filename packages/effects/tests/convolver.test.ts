@@ -3,14 +3,14 @@ import { effect } from "@audiorective/core";
 import { Convolver } from "../src";
 
 describe("Convolver", () => {
-  it("a unit-impulse IR is identity and flips isReady", async () => {
+  it("a unit-impulse IR is identity and flips status to ready", async () => {
     const ctx = new OfflineAudioContext(1, 512, 44100);
     const ir = ctx.createBuffer(1, 1, 44100);
     ir.getChannelData(0)[0] = 1;
     const fx = new Convolver(ctx, { normalize: false });
-    expect(fx.cells.isReady.value).toBe(false);
+    expect(fx.cells.status.value).toBe("loading");
     fx.buffer = ir;
-    expect(fx.cells.isReady.value).toBe(true);
+    expect(fx.cells.status.value).toBe("ready");
     const src = new ConstantSourceNode(ctx, { offset: 0.5 });
     src.connect(fx.input);
     fx.output.connect(ctx.destination);
@@ -26,7 +26,7 @@ describe("Convolver", () => {
     const fx = new Convolver(ctx, { url: "/ir.wav" });
     await fx.ready;
     expect(fx.buffer).toBe(ir);
-    expect(fx.cells.isReady.value).toBe(true);
+    expect(fx.cells.status.value).toBe("ready");
     vi.restoreAllMocks();
   });
   it("latest load(url) call wins over slower earlier calls", async () => {
@@ -55,12 +55,12 @@ describe("Convolver", () => {
     stop();
     expect(seen).toEqual([null, ir, null]);
   });
-  it("isReady is derived from the buffer cell and buffer is a registered read-only cell", () => {
+  it("status follows the buffer cell and buffer is a registered read-only cell", () => {
     const ctx = new OfflineAudioContext(1, 128, 44100);
     const ir = ctx.createBuffer(1, 4, 44100);
     const fx = new Convolver(ctx);
     const seen: boolean[] = [];
-    const stop = effect(() => void seen.push(fx.cells.isReady.value));
+    const stop = effect(() => void seen.push(fx.cells.status.value === "ready"));
     expect(fx.cells.buffer.value).toBeNull();
     fx.buffer = ir;
     expect(fx.cells.buffer.value).toBe(ir);
@@ -80,7 +80,7 @@ describe("Convolver", () => {
     resolve(ir);
     await pending;
     expect(fx.buffer).toBeNull();
-    expect(fx.cells.isReady.value).toBe(false);
+    expect(fx.cells.status.value).toBe("loading");
     vi.restoreAllMocks();
   });
 });

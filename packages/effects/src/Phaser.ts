@@ -1,6 +1,7 @@
 import type { Param, SchedulableParam } from "@audiorective/core";
 import { Effect, type EffectOptions } from "./Effect";
 import { fanout } from "./internal/fanout";
+import { SMOOTHING } from "./internal/smoothing";
 import { Lfo } from "./internal/lfo";
 
 export interface PhaserOptions extends EffectOptions {
@@ -21,6 +22,7 @@ export interface PhaserOptions extends EffectOptions {
  * notches; `wet` blends between the dry input and that phased mix.
  */
 export class Phaser extends Effect<{ frequency: SchedulableParam; Q: SchedulableParam; octaves: Param<number>; baseFrequency: Param<number> }> {
+  static override readonly type = "Phaser";
   private readonly lfo: Lfo;
   private readonly qSource: ConstantSourceNode;
 
@@ -64,8 +66,8 @@ export class Phaser extends Effect<{ frequency: SchedulableParam; Q: Schedulable
       { input: entry, output: sum },
       ({ param }) => ({
         params: {
-          frequency: param({ default: opts.frequency ?? 0.5, bind: lfo.frequency, min: 0, max: 20 }),
-          Q: param({ default: opts.Q ?? 10, bind: q.offset, min: 0.1, max: 100 }),
+          frequency: param({ default: opts.frequency ?? 0.5, bind: lfo.frequency, min: 0, max: 20, smoothing: SMOOTHING }),
+          Q: param({ default: opts.Q ?? 10, bind: q.offset, min: 0.1, max: 100, smoothing: SMOOTHING }),
           octaves: param<number>({
             default: octaves,
             min: 0,

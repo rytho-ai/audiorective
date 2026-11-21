@@ -111,14 +111,14 @@ describe("DynamicsCore without AudioWorklet", () => {
 
 describe("owner-written cells are read-only views", () => {
   const hasSetter = (c: object) => Boolean(Object.getOwnPropertyDescriptor(Object.getPrototypeOf(c), "value")?.set);
-  it("DynamicsCore reduction/isReady, Convolver isReady and PitchShift isReady have no setter", async () => {
+  it("DynamicsCore reduction/isReady and every effect status/error have no setter", async () => {
     const ctx = new OfflineAudioContext(2, 128, 44100);
     const core = new DynamicsCore(ctx, { threshold: -24, ratio: 4, knee: 0, attack: 0.001, release: 0.05, makeup: 0, lookahead: 0 });
     await core.ready;
     expect(hasSetter(core.cells.reduction)).toBe(false);
     expect(hasSetter(core.cells.isReady)).toBe(false);
     const { Convolver, PitchShift } = await import("../src");
-    expect(hasSetter(new Convolver(ctx).cells.isReady)).toBe(false);
-    expect(hasSetter(new PitchShift(ctx).cells.isReady)).toBe(false);
+    expect(hasSetter(new Convolver(ctx).cells.status)).toBe(false);
+    expect(hasSetter(new PitchShift(ctx).cells.error)).toBe(false);
   });
 });

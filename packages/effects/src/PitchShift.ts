@@ -1,4 +1,4 @@
-import { cell, readonlyCell, type Cell, type ReadonlyCell, type Param } from "@audiorective/core";
+import type { Param } from "@audiorective/core";
 import { Effect, type EffectOptions } from "./Effect";
 import { GranularShifter } from "./pitch/GranularShifter";
 import { StretchShifter } from "./pitch/StretchShifter";
@@ -22,13 +22,11 @@ export interface PitchShiftOptions extends EffectOptions {
   stretch?: StretchOptions;
 }
 
-export class PitchShift extends Effect<{ pitch: Param<number> }, { isReady: ReadonlyCell<boolean> }> {
+/** Pitch shifter. The `"stretch"` engine loads asynchronously; until `cells.status` is `"ready"` the effect passes dry. */
+export class PitchShift extends Effect<{ pitch: Param<number> }> {
+  static override readonly type = "PitchShift";
   readonly engine: PitchShiftEngine;
-  /** Resolves once the engine is ready to process audio. */
-  readonly ready: Promise<void>;
   private readonly core: GranularShifter | StretchShifter;
-  private disposed = false;
-  private readonly _isReady: Cell<boolean>;
 
   constructor(ctx: BaseAudioContext, opts: PitchShiftOptions = {}) {
     const engine = opts.engine ?? "granular";
@@ -36,10 +34,9 @@ export class PitchShift extends Effect<{ pitch: Param<number> }, { isReady: Read
       engine === "stretch"
         ? new StretchShifter(ctx, opts.pitch ?? 0, opts.stretch)
         : new GranularShifter(ctx, { pitch: opts.pitch ?? 0, windowSize: opts.windowSize });
-    const isReady = cell(engine === "granular");
     super(
       ctx,
-      { input: core, output: core },
+      { input: core, output: core, loading: engine === "stretch" },
       ({ param }) => ({
         params: {
           pitch: param<number>({
@@ -49,26 +46,16 @@ export class PitchShift extends Effect<{ pitch: Param<number> }, { isReady: Read
             bind: { set: (v) => core.setPitch(v) },
           }),
         },
-        cells: { isReady: readonlyCell(isReady) },
+        cells: {},
       }),
       opts,
     );
     this.engine = engine;
-    this._isReady = isReady;
-    this.ready =
-      core instanceof StretchShifter
-        ? core.ready.then(() => {
-            if (this.disposed) return;
-            this._isReady.value = true;
-          })
-        : Promise.resolve();
-    // A failed engine load rejects `ready` for callers that await it; this keeps it from also surfacing as unhandled.
-    this.ready.catch(() => {});
+    if (core instanceof StretchShifter) this.track(core.ready);
     this.core = core;
   }
 
   override dispose(): void {
-    this.disposed = true;
     this.core.dispose();
     super.dispose();
   }

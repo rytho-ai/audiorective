@@ -1,6 +1,7 @@
 import type { Param, SchedulableParam } from "@audiorective/core";
 import { Effect, type EffectOptions } from "./Effect";
 import { fanout } from "./internal/fanout";
+import { SMOOTHING } from "./internal/smoothing";
 import { mixFrequencyResponse } from "./internal/frequency-response";
 
 export interface FilterOptions extends EffectOptions {
@@ -13,6 +14,7 @@ export interface FilterOptions extends EffectOptions {
 }
 
 export class Filter extends Effect<{ frequency: SchedulableParam; Q: SchedulableParam; gain: SchedulableParam; type: Param<BiquadFilterType> }> {
+  static override readonly type = "Filter";
   private readonly sources: ConstantSourceNode[];
   private readonly stageCount: number;
   private responseBiquad?: BiquadFilterNode;
@@ -44,9 +46,9 @@ export class Filter extends Effect<{ frequency: SchedulableParam; Q: Schedulable
       { input: stages[0]!, output: stages[stages.length - 1]! },
       ({ param }) => ({
         params: {
-          frequency: param({ default: opts.frequency ?? 350, bind: freq.offset, min: 10, max: 22050 }),
-          Q: param({ default: opts.Q ?? 1, bind: q.offset, min: 0.0001, max: 1000 }),
-          gain: param({ default: opts.gain ?? 0, bind: gain.offset, min: -40, max: 40 }),
+          frequency: param({ default: opts.frequency ?? 350, bind: freq.offset, min: 10, max: 22050, smoothing: SMOOTHING }),
+          Q: param({ default: opts.Q ?? 1, bind: q.offset, min: 0.0001, max: 1000, smoothing: SMOOTHING }),
+          gain: param({ default: opts.gain ?? 0, bind: gain.offset, min: -40, max: 40, smoothing: SMOOTHING }),
           type: param<BiquadFilterType>({
             default: type,
             bind: {

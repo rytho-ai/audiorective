@@ -11,6 +11,7 @@ export interface EqualizerOptions extends EffectOptions {
 
 /** A serial peaking-filter bank with independent band Params and one global wet/dry mix. Each band's Params are also registered in `params` as `band<i>Frequency`, `band<i>Gain` and `band<i>Q`. */
 export class Equalizer extends Effect<Record<string, SchedulableParam>> {
+  static override readonly type = "Equalizer";
   private readonly filters: readonly Filter[];
   private magnitudes = new Float32Array(0);
   private phases = new Float32Array(0);

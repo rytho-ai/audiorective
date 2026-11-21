@@ -1,4 +1,5 @@
 import { AudioProcessor, cell, readonlyCell, registerWorklet, type Cell, type ReadonlyCell, type SchedulableParam } from "@audiorective/core";
+import { SMOOTHING } from "../internal/smoothing";
 import { DYNAMICS_WORKLET, DYNAMICS_WORKLET_NAME } from "../worklets/dynamics.worklet";
 
 export interface DynamicsCoreOptions {
@@ -48,7 +49,7 @@ export class DynamicsCore extends AudioProcessor<P, { reduction: ReadonlyCell<nu
         knee: schedulableParam({ default: opts.knee, min: 0, max: 40 }),
         attack: schedulableParam({ default: opts.attack, min: 0, max: 1 }),
         release: schedulableParam({ default: opts.release, min: 0.001, max: 5 }),
-        makeup: schedulableParam({ default: opts.makeup, min: 0, max: 40 }),
+        makeup: schedulableParam({ default: opts.makeup, min: 0, max: 40, smoothing: SMOOTHING }),
       },
       cells: { reduction: readonlyCell(reduction), isReady: readonlyCell(isReady) },
       latency: lookaheadSamples,

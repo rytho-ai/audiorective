@@ -19,27 +19,22 @@ function cacheFor(ctx: BaseAudioContext): AudioBufferCache {
   return c;
 }
 
-export class Convolver extends Effect<{}, { isReady: ReadonlyCell<boolean>; buffer: ReadonlyCell<AudioBuffer | null> }> {
+/** Convolution reverb. Until an impulse response is in place (`cells.status` is `"loading"`, or `"error"` when `url` failed to load) the effect passes the dry signal. */
+export class Convolver extends Effect<{}, { buffer: ReadonlyCell<AudioBuffer | null> }> {
+  static override readonly type = "Convolver";
   private readonly node: ConvolverNode;
   private loadToken = 0;
   private disposed = false;
   private readonly _buffer: Cell<AudioBuffer | null>;
-  /** Resolves once the initial `url` (if any) has loaded. */
-  readonly ready: Promise<void>;
 
   constructor(ctx: BaseAudioContext, opts: ConvolverOptions = {}) {
     const node = new ConvolverNode(ctx, { disableNormalization: opts.normalize === false });
     const buffer = cell<AudioBuffer | null>(null);
-    super(
-      ctx,
-      { input: node, output: node },
-      () => ({ params: {}, cells: { isReady: readonlyCell(() => buffer.value !== null), buffer: readonlyCell(buffer) }, latency: 0 }),
-      opts,
-    );
+    super(ctx, { input: node, output: node, loading: true }, () => ({ params: {}, cells: { buffer: readonlyCell(buffer) }, latency: 0 }), opts);
     this.node = node;
     this._buffer = buffer;
     if (opts.buffer) this.buffer = opts.buffer;
-    this.ready = opts.url ? this.load(opts.url) : Promise.resolve();
+    else if (opts.url) void this.load(opts.url).catch(() => {});
   }
 
   get buffer(): AudioBuffer | null {
@@ -48,13 +43,21 @@ export class Convolver extends Effect<{}, { isReady: ReadonlyCell<boolean>; buff
   set buffer(b: AudioBuffer | null) {
     this.node.buffer = b;
     this._buffer.value = b;
+    this.loadToken++;
+    this.setReady(b !== null);
   }
 
-  async load(url: string): Promise<void> {
+  /** Loads the impulse response at `url` (cached per context); rejects with the fetch or decode error, which `cells.error` also holds. */
+  load(url: string): Promise<void> {
     const token = ++this.loadToken;
-    const buffer = await cacheFor(this.context).load(url);
-    if (this.disposed || token !== this.loadToken) return;
-    this.buffer = buffer;
+    const work = cacheFor(this.context)
+      .load(url)
+      .then((buffer) => {
+        if (this.disposed || token !== this.loadToken) return;
+        this.buffer = buffer;
+      });
+    this.track(work);
+    return this.ready;
   }
 
   override dispose(): void {
