@@ -294,6 +294,7 @@ export class Clip {
       const cleanup = sched.attached?.({
         refresh: () => launcher._reseedSoon(),
         detach: () => {},
+        now: () => launcher._now(),
         loopBeats: () => {
           const cfg = this._opts.value;
           return cfg.loop && cfg.length != null ? launcher._materialBeats(this, cfg) : null;
@@ -512,6 +513,9 @@ export class ClipLauncher extends EventTarget implements Scheduler {
   }
   private isPlaying(): boolean {
     return !!this.handle && this.handle.state.value === "playing";
+  }
+  /** @internal The audio-context time now, for a scheduler clip's handle. */ _now(): number {
+    return this.now();
   }
   private now(): number {
     return this.context.currentTime;

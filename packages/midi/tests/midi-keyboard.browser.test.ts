@@ -219,6 +219,41 @@ describe("MidiKeyboard", () => {
     keyboard.dispose();
   });
 
+  test("re-striking a key the pedal is holding releases the old note first: one voice per pitch, pedal-up releases only the new one", async () => {
+    for (const hardware of [false, true]) {
+      now = 5;
+      const { inst, log } = instrument();
+      const piano = new MockInput("a");
+      access.inputs.set("a", piano);
+      const keyboard = await open(inst, hardware ? {} : { access: null });
+      const send = (...bytes: number[]) => {
+        if (hardware) piano.send(...bytes);
+      };
+      if (hardware) send(0xb0, 64, 127);
+      else keyboard.setSustain(true);
+      if (hardware) send(0x90, 60, 100);
+      else keyboard.press(60, { velocity: 100 / 127, when: 5 });
+      if (hardware) send(0x80, 60, 0);
+      else keyboard.release(60, 5.5);
+      expect(log).toEqual(["on 60 v0.787 c0 @5"]); // held by the pedal alone
+      now = 6;
+      if (hardware) send(0x90, 60, 100);
+      else keyboard.press(60, { velocity: 100 / 127, when: 6 });
+      expect(log.slice(1)).toEqual(["off 60 @6", "on 60 v0.787 c0 @6"]);
+      expect(keyboard.held.value).toEqual([60]);
+      now = 7;
+      if (hardware) send(0x80, 60, 0);
+      else keyboard.release(60, 7);
+      expect(log).toHaveLength(3); // still held by the pedal
+      now = 8;
+      if (hardware) send(0xb0, 64, 0);
+      else keyboard.setSustain(false, 8);
+      expect(log.slice(3)).toEqual(["off 60 @8"]);
+      expect(keyboard.held.value).toEqual([]);
+      keyboard.dispose();
+    }
+  });
+
   test("on-screen keys and sustain: false", async () => {
     const { inst, log } = instrument();
     const keyboard = await open(inst, { access: null, sustain: false });

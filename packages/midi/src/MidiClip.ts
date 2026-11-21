@@ -31,6 +31,10 @@ export type ClipTransport = Readonly<{
   detach(): void;
   /** A ClipLauncher's answer for the clip: the beats its `loop` and `length` repeat every, or null when the launcher clip does not loop. Present only in a launcher. */
   loopBeats?(): number | null;
+  /** The audio-context time now, when the transport can tell (a ClipLauncher's handle). A clock's handle has `timeline.now`. */
+  now?(): number;
+  /** The clock's timeline: `timeline.now` is the audio-context time now. */
+  timeline?: Readonly<{ now: number }>;
   /** The clock's time signature, when the transport has one: bars ("1m") are measured in it. */
   meter?: Readonly<{ value: readonly [number, number] }>;
 }>;
@@ -171,6 +175,15 @@ export class MidiClip {
     const draft = untracked(() => this.store.value).map((note) => ({ ...note })) as DraftNote[];
     recipe(draft);
     this.commit(draft);
+  }
+
+  /** The audio-context time now, from the transport the clip is attached to; a note is started when its on time has passed on this clock, not the last window's. */
+  private currentTime(): number {
+    for (const handle of this.handles) {
+      const now = handle.now?.() ?? handle.timeline?.now;
+      if (typeof now === "number") return Math.max(now, this.lastNow);
+    }
+    return this.lastNow;
   }
 
   private barBeats(): number {
@@ -315,8 +328,9 @@ export class MidiClip {
    */
   private cancel(sent: Sent, time?: number): void {
     if (sent.done) return;
-    const at = Math.max(time ?? this.lastNow, sent.on);
-    if (sent.on > this.lastNow) return this.release(sent, at, true);
+    const now = this.currentTime();
+    const at = Math.max(time ?? now, sent.on);
+    if (sent.on > now) return this.release(sent, at, true);
     if (sent.cutAt !== null && sent.cutAt <= at) return; // an earlier cut is already pending
     sent.cutAt = at;
     clearTimeout(sent.timer);
@@ -327,11 +341,12 @@ export class MidiClip {
    * Sends the note-off of a sent note-on at `at` (default `max(now, its start)`) in place of the pending natural one. A cut that lies ahead leaves the note
    * tracked until it passes, so a still earlier cut (a stop inside the same look-ahead) can move it again. `final` ends the record now.
    */
-  private release(sent: Sent, at = Math.max(this.lastNow, sent.on), final = false): void {
+  private release(sent: Sent, at = Math.max(this.currentTime(), sent.on), final = false): void {
     if (sent.done) return;
+    const now = this.currentTime();
     if (sent.offSent && sent.off <= at) return final ? this.finish(sent) : undefined;
     sent.cancelOff?.();
-    if (sent.on > this.lastNow) sent.cancelOn?.();
+    if (sent.on > now) sent.cancelOn?.();
     sent.cancelOn = undefined;
     const when = Math.max(sent.offSent ? at : Math.min(at, sent.off), sent.on);
     sent.off = when;
@@ -340,7 +355,7 @@ export class MidiClip {
     try {
       sent.cancelOff = cancelOf(sent.instrument.noteOff(sent.pitch, when));
     } finally {
-      if (final || when <= this.lastNow) this.finish(sent);
+      if (final || when <= now) this.finish(sent);
     }
   }
 

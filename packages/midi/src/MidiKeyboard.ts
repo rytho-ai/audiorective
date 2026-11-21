@@ -140,7 +140,8 @@ export class MidiKeyboard extends EventTarget implements MidiSource {
     const sustain = this.options.sustain !== false;
     if (kind === 0x90 && b > 0) {
       const key = channel * 128 + a;
-      port.sustained.delete(key);
+      // a key the pedal alone is holding is released at the re-strike, so the pitch has one voice and pedal-up releases only the new note
+      if (port.sustained.delete(key)) this.options.instrument.noteOff(a, when);
       port.down.add(key);
       this.options.instrument.noteOn(a, { velocity: b / 127, when, channel });
     } else if (kind === 0x80 || kind === 0x90) {
@@ -162,7 +163,7 @@ export class MidiKeyboard extends EventTarget implements MidiSource {
     this.publish();
   }
 
-  /** Strikes `note` (0-127) like a key on a keyboard: `velocity` 0..1 (default 1) on `channel` 0-15 (default 0), sounding at `when` (audio-context seconds, default now). The same path as hardware: `held`, sustain and the recorder see it. */
+  /** Strikes `note` (0-127) like a key on a keyboard (a note the pedal alone is holding is released at `when` first, so a pitch has one voice): `velocity` 0..1 (default 1) on `channel` 0-15 (default 0), sounding at `when` (audio-context seconds, default now). The same path as hardware: `held`, sustain and the recorder see it. */
   press(note: number, options: Readonly<{ velocity?: number; when?: number; channel?: number }> = {}): void {
     if (this.disposed) return;
     const { velocity = 1, channel = 0 } = options;

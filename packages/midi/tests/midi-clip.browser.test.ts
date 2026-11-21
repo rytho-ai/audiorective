@@ -192,6 +192,18 @@ describe("MidiClip on a Clock", () => {
     expect(clip.revision.value).toBe(1);
   });
 
+  test("a refresh after a note's on time but before the next window keeps the note: it sounds once, with one note-off at its natural time", async () => {
+    for (const at of [0.53, 0.535, 0.545]) {
+      const { clock, run } = rig(2, 0.1);
+      const { inst, calls } = instrument();
+      const clip = new MidiClip([note(60, 1.04, 1)], { instrument: inst }); // on at 0.52 s, off at 1.02 s
+      clock.attach(clip);
+      await run([{ at, run: () => clock.refresh() }]);
+      expect(ons(calls), `refresh at ${at}`).toEqual([[60, 0.52]]);
+      expect(offs(calls), `refresh at ${at}`).toEqual([[60, 1.02]]);
+    }
+  });
+
   test("a tempo change re-times the notes not yet played", async () => {
     const { clock, run } = rig(6);
     const { inst, calls } = instrument();
