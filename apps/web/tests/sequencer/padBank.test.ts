@@ -9,7 +9,7 @@ const pending = () => queued.filter((voice) => voice.playing.value).length;
 const owned = (voice: Voice): CancellableEvent => (
   queued.push(voice),
   {
-    cancel: () => voice.stop(),
+    cancel: (time) => voice.stop(time),
     onEnded: (listener) => void voice.playing.subscribe((playing) => playing || listener()),
   }
 );

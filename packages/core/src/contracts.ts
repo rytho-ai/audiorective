@@ -9,7 +9,7 @@ export interface CancellableEvent {
 
 /**
  * Pair a scheduled event with the extra scheduling it needed, so a cancel retracts both.
- * The returned event's `cancel()` cancels `event`, then runs `undo` once; later calls do nothing. `onEnded` passes through to `event`.
+ * The returned event's `cancel(time?)` forwards the optional audio-time boundary to `event`, then runs `undo` once; later calls do nothing. `onEnded` passes through to `event`.
  * Cancelling does not run `undo` for an event that already ended on its own.
  * With `event` null (an instrument that made no sound) there is nothing to cancel: it ends when cancelled, and `undo` still runs.
  */
@@ -21,10 +21,10 @@ export function withCancel(event: CancellableEvent | null, undo: () => void): Ca
     ended = true;
   });
   return {
-    cancel() {
+    cancel(time) {
       if (cancelled || ended) return;
       cancelled = true;
-      event?.cancel();
+      event?.cancel(time);
       try {
         undo();
       } finally {

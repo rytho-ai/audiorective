@@ -265,7 +265,7 @@ clock.start({ atBeat: -0.5 }); // beat 0, the first launch boundary, is half a b
 
 ### Own cancellable events when transport edits must cut queued sound
 
-The default remains unchanged: `Clock` does not cancel sound scheduled by `onTick`, so an unowned event may keep playing for up to the look-ahead interval after `pause()`. For a hard stop or an editable pattern, register a returned event handle with `window.own(event, when)`. `when` is its finite, nonnegative absolute `AudioContext` start time. The handle is a core `CancellableEvent` (`cancel(time?)` and `onEnded(listener)`, re-exported by this package; `time` is when the retraction takes effect, so an event that is already sounding can stop there); Clock drops naturally ended events from its registry. A core `Voice` (from `PadBank.trigger()` in [Pads](./pads.md#pad-bank) or `Sampler.trigger()`) is wrapped as one: `{ cancel: () => voice.stop(), onEnded: (done) => void voice.playing.subscribe((playing) => playing || done()) }`. `Timeline` satisfies core's `BeatTiming`, so it can be passed to `StepSequencer.schedule(window, timing)` without any other package in between.
+The default remains unchanged: `Clock` does not cancel sound scheduled by `onTick`, so an unowned event may keep playing for up to the look-ahead interval after `pause()`. For a hard stop or an editable pattern, register a returned event handle with `window.own(event, when)`. `when` is its finite, nonnegative absolute `AudioContext` start time. The handle is a core `CancellableEvent` (`cancel(time?)` and `onEnded(listener)`, re-exported by this package; `time` is when the retraction takes effect, so an event that is already sounding can stop there); Clock drops naturally ended events from its registry. A core `Voice` (from `PadBank.trigger()` in [Pads](./pads.md#pad-bank) or `Sampler.trigger()`) is wrapped as one: `{ cancel: (time) => voice.stop(time), onEnded: (done) => void voice.playing.subscribe((playing) => playing || done()) }`. `Timeline` satisfies core's `BeatTiming`, so it can be passed to `StepSequencer.schedule(window, timing)` without any other package in between.
 
 ```typescript
 const clock = new Clock({
@@ -276,7 +276,7 @@ const clock = new Clock({
       const voice = instruments.trigger("closed-hat", { when: time });
       if (voice) {
         // this sequencer owns this hit and its choke
-        window.own({ cancel: () => voice.stop(), onEnded: (done) => void voice.playing.subscribe((playing) => playing || done()) }, time);
+        window.own({ cancel: (time) => voice.stop(time), onEnded: (done) => void voice.playing.subscribe((playing) => playing || done()) }, time);
       }
     }
   },

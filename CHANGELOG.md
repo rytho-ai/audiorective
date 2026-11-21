@@ -44,6 +44,8 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Fixed
 
+- **core:** `withCancel(event, undo).cancel(time?)` forwards the optional audio-context cancellation boundary to the wrapped event instead of cancelling it immediately. Cancellation and undo still run at most once; documentation and clock-owned voice examples preserve the same boundary.
+
 - **docs / skill:** the prepared audio-stretch example executes `apply()` through the app's synchronous undo history, matching the ownership guidance; warp-editor guidance routes to that example.
 
 - **widgets:** waveform selection previews stay local until release, when the shared model receives one edit. Escape, pointer cancellation, capture loss, external owner replacement and detachment restore the committed range without writing a preview to the model.

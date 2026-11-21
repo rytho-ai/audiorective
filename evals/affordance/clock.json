@@ -1,0 +1,54 @@
+{
+  "area": "clock",
+  "description": "Clock, timeline and ruler affordance checks: musical and played-second coordinates, custom scheduler ownership, and waiting for edited look-ahead audio before offline rendering. Use alongside automation-transport.json, whose two tasks cover beat-domain curves. Expectations describe behavior, not API names. All panels use framework-independent TypeScript/DOM.",
+  "tasks": [
+    {
+      "id": "K1-musical-rulers",
+      "prompt": "Build the timing part of a plain TypeScript browser metronome. The app supplies a running AudioContext ctx and playClick(when, accented), which schedules a click at an absolute audio-context time and returns its cancellable event handle. Create one transport at 120 quarter-note BPM in 6/8. Repeat a two-bar pattern with twelve equally spaced eighth-note subdivisions, accenting the first and seventh subdivision of each two-bar pass. Let the transport's own look-ahead provide exact audio start times, including across tempo changes and a seek; do not accumulate a step counter or run an audio timer yourself. Expose a readPosition() function for the app's existing render loop: it returns the song bar number counted from one, the eighth-note beat within that bar counted from one to six, and the two-bar loop phase from zero up to but not including one. A button handler changes tempo to 90 BPM and a seek handler jumps to the first beat of song bar five; both the pattern and displayed coordinates must follow. Show start, pause, resume and idempotent teardown handlers, retaining the app's context. Use the supplied toolkit timing and ruler capabilities. Write implementation code, not an explanation.",
+      "expectations": [
+        "There is one transport on the app's audio context and a 6/8 bar is three quarter-note axis beats, so two bars span six such beats.",
+        "The twelve subdivisions repeat over two bars and the first and seventh audible subdivisions are accented without an accumulating mutable step counter.",
+        "Clicks receive absolute audio-context start times from the look-ahead and remain aligned through tempo changes and a seek, without a timer driving audio.",
+        "The displayed song bar starts at one, the displayed eighth-note beat runs from one to six, and loop phase is in the requested half-open range; ruler offsets are converted to those display units correctly.",
+        "The seek target is the beginning of song bar five, and the tempo, pause and resume handlers act on the same transport rather than restarting a separate musical phase.",
+        "Scheduled clicks are registered for transport cancellation; teardown stops this panel's scheduling and releases its own resources once without closing the app's context."
+      ]
+    },
+    {
+      "id": "K2-played-seconds",
+      "prompt": "A plain TypeScript browser panel needs musical position and a stopwatch from the same transport. The app supplies a running AudioContext ctx. Create a 120 quarter-note BPM transport with a musical ruler plus an elapsed-played-seconds readout and an independent repeating five-second visual phase. Expose readPosition() for an existing host render loop; it returns those readings without creating a second position store or a timer. Start playback half a second in the future: the played-seconds and visual-phase readings stay at zero until that boundary. Pausing freezes both time readings, and resuming continues them without counting the paused interval. Changing tempo to 180 BPM changes the musical progress but not how quickly played seconds pass; do not derive the stopwatch by multiplying the current beat by the current seconds per beat. Stop resets the readings. Provide the small handlers and idempotent cleanup, leaving the shared context alive. Write implementation code using the supplied timing and ruler capabilities.",
+      "expectations": [
+        "Musical and played-second readouts belong to the same transport and there is no duplicate authored position store.",
+        "The elapsed-seconds and repeating five-second phase use played time that excludes pauses, rather than tempo-scaled beats or wall time since panel construction.",
+        "A start half a second in the future leaves both time readings at zero before the start boundary.",
+        "Pause and resume freeze and continue the existing readings without adding the paused interval or resetting the visual phase.",
+        "Changing tempo affects musical progress but preserves elapsed-second speed; stop resets both time readings.",
+        "The host reads existing transport/ruler state without another timer, and teardown releases this panel's resources once while retaining the app's context."
+      ]
+    },
+    {
+      "id": "K3-owned-scheduler",
+      "prompt": "The app already owns a running transport clock and a tracked pattern cell containing eight booleans. Other tracks use that same transport and must keep working. It supplies playHit(when), returning a cancellable audio event or null, and addCue(when), which manages a visual cue's normal lifetime and returns an undo function for retracting it. Add a detachable custom scheduler that repeats the eight entries over four transport beats, using the transport's supplied beat-to-audio-time mapping. For each enabled entry, pair the audio event with its cue so cancellation forwards the requested absolute audio-time boundary and undoes the cue exactly once. An event that finishes normally needs no cancellation undo; a null audio event must still allow its cue to be retracted. Live pattern edits must retract stale future hits and refill from the transport without a second scheduler loop. A handler retracts only this scheduler's registered events whose starts are at or after a supplied future audio-time cutoff, leaving earlier events and other tracks alone. Closing twice detaches this scheduler, cleans its observer and cues, and leaves the shared transport and context alive. Write implementation code using the supplied toolkit contracts, without a UI timer or a parallel transport.",
+      "expectations": [
+        "One custom scheduler is attached to the supplied transport; its eight-entry pattern repeats every four transport beats using the supplied musical-to-audio mapping.",
+        "Each scheduled sound and cue form one owned cancellable event, with the requested optional audio-time cancellation boundary preserved through the composition.",
+        "Cancellation and cue undo run at most once, natural completion does not run cancellation undo, and a null audio event still permits its cue's undo.",
+        "Live pattern edits retract stale future events and refill through the existing transport rather than a timer, a new transport or a handwritten look-ahead driver.",
+        "The future-cutoff handler retracts this scheduler's events starting at or after the cutoff, preserving its earlier events and all other track registrations.",
+        "Closing twice detaches only this scheduler and releases its observer and pending cues without disposing the app-owned transport or context."
+      ]
+    },
+    {
+      "id": "K4-offline-edit-boundary",
+      "prompt": "An offline TypeScript audio test already owns an OfflineAudioContext ctx, a running transport clock with a manual tick source ticks, and an attached pattern scheduler driven by the app's editable pattern cell. The test owns its registration handle testHandle; the host owns ctx, clock, ticks and pattern. The initial look-ahead has already been filled. Implement an async renderEditedPattern(nextPattern) operation: replace the pattern, explicitly ask the existing transport to retract and refill its look-ahead, and begin ctx.startRendering() only after that refill has happened. Only one rendering operation is run; several synchronous pattern edits may occur before it reaches rendering, and they should share the refill rather than scheduling duplicate hits. Keep the transport position and the first captured edit boundary; no beat may be skipped. Also show a handler that edits from inside a scheduling callback without synchronously re-entering that callback, plus safe cleanup if rendering is abandoned after an edit: detach only the test's registration, while other host registrations continue working. Use the public lifecycle and timing surface; do not add an arbitrary timeout, render the old window, or create another transport. If a public completion boundary is absent, make the required platform coordination visible instead of assuming that a synchronous return means refilling is complete. Write the implementation and any small handlers.",
+      "expectations": [
+        "The existing pattern owner is edited and its stale look-ahead is explicitly retracted and refilled through the existing transport.",
+        "Offline rendering starts after the requested refill has actually completed rather than immediately after an unawaited edit notification.",
+        "The first captured edit boundary and transport position are retained, and coalesced edits do not cause duplicate hits or skipped beats.",
+        "Editing from a scheduling callback does not synchronously re-enter scheduling, and no independent look-ahead loop is introduced.",
+        "There is no arbitrary timeout, replacement transport or second pattern owner; any necessary platform microtask coordination is visible and semantically correct.",
+        "Abandoning the operation detaches only the test's registration and retracts its pending scheduling; cleanup is safe twice and other host registrations and resources remain alive."
+      ]
+    }
+  ]
+}

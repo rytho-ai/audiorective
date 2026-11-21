@@ -22,6 +22,19 @@ describe("withCancel", () => {
     expect(undo).toHaveBeenCalledTimes(1);
   });
 
+  test("cancel forwards the requested audio-time boundary only once", () => {
+    const inner = fakeEvent();
+    const undo = vi.fn();
+    const event = withCancel(inner, undo);
+
+    event.cancel(12.5);
+    event.cancel(15);
+
+    expect(inner.cancel).toHaveBeenCalledTimes(1);
+    expect(inner.cancel).toHaveBeenCalledWith(12.5);
+    expect(undo).toHaveBeenCalledTimes(1);
+  });
+
   test("onEnded passes through to the wrapped event", () => {
     const inner = fakeEvent();
     const event = withCancel(inner, () => {});
