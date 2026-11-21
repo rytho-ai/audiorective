@@ -57,7 +57,7 @@ describe("model", () => {
   test("defaults fill the lane and every step", () => {
     const { sequencer } = rig({ k: "x..." });
     const lane = sequencer.lanes.k!;
-    expect([lane.length, lane.rate, lane.direction, lane.swing, lane.mute, lane.solo, lane.sound]).toEqual([
+    expect([lane.length, lane.rate, lane.direction, lane.swing, lane.muted, lane.solo, lane.sound]).toEqual([
       4,
       "16n",
       "forward",
@@ -72,14 +72,14 @@ describe("model", () => {
     expect(lane.progress).toBeNull();
   });
 
-  test("lane options set direction, solo and mute at construction", () => {
-    const { sequencer } = rig({ a: { pattern: "XX", direction: "bounce", solo: true, mute: true } });
-    expect(sequencer.lanes.a).toMatchObject({ direction: "bounce", solo: true, mute: true });
+  test("lane options set direction, solo and muted at construction", () => {
+    const { sequencer } = rig({ a: { pattern: "XX", direction: "bounce", solo: true, muted: true } });
+    expect(sequencer.lanes.a).toMatchObject({ direction: "bounce", solo: true, muted: true });
   });
 
   test("validation errors", () => {
     const make = (lane: Partial<LaneOptions> & Record<string, unknown>) => () => new StepSequencer({ a: { pattern: "XX", ...lane } as LaneOptions });
-    for (const bad of [{ direction: "up" }, { mute: 1 }, { solo: "yes" }])
+    for (const bad of [{ direction: "up" }, { muted: 1 }, { solo: "yes" }])
       expect(make(bad), JSON.stringify(bad)).toThrow(/^Step Sequencer lane needs/);
     for (const bad of [{ rate: "1/3" }, { swing: 1.5 }]) expect(make(bad), JSON.stringify(bad)).toThrow(/^Step Sequencer /);
     const lane = new StepSequencer({ a: "XX" }).lanes.a!;
@@ -305,18 +305,18 @@ describe("scheduling", () => {
     expect(single.hits[0]!.pitch).toBe(0);
   });
 
-  test("mute and solo", () => {
-    const play = (patch: Record<string, { mute?: boolean; solo?: boolean }>) => {
+  test("muted and solo", () => {
+    const play = (patch: Record<string, { muted?: boolean; solo?: boolean }>) => {
       const r = rig({ a: "X...", b: "X...", c: "X..." });
       for (const [name, change] of Object.entries(patch)) Object.assign(r.sequencer.lanes[name]!, change);
       r.run(0, 1);
       return r.hits.map((hit) => hit.lane).sort();
     };
     expect(play({})).toEqual(["a", "b", "c"]);
-    expect(play({ b: { mute: true } })).toEqual(["a", "c"]);
+    expect(play({ b: { muted: true } })).toEqual(["a", "c"]);
     expect(play({ b: { solo: true } })).toEqual(["b"]);
     expect(play({ a: { solo: true }, c: { solo: true } })).toEqual(["a", "c"]);
-    expect(play({ a: { solo: true, mute: true }, b: { solo: true } })).toEqual(["b"]);
+    expect(play({ a: { solo: true, muted: true }, b: { solo: true } })).toEqual(["b"]);
   });
 
   test("chance uses the injectable random once per step", () => {

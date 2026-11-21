@@ -23,7 +23,7 @@ const DIRECTIONS: readonly StepGridDirection[] = ["forward", "backward", "bounce
 const ARROWS: Record<StepGridDirection, string> = { forward: "→", backward: "←", bounce: "↔" };
 const DRAG_THRESHOLD = 3;
 const BOX_DRAG = 3;
-const HEADER_FIELDS = ["length", "rate", "direction", "swing", "mute", "solo"] as const;
+const HEADER_FIELDS = ["length", "rate", "direction", "swing", "muted", "solo"] as const;
 const MAX_LENGTH = 128;
 
 const DEFAULT_LABELS: StepGridLabels = {
@@ -202,7 +202,7 @@ type Snap = Readonly<{
   rate: string;
   direction: StepGridDirection;
   swing: number;
-  mute: boolean;
+  muted: boolean;
   solo: boolean;
   params: StepGridLane["params"];
   /** One entry per visible step (the first `length`). */
@@ -210,7 +210,7 @@ type Snap = Readonly<{
 }>;
 
 function readLane(lane: StepGridLane): Snap {
-  const { length, rate, direction, swing, mute, solo, params } = lane;
+  const { length, rate, direction, swing, muted, solo, params } = lane;
   const cells = lane.steps.map(({ velocity, offset, length, repeat, pitch, chance, values }) => ({
     velocity,
     offset,
@@ -220,7 +220,7 @@ function readLane(lane: StepGridLane): Snap {
     chance,
     values: { ...values },
   }));
-  return { length, rate: String(rate), direction, swing, mute, solo, params, cells };
+  return { length, rate: String(rate), direction, swing, muted, solo, params, cells };
 }
 
 type NumberBox = {
@@ -378,7 +378,7 @@ type Drag = { view: LaneView; step: number; def: ParamDef; startY: number; start
 
 /**
  * A pluggable, lane-aware step editor over a borrowed sequencer.
- * `sequencer` is a structural contract (`lanes`: per lane `length`, `rate`, `swing`, `direction`, `mute`, `solo`, `params`, `playhead` and `steps`),
+ * `sequencer` is a structural contract (`lanes`: per lane `length`, `rate`, `swing`, `direction`, `muted`, `solo`, `params`, `playhead` and `steps`),
  * so a `StepSequencer` or your own model fits. Disposeing the grid leaves the borrowed sequencer alone.
  */
 export function mountStepGrid(root: HTMLElement, options: StepGridOptions): StepGridHandle {
@@ -584,7 +584,7 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
     };
     mute.addEventListener("click", () => {
       const lane = untracked(live);
-      lane.mute = !untracked(() => lane.mute);
+      lane.muted = !untracked(() => lane.muted);
     });
     solo.addEventListener("click", () => {
       const lane = untracked(live);
@@ -611,7 +611,7 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
     const label = laneView.label;
     setText(laneView.name, label);
     laneView.el.setAttribute("aria-label", label);
-    laneView.mute.setAttribute("aria-pressed", String(snap.mute));
+    laneView.mute.setAttribute("aria-pressed", String(snap.muted));
     laneView.mute.setAttribute("aria-label", `${label} ${labels.mute}`);
     laneView.mute.title = labels.mute;
     laneView.solo.setAttribute("aria-pressed", String(snap.solo));

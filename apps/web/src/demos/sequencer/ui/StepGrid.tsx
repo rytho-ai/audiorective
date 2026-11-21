@@ -26,7 +26,7 @@ function useHeardStep(): number | null {
 function TrackRow({ track, steps, playhead }: { track: DrumTrack; steps: number[]; playhead: number | null }) {
   const { machine } = useEngine();
   const pattern = useValue(track.pattern);
-  const muted = useValue(track.mute);
+  const muted = useValue(track.muted);
 
   return (
     <div className={`row${muted ? " row--muted" : ""}`}>
@@ -34,7 +34,7 @@ function TrackRow({ track, steps, playhead }: { track: DrumTrack; steps: number[
         <span className="row__label">{track.label}</span>
         <button
           className={`row__mute${muted ? " row__mute--on" : ""}`}
-          onClick={() => (track.mute.value = !muted)}
+          onClick={() => (track.muted.value = !muted)}
           aria-label={`${muted ? "Unmute" : "Mute"} ${track.label}`}
           aria-pressed={muted}
         >

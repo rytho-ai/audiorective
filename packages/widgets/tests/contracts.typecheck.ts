@@ -22,8 +22,20 @@ export const lanesWritableInPlugin: StepGridPlugin = {
     lane.rate = "1/8";
     lane.swing = 0.3;
     lane.direction = "bounce";
-    lane.mute = false;
+    lane.muted = false;
     lane.solo = false;
     lane.steps[0]!.velocity = 1;
   },
 };
+
+// Boolean silence controls use the same spelling on real and structural owners.
+export function mutedLaneContract(sequencer: StepSequencer, structural: StepGridSequencer): void {
+  const lane = sequencer.lanes.kick!;
+  const viewLane = structural.lanes.kick!;
+  lane.muted = viewLane.muted;
+  viewLane.muted = lane.muted;
+  // @ts-expect-error A concrete lane has no former Boolean alias.
+  void lane.mute;
+  // @ts-expect-error A structural widget owner has no former Boolean alias.
+  void viewLane.mute;
+}

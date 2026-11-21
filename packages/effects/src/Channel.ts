@@ -5,7 +5,8 @@ import type { SendBus } from "./SendBus";
 export interface ChannelOptions {
   gain?: number;
   pan?: number;
-  mute?: boolean;
+  /** Silence the channel and its sends without changing gain. Default false. */
+  muted?: boolean;
   /** Output channel count; mono input is upmixed. Default 2. */
   channelCount?: number;
   /**
@@ -104,7 +105,8 @@ export class Channel extends AudioProcessor<
     gain: SchedulableParam;
     /** Stereo pan -1..1, default 0; writes smooth over 10 ms automatically. */
     pan: SchedulableParam;
-    mute: Param<boolean>;
+    /** Silence the channel and its sends without changing gain. */
+    muted: Param<boolean>;
     outputEnabled: Param<boolean>;
   },
   { level: ReadonlyCell<number> }
@@ -120,7 +122,7 @@ export class Channel extends AudioProcessor<
     const input = new GainNode(ctx, { channelCount: opts.channelCount ?? 2, channelCountMode: opts.channelCountMode ?? "explicit" });
     const gain = new GainNode(ctx, { gain: opts.gain ?? 1 });
     const pan = new StereoPannerNode(ctx, { pan: opts.pan ?? 0 });
-    const mute = new GainNode(ctx, { gain: opts.mute ? 0 : 1 });
+    const mute = new GainNode(ctx, { gain: opts.muted ? 0 : 1 });
     const output = new GainNode(ctx);
     const level = cell(-Infinity);
 
@@ -129,8 +131,8 @@ export class Channel extends AudioProcessor<
       params: {
         gain: param({ default: opts.gain ?? 1, bind: gain.gain, min: 0, smoothing: SMOOTHING }),
         pan: param({ default: opts.pan ?? 0, bind: pan.pan, min: -1, max: 1, smoothing: SMOOTHING }),
-        mute: param<boolean>({
-          default: opts.mute ?? false,
+        muted: param<boolean>({
+          default: opts.muted ?? false,
           bind: {
             set: (m) => {
               mute.gain.value = m ? 0 : 1;

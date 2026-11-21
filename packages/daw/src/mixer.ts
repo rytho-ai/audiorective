@@ -112,7 +112,7 @@ export class Mixer {
       batch(() => {
         params.gain.value = track.volume;
         params.pan.value = track.pan;
-        params.mute.value = track.muted || !solo.strip(track);
+        params.muted.value = track.muted || !solo.strip(track);
         params.outputEnabled.value = solo.edge(track, track.routing.outputBusId);
         for (const { busId, gain } of track.routing.sends) {
           const send = runtime.sends.get(busId)?.send;

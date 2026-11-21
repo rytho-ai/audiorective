@@ -6,7 +6,7 @@ Deep topics for the lane-record `StepSequencer` from `@audiorective/sequencer`: 
 
 ## Custom transform
 
-`transform(hit, random)` is the last hook before a hit is scheduled. It sees each hit that will sound, after `offset`, `swing`, `repeat`, `chance`, `mute` and `solo` have been applied. Each hit carries both forms of its position: `beat` and `durationBeats` (the musical grid) and `when` and `duration` (audio-context seconds). It returns the hit (changed or not) or `null` to drop it.
+`transform(hit, random)` is the last hook before a hit is scheduled. It sees each hit that will sound, after `offset`, `swing`, `repeat`, `chance`, `muted` and `solo` have been applied. Each hit carries both forms of its position: `beat` and `durationBeats` (the musical grid) and `when` and `duration` (audio-context seconds). It returns the hit (changed or not) or `null` to drop it.
 
 ```ts
 const seq = new StepSequencer(lanes, {

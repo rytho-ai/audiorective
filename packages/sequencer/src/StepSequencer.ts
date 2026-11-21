@@ -77,7 +77,8 @@ export type LaneOptions = Readonly<{
   sound?: Sound;
   /** Per-step numbers by name; each step holds one, and `hit.values` carries them. */
   params?: Readonly<Record<string, ParamRange>>;
-  mute?: boolean;
+  /** Silence this lane without changing its pattern. Default false. */
+  muted?: boolean;
   /** While any lane is soloed, only soloed lanes play. Default false. */
   solo?: boolean;
   /** Called for each hit of this lane after the sequencer-level `onHit`; may return a cleanup. */
@@ -168,7 +169,7 @@ type LaneData = Readonly<{
   rate: Time | StepRate;
   direction: StepDirection;
   swing: number;
-  mute: boolean;
+  muted: boolean;
   solo: boolean;
   sound: Sound | undefined;
   /** At least `steps` long; cells beyond `steps` are kept but not played. */
@@ -236,7 +237,7 @@ type FieldId = (typeof FIELDS)[number]["id"];
 const FIELD_IDS = FIELDS.map((field) => field.id) as readonly FieldId[];
 const BUILTIN_CELL = Object.fromEntries(FIELDS.map((field) => [field.id, field.default])) as Omit<StepCell, "custom">;
 
-const LANE_ERROR = "Step Sequencer lane needs a length from 1 to 128, a known direction and boolean mute and solo.";
+const LANE_ERROR = "Step Sequencer lane needs a length from 1 to 128, a known direction and boolean muted and solo.";
 const CELL_ERROR =
   "Step Sequencer cell needs velocity and chance from 0 to 1, offset from -0.5 to 0.5, length from 1/16 to 4, an integer repeat from 1 to 8 and an integer pitch from -24 to 24.";
 const CUSTOM_ERROR = "Step Sequencer custom values need declared param ids and finite numbers from each param's min to max.";
@@ -334,7 +335,7 @@ function checkFields(patch: LaneFields): void {
     if (typeof patch.direction !== "string") throw new TypeError(LANE_ERROR);
     throw new RangeError(LANE_ERROR);
   }
-  if (patch.mute !== undefined && typeof patch.mute !== "boolean") throw new TypeError(LANE_ERROR);
+  if (patch.muted !== undefined && typeof patch.muted !== "boolean") throw new TypeError(LANE_ERROR);
   if (patch.solo !== undefined && typeof patch.solo !== "boolean") throw new TypeError(LANE_ERROR);
 }
 
@@ -410,7 +411,7 @@ export class StepSequencer extends EventTarget {
       const specs = toParamSpecs(lane.params);
       const fields: LaneFields = {
         direction: lane.direction ?? "forward",
-        mute: lane.mute ?? false,
+        muted: lane.muted ?? false,
         solo: lane.solo ?? false,
       };
       checkFields(fields);
@@ -435,7 +436,7 @@ export class StepSequencer extends EventTarget {
         rate,
         direction: fields.direction!,
         swing,
-        mute: fields.mute!,
+        muted: fields.muted!,
         solo: fields.solo!,
         sound: lane.sound,
         cells: Object.freeze(velocities.map((velocity) => makeCell(blank, { velocity }, specs))),
@@ -596,7 +597,7 @@ export class StepSequencer extends EventTarget {
       const planned: StepEvent[] = [];
       for (const name of this.names) {
         const lane = lanes[name]!;
-        if (lane.mute || (soloed && !lane.solo)) continue;
+        if (lane.muted || (soloed && !lane.solo)) continue;
         const rate = this.rateBeats(lane, timing);
         if (!(rate >= MIN_RATE_BEATS)) continue;
         // the lane's step counter runs from beat 0, forever
@@ -754,7 +755,7 @@ export class StepSequencer extends EventTarget {
 
   /**
    * Called by `clock.attach(sequencer)` (or `workspace.transport.attach`) with a handle to that transport. Every committed edit (a step, a
-   * lane's pattern, `rate`, `swing`, `direction`, `mute`, `solo`, `sound`) then calls `handle.refresh()`, which retracts the pending hits and
+   * lane's pattern, `rate`, `swing`, `direction`, `muted`, `solo`, `sound`) then calls `handle.refresh()`, which retracts the pending hits and
    * queues them again; several edits in one task re-queue once. Returns the cleanup the transport runs on detach.
    */
   attached(handle: TransportHandle): () => void {
@@ -894,12 +895,12 @@ export class Lane {
     this.host.patch(this.name, { direction });
   }
 
-  get mute(): boolean {
-    return this.data().mute;
+  get muted(): boolean {
+    return this.data().muted;
   }
 
-  set mute(mute: boolean) {
-    this.host.patch(this.name, { mute });
+  set muted(muted: boolean) {
+    this.host.patch(this.name, { muted });
   }
 
   /** While any lane is soloed, only soloed lanes play. */

@@ -54,8 +54,8 @@ describe("StepSequencer readers are tracked", () => {
       () => (lane.swing = "20%"),
     );
     expectTracked(
-      () => lane.mute,
-      () => (lane.mute = true),
+      () => lane.muted,
+      () => (lane.muted = true),
     );
     expectTracked(
       () => lane.solo,
@@ -124,10 +124,10 @@ describe("StepSequencer readers are tracked", () => {
     const { sequencer } = make();
     let refreshes = 0;
     const cleanup = sequencer.attached({ refresh: () => refreshes++, detach() {} });
-    sequencer.lanes.k!.mute = true;
+    sequencer.lanes.k!.muted = true;
     expect(refreshes).toBe(1);
     cleanup();
-    sequencer.lanes.k!.mute = false;
+    sequencer.lanes.k!.muted = false;
     expect(refreshes).toBe(1);
     sequencer.onhit = () => {};
     expect(sequencer.onhit).toBeTypeOf("function");

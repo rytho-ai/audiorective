@@ -19,7 +19,7 @@ Press **Play**. Browsers require a user gesture before audio, which `EngineProvi
    onTick: (window) => {
      for (const { when, step } of window.rulers.pattern.grid(patternLength)) {
        for (const track of this.tracks) {
-         if (!track.mute.value && track.pattern.value[step]) {
+         if (!track.muted.value && track.pattern.value[step]) {
            track.sampler.trigger({ when });
          }
        }

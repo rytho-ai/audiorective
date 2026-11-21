@@ -44,6 +44,15 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Changed
 
+- **effects / sequencer / widgets:** Boolean silence controls use `muted`, matching mixer and Project state. The Channel Param registry and lane setters retain their existing shapes; the former spelling has no alias. DAW runtime, grid plugins and demos use the same name. The sequencer lane-validation message names `muted` accordingly.
+
+  | Before                                 | After                                   |
+  | -------------------------------------- | --------------------------------------- |
+  | `new Channel(context, { mute: true })` | `new Channel(context, { muted: true })` |
+  | `channel.params.mute.value`            | `channel.params.muted.value`            |
+  | `LaneOptions.mute`, `lane.mute`        | `LaneOptions.muted`, `lane.muted`       |
+  | `StepGridLane.mute`                    | `StepGridLane.muted`                    |
+
 - **sequencer / pads / clock / host:** argument-shape failures use `TypeError`, invalid values and ranges use `RangeError`, and disposed or duplicate attachment/editor operations use `DOMException` with `InvalidStateError`. WebCLAP response timeouts and state-confirmation exhaustion use `TimeoutError`. Messages are unchanged. External resource/plug-in failures and internal invariants remain ordinary `Error`; launcher validation already uses range/type errors and is unchanged.
 
 - **widgets / docs:** `StepGridOptions.sequencer` documents that lane rows update live while the custom parameter tab set is fixed at mount.

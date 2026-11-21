@@ -296,9 +296,9 @@ For a Workspace clip, follow the [prepared stretch example](./daw.md#pitch-prese
 
 ## Step grid reference
 
-`StepGridSequencer = { lanes: Record<string, StepGridLane> }` is structural. Each lane supplies writable pattern, length, rate, swing, direction, mute and solo, plus params, playhead, optional progress and steps. A real StepSequencer fits; widgets import no sequencer runtime. The grid follows tracked lane membership and length changes. Declare custom parameters before mounting so their tabs are available. Pattern edits reuse elements; longest lane length determines columns.
+`StepGridSequencer = { lanes: Record<string, StepGridLane> }` is structural. Each lane supplies writable pattern, length, rate, swing, direction, `muted` and `solo`, plus params, playhead, optional progress and steps. A real StepSequencer fits; widgets import no sequencer runtime. The grid follows tracked lane membership and length changes. Declare custom parameters before mounting so their tabs are available. Pattern edits reuse elements; longest lane length determines columns.
 
-The grid reads each lane's length, rate, direction, swing, mute, solo, `steps`, `playhead` and `progress` and writes through the lane's setters and `steps[i]` fields. The column count is the longest lane length seen. `laneLabel(name)` names a lane for display (default: the lane name).
+The grid reads each lane's length, rate, direction, swing, `muted`, solo, `steps`, `playhead` and `progress` and writes through the lane's setters and `steps[i]` fields. The column count is the longest lane length seen. `laneLabel(name)` names a lane for display (default: the lane name).
 
 Each lane row has a header and a row of cells.
 
@@ -350,7 +350,7 @@ Each lane row has a header and a row of cells.
 
 - `onCell(attach)`: attaches a cell-owned helper to every live step. Its `StepGridCellContext` supplies `laneId`, zero-based `stepIndex`, tracked `step`, dedicated auto-positioned `root`, `listen` and `onCleanup`. The returned cleanup ends on cell removal or plugin detach.
 - `surface`: the positioned element that holds the lanes.
-- `sequencer`: the borrowed sequencer, so a plugin writes steps through `sequencer.lanes.<name>.steps[i]` and whole patterns through `lanes.<name>.pattern`. The context types each lane with the writable members of a real lane: `pattern`, `length`, `rate`, `swing`, `direction`, `mute` and `solo`.
+- `sequencer`: the borrowed sequencer, so a plugin writes steps through `sequencer.lanes.<name>.steps[i]` and whole patterns through `lanes.<name>.pattern`. The context types each lane with the writable members of a real lane: `pattern`, `length`, `rate`, `swing`, `direction`, `muted` and `solo`.
 - `cellElement(laneId, step)`: the cell element, or `null` for an unknown lane or step.
 - `cellRect(laneId, step)`: `{ x, y, width, height }` in CSS pixels relative to `surface`, or `null`.
 - `mountOverlay(element)`: add a full-surface overlay (`pointer-events: none` by default). Returns its cleanup.

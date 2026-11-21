@@ -149,7 +149,7 @@ describe("DrumMachine — scheduling", () => {
   test("a muted track schedules nothing; unmuting resumes on the next window", () => {
     const h = makeHarness(ctx, 120);
     const kick = h.machine.tracks.find((t) => t.id === "kick")!;
-    kick.mute.value = true;
+    kick.muted.value = true;
     h.machine.play();
 
     for (let t = 0; t <= 1; t += 0.05) {
@@ -159,7 +159,7 @@ describe("DrumMachine — scheduling", () => {
     expect(h.stepsFor("kick")).toEqual([]);
     expect(h.stepsFor("hat").length).toBeGreaterThan(0); // others unaffected
 
-    kick.mute.value = false;
+    kick.muted.value = false;
     for (let t = 1.05; t <= 1.85; t += 0.05) {
       h.advanceTo(t);
       h.tick();

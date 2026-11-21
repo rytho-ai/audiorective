@@ -50,7 +50,7 @@ function Slider({
 function Transport({ compact = false }: { compact?: boolean }) {
   const e = useEngine();
   const state = useValue(e.machine.state);
-  const muted = useValue(e.master.params.mute);
+  const muted = useValue(e.master.params.muted);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const handlePlay = async () => {
@@ -75,7 +75,7 @@ function Transport({ compact = false }: { compact?: boolean }) {
         className="console-button"
         aria-pressed={muted}
         onClick={() => {
-          e.master.params.mute.value = !muted;
+          e.master.params.muted.value = !muted;
         }}
       >
         {muted ? "Unmute" : "Mute"}
@@ -93,7 +93,7 @@ function Transport({ compact = false }: { compact?: boolean }) {
 
 function Track({ track, full, heardStep }: { track: DrumTrack; full: boolean; heardStep: number | null }) {
   const pattern = useValue(track.pattern);
-  const muted = useValue(track.mute);
+  const muted = useValue(track.muted);
   const { machine } = useEngine();
   return (
     <div className={`beat-track${muted ? " beat-track--muted" : ""}`}>
@@ -102,7 +102,7 @@ function Track({ track, full, heardStep }: { track: DrumTrack; full: boolean; he
         aria-label={`${muted ? "Unmute" : "Mute"} ${track.label}`}
         aria-pressed={muted}
         onClick={() => {
-          track.mute.value = !muted;
+          track.muted.value = !muted;
         }}
       >
         {track.label}

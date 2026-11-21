@@ -6,6 +6,9 @@ import type { StepGridCellContext } from "../src/step-grid-types";
 /** Public structural owners and scoped cell helpers, checked without executing this file. */
 export function stepGridCellContracts(root: HTMLElement): void {
   const sequencer = new StepSequencer({ kick: { pattern: "X...", params: { cutoff: { min: 20, max: 20000, default: 1000 } } } });
+  // @ts-expect-error The former constructor option is removed.
+  new StepSequencer({ kick: { pattern: "X...", mute: true } });
+  new StepSequencer({ kick: { pattern: "X...", muted: true } });
   const grid = mountStepGrid(root, { sequencer, formatStep: (label, index) => `${label} ${index + 1}` });
   const attachment = grid.attach({
     attach(context: StepGridPluginContext) {

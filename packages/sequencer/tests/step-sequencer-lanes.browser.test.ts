@@ -244,7 +244,7 @@ describe("notation and lane setters", () => {
     expect(Object.isFrozen(seq.lanes.a!.steps)).toBe(true);
   });
 
-  test("setters change the live lane: pattern (and length), rate, swing, mute, sound", () => {
+  test("setters change the live lane: pattern (and length), rate, swing, muted, sound", () => {
     const ctx = new OfflineAudioContext(1, 128, 44100);
     const seq = new StepSequencer({ a: "X..." }, { context: ctx });
     const lane = seq.lanes.a!;
@@ -256,8 +256,8 @@ describe("notation and lane setters", () => {
     expect(lane.rate).toBe("8t");
     lane.swing = "30%";
     expect(lane.swing).toBeCloseTo(0.3);
-    lane.mute = true;
-    expect(lane.mute).toBe(true);
+    lane.muted = true;
+    expect(lane.muted).toBe(true);
     expect(lane.sound).toBeUndefined();
     lane.sound = "C4";
     expect(lane.sound).toBe("C4");
@@ -277,9 +277,9 @@ describe("notation and lane setters", () => {
     refresh.mockClear();
     seq.lanes.a!.rate = "8n";
     seq.lanes.a!.swing = 0.2;
-    seq.lanes.a!.mute = false;
+    seq.lanes.a!.muted = false;
     seq.lanes.a!.steps[1]!.velocity = 1;
-    expect(refresh).toHaveBeenCalledTimes(3); // one per committed change (mute stays false: no commit); the clock coalesces them into one refill
+    expect(refresh).toHaveBeenCalledTimes(3); // one per committed change (muted stays false: no commit); the clock coalesces them into one refill
     await settle();
   });
 

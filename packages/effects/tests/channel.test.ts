@@ -11,14 +11,14 @@ async function renderStereo(build: (ctx: OfflineAudioContext) => void, frames = 
 describe("Channel", () => {
   it("gain scales, mute silences, unmute restores", async () => {
     const buf = await renderStereo((ctx) => {
-      const ch = new Channel(ctx, { gain: 0.5 });
+      const ch = new Channel(ctx, { gain: 0.5, muted: true });
       const src = new ConstantSourceNode(ctx, { offset: 1 });
       src.connect(ch.input);
       ch.output.connect(ctx.destination);
       src.start();
-      ch.params.mute.value = true;
+      expect(ch.params.muted.value).toBe(true);
       ctx.suspend(128 / 44100).then(() => {
-        ch.params.mute.value = false;
+        ch.params.muted.value = false;
         ctx.resume();
       });
     });
@@ -172,7 +172,7 @@ describe("Channel meter and send latency compensation", () => {
     await new Promise((r) => setTimeout(r, 300));
     expect(ch.cells.level.value).toBeGreaterThan(-7.5);
     expect(ch.cells.level.value).toBeLessThan(-5);
-    ch.params.mute.value = true;
+    ch.params.muted.value = true;
     await new Promise((r) => setTimeout(r, 300));
     expect(ch.cells.level.value).toBe(-Infinity);
     src.stop();

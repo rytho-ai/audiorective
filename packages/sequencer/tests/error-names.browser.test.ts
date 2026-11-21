@@ -94,9 +94,9 @@ const writeCases: Array<{ label: string; write(seq: StepSequencer): unknown; nam
     name: "RangeError",
   },
   {
-    label: "mute type",
+    label: "muted type",
     write: (seq) => {
-      seq.lanes.a.mute = 1 as never;
+      seq.lanes.a.muted = 1 as never;
     },
     name: "TypeError",
   },

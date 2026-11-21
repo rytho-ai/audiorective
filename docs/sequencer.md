@@ -31,7 +31,7 @@ const seq = new StepSequencer(
   },
   { context },
 );
-seq.lanes.hat.mute = true; // live setters: pattern, rate, swing, direction, mute, solo, sound, length
+seq.lanes.hat.muted = true; // live setters: pattern, rate, swing, direction, muted, solo, sound, length
 ```
 
 - **Each lane loops on its own length and rate** (true polymeter), starting at beat 0 of the transport.
@@ -142,7 +142,7 @@ Invalid argument types, callback shapes and parameter specifications throw `Type
 | --- | --- |
 | `Step Sequencer takes a record of lanes and an options object.` | The first argument is not a plain record of lanes (an array, `null`), or the second is not an options object. Pass `new StepSequencer({ kick: "X..." }, { context })`. |
 | `Step Sequencer lanes need nonempty names mapped to a pattern or to lane options with a pattern.` | A lane name is empty, or its value is neither a pattern nor an object with `pattern`. Pass `{ kick: "X..." }` or `{ kick: { pattern: "X..." } }`. |
-| `Step Sequencer lane needs a length from 1 to 128, a known direction and boolean mute and solo.` | `lane.length`, `direction`, `mute` or `solo` was set out of range. Use an integer length 1..128, `"forward"`, `"backward"` or `"bounce"`, and booleans. |
+| `Step Sequencer lane needs a length from 1 to 128, a known direction and boolean muted and solo.` | `lane.length`, `direction`, `muted` or `solo` was set out of range. Use an integer length 1..128, `"forward"`, `"backward"` or `"bounce"`, and booleans. |
 | `Step Sequencer cell needs velocity and chance from 0 to 1, offset from -0.5 to 0.5, length from 1/16 to 4, an integer repeat from 1 to 8 and an integer pitch from -24 to 24.` | A `steps[i]` write is out of range. Keep each field inside the ranges in the `Step` JSDoc. |
 | `Step Sequencer custom values need declared param ids and finite numbers from each param's min to max.` | `steps[i].values.<id>` named an undeclared param or fell outside its `min`..`max`. Declare it in the lane's `params` and stay in range. |
 | `Step Sequencer lane params need nonempty names that differ from the built-in step keys, a finite min below max, a step above 0 and a default from min to max.` | A lane `params` entry is malformed. Do not name one `velocity`, `offset`, `length`, `repeat`, `pitch`, `chance` or `custom`; keep `min < max`, `step > 0` and `default` in range. |

@@ -40,7 +40,7 @@ vi.mock("@audiorective/effects", async (importOriginal) => ({
     input = { connect: vi.fn() };
     output = { connect: vi.fn(), disconnect: vi.fn() };
     tap = {};
-    params = { gain: { value: 1 }, pan: { value: 0 }, mute: { value: false }, outputEnabled: { value: true } };
+    params = { gain: { value: 1 }, pan: { value: 0 }, muted: { value: false }, outputEnabled: { value: true } };
     send = vi.fn(() => ({ params: { gain: { value: 1 }, enabled: { value: true } }, dispose: vi.fn() }));
     dispose = vi.fn();
     constructor() {

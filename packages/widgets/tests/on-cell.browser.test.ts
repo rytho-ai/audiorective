@@ -39,7 +39,7 @@ describe("step grid cell attachments", () => {
 
     expect([...roots.keys()]).toEqual(["kick:0", "kick:1", "snare:0"]);
     const first = roots.get("kick:0")!;
-    sequencer.lanes.snare.mute = true;
+    sequencer.lanes.snare.muted = true;
     sequencer.lanes.kick.steps[0].velocity = 0.25;
     sequencer.lanes.kick.steps[0].repeat = 3;
     expect(first.textContent).toBe("3");

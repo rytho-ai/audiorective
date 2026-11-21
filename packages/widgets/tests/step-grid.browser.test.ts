@@ -89,11 +89,11 @@ function withPlayback(source: StepSequencer) {
         set direction(value) {
           live.direction = value;
         },
-        get mute() {
-          return live.mute;
+        get muted() {
+          return live.muted;
         },
-        set mute(value: boolean) {
-          live.mute = value;
+        set muted(value: boolean) {
+          live.muted = value;
         },
         get solo() {
           return live.solo;
@@ -165,7 +165,7 @@ describe("rendering", () => {
     const { root, sequencer } = mount();
     const head = laneAt(root, "snare");
     head.querySelector<HTMLButtonElement>(".ar-sg-mute")!.click();
-    expect(sequencer.lanes.snare.mute).toBe(true);
+    expect(sequencer.lanes.snare.muted).toBe(true);
     expect(head.querySelector(".ar-sg-mute")!.getAttribute("aria-pressed")).toBe("true");
     head.querySelector<HTMLButtonElement>(".ar-sg-solo")!.click();
     expect(sequencer.lanes.snare.solo).toBe(true);
@@ -690,7 +690,7 @@ describe("plugin host", () => {
     toggle(sequencer, "hat", 1);
     toggle(sequencer, "hat", 1);
     expect(seen).toEqual([1, 0]);
-    sequencer.lanes.hat.mute = true;
+    sequencer.lanes.hat.muted = true;
     expect(seen).toEqual([1, 0, 0]);
     seen.length = 0;
     attachment.dispose();
@@ -797,7 +797,7 @@ describe("lifecycle and contract", () => {
 
   test("works over a hand-written sequencer and reports edits through its members", () => {
     const writes: string[] = [];
-    const state = cell({ length: 8, mute: false, velocity: [0, 0.8, 0, 0, 0, 0, 0, 0] });
+    const state = cell({ length: 8, muted: false, velocity: [0, 0.8, 0, 0, 0, 0, 0, 0] });
     const steps: StepGridStep[] = state.value.velocity.map((_, index) => ({
       get velocity() {
         return state.value.velocity[index];
@@ -823,12 +823,12 @@ describe("lifecycle and contract", () => {
       rate: "1/16",
       swing: 0,
       direction: "forward",
-      get mute() {
-        return state.value.mute;
+      get muted() {
+        return state.value.muted;
       },
-      set mute(value: boolean) {
-        writes.push(`mute ${value}`);
-        state.value = { ...state.value, mute: value };
+      set muted(value: boolean) {
+        writes.push(`muted ${value}`);
+        state.value = { ...state.value, muted: value };
       },
       solo: false,
       params: {},
@@ -847,7 +847,7 @@ describe("lifecycle and contract", () => {
     expect(writes.at(-1)).toBe("velocity 1 0.75");
     expect(element.getAttribute("aria-label")).toContain("75%");
     laneAt(root, "a").querySelector<HTMLButtonElement>(".ar-sg-mute")!.click();
-    expect(writes.at(-1)).toBe("mute true");
+    expect(writes.at(-1)).toBe("muted true");
     expect(laneAt(root, "a").querySelector(".ar-sg-mute")!.getAttribute("aria-pressed")).toBe("true");
     key(laneAt(root, "a").querySelector<HTMLElement>("[role=spinbutton]")!, "ArrowUp");
     expect(writes.at(-1)).toBe("length 9");

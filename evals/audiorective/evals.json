@@ -1144,6 +1144,18 @@
         "Handles disposed or duplicate Clock/scheduler/editor operations by InvalidStateError and WebCLAP timeout or state-confirmation exhaustion by TimeoutError, retaining original diagnostic messages.",
         "Leaves external HTTP/plug-in errors and internal invariants as ordinary Error, and does not remove callback or cleanup isolation merely to surface a failure."
       ]
+    },
+    {
+      "id": 88,
+      "prompt": "Build a small vanilla browser drum mixer using the audiorective packages. A kick lane and a hat lane run on an existing playing Clock. Give each lane a button that silences and restores it without changing its pattern. Route their outputs through one channel with a master silence button that preserves its gain. Mount the step grid over the same sequencer, so lane changes from either control are reflected immediately. Show initial silence options and disposal of the resources this UI owns. Do not run anything.",
+      "expected_output": "Uses the actual owner state and one Boolean spelling throughout Channel options/params, sequencer lane options/setters, and the structural step-grid contract. The grid borrows the same sequencer; gain and patterns survive silence toggles.",
+      "expectations": [
+        "Uses ChannelOptions.muted and channel.params.muted.value for the channel Boolean, without the removed mute option or Param alias.",
+        "Uses LaneOptions.muted and lane.muted for lane silence, without a removed lane.mute alias or a separate UI state mirror.",
+        "mountStepGrid borrows the same StepSequencer; both external buttons and the grid write its lanes.",
+        "An existing Clock is reused with attach; cleanup disposes only resources owned by this UI and leaves the borrowed Clock alive."
+      ],
+      "files": []
     }
   ]
 }

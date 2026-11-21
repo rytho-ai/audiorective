@@ -36,7 +36,7 @@ export interface StepGridLane {
   /** 0..1, shown as a percentage: delays every odd step by that share of half a step. */
   swing: number;
   direction: StepGridDirection;
-  mute: boolean;
+  muted: boolean;
   solo: boolean;
   /** Custom per-step numbers this lane declares, by id; they become tabs after the built-in ones. */
   readonly params: Readonly<Record<string, ParamRange>>;
