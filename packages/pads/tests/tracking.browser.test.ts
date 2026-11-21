@@ -46,11 +46,33 @@ describe("PadBank readers are tracked", () => {
     );
     await expectTracked(
       () => bank.cells.activeVoices.value,
-      () => void bank.trigger("kick", { when: context.currentTime + 5 }),
+      () => void bank.trigger("kick"),
     );
     await expectTracked(
       () => bank.cells.activeVoices.value,
       () => bank.stopAll(),
+    );
+  });
+  test("cells.playing follows trigger and stopAll; params.release follows assignment", async () => {
+    const context = new AudioContext();
+    const bank = watch(new PadBank(context, [{ id: "kick", sound: tone(context) }]), touched.padBank);
+    disposers.push(
+      () => context.close(),
+      () => bank.dispose(),
+    );
+    await expectTracked(
+      () => bank.cells.playing.value,
+      () => void bank.trigger("kick"),
+    );
+    await expectTracked(
+      () => bank.cells.playing.value,
+      () => bank.stopAll(),
+    );
+    await expectTracked(
+      () => bank.params.release.value,
+      () => {
+        bank.params.release.value = 0.2;
+      },
     );
   });
   test("a voice's playing cell follows stop", async () => {
@@ -60,7 +82,7 @@ describe("PadBank readers are tracked", () => {
       () => context.close(),
       () => bank.dispose(),
     );
-    const voice = bank.trigger("kick", { when: context.currentTime + 5 })!;
+    const voice = bank.trigger("kick")!;
     await expectTracked(
       () => voice.playing.value,
       () => voice.stop(),

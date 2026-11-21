@@ -61,7 +61,7 @@ In words:
 | `Tone.Player`                  | `Sampler`                                                             |
 | ------------------------------ | --------------------------------------------------------------------- |
 | `start(when)`                  | `trigger({ when, velocity, pitch })`                                  |
-| `fadeOut`                      | `release` (constructor option, seconds)                               |
+| `fadeOut`                      | `release` (constructor option or live `params.release`, seconds)      |
 | `reverse`                      | `reverseBuffer(buffer)` as the `sound`                                |
 | `mute`                         | `params.volume.value = 0`                                             |
 | `volume` (dB, schedulable)     | `params.volume` (linear, schedulable; `dbToGain` for dB)              |

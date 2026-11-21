@@ -72,11 +72,11 @@ test("assign cancels only its pad's events and their future choke; handles end o
   const { context, bank, buffer, level } = await fixture();
   const manual = bank.trigger("open")!;
   const second = bank.trigger("open", { when: context.currentTime + 0.5 })!;
-  let secondEnds = 0;
-  second.playing.subscribe((playing) => playing || secondEnds++);
+  expect(second.playing.value).toBe(false);
+  expect(bank.cells.activeVoices.value).toBe(1);
   second.stop();
   second.stop();
-  expect(secondEnds).toBe(1);
+  expect(second.playing.value).toBe(false);
   bank.trigger("closed", { when: context.currentTime + 0.14 });
   bank.assign("closed", buffer(0.1, 0.05));
   await delay(220);
@@ -99,10 +99,9 @@ test("invalid inputs preserve state and dispose ends future events", async () =>
   expect(() => bank.trigger("open", { velocity: Infinity })).toThrow("Sound hit needs a velocity from 0 to 1.");
   expect(() => bank.assign("missing", context.createBuffer(1, 10, context.sampleRate))).toThrow("Unknown pad.");
   const future = bank.trigger("closed", { when: context.currentTime + 1 })!;
-  let ended = 0;
-  future.playing.subscribe((playing) => playing || ended++);
+  expect(future.playing.value).toBe(false);
   bank.dispose();
-  expect(ended).toBe(1);
+  expect(future.playing.value).toBe(false);
   expect(bank.cells.activeVoices.value).toBe(0);
   expect(() => bank.trigger("open")).toThrow("PadBank is disposed.");
 });
@@ -175,4 +174,30 @@ test("the signal option disposes the bank, and an unknown pad returns null", asy
   expect(hit.playing.value).toBe(false);
   expect(() => bank.trigger("kick")).toThrow("PadBank is disposed.");
   await context.close();
+});
+
+test("cells.playing lists pads with a started hit, and a scheduled hit joins at its start time", async () => {
+  const { context, bank } = await fixture();
+  expect(bank.cells.playing.value).toEqual([]);
+  const future = bank.trigger("open", { when: context.currentTime + 0.3 })!;
+  expect(future.playing.value).toBe(false);
+  expect(bank.cells.activeVoices.value).toBe(0);
+  expect(bank.cells.playing.value).toEqual([]);
+  bank.trigger("closed");
+  expect(bank.cells.playing.value).toEqual(["closed"]);
+  await expect.poll(() => bank.cells.playing.value.includes("open")).toBe(true);
+  expect(future.playing.value).toBe(true);
+  expect(bank.cells.activeVoices.value).toBeGreaterThan(0);
+  bank.stopAll();
+  expect(bank.cells.playing.value).toEqual([]);
+});
+
+test("params.release is read when a hit is released", async () => {
+  const { bank } = await fixture();
+  expect(bank.params.release.value).toBe(0.005);
+  bank.params.release.value = 0.4;
+  const voice = bank.trigger("open")!;
+  voice.stop();
+  expect(voice.playing.value).toBe(false);
+  expect(bank.cells.playing.value).toEqual([]);
 });

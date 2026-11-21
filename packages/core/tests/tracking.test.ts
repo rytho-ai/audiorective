@@ -55,6 +55,34 @@ describe("Sampler readers are tracked", () => {
     );
   });
 
+  test("cells.heldNotes follows noteOn and noteOff", () => {
+    const { sampler } = fixture();
+    expectTracked(
+      () => sampler.cells.heldNotes.value,
+      () => void sampler.noteOn("C4"),
+    );
+    expectTracked(
+      () => sampler.cells.heldNotes.value,
+      () => sampler.noteOff("C4"),
+    );
+  });
+
+  test("params.release and params.sustain follow assignment", () => {
+    const { sampler } = fixture();
+    expectTracked(
+      () => sampler.params.release.value,
+      () => {
+        sampler.params.release.value = 0.5;
+      },
+    );
+    expectTracked(
+      () => sampler.params.sustain.value,
+      () => {
+        sampler.params.sustain.value = true;
+      },
+    );
+  });
+
   test("sound follows assignment", () => {
     const { context, sampler } = fixture();
     expectTracked(

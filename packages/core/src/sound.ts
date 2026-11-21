@@ -54,7 +54,7 @@ export interface Voice {
   readonly note: number | null;
   /** Audio-context seconds it starts. */
   readonly when: number;
-  /** True until it has ended (stopped, stolen, choked, or ran out). */
+  /** True from `when` until it has ended (stopped, stolen, choked, or ran out); false while it is still scheduled. */
   readonly playing: ReadonlyCell<boolean>;
   /** Fades out over the player's `release` from `when` (default now), then ends. Stopping a voice that has not started yet drops it silently. Idempotent. */
   stop(when?: number): void;
@@ -99,8 +99,8 @@ export function noteNumber(note: number | NoteName): number {
 
 /** What `playSound` takes besides the hit. */
 export type PlaySoundOptions = Readonly<{
-  /** Seconds a stopped voice fades out. Default 0.005. */
-  release?: number;
+  /** Seconds a stopped voice fades out. Default 0.005. A function is read each time the voice is released, so the fade follows a live value. */
+  release?: number | (() => number);
   /** MIDI note the voice reports. Default null. */
   note?: number | null;
   /** Hold an open-ended voice for `hit.duration` before fading it. Default true; false leaves `hit.duration` informational and only `stop` ends the voice. */
@@ -111,6 +111,8 @@ export type PlaySoundOptions = Readonly<{
   span?: number;
   /** Called once when every node of the voice is disconnected, after a release has rung out. */
   onFree?: () => void;
+  /** Called once when the voice is over for its callers (`playing` is false for good), including a voice stopped before it started. */
+  onEnd?: () => void;
 }>;
 
 const isSourceNode = (value: unknown): value is AudioScheduledSourceNode =>
@@ -179,8 +181,10 @@ class PlayedVoice implements Voice {
   private readonly output: AudioNode;
   private readonly sources: readonly AudioScheduledSourceNode[];
   private readonly velocity: number;
-  private readonly release: number;
+  private readonly release: () => number;
   private readonly onFree: (() => void) | undefined;
+  private readonly onEnd: (() => void) | undefined;
+  private startTimer: ReturnType<typeof setTimeout> | undefined;
   private freed = false;
   private readonly context: BaseAudioContext;
   private readonly limit: number;
@@ -189,9 +193,10 @@ class PlayedVoice implements Voice {
   private open = 0;
   private done = false;
 
-  constructor(context: BaseAudioContext, sound: Sound, destination: AudioNode, hit: SoundHit, release: number, options: PlaySoundOptions) {
+  constructor(context: BaseAudioContext, sound: Sound, destination: AudioNode, hit: SoundHit, release: () => number, options: PlaySoundOptions) {
     const hold = options.hold ?? true;
     this.onFree = options.onFree;
+    this.onEnd = options.onEnd;
     this.context = context;
     this.note = options.note ?? null;
     this.when = hit.when;
@@ -204,6 +209,11 @@ class PlayedVoice implements Voice {
     this.gain = new GainNode(context, { gain: hit.velocity });
     output.connect(this.gain);
     this.gain.connect(destination);
+    // A voice scheduled ahead is not playing until its start time; a timer aligned to audio time, like PadBank's cleanup timer, flips the cell.
+    if (hit.when > context.currentTime) {
+      this.state.value = false;
+      this.awaitStart();
+    }
     this.open = sources.length;
     for (const source of sources) {
       source.addEventListener("ended", () => this.ended(), { once: true });
@@ -224,14 +234,26 @@ class PlayedVoice implements Voice {
     const { gain } = this.gain;
     gain.cancelScheduledValues(0);
     gain.setValueAtTime(this.velocity, at);
-    gain.linearRampToValueAtTime(0, at + this.release);
+    const release = Math.max(0, this.release());
+    gain.linearRampToValueAtTime(0, at + release);
     for (const source of this.sources) {
       try {
-        source.stop(Math.min(at + this.release, this.limit));
+        source.stop(Math.min(at + release, this.limit));
       } catch {
         // already stopped
       }
     }
+  }
+
+  /** Wait for the context clock to reach `when`, then mark the voice playing. */
+  private awaitStart(): void {
+    const wait = Math.max(1, Math.ceil((this.when - this.context.currentTime) * 1000));
+    this.startTimer = setTimeout(() => {
+      this.startTimer = undefined;
+      if (this.done) return;
+      if (this.context.currentTime >= this.when) this.state.value = true;
+      else this.awaitStart();
+    }, wait);
   }
 
   stop(when?: number): void {
@@ -275,7 +297,10 @@ class PlayedVoice implements Voice {
   private finish(): void {
     if (this.done) return;
     this.done = true;
+    if (this.startTimer !== undefined) clearTimeout(this.startTimer);
+    this.startTimer = undefined;
     this.state.value = false;
+    this.onEnd?.();
   }
 }
 
@@ -292,7 +317,8 @@ export function playSound(context: BaseAudioContext, sound: Sound, destination: 
   for (const seconds of [options.offset, options.span])
     if (seconds !== undefined && (!Number.isFinite(seconds) || seconds < 0))
       throw new Error("Sound hit needs finite seconds from 0 for offset and duration.");
-  const release = Math.max(0, options.release ?? 0.005);
+  const setting = options.release;
+  const release = typeof setting === "function" ? setting : () => setting ?? 0.005;
   const at = Math.max(hit.when, context.currentTime);
   return new PlayedVoice(context, sound, destination, { ...hit, when: at, velocity: Math.min(1, Math.max(0, hit.velocity)) }, release, options);
 }

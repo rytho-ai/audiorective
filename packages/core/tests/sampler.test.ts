@@ -136,6 +136,79 @@ describe("Sampler hits", () => {
   });
   afterEach(() => void context.close());
 
+  test("params.release is read when a voice is released", async () => {
+    const data = await render(4, (context) => {
+      const sampler = new Sampler(context, { sound: constant(0.5), release: 0.01 });
+      expect(sampler.params.release.value).toBe(0.01);
+      sampler.connect(context.destination);
+      sampler.params.release.value = 2;
+      sampler.noteOn(60, { when: 0 });
+      sampler.noteOff(60, 1);
+    });
+    expect(at(data, 0.9)).toBeCloseTo(0.5, 3);
+    expect(at(data, 2)).toBeCloseTo(0.25, 2);
+    expect(at(data, 3.5)).toBe(0);
+  });
+
+  test("sustain keeps noteOff'd voices sounding until it is turned off", () => {
+    const sampler = new Sampler(context, { sound: constant(0.1) });
+    expect(sampler.params.sustain.value).toBe(false);
+    sampler.params.sustain.value = true;
+    sampler.noteOn(60);
+    sampler.noteOn(64);
+    sampler.noteOff(60);
+    expect(sampler.cells.heldNotes.value).toEqual([60, 64]);
+    sampler.noteOn(60); // a sustained note pressed again adds a voice
+    expect(sampler.cells.activeVoices.value).toBe(3);
+    sampler.noteOff(60);
+    expect(sampler.cells.activeVoices.value).toBe(3);
+    sampler.params.sustain.value = false;
+    expect(sampler.cells.activeVoices.value).toBe(1);
+    expect(sampler.cells.heldNotes.value).toEqual([64]);
+    sampler.dispose();
+  });
+
+  test("a sustained voice is not released by a later noteOff while the pedal is up again", () => {
+    const sampler = new Sampler(context, { sound: constant(0.1) });
+    sampler.params.sustain.value = true;
+    sampler.noteOn(60);
+    sampler.noteOff(60);
+    sampler.params.sustain.value = false;
+    expect(sampler.cells.activeVoices.value).toBe(0);
+    sampler.dispose();
+  });
+
+  test("heldNotes lists the notes with a sounding voice, ascending", () => {
+    const sampler = new Sampler(context, { sound: constant(0.1) });
+    sampler.noteOn(64);
+    sampler.noteOn(60);
+    sampler.noteOn(60);
+    sampler.trigger();
+    expect(sampler.cells.heldNotes.value).toEqual([60, 64]);
+    sampler.noteOff(60);
+    expect(sampler.cells.heldNotes.value).toEqual([64]);
+    sampler.stopAll();
+    expect(sampler.cells.heldNotes.value).toEqual([]);
+    sampler.dispose();
+  });
+
+  test("a voice scheduled ahead is not playing, counted or held until its start time", async () => {
+    const sampler = new Sampler(context, { sound: constant(0.1) });
+    const voice = sampler.noteOn(60, { when: context.currentTime + 0.3 })!;
+    expect(voice.playing.value).toBe(false);
+    expect(sampler.cells.activeVoices.value).toBe(0);
+    expect(sampler.cells.heldNotes.value).toEqual([]);
+    await expect.poll(() => voice.playing.value).toBe(true);
+    expect(context.currentTime).toBeGreaterThanOrEqual(voice.when);
+    expect(sampler.cells.activeVoices.value).toBe(1);
+    expect(sampler.cells.heldNotes.value).toEqual([60]);
+    const dropped = sampler.noteOn(62, { when: context.currentTime + 5 })!;
+    dropped.stop();
+    expect(sampler.cells.activeVoices.value).toBe(1);
+    sampler.dispose();
+    expect(sampler.cells.heldNotes.value).toEqual([]);
+  });
+
   test("no sound returns null; setting one applies to the next hit", () => {
     const sampler = new Sampler(context);
     expect(sampler.trigger()).toBeNull();

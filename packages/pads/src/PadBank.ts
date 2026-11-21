@@ -7,6 +7,7 @@ import {
   readonlyCell,
   untracked,
   type Cell,
+  type Param,
   type PlayOptions,
   type ReadonlyCell,
   type SchedulableParam,
@@ -23,7 +24,7 @@ export type PadSpec = Readonly<{
 }>;
 
 export type PadBankOptions = Readonly<{
-  /** Seconds a cut or stopped voice fades out. Default 0.005. */
+  /** Start value of `params.release`: seconds of fade-out applied when a voice is released; changes apply to voices released afterwards. Default 0.005. */
   release?: number;
   /** Aborting the signal calls `dispose()`. */
   signal?: AbortSignal;
@@ -50,17 +51,17 @@ type Hit = {
  * Each pad feeds the bank `output` through its own gain; `routePad` redirects that gain, so pads in one choke group can have separate effects.
  */
 export class PadBank extends AudioProcessor<
-  { volume: SchedulableParam },
-  { activeVoices: ReadonlyCell<number>; pads: ReadonlyCell<readonly PadSpec[]> }
+  { volume: SchedulableParam; release: Param<number> },
+  { activeVoices: ReadonlyCell<number>; pads: ReadonlyCell<readonly PadSpec[]>; playing: ReadonlyCell<readonly string[]> }
 > {
   private readonly outputNode: GainNode;
   /** One bank-owned gain per pad: every hit of the pad feeds it, and it feeds `output` unless routed elsewhere. */
   private readonly padNodes = new Map<string, GainNode>();
   private readonly activeStore: Cell<number>;
+  private readonly playingStore: Cell<readonly string[]>;
   /** The only store of pad specs; `cells.pads` is its read-only view. */
   private readonly padStore: Cell<readonly PadSpec[]>;
   private readonly hits = new Set<Hit>();
-  private readonly release: number;
   private readonly abortSignal: AbortSignal | undefined;
   private readonly onAbort = () => this.dispose();
   private nextOrder = 0;
@@ -76,10 +77,11 @@ export class PadBank extends AudioProcessor<
     }
     const output = new GainNode(context);
     const active = cell(0);
+    const playing = cell<readonly string[]>([]);
     const store = cell<readonly PadSpec[]>(Object.freeze(pads.map((pad) => Object.freeze({ ...pad }))));
     super(context, ({ param }) => ({
-      params: { volume: param({ default: 1, bind: output.gain }) },
-      cells: { activeVoices: readonlyCell(active), pads: readonlyCell(store) },
+      params: { volume: param({ default: 1, bind: output.gain }), release: param({ default: Math.max(0, options.release ?? 0.005), min: 0 }) },
+      cells: { activeVoices: readonlyCell(active), pads: readonlyCell(store), playing: readonlyCell(playing) },
     }));
     this.outputNode = output;
     for (const pad of pads) {
@@ -88,8 +90,8 @@ export class PadBank extends AudioProcessor<
       this.padNodes.set(pad.id, node);
     }
     this.activeStore = active;
+    this.playingStore = playing;
     this.padStore = store;
-    this.release = Math.max(0, options.release ?? 0.005);
     this.abortSignal = options.signal;
     if (this.abortSignal) {
       if (this.abortSignal.aborted) this.dispose();
@@ -109,8 +111,26 @@ export class PadBank extends AudioProcessor<
     if (this.disposed) throw new Error("PadBank is disposed.");
   }
 
+  /** Seconds a hit fades out when released, read when it is released. */
+  private get release(): number {
+    return Math.max(
+      0,
+      untracked(() => this.params.release.value),
+    );
+  }
+
+  /** Commit the sounding-hit count and pad ids together; a hit scheduled ahead counts from its start time. */
   private publish(): void {
-    this.activeStore.value = this.hits.size;
+    const sounding = [...this.hits].filter((hit) => untracked(() => hit.state.value));
+    const ids = new Set(sounding.map((hit) => hit.pad.id));
+    const playing = untracked(() => this.padStore.value)
+      .map((pad) => pad.id)
+      .filter((id) => ids.has(id));
+    batch(() => {
+      this.activeStore.value = sounding.length;
+      const current = untracked(() => this.playingStore.value);
+      if (current.length !== playing.length || current.some((id, index) => id !== playing[index])) this.playingStore.value = playing;
+    });
   }
 
   private finish(hit: Hit): void {
@@ -119,8 +139,8 @@ export class PadBank extends AudioProcessor<
     this.hits.delete(hit);
     hit.voice.stop();
     batch(() => {
-      this.publish();
       hit.state.value = false;
+      this.publish();
     });
   }
 
@@ -201,17 +221,24 @@ export class PadBank extends AudioProcessor<
         pad.sound,
         gate,
         { when: at, velocity: options.velocity ?? 1, pitch: options.pitch ?? 0, duration: options.duration ?? Infinity },
-        { release: this.release, offset: options.offset, span: options.duration, onFree: () => gate.disconnect() },
+        { release: () => this.release, offset: options.offset, span: options.duration, onFree: () => gate.disconnect() },
       );
     } catch (error) {
       gate.disconnect();
       throw error;
     }
-    const state = cell(true);
+    const state = cell(voice.playing.value);
     const created: Hit = { pad, when: at, order: ++this.nextOrder, gate, voice, state, chokeAt: Infinity, stopAt: Infinity, done: false };
     this.hits.add(created);
     voice.playing.subscribe((playing) => {
-      if (playing || created.done) return;
+      if (created.done) return;
+      if (playing) {
+        batch(() => {
+          state.value = true;
+          this.publish();
+        });
+        return;
+      }
       this.settle();
       this.finish(created);
       this.rebuild();

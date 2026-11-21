@@ -688,17 +688,17 @@ piano.noteOff("E4"); // releases the held voices of that note
 
 **Constructor options** (`SamplerOptions`):
 
-| Option      | Type                 | Default    | Description                                                                                      |
-| ----------- | -------------------- | ---------- | ------------------------------------------------------------------------------------------------ |
-| `sound`     | `Sound`              | none       | What each voice plays; settable later through `sampler.sound`.                                   |
-| `rootNote`  | `number`             | `60`       | MIDI note at which `sound` plays at its natural pitch; `noteOn(n)` transposes by `n - rootNote`. |
-| `lowNote`   | `number`             | `0`        | Lowest note `noteOn` plays; lower notes are ignored (it returns `null`).                         |
-| `highNote`  | `number`             | `127`      | Highest note `noteOn` plays; higher notes are ignored.                                           |
-| `polyphony` | `number`             | `32`       | Maximum voices sounding or scheduled at once.                                                    |
-| `steal`     | `"oldest" \| "none"` | `"oldest"` | At the cap: release the oldest voice and play the new hit, or drop the new hit.                  |
-| `release`   | `number`             | `0.005`    | Seconds a voice fades out when stopped (`noteOff`, `voice.stop`, steal, `stopAll`).              |
-| `volume`    | `number`             | `1`        | Start value of `params.volume` (0..1).                                                           |
-| `signal`    | `AbortSignal`        | none       | Aborting the signal calls `dispose()`.                                                           |
+| Option      | Type                 | Default    | Description                                                                                                          |
+| ----------- | -------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------- |
+| `sound`     | `Sound`              | none       | What each voice plays; settable later through `sampler.sound`.                                                       |
+| `rootNote`  | `number`             | `60`       | MIDI note at which `sound` plays at its natural pitch; `noteOn(n)` transposes by `n - rootNote`.                     |
+| `lowNote`   | `number`             | `0`        | Lowest note `noteOn` plays; lower notes are ignored (it returns `null`).                                             |
+| `highNote`  | `number`             | `127`      | Highest note `noteOn` plays; higher notes are ignored.                                                               |
+| `polyphony` | `number`             | `32`       | Maximum voices sounding or scheduled at once.                                                                        |
+| `steal`     | `"oldest" \| "none"` | `"oldest"` | At the cap: release the oldest voice and play the new hit, or drop the new hit.                                      |
+| `release`   | `number`             | `0.005`    | Start value of `params.release`: seconds a voice fades out when stopped (`noteOff`, `voice.stop`, steal, `stopAll`). |
+| `volume`    | `number`             | `1`        | Start value of `params.volume` (0..1).                                                                               |
+| `signal`    | `AbortSignal`        | none       | Aborting the signal calls `dispose()`.                                                                               |
 
 **Public surface:**
 
@@ -706,7 +706,10 @@ piano.noteOff("E4"); // releases the held voices of that note
 sampler.sound: Sound | null                     // tracked; the next hit uses it
 sampler.output: GainNode                        // summing gain; use sampler.connect(...)
 sampler.params.volume: SchedulableParam         // output gain 0..1
-sampler.cells.activeVoices: ReadonlyCell<number> // voices sounding or scheduled
+sampler.params.release: Param<number>           // seconds of fade-out applied when a voice is released; changes apply to voices released afterwards
+sampler.params.sustain: Param<boolean>          // sustain pedal (MIDI CC64), default false: while true, noteOff keeps the held voices sounding; false releases them
+sampler.cells.activeVoices: ReadonlyCell<number> // voices sounding (started, not ended); a voice scheduled ahead joins at its start time
+sampler.cells.heldNotes: ReadonlyCell<readonly number[]> // notes with at least one sounding voice, ascending
 
 sampler.trigger(options?: PlayOptions): Voice | null
 // null when there is no sound, or steal:"none" dropped the hit.
@@ -730,6 +733,8 @@ type PlayOptions = Readonly<{
 ```
 
 `when` is absolute `AudioContext` time, the unit `@audiorective/clock` hands you as `time` on each grid point, so a sequencer passes it straight through as `trigger({ when: time })`. See `clock.md`.
+
+**Sustain and release.** `params.release` is read when a voice is released, so a release knob is `sampler.params.release.value = seconds` with no rebuild. With `params.sustain` on, `noteOff` marks the held voices of the note as sustained instead of releasing them; setting it back to `false` releases every sustained voice at the current time. A sustained note struck again adds a voice as usual. `cells.heldNotes` and `cells.activeVoices` are the state a keyboard or meter view reads: a voice scheduled with a future `when` is not counted, and not `playing`, until the context clock reaches `when` (a timer aligned to audio time flips it, like the `PadBank` cleanup timer).
 
 **Polyphony and steal.** With `polyphony: 1` and `steal: "oldest"` each hit replaces the last one over `release`: the pad recipe. `cells.activeVoices` is then `1` while the latest hit plays and never exceeds the cap during a steal. With `steal: "none"` the new hit is dropped and `trigger` returns `null`. For clock-scheduled dynamics automate `params.volume` (linear gain; convert dB with `dbToGain` from `@audiorective/effects`).
 
@@ -777,12 +782,12 @@ The voice rules, the same for every player:
 interface Voice {
   readonly note: number | null; // MIDI note, or null from trigger
   readonly when: number; // AudioContext seconds it starts
-  readonly playing: ReadonlyCell<boolean>; // true until it has ended (stopped, stolen, choked or ran out)
+  readonly playing: ReadonlyCell<boolean>; // false while scheduled ahead, true from `when` until it has ended (stopped, stolen, choked or ran out)
   stop(when?: number): void; // fade out over `release` from `when` (default now), then end
 }
 ```
 
-`stop()` with no time or a past time ends the voice for its callers at once (`playing` is `false`, `activeVoices` drops) while the nodes ring out over `release` and then disconnect. A later `stop(when)` replaces an earlier pending one, like `AudioScheduledSourceNode.stop`; stopping a voice that has not started yet drops it silently, like Web Audio's `stop` before `start`. Calling `stop()` again after the voice has been released does nothing.
+`stop()` with no time or a past time ends the voice for its callers at once (`playing` is `false`, `activeVoices` drops) while the nodes ring out over `release` and then disconnect. A later `stop(when)` replaces an earlier pending one, like `AudioScheduledSourceNode.stop`; stopping a voice that has not started yet drops it silently (`playing` stays `false`), like Web Audio's `stop` before `start`. Calling `stop()` again after the voice has been released does nothing.
 
 ### `playSound`
 
@@ -792,7 +797,7 @@ interface Voice {
 const voice = playSound(ctx, zap, bus, { when, velocity: 1, pitch: 0, duration: 0.25 }, { release: 0.01 });
 ```
 
-`options` (`PlaySoundOptions`): `release` (seconds, default `0.005`), `note` (the MIDI note the voice reports, default `null`), `hold` (default `true`; `false` leaves `hit.duration` informational so only `stop` ends an open-ended voice) and `onFree` (called once when every node is disconnected, after a release has rung out). `assertSound(value)` throws unless `value` is a note name, an `AudioBuffer` or a function, and `noteNumber(note)` returns the MIDI number of a number or note name (`"C4"` is 60) or throws. Use `Sampler` unless you need your own gating, as `PadBank` does for choke.
+`options` (`PlaySoundOptions`): `release` (seconds, or a function read each time the voice is released; default `0.005`), `note` (the MIDI note the voice reports, default `null`), `hold` (default `true`; `false` leaves `hit.duration` informational so only `stop` ends an open-ended voice) `onFree` (called once when every node is disconnected, after a release has rung out) and `onEnd` (called once when the voice is over for its callers, including one stopped before it started). `assertSound(value)` throws unless `value` is a note name, an `AudioBuffer` or a function, and `noteNumber(note)` returns the MIDI number of a number or note name (`"C4"` is 60) or throws. Use `Sampler` unless you need your own gating, as `PadBank` does for choke.
 
 ### BufferPlayer
 
