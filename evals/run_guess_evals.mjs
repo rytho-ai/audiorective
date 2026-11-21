@@ -9,8 +9,9 @@
 // guess:  the solver gets only a variant's .d.ts. Its code is type-checked with tsc, then a
 //         separate grader (never told which variant) scores it against the task's expectations.
 //
-// Solver, grader and clustering calls are `claude -p` with no tools, no skills and a minimal
-// system prompt, run from empty throwaway directories. Requires the Claude Code CLI and a login.
+// Solver, grader and clustering calls use Claude (default) or Codex, with no tools,
+// skills or history and a minimal instruction prompt. Requires the selected CLI and login.
+// Codex requires explicit --model and --reasoning-effort; USD billing is unavailable.
 //
 // Options: --mode desire|guess   --variant <file.d.ts> (guess)   --ids T1,T2   --runs <n> (3)
 //          --concurrency <n> (4)   --model <id>   --grader-model <id>   --timeout <seconds> (300)
@@ -34,6 +35,7 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { createUsageTracker, printUsageReport, usageJson } from "./usage.mjs";
+import { callCodex, codexUsageJson, printCodexUsageReport } from "./codex-call.mjs";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -45,6 +47,8 @@ const repoRoot = resolve(here, "..");
 const args = process.argv.slice(2);
 const flagsWithValue = new Set([
   "mode",
+  "backend",
+  "reasoning-effort",
   "variant",
   "context",
   "ids",
@@ -62,7 +66,7 @@ const suitePath = args.find((a, i) => !a.startsWith("--") && !(args[i - 1]?.star
 const usage = (msg) => {
   if (msg) console.error(`error: ${msg}`);
   console.error(
-    "usage: node evals/run_guess_evals.mjs <suite.json> --mode desire|guess [--variant f.d.ts] [--context f.d.ts] [--ids T1,T2] [--runs n] [--concurrency n] [--model m] [--grader-model m] [--timeout s] [--json f] [--md f] [--regrade results.json] [--checks-only results.json]",
+    "usage: node evals/run_guess_evals.mjs <suite.json> --mode desire|guess [--variant f.d.ts] [--context f.d.ts] [--ids T1,T2] [--runs n] [--concurrency n] [--backend claude|codex] [--model m] [--reasoning-effort e] [--grader-model m] [--timeout s] [--json f] [--md f] [--regrade results.json] [--checks-only results.json]",
   );
   process.exit(2);
 };
@@ -83,8 +87,6 @@ if (mode !== "desire" && mode !== "guess") usage("--mode must be desire or guess
 const runs = positiveInt("runs", 3);
 const concurrency = positiveInt("concurrency", 4);
 const timeoutMs = positiveInt("timeout", 300) * 1000;
-const model = opt("model", null);
-const graderModel = opt("grader-model", model);
 const jsonOut = opt("json", null);
 const mdOut = opt("md", null);
 const regradePath = opt("regrade", checksOnlyPath);
@@ -92,6 +94,25 @@ if (checksOnlyPath && opt("regrade", null)) usage("use --regrade or --checks-onl
 if (regradePath && mode !== "guess") usage("--regrade needs --mode guess");
 if (regradePath && !existsSync(regradePath)) usage(`--regrade file not found: ${regradePath}`);
 const stored = regradePath ? JSON.parse(readFileSync(regradePath, "utf8")) : null;
+const backend = opt("backend", checksOnlyPath ? (stored?.backend ?? "claude") : "claude");
+if (backend !== "claude" && backend !== "codex") usage("--backend must be claude or codex");
+const model = opt("model", stored?.model ?? null);
+const graderModel = opt("grader-model", model);
+const reasoningEffort = opt("reasoning-effort", stored?.reasoningEffort ?? null);
+if (backend === "codex" && !checksOnlyPath && (!model || !reasoningEffort)) usage("--backend codex requires explicit --model and --reasoning-effort");
+if (backend === "claude" && args.includes("--reasoning-effort")) usage("--reasoning-effort is only supported with --backend codex");
+if (stored && (stored.backend ?? "claude") !== backend) usage("stored results use a different backend; re-run control and candidate separately");
+if (stored?.model && stored.model !== model) usage("regrading cannot relabel the stored solver model");
+if (stored?.reasoningEffort && stored.reasoningEffort !== reasoningEffort) usage("regrading cannot relabel the stored solver reasoning effort");
+if (jsonOut && existsSync(jsonOut)) {
+  let previous;
+  try {
+    previous = JSON.parse(readFileSync(jsonOut, "utf8"));
+  } catch {}
+  if (previous?.results && (previous.backend ?? "claude") !== backend)
+    usage("refusing to overwrite another backend's results; choose a separate --json file");
+}
+
 const ids = opt("ids", null)
   ?.split(",")
   .map((s) => s.trim());
@@ -202,6 +223,15 @@ function claude(prompt, useModel, role = "solver") {
   });
 }
 
+// Codex accounting stays separate: its CLI reports tokens but no USD billing.
+async function callModel(prompt, useModel, role = "solver") {
+  if (backend === "claude") return claude(prompt, useModel, role);
+  const result = await callCodex({ prompt, model: useModel, reasoningEffort, systemPrompt: SYSTEM_PROMPT, timeoutMs, env });
+  usageByRole[role].push(result.usage);
+  return result;
+}
+const addCost = (a, b) => (a === null || b === null ? null : a + b);
+
 // ---- prompts ---------------------------------------------------------------
 
 const DESIRE_INTRO =
@@ -294,7 +324,7 @@ function compileAs(variant, tsCode, tsx) {
       "--moduleResolution",
       "bundler",
       "--lib",
-      "es2022,dom",
+      "es2022,dom,dom.iterable",
       "--skipLibCheck",
       "false",
       "--pretty",
@@ -373,17 +403,19 @@ function parseGrade(text, count) {
 }
 
 async function gradeWithRetry(task, code, html, tscResult) {
-  let cost = 0;
+  let cost = backend === "codex" ? null : 0;
+  const calls = [];
   let lastError = "";
   for (let attempt = 0; attempt < 2; attempt++) {
-    const g = await claude(gradePrompt(task, code, html, tscResult), graderModel, "grader");
-    if (g.error) return { error: `grader: ${g.error}`, cost };
-    cost += g.costUsd;
+    const g = await callModel(gradePrompt(task, code, html, tscResult), graderModel, "grader");
+    calls.push({ role: "grader", usage: g.usage, metadata: g.metadata });
+    if (g.error) return { error: `grader: ${g.error}`, cost, calls };
+    cost = addCost(cost, g.costUsd);
     const grade = parseGrade(g.text, task.expectations.length);
-    if (grade) return { grade, cost };
+    if (grade) return { grade, cost, calls };
     lastError = "reply was not the requested JSON";
   }
-  return { error: `grader: ${lastError}`, cost };
+  return { error: `grader: ${lastError}`, cost, calls };
 }
 
 // ---- deterministic checks --------------------------------------------------
@@ -446,7 +478,7 @@ async function runOne(task, replay) {
   let solved;
   if (replay) {
     if (replay.error && !replay.ts && !replay.html) return { error: replay.error };
-    solved = { text: replay.raw ?? "", costUsd: 0 };
+    solved = { text: replay.raw ?? "", costUsd: backend === "codex" ? null : 0 };
     if (checksOnlyPath) {
       if (!replay.grade) return { error: replay.error ?? "no stored grade" };
       const { ts = "", html = "" } = replay;
@@ -459,8 +491,13 @@ async function runOne(task, replay) {
       };
     }
   } else {
-    solved = await claude(solverPrompt(task), model);
-    if (solved.error) return { error: `solver: ${solved.error}` };
+    solved = await callModel(solverPrompt(task), model);
+    if (solved.error)
+      return {
+        error: `solver: ${solved.error}`,
+        costUsd: solved.costUsd,
+        calls: [{ role: "solver", usage: solved.usage, metadata: solved.metadata }],
+      };
   }
   const { ts, html } = replay ? { ts: replay.ts ?? "", html: replay.html ?? "" } : extractBlocks(solved.text);
   if (!ts.trim() && !html.trim()) return { error: "solver: reply contained no code block", raw: solved.text };
@@ -471,12 +508,14 @@ async function runOne(task, replay) {
     loc: countLoc(ts) + countLoc(html),
     chars: ts.length + html.length,
     costUsd: solved.costUsd,
+    calls: replay ? [] : [{ role: "solver", usage: solved.usage, metadata: solved.metadata }],
   };
   if (mode === "desire") return base;
   const tscResult = compile(variantDts, ts);
   if (tscResult.error) return { ...base, error: tscResult.error };
   const graded = await gradeWithRetry(task, ts, html, tscResult);
-  base.costUsd += graded.cost;
+  base.costUsd = addCost(base.costUsd, graded.cost);
+  base.calls.push(...graded.calls);
   if (graded.error) return { ...base, tsc: tscResult, error: graded.error };
   return { ...base, tsc: tscResult, grade: applyChecks(task, ts, html, graded.grade) };
 }
@@ -507,7 +546,7 @@ async function clusterTask(task, samples) {
   if (samples.length === 0) return { error: "no completed samples" };
   let last = "";
   for (let attempt = 0; attempt < 2; attempt++) {
-    const r = await claude(clusterPrompt(task, samples), graderModel, "cluster");
+    const r = await callModel(clusterPrompt(task, samples), graderModel, "cluster");
     if (r.error) return { error: `cluster: ${r.error}` };
     const p = extractJson(r.text);
     if (p && Array.isArray(p.clusters)) return { clusters: p.clusters, recurring: p.recurring ?? {}, costUsd: r.costUsd };
@@ -532,8 +571,10 @@ async function pool(jobs, size) {
   return results;
 }
 
-console.error(`suite: ${suite.area ?? suitePath}  mode: ${mode}${variantPath ? `  variant: ${variantPath}` : ""}`);
-console.error(`${tasks.length} tasks × ${runs} runs, concurrency ${concurrency}${model ? `, model ${model}` : ""}…`);
+console.error(`suite: ${suite.area ?? suitePath}  backend: ${backend}  mode: ${mode}${variantPath ? `  variant: ${variantPath}` : ""}`);
+console.error(
+  `${tasks.length} tasks × ${runs} runs, concurrency ${concurrency}${model ? `, model ${model}` : ""}${reasoningEffort ? `, reasoning ${reasoningEffort}` : ""}…`,
+);
 
 const jobs = [];
 for (const [ti, task] of tasks.entries()) {
@@ -586,6 +627,8 @@ const results = tasks.map((task, ti) => {
     raw: x.raw ?? null,
     tsc: x.tsc ? { passed: x.tsc.passed, diagnostics: x.tsc.diagnostics, first: x.tsc.first } : null,
     grade: x.grade ?? null,
+    costUsd: backend === "codex" ? null : (x.costUsd ?? 0),
+    calls: x.calls ?? [],
   }));
   out._ok = ok;
   return out;
@@ -603,7 +646,7 @@ if (mode === "desire") {
     clusterCost += c.costUsd ?? 0;
   });
 }
-const costUsd = sum(flat, (x) => x.costUsd ?? 0) + clusterCost;
+const costUsd = backend === "codex" ? null : sum(flat, (x) => x.costUsd ?? 0) + clusterCost;
 for (const r of results) delete r._ok;
 for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });
 
@@ -698,15 +741,31 @@ if (mode === "guess") {
 }
 const failed = results.filter((r) => r.errors.length);
 if (failed.length) console.log(`\n${sum(failed, (r) => r.errors.length)} error(s) occurred; erroring runs are excluded from the totals.`);
-console.log(`cost: $${costUsd.toFixed(2)}`);
+console.log(
+  costUsd === null ? "cost: unavailable (Codex CLI reports tokens only; excluded from Claude eval budget)" : `cost: $${costUsd.toFixed(2)}`,
+);
 const usageRows = Object.entries(usageByRole).map(([label, runs]) => ({ label, runs }));
-printUsageReport(usageRows, { title: "Token and cost breakdown by call role (no tools, so no per-file attribution)" });
+if (backend === "codex") printCodexUsageReport(usageRows);
+else printUsageReport(usageRows, { title: "Token and cost breakdown by call role (no tools, so no per-file attribution)" });
 
 if (jsonOut)
   writeFileSync(
     jsonOut,
     JSON.stringify(
-      { suite: suite.area, mode, variant: variantPath, model, graderModel, runs, costUsd, usage: usageJson(usageRows), results },
+      {
+        suite: suite.area,
+        mode,
+        variant: variantPath,
+        backend,
+        model,
+        graderModel,
+        reasoningEffort,
+        runs,
+        costUsd,
+        accounting: backend === "codex" ? "actual tokens; USD unavailable; excluded from Claude budget" : "Claude CLI reported USD",
+        usage: backend === "codex" ? codexUsageJson(usageRows) : usageJson(usageRows),
+        results,
+      },
       null,
       2,
     ) + "\n",

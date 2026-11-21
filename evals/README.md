@@ -66,6 +66,22 @@ node evals/run_guess_evals.mjs evals/affordance/step-sequencer.json --mode guess
 
 Options: `--ids T1,T2`, `--runs` (3), `--concurrency` (4), `--timeout` seconds (300), `--model`, `--grader-model`, `--json <file>`, `--context <file.d.ts>` (desire), `--md <file>` (desire). The report gives, per task and overall, the compile pass rate, expectations met, mean lines of code (non-blank, non-comment) and error-kind counts; the JSON also keeps every raw reply. A run that does not complete (timeout, login, rate limit, no code block, unparseable grader reply after one retry) is reported as an error, excluded from the totals, and makes the exit code non-zero.
 
+## Optional Codex backend
+
+All three runners default to Claude. To use an authenticated Codex CLI, pin both the model and reasoning effort on every baseline and candidate command:
+
+```sh
+node evals/run_guess_evals.mjs evals/affordance/effects.json --backend codex --model gpt-6.1-sol --reasoning-effort high --mode guess --variant /path/to/real.d.ts --runs 3 --json /tmp/codex-guess.json
+node evals/run_functional_evals.mjs audiorective --backend codex --model gpt-6.1-sol --reasoning-effort high --ids 13,80,81 --runs 3 --json /tmp/codex-functional.json
+node evals/run_trigger_evals.mjs audiorective --backend codex --model gpt-6.1-sol --reasoning-effort high --ids 11,28 --runs 3 --json /tmp/codex-trigger.json
+```
+
+Trigger `--ids` are one-based query indices; functional and guess IDs come from their sets. Functional and guess also accept `--grader-model` and `--grader-reasoning-effort`; they default to the pinned solver settings. Codex calls use a fresh ephemeral scratch directory, ignore user config and rules, suppress host skill discovery, and disable shell, browser, apps, plugins, hooks and memory. Guess calls and graders have no tools. `--user-settings` is unavailable for Codex.
+
+Functional solvers receive a read-only MCP server exposing the staged skills' exact descriptions and Markdown bodies/references through `open_skill`, `read_file`, `list_files` and `search`. Trigger solvers receive only the descriptions and `SKILL.md` bodies through `open_skill` and `read_file`. The reader rejects paths outside the staged Markdown, traversal, symlinks and hidden paths. The JSON records successful body reads and reference sizes. A successful target body read counts as opened; listing a catalog does not. This measures Codex's staged MCP discovery, which differs from Claude's native Skill tool. Compare complete baselines and candidates with the same backend, model, reasoning effort, prompts and staging; do not compare these scores directly with historical Claude scores.
+
+Codex JSON stores actual CLI tokens by call role, including cached input and reasoning output when reported. The CLI does not report USD, so `costUsd` is `null`; these calls are excluded from the Claude dollar budget and are never priced using Claude rates. Missing completion, timeout, API failure, malformed output and forbidden tool calls fail the run. Keep the raw result JSON when reviewing scores and generated samples.
+
 ## Maintaining the sets
 
 - When a public API is added or changed, add or update the eval that exercises it in the same change as the docs and `CHANGELOG.md` entry.
