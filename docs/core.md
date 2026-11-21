@@ -573,6 +573,8 @@ class Analyser extends AudioProcessor {
   createWaveformBuffer(): Uint8Array; // sized to fftSize
   readFrequencies(out: Uint8Array): void; // 0–255 per bin (getByteFrequencyData)
   readWaveform(out: Uint8Array): void; // 0–255, 128 = silence (getByteTimeDomainData)
+  createFloatWaveformBuffer(): Float32Array; // sized to fftSize
+  readFloatWaveform(out: Float32Array): void; // -1..1, 0 = silence (getFloatTimeDomainData), what a level meter reads
 
   constructor(context: BaseAudioContext, options?: AnalyserOptions);
 }

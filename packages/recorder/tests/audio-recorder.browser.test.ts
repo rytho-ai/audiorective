@@ -271,3 +271,45 @@ test("stop asked while the capture graph is still being built ends the take as s
   expect(await recording).toBe(take);
   expect(Math.abs(take.endFrame - take.startFrame - Math.ceil(0.1 * context.sampleRate))).toBeLessThanOrEqual(1);
 });
+
+test("an input that reaches only the recorder is processed from the start, so a take holds exactly what played at that audio time", async () => {
+  const sampleRate = 48_000;
+  const context = new OfflineAudioContext(1, sampleRate, sampleRate);
+  const recorder = new AudioRecorder(context, { channels: 1 });
+  disposers.push(() => recorder.dispose());
+  // A ramp from 0 at t=0 to 1 at t=1 that is wired to nothing but the recorder.
+  const ramp = new ConstantSourceNode(context, { offset: 0 });
+  ramp.offset.setValueAtTime(0, 0);
+  ramp.offset.linearRampToValueAtTime(1, 1);
+  ramp.connect(recorder.input);
+  ramp.start(0);
+
+  const recording = recorder.record({ when: 0.5, length: 0.25 });
+  await vi.waitFor(() => expect(recorder.cells.startsAt.value).toBe(0.5));
+  await context.startRendering();
+  const take = await recording;
+  expect(take.startFrame).toBe(sampleRate / 2);
+  expect(take.channels[0][0]).toBeCloseTo(0.5, 3);
+  expect(take.channels[0][take.channels[0].length - 1]).toBeCloseTo(0.75, 3);
+});
+
+test("an oscillator wired only to the recorder keeps its phase when the take is armed mid-render", async () => {
+  const sampleRate = 48_000;
+  const context = new OfflineAudioContext(1, sampleRate, sampleRate);
+  const recorder = new AudioRecorder(context, { channels: 1 });
+  disposers.push(() => recorder.dispose());
+  const osc = new OscillatorNode(context, { frequency: 50 });
+  osc.connect(recorder.input);
+  osc.start(0);
+  await recorder.ready;
+  let recording!: Promise<{ channels: readonly Float32Array[] }>;
+  context.suspend(0.25).then(() => {
+    recording = recorder.record({ when: 0.5, length: 0.01 });
+    return vi.waitFor(() => expect(recorder.cells.startsAt.value).toBe(0.5)).then(() => context.resume());
+  });
+  await context.startRendering();
+  const take = await recording;
+  // 50 Hz from phase 0 at t=0: at t=0.5 it has completed 25 cycles, so the take starts at phase 0 and rises. Started late, it would be half a cycle off.
+  expect(take.channels[0][0]).toBeCloseTo(0, 3);
+  expect(take.channels[0][20]).toBeCloseTo(Math.sin((2 * Math.PI * 50 * 20) / sampleRate), 3);
+});

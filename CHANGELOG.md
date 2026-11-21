@@ -15,12 +15,18 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Added
 
+- **launcher:** `clip.launch({ at: beat })` starts a buffer clip as if it had started at that transport beat: a beat ahead starts there, a past one starts now at the elapsed phase (wrapped by the loop), so a take that resolved late loops in phase. `clip.buffer` (a `ReadonlyCell`) reads a buffer clip's audio and `clip.configure({ buffer })` replaces it, swapping a playing clip gaplessly at the same position. `removeEventListener` is typed with `ClipEvent` like `addEventListener`.
+- **recorder:** `overdub(loop, take, { loopStartBeat, bpm | timeline, atBeat?, gain? })` sums a take into a loop at its beat position (wrapping across the loop end) and `punch(loop, take, { loopStartBeat, fromBeat, toBeat, bpm | timeline, fadeSeconds? })` replaces a region with crossfaded edges; both return a new `AudioBuffer` for `clip.configure({ buffer })`.
+- **clock:** `clock.beat`, a plain getter for the current beat. `renderTimeline({ actions: [{ at, run }] })` runs closures at audio times and waits for any promise they return (a take delivered by a worklet) before the next tick; `RenderAction` is exported.
+- **core:** `Analyser.createFloatWaveformBuffer()` and `readFloatWaveform(out)` read the time-domain waveform as floats.
+- **skill:** capability rows for a loop station, overdub and punch, resampling and launcher `scheduler` clips; the restored "What to read next", "Rules that always apply" and "Common errors" sections after a merge dropped them, with one "Message starts with" routing table.
 - **core / pads:** `Sampler.params.release` and `PadBank.params.release` (`Param<number>`, seconds, default 0.005, set by the `release` option) are read when a voice is released, so a release knob needs no rebuild. `PlaySoundOptions.release` also accepts a function. `Voice` gains `started` (false while scheduled ahead, true once its `when` has passed).
 - **core:** `Sampler.params.sustain` (`Param<boolean>`, default `false`) is a sustain pedal (MIDI CC64): while true, `noteOff` keeps the held voices sounding, and setting it to `false` releases them at the current time.
 - **core / pads:** `Sampler.cells.heldNotes` (notes with a sounding voice, ascending) and `PadBank.cells.playing` (pad ids with a sounding voice, in pad order) replace page-side counters.
 
 ### Fixed
 
+- **recorder:** a source or automation wired only to `recorder.input` is processed from the start, armed or not (a silent pull path to the destination), so a take holds what played at that audio time. Before, it was pulled only once a take armed: in an offline render the oscillator phase or ramp started late and the take came back time-shifted with no error.
 - **core:** `Sampler.noteOff` releases only the held voices of the note that start by `when`. A later `noteOff` no longer moves the stop of a voice an earlier `noteOff` released, and a `noteOff` does not release a voice scheduled after it.
 - **core / pads:** `Sampler.cells.activeVoices` and `PadBank.cells.activeVoices` count only started voices: a voice scheduled for the future joins at its start time, where before it counted at scheduling, one look-ahead early. `voice.playing` is unchanged (true until the voice ends); read `voice.started` for whether it has begun.
 - **recorder:** a take with `length` is exactly that many frames. The capture worklet now counts the length from its first captured frame and never opens before the planned start frame, so a boundary already in the past or a late-opening gate no longer yields extra frames (a 0.25 s take could be 12512 frames). A render quantum the browser repeats is skipped, so chunks stay contiguous instead of failing with `AudioRecorder lost captured frames.`

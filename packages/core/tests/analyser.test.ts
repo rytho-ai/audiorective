@@ -41,6 +41,22 @@ describe("Analyser", () => {
     a.dispose();
   });
 
+  test("reads the waveform as floats: silence is 0 and a constant signal reads its level", async () => {
+    const a = new Analyser(ctx, { fftSize: 256 });
+    const out = a.createFloatWaveformBuffer();
+    expect(out).toBeInstanceOf(Float32Array);
+    expect(out.length).toBe(256);
+    const source = new ConstantSourceNode(ctx, { offset: 0.5 });
+    source.connect(a.input);
+    source.start();
+    await waitUntil(ctx.currentTime + 0.1);
+    a.readFloatWaveform(out);
+    expect(out[out.length - 1]).toBeCloseTo(0.5, 5);
+    source.stop();
+    source.disconnect();
+    a.dispose();
+  });
+
   test("defaults to fftSize 2048", () => {
     const a = new Analyser(ctx);
     expect(a.fftSize).toBe(2048);

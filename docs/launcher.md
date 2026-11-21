@@ -50,10 +50,11 @@ clip.configure({ quantize: "1m", loop: false }); // every other option
 - **A clip is a buffer, a `sound` or a `scheduler`.** `sound` is a core `Sound`: a note name plays the built-in tone for the clip's length; an `AudioBuffer` plays like `buffer`; a factory `(context, hit) => AudioScheduledSourceNode | { output, sources, duration? }` builds an unconnected, unstarted voice per start, and the launcher connects it to the track, starts every source, ends it with the clip (a short release fade) and frees it. The factory sees `hit.duration` = the clip's `length` in seconds (`Infinity` while looping or without a `length`: the voice is held until the clip stops) and `hit.pitch` = the clip's `pitch` at the start. A `scheduler` is a `StepSequencer` or any clock scheduler (see [advanced](./launcher-advanced.md#pattern-clips)).
 - **Material is in beats from its first beat.** A buffer's seconds become beats at its `bpm`, which defaults to the clock tempo when the clip is created. `offsetBeats` sets where the first pass starts; `loop` is `true` or a region `{ startBeat, endBeat }`; `length` is where a one-shot ends. One rule: the material is `[0, length)`, `loop` picks the part that repeats, `offsetBeats` only sets the start, `bpm` only converts seconds to beats.
 - **Buffer clips follow the song tempo.** `warp` defaults to `"repitch"`: the playback rate is clock tempo / `bpm`, so a tempo change or a scene tempo speeds the clip up with the song and moves its pitch. Pass `warp: false` for a clip that must keep its own speed.
+- **Launch as if it started earlier.** `clip.launch({ at: beat })` starts a buffer clip as if it had started at transport beat `at`, with no quantize: a beat still ahead starts there; a beat already past starts now, from `offsetBeats` advanced by the beats elapsed since `at` (wrapped by the loop). It is how a take that resolved after its bar loops in phase: `clip.launch({ at: take.startBeat + 8 })` for a two-bar take. `legato` takes precedence.
 - **`quantize` per clip** overrides `launcher.quantize` for that clip's launch, stop and release. `launch({ quantize, legato })` overrides it for one call.
 - **`track.stop()` quantize:** the explicit option, else the playing clip's `quantize`, else `launcher.quantize`.
 - **`pitch` moves a buffer's playback rate live.** A `sound` factory reads it (`hit.pitch`) once, at the start; a `scheduler` clip ignores it.
-- **`configure(patch)`** takes a writable `ClipPatch` (any subset of the options, so `const patch: ClipPatch = {}; patch.loop = true` compiles) and edits any option after construction; the JSDoc says when each takes effect (`loop` at the playing clip's next wrap, `mode`, `length`, `offsetBeats`, `bpm` and `warp` at its next start). It throws `RangeError` for `chance` outside 0..1, `repeatBeats` of 0 or less, or an empty loop.
+- **`configure(patch)`** takes a writable `ClipPatch` (any subset of the options, so `const patch: ClipPatch = {}; patch.loop = true` compiles) and edits any option after construction; the JSDoc says when each takes effect (`loop` at the playing clip's next wrap, `mode`, `length`, `offsetBeats`, `bpm` and `warp` at its next start). It throws `RangeError` for `chance` outside 0..1, `repeatBeats` of 0 or less, or an empty loop. `configure({ buffer })` replaces a buffer clip's audio: a playing clip swaps to it at once at the same position, without a gap, and `clip.buffer` (a cell) reads the current audio, so an overdub or punch needs no second copy (`overdub` and `punch` in [recorder](./recorder.md#placing-a-take-in-a-loop)).
 
 ## Layer 3: scenes, cancel and the wait
 
@@ -90,6 +91,10 @@ Events are `queued`, `started`, `ended`, `cancelled` and `skipped` (a `ClipEvent
 
 For lanes of steps use `StepSequencer`; for a one-off sound, a player. A launcher fits looping and one-shot material switched in time with a transport. For arrangement-style timelines use the DAW `Project`.
 
+## Launch as if it started earlier
+
+See the `launch({ at })` bullet above; `ClipLauncher` events type `addEventListener` and `removeEventListener` with `ClipEvent`.
+
 ## Common errors
 
 <!-- prettier-ignore -->
@@ -97,5 +102,7 @@ For lanes of steps use `StepSequencer`; for a one-off sound, a player. A launche
 | --- | --- |
 | `Clip Launcher requires a note value such as "4n" or "1m", got "…".` | A `quantize`, `length` or `follow.after` string is not a note value. Use `"none"`, `"4n"`, `"8n"`, `"1m"`, `"2m"` (`"1m"` is a bar of `clock.meter`). |
 | `Clip Launcher requires chance in 0..1, got ….` | `chance` is a probability. Pass a number from 0 to 1. |
+| `Clip Launcher can only replace the buffer of a buffer clip.` | `configure({ buffer })` on a `sound` factory or `scheduler` clip | Replace the clip with `track.setClip(slot, { buffer })`, or configure a buffer clip. |
+| `Clip Launcher requires a finite beat for `at`.` | `launch({ at })` got NaN or Infinity | Pass a transport beat. |
 | `Clip Launcher requires repeatBeats above 0, got ….` | `repeatBeats` is the retrigger interval in beats of a `mode: "repeat"` clip. Pass a number above 0. |
 | `Clip Launcher requires a loop with endBeat after startBeat.` | A loop region needs `endBeat > startBeat`, in material beats. |

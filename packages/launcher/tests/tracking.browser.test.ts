@@ -52,7 +52,9 @@ describe("commands called inside an effect do not subscribe it", () => {
       launcher.launchScene([clip]);
       launcher.stopAll();
       launcher.cancelQueued();
-      launcher.addEventListener("started", () => {});
+      const onStarted = () => {};
+      launcher.addEventListener("started", onStarted);
+      launcher.removeEventListener("started", onStarted);
       launcher.schedule({ beat: { start: 0, end: 0.2 }, time: { current: 0 }, own() {} }, clock.timeline);
       launcher.transport({ type: "tempo", when: 0, beat: 0 });
       launcher.reset("pause");

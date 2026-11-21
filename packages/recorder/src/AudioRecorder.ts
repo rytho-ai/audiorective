@@ -12,6 +12,7 @@ import {
 import type { PCMData } from "@audiorective/core/peaks";
 import { AUDIO_RECORDER_WORKLET, AUDIO_RECORDER_WORKLET_NAME } from "./recording/audio-recorder.worklet";
 export * from "./MicrophoneInput";
+export * from "./placement";
 
 /** "none" starts at once; otherwise the next boundary of an attached playing clock: "1m" a bar of its meter (4 beats in 4/4), "2m" two bars, "4n" a beat, "8n" half a beat. A call exactly on a boundary starts there, not on the next one. */
 export type Quantize = "none" | `${number}m` | `${number}n`;
@@ -154,6 +155,9 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
     const channels = options.channels ?? 2;
     if (!Number.isInteger(channels) || channels < 1 || channels > 32) throw new RangeError("AudioRecorder channels must be an integer from 1 to 32.");
     const source = new GainNode(context, { channelCount: channels, channelCountMode: "explicit", channelInterpretation: "discrete" });
+    // A silent pull path keeps everything wired to `input` processed even while no take is armed: sources and automation upstream then run on the
+    // audio clock from the start, so a take holds what played at that time and not material that began late. It sends nothing to the destination.
+    source.connect(new GainNode(context, { gain: 0 })).connect(context.destination);
     const stateStore = cell<AudioRecorderState>("idle");
     const errorStore = cell<string | null>(null);
     const startsAtStore = cell<number | null>(null);
