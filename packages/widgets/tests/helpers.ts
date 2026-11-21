@@ -1,4 +1,6 @@
 import { commands } from "vitest/browser";
+import { MidiClip, type NoteInit } from "@audiorective/midi";
+import { pianoRollModel } from "../src/piano-roll";
 
 export type PointerAction = {
   action: "down" | "move" | "up";
@@ -84,4 +86,15 @@ export function bandsFile(seconds = 6): File {
     view.setInt16(44 + i * 2, Math.round(Math.sin(2 * Math.PI * frequency * time) * 0.25 * 32767), true);
   }
   return new File([bytes], "bands.wav", { type: "audio/wav" });
+}
+
+/** A piano-roll model over a fresh clip; both are released by `cleanup()`. */
+export function rollModel(notes: readonly NoteInit[] = [], duration?: number | (() => number)) {
+  const clip = new MidiClip(notes);
+  const model = pianoRollModel(clip, duration === undefined ? undefined : { duration });
+  own(() => {
+    model.dispose();
+    clip.dispose();
+  });
+  return Object.assign(model, { clip });
 }

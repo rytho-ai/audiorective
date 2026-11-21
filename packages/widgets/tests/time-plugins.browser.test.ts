@@ -1,14 +1,13 @@
 /** Public integration and lifecycle for plugins shared by time-based views. */
 import { afterEach, expect, test, vi } from "vitest";
 import { userEvent } from "vitest/browser";
-import { MidiSequence } from "@audiorective/midi";
 import { WavePlayer } from "@audiorective/player";
 import { cell } from "@audiorective/core";
 import type { AutomationPoint } from "@audiorective/core/automation";
 import { createAutomationOverlay, mountWaveformSelector, type TimeViewPlugin } from "../src";
 import { mountPianoRoll, type WaveformPlugin, type WaveformPluginContext } from "../src/piano-roll";
 import { mountWaveform } from "../src/waveform";
-import { bandsFile, cleanup, element, host, own, pointer } from "./helpers";
+import { bandsFile, cleanup, element, host, own, pointer, rollModel } from "./helpers";
 
 afterEach(async () => {
   await cleanup();
@@ -18,10 +17,9 @@ afterEach(async () => {
 test("an automation overlay edits a shared curve with output-to-source time projection and independent lifetimes", () => {
   const root = host();
   const peer = host();
-  const model = new MidiSequence({ notes: [], duration: 2 });
+  const model = rollModel([], 2);
   const waveform = mountWaveform(root, { data: { peaks: Float32Array.of(0.2, 0.8), duration: 2 } });
   const notes = mountPianoRoll(peer, { model });
-  own(() => model.dispose());
   own(() => waveform.dispose());
   own(() => notes.dispose());
   const points = cell<readonly AutomationPoint[]>([
@@ -66,11 +64,10 @@ test("one time plugin mounts on all three views, follows units and cleans up eac
   own(() => context.close());
   const player = new WavePlayer(context);
   own(() => player.dispose());
-  const model = new MidiSequence({ duration: 8, notes: [] });
-  own(() => model.dispose());
+  const model = rollModel([], 8);
 
   const wave = mountWaveform(host(), { data: { peaks: Float32Array.of(0.5), duration: 4 } });
-  const piano = mountPianoRoll(host(), { model, timeUnit: "beats" });
+  const piano = mountPianoRoll(host(), { model });
   const selectorRoot = host();
   const selector = mountWaveformSelector(selectorRoot, { player });
   own(() => wave.dispose());
@@ -124,8 +121,8 @@ test("one time plugin mounts on all three views, follows units and cleans up eac
 for (const kind of ["waveform", "piano roll"] as const) {
   function fixture() {
     const root = host();
-    const model = new MidiSequence({ duration: 6, notes: [] });
-    own(() => model.dispose());
+    const length = cell(6);
+    const model = rollModel([], () => length.value);
     const wave = kind === "waveform" ? mountWaveform(root, { data: { peaks: Float32Array.of(0.2, 0.8), duration: 6 } }) : undefined;
     const view = wave ?? mountPianoRoll(root, { model });
     own(() => view.dispose());
@@ -134,7 +131,7 @@ for (const kind of ["waveform", "piano roll"] as const) {
       view,
       replace() {
         if (wave) wave.setData({ peaks: Float32Array.of(0.5, 0.1), duration: 8 });
-        else model.setData({ notes: [], duration: 8 });
+        else length.value = 8;
       },
     };
   }

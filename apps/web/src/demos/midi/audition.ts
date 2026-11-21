@@ -4,6 +4,9 @@
 import { AudioProcessor, type SchedulableParam } from "@audiorective/core";
 import { compileMidiPlaybackEvents, type MidiNote, type MidiRange, type MidiData, type MidiPlaybackSource } from "@audiorective/midi";
 import { planMidiVoices } from "./voice-plan";
+/** The demo plays at a fixed tempo: positions, selections and note times are beats, audio is scheduled in seconds. */
+export const DEMO_BPM = 120;
+const SECONDS_PER_BEAT = 60 / DEMO_BPM;
 export type Note = MidiNote;
 export type Range = MidiRange;
 export type State = MidiData & Readonly<{ selection: MidiRange | null; source?: MidiPlaybackSource | null }>;
@@ -26,10 +29,12 @@ class DemoMidiAuditioner extends AudioProcessor<{ volume: SchedulableParam }, {}
     return this.gain;
   }
   get position(): number {
-    return this.anchor ? Math.min(this.anchor.end, this.anchor.offset + Math.max(0, this.context.currentTime - this.anchor.time)) : this.held;
+    return this.anchor
+      ? Math.min(this.anchor.end, this.anchor.offset + Math.max(0, this.context.currentTime - this.anchor.time) / SECONDS_PER_BEAT)
+      : this.held;
   }
   get isPlaying(): boolean {
-    return !!this.anchor && this.context.currentTime < this.anchor.time + this.anchor.end - this.anchor.offset;
+    return !!this.anchor && this.context.currentTime < this.anchor.time + (this.anchor.end - this.anchor.offset) * SECONDS_PER_BEAT;
   }
   get activeVoices(): number {
     return this.voices.size;
@@ -59,23 +64,24 @@ class DemoMidiAuditioner extends AudioProcessor<{ volume: SchedulableParam }, {}
     if (range.end <= range.start) return;
     const offset = this.held >= range.start && this.held < range.end ? this.held : range.start,
       time = this.context.currentTime + 0.03;
-    const messages = compileMidiPlaybackEvents(state.source ?? { startTime: 0, events: [] }, state);
+    const messages = compileMidiPlaybackEvents(state.source ?? { events: [] }, state);
     const planned = planMidiVoices(messages, state.duration);
     this.anchor = { time, offset, end: range.end };
     for (const note of planned) {
       const start = Math.max(note.start, offset),
         end = Math.min(note.end, range.end);
       if (end <= start) continue;
-      const when = time + start - offset,
+      const when = time + (start - offset) * SECONDS_PER_BEAT,
+        length = (end - start) * SECONDS_PER_BEAT,
         osc = new OscillatorNode(this.context, { type: "sine", frequency: 440 * 2 ** ((note.pitch - 69) / 12) }),
         gain = new GainNode(this.context),
         voice = { osc, gain };
-      const level = (note.velocity / 127) * 0.15,
-        fade = Math.min(0.003, (end - start) / 4);
+      const level = note.velocity * 0.15,
+        fade = Math.min(0.003, length / 4);
       gain.gain.setValueAtTime(0, when);
       gain.gain.linearRampToValueAtTime(level, when + fade);
-      gain.gain.setValueAtTime(level, when + end - start - fade);
-      gain.gain.linearRampToValueAtTime(0, when + end - start);
+      gain.gain.setValueAtTime(level, when + length - fade);
+      gain.gain.linearRampToValueAtTime(0, when + length);
       osc.connect(gain);
       gain.connect(this.gain);
       this.voices.add(voice);
@@ -85,13 +91,13 @@ class DemoMidiAuditioner extends AudioProcessor<{ volume: SchedulableParam }, {}
         this.voices.delete(voice);
       };
       osc.start(when);
-      osc.stop(when + end - start);
+      osc.stop(when + length);
     }
   }
-  seek(seconds: number): void {
+  seek(beat: number): void {
     const active = this.isPlaying;
     this.pause();
-    this.held = Math.max(0, Math.min(this.read().duration, seconds));
+    this.held = Math.max(0, Math.min(this.read().duration, beat));
     if (active) void this.play();
   }
   override dispose(): void {
@@ -110,7 +116,7 @@ export function createAuditioner(context: AudioContext, output: AudioNode, read:
 export interface Auditioner {
   play(): Promise<void>;
   pause(): void;
-  seek(seconds: number): void;
+  seek(beat: number): void;
   readonly position: number;
   readonly isPlaying: boolean;
   dispose(): void;
@@ -120,10 +126,10 @@ export type MidiApp = {
   load(bytes: ArrayBuffer | Uint8Array): void;
   getState(): State;
   setSelection(range: Range | null): void;
-  editNote(id: string, patch: Partial<Pick<Note, "pitch" | "velocity" | "start" | "end">>): void;
+  editNote(id: string, patch: Partial<Pick<Note, "pitch" | "velocity" | "start" | "duration">>): void;
   play(): Promise<void>;
   pause(): void;
-  seek(seconds: number): void;
+  seek(beat: number): void;
   readonly position: number;
   readonly isPlaying: boolean;
   removeSecondView(): void;

@@ -31,7 +31,7 @@ export const rightKeyboardLayout: PianoRollLayout = (root, viewport, controls) =
   return {
     render(frame) {
       zoom = frame.zoom;
-      output.textContent = `${zoom}× · ${frame.duration.toFixed(2)}s`;
+      output.textContent = `${zoom}× · ${frame.duration.toFixed(2)} beats`;
       keys.style.height = `${frame.height}px`;
       const nodes: HTMLElement[] = [],
         height = frame.height / (frame.pitches.high - frame.pitches.low + 1);

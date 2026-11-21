@@ -1,14 +1,12 @@
 /** Custom controls must read the same snap state that note/selection gestures use. */
 import { expect, test, vi, afterEach } from "vitest";
-import { MidiSequence } from "@audiorective/midi";
 import { mountPianoRoll, type PianoRollControls, type PianoRollLayoutFrame } from "../src/piano-roll";
-import { host, own, cleanup } from "./helpers";
+import { host, own, cleanup, rollModel } from "./helpers";
 
 afterEach(cleanup);
 
 test("custom layout reads initial snap and follows caller and layout control writes", () => {
-  const model = new MidiSequence({ duration: 4, notes: [] });
-  own(() => model.dispose());
+  const model = rollModel([], 4);
   const output = document.createElement("output");
   let controls!: PianoRollControls;
   const view = mountPianoRoll(host(), {
@@ -33,8 +31,7 @@ test("custom layout reads initial snap and follows caller and layout control wri
 });
 
 test("default snap is off and a disposed view cannot render a snap update", () => {
-  const model = new MidiSequence({ duration: 4, notes: [] });
-  own(() => model.dispose());
+  const model = rollModel([], 4);
   const render = vi.fn();
   const view = mountPianoRoll(host(), {
     model,
