@@ -151,6 +151,12 @@ No within-host pair reaches the preregistered two-extra-usable-samples threshold
 
 Paul subsequently stated a preference for Vanilla absent a particular reason. Keep the framework-independent Vanilla `mount` core; framework adapters, when needed, connect the same owners and view lifecycle. This preference is independent of the empirical ranking. Framework integration must retain control identity, focus and active gestures through normal redraws and release only view-owned resources on unmount. The evidence supports these ownership/lifecycle requirements, not a universal declarative-API claim. Method, raw evidence, amendment and root assessment live under ignored `blueprints/probes/affordance-widgets/view-syntax-comparison/` in the development worktree.
 
+### Widgets implementation-review follow-up (2026-11-22)
+
+After meter callbacks sample each animation frame and live invalid lane duration disables rather than throws, extract the current real17a01d5 declarations and run all six tasks anew, three answers each. All18 compile both against the minimal true-declaration fixture and the actual public package entries; original behavior grades96/96. Root read all18 TS/HTML/grades. Official deterministic replay matched raw/applied grades;36 native calls, zero format retries/errors/unknown usage. The earlier mixed15+3 cohort above stays historical rather than being presented as this fresh cohort.
+
+The preregistered varying-input-form count is0/18, below the3/18 threshold for proposing a uniform input contract. Keep current forms: direct owner readables, required tracked getters/data readers, and necessary structure/unit/predicate projections serve different roles. Do not count Channel-to-MixerState or seconds-to-beats projections as identity wrappers. Extra defensive release bookkeeping in one pad answer, library forwarding facades in all three sample-browser answers and coordinate-change gesture rebinds in one arrangement answer remain descriptive scaffolding observations; this result does not mean every line of view glue vanished. Evidence lives in ignored `affordance-widgets/implementation-review/D-root-manual-review.json` and `D-review-conclusion-17a01d5.md` in the development worktree. The syntax/host comparison and its limits remain unchanged.
+
 ### Cross-phase lessons
 
 - Run the expressive real build right after the first implementation: every phase's build found bugs or missing extension points the guess runs could not.
