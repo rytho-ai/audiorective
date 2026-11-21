@@ -450,14 +450,21 @@ Pass `renderer: PlayerRenderer` to replace the markup while keeping these intera
 ```typescript
 import { attachClipGesture } from "@audiorective/widgets/arrangement";
 
+const clipOrigins = new Map<string, { time: number; trackId: string }>();
+let originRevision: number | undefined;
+function findClipOrigin(id: string) {
+  const revision = project.cells.revision.value;
+  if (revision !== originRevision) {
+    clipOrigins.clear();
+    for (const track of project.tracks) for (const clip of track.clips) clipOrigins.set(clip.id, { time: clip.time, trackId: track.id });
+    originRevision = revision;
+  }
+  return clipOrigins.get(id);
+}
+
 const gesture = attachClipGesture(clipElement, {
   clipId,
-  origin() {
-    void project.cells.revision.value;
-    const track = project.tracks.find((track) => track.clips.some((clip) => clip.id === clipId));
-    const clip = track?.clips.find((clip) => clip.id === clipId);
-    return clip && track ? { time: clip.time, trackId: track.id } : undefined;
-  },
+  origin: () => findClipOrigin(clipId),
   timeUnit: clipKind === "midi" ? "beats" : "seconds",
   timeMap: {
     secondsToBeat: (seconds) => project.tempoMap.secondsToBeat(seconds),
@@ -475,6 +482,8 @@ const gesture = attachClipGesture(clipElement, {
 // Dispose before removing this borrowed element.
 gesture.dispose();
 ```
+
+Each mounted clip re-evaluates its tracked `origin()` when Project changes. Build a clip-ID index once per revision and use constant-time lookups; avoid searching every track separately for every clip. If the app replaces the Project object, invalidate that index as well. Document-level Escape listeners exist only during active drags.
 
 The supplied Project owns the source state; the getter rereads its current clip instead of capturing a stale position. It is tracked and returns undefined when the clip is unavailable. Actual origin time/track changes cancel a stale drag. Pointer drags freeze their origin; every keyboard nudge reads the latest owner origin. Left/Right move one beat, Shift four; Alt bypasses pointer snapping. `origin.time` and `onMove.time` use `timeUnit` (seconds by default, or beats); pointer geometry stays in seconds through the structural time map (`secondsToBeat`, `beatToSeconds`, `snapSeconds`). Keep the same element after committing a nudge so focus survives. Escape, pointercancel, lost capture and dispose commit no move.
 

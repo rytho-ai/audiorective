@@ -125,6 +125,9 @@ export class StudioView {
   private playheads: HTMLElement[] = [];
   private rulerWidth = 0;
   private readonly clipGestures: ClipGestureHandle[] = [];
+  private clipOriginProject?: Workspace["project"];
+  private clipOriginRevision?: number;
+  private readonly clipOriginIndex = new Map<string, Readonly<{ trackId: string; time: number }>>();
   private readonly history: EditHistory;
   private automationView?: AutomationLaneHandle;
   private mixerView?: ReturnType<typeof mountMixer>;
@@ -625,6 +628,18 @@ export class StudioView {
     return undefined;
   }
 
+  private clipOrigin(clipId: string): Readonly<{ trackId: string; time: number }> | undefined {
+    const project = this.workspace.project;
+    const revision = project.cells.revision.value;
+    if (project !== this.clipOriginProject || revision !== this.clipOriginRevision) {
+      this.clipOriginIndex.clear();
+      for (const track of project.tracks) for (const clip of track.clips) this.clipOriginIndex.set(clip.id, { trackId: track.id, time: clip.time });
+      this.clipOriginProject = project;
+      this.clipOriginRevision = revision;
+    }
+    return this.clipOriginIndex.get(clipId);
+  }
+
   private clipElement(clip: ProjectClip, track: ProjectTrack): HTMLElement {
     const element = document.createElement("div");
     element.className = `clip ${clip.kind} ${this.selectedClipId === clip.id ? "selected" : ""}`;
@@ -646,14 +661,7 @@ export class StudioView {
     this.clipGestures.push(
       attachClipGesture(element, {
         clipId: clip.id,
-        origin: () => {
-          const project = this.workspace.project;
-          project.cells.revision.$();
-          for (const currentTrack of project.tracks) {
-            const current = currentTrack.clips.find((item) => item.id === clip.id);
-            if (current) return { trackId: currentTrack.id, time: current.time };
-          }
-        },
+        origin: () => this.clipOrigin(clip.id),
         timeUnit: clip.kind === "midi" ? "beats" : "seconds",
         timeMap: this.workspace.project.tempoMap,
         pixelsPerSecond: () => this.pixelsPerSecond,

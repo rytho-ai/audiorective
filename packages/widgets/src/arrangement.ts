@@ -73,6 +73,7 @@ export function attachTimeRangeGesture(element: HTMLElement, options: TimeRangeG
     if (!drag) return;
     const { pointerId } = drag;
     drag = undefined;
+    doc.removeEventListener("keydown", escape, true);
     if (element.hasPointerCapture(pointerId)) element.releasePointerCapture(pointerId);
     options.onPreview(undefined);
   };
@@ -81,6 +82,7 @@ export function attachTimeRangeGesture(element: HTMLElement, options: TimeRangeG
     event.preventDefault();
     element.setPointerCapture(event.pointerId);
     drag = { pointerId: event.pointerId, startX: event.clientX, time: options.timeAt(event.clientX, event.altKey) };
+    doc.addEventListener("keydown", escape, true);
   };
   const move = (event: PointerEvent) => {
     if (drag?.pointerId === event.pointerId) options.onPreview(candidate(event));
@@ -101,7 +103,6 @@ export function attachTimeRangeGesture(element: HTMLElement, options: TimeRangeG
     clear();
   };
   const doc = element.ownerDocument;
-  doc.addEventListener("keydown", escape, true);
   element.addEventListener("pointerdown", down);
   element.addEventListener("pointermove", move);
   element.addEventListener("pointerup", up);
@@ -232,6 +233,7 @@ export function attachClipGesture(element: HTMLElement, options: ClipGestureOpti
   const cleanup = (replacement?: Origin, replaced = false) => {
     const previous = drag;
     drag = undefined;
+    doc.removeEventListener("keydown", escape, true);
     if (previous?.moved && element.style.left === previous.previewLeft) {
       element.style.left = replaced && replacement ? `${toSeconds(replacement.time) * options.pixelsPerSecond()}px` : previous.left;
     }
@@ -268,6 +270,7 @@ export function attachClipGesture(element: HTMLElement, options: ClipGestureOpti
       seconds,
       left: element.style.left,
     };
+    doc.addEventListener("keydown", escape, true);
   };
   const move = (event: PointerEvent) => {
     if (!drag || event.pointerId !== drag.pointerId) return;
@@ -325,7 +328,6 @@ export function attachClipGesture(element: HTMLElement, options: ClipGestureOpti
       options.onMove({ clipId: options.clipId, trackId: accepted.trackId, time, kind: "keyboard" });
   };
   const doc = element.ownerDocument;
-  doc.addEventListener("keydown", escape, true);
   element.addEventListener("pointerdown", down);
   element.addEventListener("pointermove", move);
   element.addEventListener("pointerup", up);

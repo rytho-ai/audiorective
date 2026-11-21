@@ -112,6 +112,7 @@ export function createSelectionPlugin(options: SelectionPluginOptions = {}): Sel
       function cancel(revert = true): void {
         const g = gesture;
         gesture = null;
+        doc.removeEventListener("keydown", escape, true);
         if (!g) return;
         preview = undefined;
         stop();
@@ -164,6 +165,7 @@ export function createSelectionPlugin(options: SelectionPluginOptions = {}): Sel
           original: copy(),
         };
         ctx.surface.setPointerCapture(e.pointerId);
+        doc.addEventListener("keydown", escape, true);
       });
       ctx.listen(ctx.surface, "pointermove", (event) => {
         const e = event as PointerEvent;
@@ -208,7 +210,6 @@ export function createSelectionPlugin(options: SelectionPluginOptions = {}): Sel
         cancel();
       };
       const doc = ctx.surface.ownerDocument;
-      doc.addEventListener("keydown", escape, true);
       ctx.onCleanup(() => doc.removeEventListener("keydown", escape, true));
       for (const [grip, boundary] of [
         [start, "start"],
