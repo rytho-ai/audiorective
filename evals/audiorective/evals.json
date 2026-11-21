@@ -132,9 +132,9 @@
         "Injects the processor via new WavePlayer(context, {stretch}) and connects player.output to the caller gain once",
         "Mounts two selectors with the same player, separate renderers and source-coordinate grids",
         "Awaits player.load before editing and calls player.setStretch(ratio) rather than rebuilding transport or rewriting original PCM",
-        "Uses committed stretchRatio/duration/revision and processing/error state; pending render keeps the previous version usable",
-        "Treats successful stretch as a stopped commit with selection/position mapped into output seconds; sourceToOutput/outputToSource can convert coordinates",
-        "Uses player.version.peaks as the committed summary and lets the selector share it; standalone PCM summaries use core/peaks and have no display normalization",
+        "Uses committed PlaybackVersion.ratio, buffer duration and revision, plus processing/error state; pending rendering keeps the previous committed version usable",
+        "Uses WavePlayer.setStretch and selector-owned source-coordinate mapping, which provide the documented stopped commit and mapped selection/playhead; explicit mapping, if present, uses sourceToOutput/outputToSource correctly, without contradictory remapping or seamless-live-warp claims",
+        "Keeps both selectors and their renderers on the shared player's committed audio/peaks revision (selector-supplied peaks or player.version.peaks are valid); standalone PCM summaries, if created, use core/peaks without display normalization",
         "Handles newer edit/source load replacing older work without publishing stale results; does not mirror buffers/selection into UI stores",
         "Disposes views then player then borrowed TimeStretch, leaving context and caller gain chain alive",
         "Uses repository/packed artifacts for Unreleased APIs and does not claim seamless live warp or sample-accurate dynamic stretch"
@@ -810,7 +810,7 @@
       "files": [],
       "expectations": [
         "Passes ratio 1 and anchors [{ sourceFrame: 48000, outputFrame: 62400 }] to TimeStretch.process",
-        "Uses implicit endpoints and requires strictly increasing interior frame pairs",
+        "Uses valid strictly increasing interior frame pairs with implicit start/end endpoints, preserving total duration; delegating validation and implicit endpoints to TimeStretch is valid without extra explanatory prose",
         "Loads a caller-supplied WASM build supporting rb_set_key_frame_map with TimeStretch.load({ wasmUrl }) and keeps the original buffer intact"
       ]
     },
@@ -1025,13 +1025,13 @@
     {
       "id": 78,
       "prompt": "A guitar pedalboard starts with a low-pass filter followed by a delay. The player adds a filter, delay or distortion pedal from a menu, removes any pedal, moves a pedal up or down, bypasses each one, and saves and loads the board as JSON; none of that may click, drop out or reset the other pedals, and a malformed save must leave the running board unchanged. Use the audiorective packages from the repository. Do not run anything.",
-      "expected_output": "Uses EffectChain add, remove and move, each effect's params.bypass, toJSON and EffectChain.restore with a types map and its issues.",
+      "expected_output": "Uses EffectChain add, remove and move, each effect's params.bypass, toJSON and await chain.restore(json, { types }) with its issues; the chain owns live restoration.",
       "files": [],
       "expectations": [
         "Builds the board as one EffectChain over the effect instances and edits it only with chain.add, chain.remove and chain.move, not with manual connect and disconnect",
         "Toggles bypass with effect.params.bypass.value and keeps the same instances when moving or bypassing",
-        "Saves with JSON.stringify(chain) or chain.toJSON() and loads with EffectChain.restore(context, json, { types }) where types maps names to effect classes",
-        "Shows the returned issues for malformed data and keeps the running chain when issues make the load unacceptable, then disposes the replaced chain",
+        "Saves with JSON.stringify(chain) or chain.toJSON() and restores the existing chain with await chain.restore(json, { types }), checking returned issues while keeping the stable input/output; the toolkit validates, awaits readiness and owns click-free transitions",
+        "Shows returned issues for malformed or unready saved data and keeps the same running chain unchanged on failure; transactional restore owns disposal of rejected and retired effects without caller-written chain replacement",
         "Observes the pedal order through chain.cells.effects rather than a second array"
       ]
     },
@@ -1041,11 +1041,11 @@
       "expected_output": "Uses TimeStretch.load({ wasmUrl }), process(AudioBuffer, { ratio: fromBpm / toBpm, loop: true, signal }) and tells an AbortError from a real failure.",
       "files": [],
       "expectations": [
-        "Loads the stretcher once with await TimeStretch.load({ wasmUrl: \"/wasm/rubberband.wasm\" }) from @audiorective/effects/time-stretch and reuses it across jobs",
+        "Uses TimeStretch.load({ wasmUrl: \"/wasm/rubberband.wasm\" }) from @audiorective/effects/time-stretch and avoids repeated WASM fetch/compilation across jobs (one shared instance or the documented per-URL module cache are valid)",
         "Computes ratio as sourceBpm / projectBpm (output length over input length), so 92 to 120 BPM gives about 0.767",
-        "Passes the decoded AudioBuffer and loop: true to process and plays the AudioBuffer result with an AudioBufferSourceNode whose loop is true, with no seam crossfade written by hand",
-        "Cancels with an AbortController signal and ignores rejections whose name is AbortError, showing other errors",
-        "Calls stretch.dispose() when the tool closes"
+        "Cancel and tempo changes abort the owned job and suppress all abandoned-job results and errors (generation guards, abort-signal checks or AbortError checks are valid when they cover every abandonment path)",
+        "Passes the decoded AudioBuffer and loop: true to process and loops the returned AudioBuffer through an AudioBufferSourceNode, BufferPlayer or WavePlayer configured to loop, without a caller-written seam crossfade",
+        "Disposes every constructed stretcher after its job or on tool close, including abandoned jobs, and releases owned preview resources on close while preserving the caller-owned AudioContext"
       ]
     },
     {
@@ -1056,9 +1056,9 @@
       "expectations": [
         "Builds each strip as a Channel and reads channel.cells.level for the post-fader meter instead of an analyser and animation-frame loop of its own",
         "Sends with channel.send(bus, name, gain) into a SendBus whose receive point connects to a fully wet Convolver; the return fader uses a separate gain or Channel, so the reverb never duplicates the dry stems while loading or failing",
-        "Connects the vocal's Limiter and the channels with processor.connect so delay compensation covers the dry paths and the sends, without hand-written matching delays",
+        "Connects the vocal Limiter, channels, master and sends through processor.connect or one consistent compensated defineGraph so both dry and send paths align, without hand-written matching delays or uncompensated split graph boundaries",
         "Shows the reverb as loading until Convolver cells.status is ready and reports cells.error when the impulse response fails",
-        "Implements solo with the strips' own mute or gain params without changing the stored fader values"
+        "Solo blocks every non-solo dry and send path while preserving stored fader and mute values and the audible return; mute/gain controls or outputEnabled plus per-send enabled gates are valid for their documented tap topology"
       ]
     },
     {
@@ -1071,7 +1071,7 @@
         "Constructs the clip over the curve with target: audioParamTarget(gain.gain) or a valid domain AutomationTarget, loop: true and length: 4",
         "Uses clock.attach(clip) and the returned detach cleanup so beat position, tempo ramps, seeks and reactive curve edits need no caller-written scheduling window or native cancellation engine",
         "Observes clip.cells.attached for the toggle state and cleans up its observer",
-        "Disposes the clip before its target and leaves the app-owned shared context and clock alive"
+        "Disposes the clip on close, leaves the borrowed target and app-owned shared context and clock alive, and releases the clip before any later target replacement or disposal"
       ]
     }
   ]

@@ -66,6 +66,10 @@ node evals/run_guess_evals.mjs evals/affordance/step-sequencer.json --mode guess
 
 Options: `--ids T1,T2`, `--runs` (3), `--concurrency` (4), `--timeout` seconds (300), `--model`, `--grader-model`, `--json <file>`, `--context <file.d.ts>` (desire), `--md <file>` (desire). The report gives, per task and overall, the compile pass rate, expectations met, mean lines of code (non-blank, non-comment) and error-kind counts; the JSON also keeps every raw reply. A run that does not complete (timeout, login, rate limit, no code block, unparseable grader reply after one retry) is reported as an error, excluded from the totals, and makes the exit code non-zero.
 
+A task may declare exact, typed app-owned bindings in `hostDeclarations`, for example `"declare const synthOut: AudioNode;"` when its prompt supplies that existing node. The compiler adds a separate `host.d.ts` identically for every variant and records it in the sample diagnostics. It never infers missing names or substitutes `any`.
+
+`--regrade <results.json>` reuses the stored answers, recompiles them against `--variant`, and calls only the grader with the current expectations. `--checks-only <results.json>` reruns deterministic checks without a model call and retains the original compile result. Keep their output in a separate file: the JSON records the replay source and original solver variant. Recompiling against changed declarations verifies cached code; it does not mean a fresh solver saw those changed declarations.
+
 ## Optional Codex backend
 
 All three runners default to Claude. To use an authenticated Codex CLI, pin both the model and reasoning effort on every baseline and candidate command:
@@ -76,7 +80,7 @@ node evals/run_functional_evals.mjs audiorective --backend codex --model gpt-6.1
 node evals/run_trigger_evals.mjs audiorective --backend codex --model gpt-6.1-sol --reasoning-effort high --ids 11,28 --runs 3 --json /tmp/codex-trigger.json
 ```
 
-Trigger `--ids` are one-based query indices; functional and guess IDs come from their sets. Functional and guess also accept `--grader-model` and `--grader-reasoning-effort`; they default to the pinned solver settings. Codex calls use a fresh ephemeral scratch directory, ignore user config and rules, suppress host skill discovery, and disable shell, browser, apps, plugins, hooks and memory. Guess calls and graders have no tools. `--user-settings` is unavailable for Codex.
+Trigger `--ids` are one-based query indices; functional and guess IDs come from their sets. Functional and guess also accept `--grader-model`, defaulting to the solver model. Functional additionally accepts `--grader-reasoning-effort`; guess uses its pinned reasoning effort for every call role. Codex calls use a fresh ephemeral scratch directory, ignore user config and rules, suppress host skill discovery, and disable shell, browser, apps, plugins, hooks and memory. Guess calls and graders have no tools. `--user-settings` is unavailable for Codex.
 
 Functional solvers receive a read-only MCP server exposing the staged skills' exact descriptions and Markdown bodies/references through `open_skill`, `read_file`, `list_files` and `search`. Trigger solvers receive only the descriptions and `SKILL.md` bodies through `open_skill` and `read_file`. The reader rejects paths outside the staged Markdown, traversal, symlinks and hidden paths. The JSON records successful body reads and reference sizes. A successful target body read counts as opened; listing a catalog does not. This measures Codex's staged MCP discovery, which differs from Claude's native Skill tool. Compare complete baselines and candidates with the same backend, model, reasoning effort, prompts and staging; do not compare these scores directly with historical Claude scores.
 

@@ -1,11 +1,12 @@
-import { AudioProcessor, Param, SchedulableParam, cell, readonlyCell, type Cell, type ReadonlyCell } from "@audiorective/core";
-import { Effect } from "./Effect";
+import { AudioProcessor, batch, Param, SchedulableParam, cell, readonlyCell, untracked, type Cell, type ReadonlyCell } from "@audiorective/core";
+import { Effect, initializeEffectSnapshot } from "./Effect";
 import { LEAD } from "./internal/smoothing";
 
+/** Common effect type for heterogeneous insert lists and shared wet/bypass controls. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyEffect = Effect<any, any>;
+export type AnyEffect = Effect<Record<string, Param<any>>, Record<string, Cell<any> | ReadonlyCell<any>>>;
 
-/** What `EffectChain.restore` builds an effect from: an `Effect` class, or a function returning a configured instance. */
+/** What `EffectChain.fromJSON` and `chain.restore` build an effect from: an `Effect` class, or a function returning a configured instance. */
 export type EffectType = (new (context: BaseAudioContext) => AnyEffect) | ((context: BaseAudioContext) => AnyEffect);
 
 export interface EffectChainOptions {
@@ -24,16 +25,27 @@ export interface EffectChainJSON {
   effects: EffectChainJSONEffect[];
 }
 
-/** A problem `EffectChain.restore` met and worked around: `path` locates it in the JSON, e.g. `effects[2].params.frequency`. */
+/** A preset problem reported by `EffectChain.fromJSON` or `chain.restore`: `path` locates it in the JSON, e.g. `effects[2].params.frequency`. */
 export interface EffectChainIssue {
   path: string;
   message: string;
 }
 
-export interface EffectChainRestoreOptions extends EffectChainOptions {
+export interface EffectChainFromJSONOptions extends EffectChainOptions {
   /** Maps the `type` names in the JSON to the classes (or factories) that build them. */
   types: Record<string, EffectType>;
 }
+
+/** One live-preset job; aborting leaves the chain alive and its current preset unchanged. */
+export interface EffectChainRestoreOptions {
+  /** Maps saved type names to effect classes or factories that create new instances. */
+  types: Record<string, EffectType>;
+  /** Cancels only this pending restore, not the chain. */
+  signal?: AbortSignal;
+}
+
+const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
+const restoreAborted = () => new DOMException("EffectChain restore was cancelled.", "AbortError");
 
 /** Link gains settle with this time constant, seconds; a hand-over takes about 6 of them. */
 const GATE = 0.003;
@@ -62,6 +74,8 @@ export class EffectChain extends AudioProcessor<Record<never, never>, { effects:
   /** The wiring as built so far; `cells.effects` is the order the edits will end in. */
   private readonly order: AnyEffect[] = [];
   private readonly queue: Array<(t: number, step: number) => void> = [];
+  private readonly owned = new Set<AnyEffect>();
+  private pendingRestore: { cancel(): void } | undefined;
   private readonly releases = new Set<() => void>();
   private readonly suspends = new Map<number, Array<() => void>>();
   private readonly latencyParam: Param<number>;
@@ -83,6 +97,7 @@ export class EffectChain extends AudioProcessor<Record<never, never>, { effects:
     for (const effect of effects) {
       if (seen.has(effect)) throw new Error("EffectChain: effect is already in the chain.");
       seen.add(effect);
+      this.owned.add(effect);
     }
     let previous: End = null;
     for (const effect of [...effects, null]) {
@@ -116,8 +131,9 @@ export class EffectChain extends AudioProcessor<Record<never, never>, { effects:
   /** Inserts `effect` at `index` (default: the end; clamped to the chain's length). */
   add(effect: AnyEffect, index?: number): void {
     this.assertAlive();
-    if (this.list.value.includes(effect)) throw new Error("EffectChain: effect is already in the chain.");
-    const at = this.clamp(index, this.list.value.length);
+    if (this.owned.has(effect)) throw new Error("EffectChain: effect is already in the chain.");
+    this.owned.add(effect);
+    const at = this.clamp(index, this.currentEffects.length);
     this.publish((order) => order.splice(at, 0, effect));
     this.queue.push((t, step) => this.insert(effect, at, t, step));
     this.pump();
@@ -136,8 +152,8 @@ export class EffectChain extends AudioProcessor<Record<never, never>, { effects:
   move(effect: AnyEffect, index: number): void {
     this.assertAlive();
     this.assertMember(effect);
-    const target = this.clamp(index, this.list.value.length - 1);
-    if (this.list.value.indexOf(effect) === target) return;
+    const target = this.clamp(index, this.currentEffects.length - 1);
+    if (this.currentEffects.indexOf(effect) === target) return;
     this.publish((order) => order.splice(target, 0, ...order.splice(order.indexOf(effect), 1)));
     this.queue.push((t, step) => this.take(effect, false, t, step));
     this.queue.push((t, step) => this.insert(effect, target, t, step));
@@ -160,24 +176,146 @@ export class EffectChain extends AudioProcessor<Record<never, never>, { effects:
   }
 
   /**
-   * Builds a chain from `toJSON()` data. Never throws for bad data: an unknown type, an unknown or out-of-range
-   * parameter, or a constructor that fails becomes an issue and that part is skipped.
-   * Saved values initialize the new effects immediately, even on a running context; later writes keep normal smoothing.
+   * Constructs a separate chain, recovering valid parts and reporting skipped bad data.
+   * This factory does not replace an existing live chain; use its `restore()` method for that.
+   * Saved values initialize detached effects immediately; later writes retain normal smoothing.
    */
-  static restore(context: BaseAudioContext, json: unknown, options: EffectChainRestoreOptions): { chain: EffectChain; issues: EffectChainIssue[] } {
+  static fromJSON(context: BaseAudioContext, json: unknown, options: EffectChainFromJSONOptions): { chain: EffectChain; issues: EffectChainIssue[] } {
+    const { effects, issues } = EffectChain.build(context, json, options.types, false);
+    return { chain: new EffectChain(context, effects, { signal: options.signal }), issues };
+  }
+
+  /**
+   * Transactionally loads a preset into this chain's stable input/output. Malformed data or a
+   * readiness failure returns issues, disposes the candidate effects, and leaves the live chain alone.
+   * The latest pending request wins; supersession, `signal`, or disposal rejects with AbortError.
+   * Resolves after the target list is published and its crossfades are queued, not after they finish.
+   */
+  async restore(json: unknown, options: EffectChainRestoreOptions): Promise<EffectChainIssue[]> {
+    this.assertAlive();
+    this.pendingRestore?.cancel();
+    if (options.signal?.aborted) throw restoreAborted();
+    const candidates = new Set<AnyEffect>();
     const issues: EffectChainIssue[] = [];
-    const effects: AnyEffect[] = [];
-    const entries = (json as { effects?: unknown } | null)?.effects;
-    if (!json || typeof json !== "object" || (json as { version?: unknown }).version !== 1 || !Array.isArray(entries)) {
-      issues.push({ path: "", message: "expected { version: 1, effects: [...] }" });
-    } else {
-      entries.forEach((entry: unknown, i) => {
-        const path = `effects[${i}]`;
-        const type = (entry as { type?: unknown } | null)?.type;
-        const make = typeof type === "string" && Object.hasOwn(options.types, type) ? options.types[type] : undefined;
+    let active = true;
+    let rejectAbort!: (error: DOMException) => void;
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      rejectAbort = reject;
+    });
+    void cancelled.catch(() => {});
+    const discard = () => {
+      for (const effect of [...candidates]) {
+        candidates.delete(effect);
+        try {
+          effect.dispose();
+        } catch (cause) {
+          issues.push({ path: "", message: `could not dispose candidate: ${cause instanceof Error ? cause.message : String(cause)}` });
+        }
+      }
+    };
+    const job = {
+      cancel: () => {
+        if (!active) return;
+        active = false;
+        rejectAbort(restoreAborted());
+        discard();
+      },
+    };
+    const onAbort = () => job.cancel();
+    this.pendingRestore = job;
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    try {
+      const built = EffectChain.build(this.context, json, options.types, true, this.owned);
+      for (const effect of built.effects) candidates.add(effect);
+      issues.push(...built.issues);
+      if (!active) throw restoreAborted();
+      if (issues.length) return issues;
+      const ready = Promise.all(
+        built.effects.map(async (effect, index) => {
+          try {
+            await effect.ready;
+          } catch (cause) {
+            if (active)
+              issues.push({
+                path: `effects[${index}]`,
+                message: `could not prepare ${typeName(effect)}: ${cause instanceof Error ? cause.message : String(cause)}`,
+              });
+            throw cause;
+          }
+        }),
+      );
+      try {
+        await Promise.race([ready, cancelled]);
+      } catch {
+        if (!active) throw restoreAborted();
+        return issues;
+      }
+      if (!active) throw restoreAborted();
+      if (issues.length) return issues;
+      // Ownership and the complete job batch precede publication: a subscriber's edit
+      // may enqueue after this batch, but can never interleave with its internal work.
+      const previous = [...this.currentEffects];
+      const edits: Array<(t: number, step: number) => void> = [
+        ...previous.map((effect) => (t: number, step: number) => this.take(effect, true, t, step)),
+        ...built.effects.map((effect, index) => (t: number, step: number) => this.insert(effect, index, t, step)),
+      ];
+      active = false;
+      options.signal?.removeEventListener("abort", onAbort);
+      if (this.pendingRestore === job) this.pendingRestore = undefined;
+      for (const effect of built.effects) this.owned.add(effect);
+      candidates.clear();
+      batch(() => {
+        this.queue.push(...edits);
+        this.list.value = Object.freeze([...built.effects]);
+      });
+      this.pump();
+      return [];
+    } finally {
+      active = false;
+      options.signal?.removeEventListener("abort", onAbort);
+      if (this.pendingRestore === job) this.pendingRestore = undefined;
+      discard();
+    }
+  }
+
+  private static build(
+    context: BaseAudioContext,
+    json: unknown,
+    types: Record<string, EffectType>,
+    strict: boolean,
+    forbidden: ReadonlySet<AnyEffect> = new Set(),
+  ): { effects: AnyEffect[]; issues: EffectChainIssue[] } {
+    const issues: EffectChainIssue[] = [],
+      effects: AnyEffect[] = [];
+    const seen = new Set<AnyEffect>();
+    const extraKeys = (value: Record<string, unknown>, keys: string[], path: string) => {
+      for (const key of Object.keys(value))
+        if (!keys.includes(key)) issues.push({ path: path ? `${path}.${key}` : key, message: "unknown property" });
+    };
+    try {
+      if (!record(json) || json.version !== 1 || !Array.isArray(json.effects)) {
+        issues.push({ path: "", message: "expected { version: 1, effects: [...] }" });
+        return { effects, issues };
+      }
+      if (strict) extraKeys(json, ["version", "effects"], "");
+      for (let i = 0; i < json.effects.length; i++) {
+        const entry: unknown = json.effects[i],
+          path = `effects[${i}]`;
+        if (!record(entry)) {
+          issues.push({ path, message: "expected { type, params }" });
+          continue;
+        }
+        if (strict) extraKeys(entry, ["type", "params"], path);
+        const type = entry.type;
+        const make = typeof type === "string" && Object.hasOwn(types, type) ? types[type] : undefined;
         if (!make) {
           issues.push({ path: `${path}.type`, message: `unknown type ${JSON.stringify(type)}` });
-          return;
+          continue;
+        }
+        const params = entry.params;
+        if (strict && !record(params)) {
+          issues.push({ path: `${path}.params`, message: "expected an object" });
+          continue;
         }
         let effect: AnyEffect;
         try {
@@ -187,21 +325,47 @@ export class EffectChain extends AudioProcessor<Record<never, never>, { effects:
               : (make as (context: BaseAudioContext) => AnyEffect)(context);
         } catch (cause) {
           issues.push({ path, message: `could not build ${type}: ${cause instanceof Error ? cause.message : String(cause)}` });
-          return;
+          continue;
         }
-        const params = (entry as { params?: unknown }).params;
-        if (params !== undefined && (params === null || typeof params !== "object" || Array.isArray(params))) {
-          issues.push({ path: `${path}.params`, message: "expected an object" });
-        } else {
-          for (const [name, value] of Object.entries((params ?? {}) as Record<string, unknown>)) {
-            const problem = EffectChain.apply(effect, name, value);
-            if (problem) issues.push({ path: `${path}.params.${name}`, message: problem });
-          }
+        if (!(effect instanceof Effect)) {
+          issues.push({ path, message: `could not build ${type}: factory must return an Effect` });
+          continue;
+        }
+        if (forbidden.has(effect)) {
+          issues.push({ path, message: "factory must create a new effect, not an effect owned by the live chain" });
+          continue;
+        }
+        if (seen.has(effect)) {
+          issues.push({ path, message: "factory returned the same effect twice" });
+          continue;
+        }
+        seen.add(effect);
+        if (effect.context !== context) {
+          effect.dispose();
+          issues.push({ path, message: "effect belongs to another audio context" });
+          continue;
         }
         effects.push(effect);
-      });
+        if (params !== undefined && !record(params)) {
+          issues.push({ path: `${path}.params`, message: "expected an object" });
+          continue;
+        }
+        for (const [name, value] of Object.entries(params ?? {})) {
+          if (!["number", "string", "boolean"].includes(typeof value) || (typeof value === "number" && !Number.isFinite(value))) {
+            issues.push({ path: `${path}.params.${name}`, message: "expected a finite number, string or boolean" });
+            continue;
+          }
+          const problem = EffectChain.apply(effect, name, value);
+          if (problem) issues.push({ path: `${path}.params.${name}`, message: problem });
+        }
+      }
+    } catch (cause) {
+      issues.push({ path: "", message: `could not read preset: ${cause instanceof Error ? cause.message : String(cause)}` });
     }
-    return { chain: new EffectChain(context, effects, { signal: options.signal }), issues };
+    // Saved bypass is initial state too: settle its native gate after all detached
+    // parameter writes, before fromJSON or live restore can expose the candidate.
+    for (const effect of effects) initializeEffectSnapshot(effect);
+    return { effects, issues };
   }
 
   private static apply(effect: AnyEffect, name: string, value: unknown): string | undefined {
@@ -236,9 +400,9 @@ export class EffectChain extends AudioProcessor<Record<never, never>, { effects:
   override dispose(): void {
     if (this.gone) return;
     this.gone = true;
+    this.pendingRestore?.cancel();
     if (this.abort) this.signal?.removeEventListener("abort", this.abort);
-    for (const effect of this.list.value) effect.dispose();
-    for (const effect of this.order) effect.dispose();
+    for (const effect of [...this.owned]) this.releaseEffect(effect);
     for (const release of [...this.releases]) release();
     this.releases.clear();
     this.queue.length = 0;
@@ -250,12 +414,20 @@ export class EffectChain extends AudioProcessor<Record<never, never>, { effects:
     this.latencyParam.dispose();
   }
 
+  private releaseEffect(effect: AnyEffect): void {
+    if (this.owned.delete(effect)) effect.dispose();
+  }
+
+  private get currentEffects(): readonly AnyEffect[] {
+    return untracked(() => this.list.value);
+  }
+
   private assertAlive(): void {
     if (this.gone) throw new Error("EffectChain is disposed.");
   }
 
   private assertMember(effect: AnyEffect): void {
-    if (!this.list.value.includes(effect)) throw new Error("EffectChain: effect is not in this chain.");
+    if (!this.currentEffects.includes(effect)) throw new Error("EffectChain: effect is not in this chain.");
   }
 
   private clamp(index: number | undefined, max: number): number {
@@ -263,7 +435,7 @@ export class EffectChain extends AudioProcessor<Record<never, never>, { effects:
   }
 
   private publish(change: (order: AnyEffect[]) => unknown): void {
-    const order = [...this.list.value];
+    const order = [...this.currentEffects];
     change(order);
     this.list.value = Object.freeze(order);
   }
@@ -384,6 +556,6 @@ export class EffectChain extends AudioProcessor<Record<never, never>, { effects:
     this.retire(into, t);
     this.retire(out, t + step);
     order.splice(at, 1);
-    if (dispose) this.after(t === 0 ? 0 : t + 2 * FADE, () => effect.dispose());
+    if (dispose) this.after(t === 0 ? 0 : t + 2 * FADE, () => this.releaseEffect(effect));
   }
 }

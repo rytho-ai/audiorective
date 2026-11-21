@@ -30,7 +30,7 @@
         "A future transport start schedules automation at that future boundary without changing the current gain before it.",
         "Pause, disable, detach and disposal retract the panel's pending automation and hold the current target value rather than letting stale ramps continue.",
         "Closing the panel releases its own automation and subscriptions, is safe twice, and leaves the app-owned context and clock alive.",
-        "The panel does not cancel or replace unrelated schedulers or automation targets on the shared transport."
+        "The panel detaches or disposes only its own scheduler and holds only its target. Documented shared refresh/refill is allowed, but other registrations and already-sounding audio stay intact, and unrelated future events or automation are restored without gaps or duplicates; the panel never stops or replaces the shared transport."
       ]
     }
   ]

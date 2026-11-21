@@ -16,7 +16,15 @@ export interface FilterOptions extends EffectOptions {
 }
 
 /** `params.frequency`, `params.Q` and `params.gain` writes smooth over 10 ms automatically; scheduled ramps stay exact. */
-export class Filter extends Effect<{ frequency: SchedulableParam; Q: SchedulableParam; gain: SchedulableParam; type: Param<BiquadFilterType> }> {
+export class Filter extends Effect<{
+  /** Cutoff in Hz; value writes already smooth over 10 ms by default. */
+  frequency: SchedulableParam;
+  /** Resonance; value writes already smooth over 10 ms by default. */
+  Q: SchedulableParam;
+  /** Gain in dB; value writes already smooth over 10 ms by default. */
+  gain: SchedulableParam;
+  type: Param<BiquadFilterType>;
+}> {
   static override readonly type: string = "Filter";
   private readonly sources: ConstantSourceNode[];
   private readonly stageCount: number;

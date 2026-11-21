@@ -18,6 +18,8 @@ Every live effect in this package is an `AudioProcessor` with a stable `input: G
 
 A custom effect extends `Effect`, passes its wet arm's `input`/`output` pair to `super()`, and either declares `latency` (a fixed number or a `Param<number>`) or leaves it to derive from its own internal `defineGraph`. An arm that loads asynchronously sets `loading: true` and calls `this.track(promise)` once; the wet arm stays muted until the promise resolves (the dry share remains `1 − wet`), and `cells.status`, `cells.error` and `ready` follow it. Set `static type` to the name `EffectChain.toJSON()` should write. `Effect`, `EffectStatus`, `WetArm`, `EffectOptions`, and `WorkletUnavailableError` are exported from `@audiorective/effects` for this purpose.
 
+`AnyEffect` is the exported common type for heterogeneous insert lists and shared controls over `params.wet`, `params.bypass`, `cells.status` and `ready`. Effect-specific params remain typed on each concrete effect.
+
 ## Effects
 
 | Class              | Constructor options (defaults)                                                                                               | Params                                                                            | Cells                                                 | Latency                                                                                                                 |
@@ -147,6 +149,8 @@ Each call owns a Worker, so concurrent calls remain independent. **Every cancell
 | `TimeStretch allocation failed.` / `TimeStretch could not create a Rubber Band state.`    | The supplied module could not allocate its processing resources.                                                                          |
 | `TimeStretch worker failed.` / `Rubber Band exited: <code>`                               | Worker execution or the supplied module failed; inspect the browser's worker error and module compatibility.                              |
 
+For DAW clip edits, pass the loaded processor to `workspace.prepareAudioClipStretch(clipId, ratio, processor, { anchors, signal })`, call the prepared edit's `apply()`, then await `workspace.flush()`; see [pitch-preserving clip stretch](./daw.md#pitch-preserving-clip-stretch) for ownership and undo. The rendered WAV provides standard DAWproject playback. The original window, ratio and anchors are Audiorective-private entries that other DAWs may drop. Use streaming `saveWorkspaceTo(workspace, writableStream)` when playback or a retained original source is file-backed.
+
 See [WavePlayer composition](./player.md#compose-offline-stretch-and-a-selector) for module loading, audio routing, selection mapping, and cleanup with a waveform selector.
 
 ## Compressor and Limiter
@@ -186,9 +190,17 @@ ducker.output.connect(ctx.destination);
 mic.connect(ducker.sidechain); // keys the ducking
 mic.connect(ctx.destination); // the voice itself, unchanged
 
-duckingEl.textContent = `${ducker.cells.reduction.value.toFixed(1)} dB`; // live, ≤ 0
-ducker.params.bypass.value = true; // auto-duck off: the music recovers click-free
+const stopMeter = ducker.cells.reduction.subscribe(
+  (db) => {
+    duckingEl.textContent = `${db.toFixed(1)} dB`;
+  },
+  { immediate: true },
+);
+ducker.params.bypass.value = true; // auto-duck off: audio and meter recover together
+// On teardown: stopMeter(); ducker.dispose();
 ```
+
+`cells.reduction` is the actual output attenuation in dB (≤ 0), including the wet/dry mix and the complete bypass fade. Read it each frame or subscribe directly; do not substitute `0` when the bypass checkbox changes. The worklet refreshes the meter every 512 audio frames (about 12 ms at 44.1 kHz), even when the detector envelope is steady. While loading or after failure, an animation-frame poll reports the remaining dry path: `wet: 1` is silent (`-Infinity` dB), `wet: 0.5` is about −6.02 dB, and full bypass is `0` dB. Disposal stops the poll and worklet reports.
 
 `attack` and `release` are the seconds a full-depth change takes (linear in dB), so `release: 0.3` recovers 8 dB over 300 ms. `threshold` is the sidechain's peak level in dBFS; a 50 ms peak follower keeps speech from chattering the gate. `depth`, `attack`, `release` and `threshold` are `SchedulableParam`s. The core runs in an `AudioWorkletNode`, so, like `Compressor`, only the `1 − wet` dry share passes until `cells.status` is `"ready"` (`wet: 1` is silent).
 
@@ -270,15 +282,29 @@ filter.params.bypass.value = true; // or just bypass it, keeping its place
 
 `cells.effects: ReadonlyCell<readonly Effect[]>` is the current order; an effect or `useValue` that reads it re-runs after every edit. Every edit is a crossfade of about 15 ms between per-edge gains, never a hard reconnect: adding, removing or moving an effect does not click or drop out, and the other effects keep their state, so a delay's echoes keep ringing while a neighbour moves. A move runs as a removal followed by an insertion (about 70 ms in all), which is what keeps the graph free of feedback loops at every instant; edits made during a hand-over queue behind it. Effects inside a chain take stereo input (a mono source is upmixed). `new EffectChain(ctx, effects, { signal })` disposes the chain and its effects when `signal` aborts.
 
-`chain.toJSON()` returns `{ version: 1, effects: [{ type, params }] }`: each effect's type name (its class's `static type`) and every primitive param value, `bypass` and `wet` included. `EffectChain.restore(context, json, { types })` builds a chain back and returns `{ chain, issues }`; `types` maps a type name to an effect class, or to a function that returns a configured instance (for an effect that needs constructor options, like `Equalizer`). Restored parameters are initialized immediately, including when the context is already running; later knob writes retain their usual smoothing. It never throws on bad data: an unknown type, an unknown or out-of-range param, or a constructor that throws becomes an entry in `issues` (`{ path, message }`, e.g. `effects[2].params.frequency`) and that part is skipped, so a loader can show the messages and keep the running chain.
+`chain.toJSON()` returns `{ version: 1, effects: [{ type, params }] }`: each effect's type name (its class's `static type`) and every primitive parameter, including `bypass` and `wet`. `AnyEffect` is the common type for a heterogeneous list and its shared controls.
+
+For a preset Load button, use `await chain.restore(json, { types, signal? })` on the existing chain. `types` maps saved names to effect classes or factories that create new instances (for example, an `Equalizer` factory can supply its required `bands`). Restore validates the complete JSON shape, types, parameter names, values and ranges, then awaits every candidate effect's `ready`. Any issue disposes the candidates and leaves the live order, settings and wiring unchanged. Saved values initialize detached effects immediately; later knob writes keep normal smoothing.
+
+A successful restore publishes the complete target order once and queues its existing remove/insert crossfades as one batch behind earlier edits. The chain keeps the same `input` and `output`, so the caller does not reconnect audio, run timers, or write a second fade engine. The promise resolves when that target is committed and queued; the audio handovers can still be running. Edits made by subscribers or after the restore queue behind the whole replacement.
 
 ```typescript
+const types = { Filter, PingPongDelay, Distortion, Equalizer: (c) => new Equalizer(c, { bands }) };
 localStorage.setItem("board", JSON.stringify(chain));
-const { chain: restored, issues } = EffectChain.restore(ctx, JSON.parse(localStorage.getItem("board")!), {
-  types: { Filter, PingPongDelay, Distortion, Equalizer: (c) => new Equalizer(c, { bands }) },
-});
-if (issues.length) showMessage(issues.map((i) => `${i.path}: ${i.message}`).join("\n"));
+try {
+  const issues = await chain.restore(JSON.parse(localStorage.getItem("board")!), {
+    types,
+    signal: loadController.signal,
+  });
+  if (issues.length) showMessage(issues.map((i) => `${i.path}: ${i.message}`).join("\n"));
+} catch (error) {
+  if (!(error instanceof DOMException && error.name === "AbortError")) showMessage(String(error));
+}
 ```
+
+Only the latest pending restore may commit. A newer request, the job's `signal`, or chain disposal cancels pending preparation, disposes its candidates and rejects with `AbortError`. A restore job's signal does **not** dispose the chain or cancel an already committed queue batch. In contrast, `new EffectChain(ctx, effects, { signal })` uses its signal for ownership of the chain itself.
+
+For a separate chain—for example, a preview or caller-composed two-chain morph—use `EffectChain.fromJSON(context, json, { types, signal? })`. This tolerant factory returns `{ chain, issues }`, keeps valid entries and settings, and reports unknown types, malformed entries or rejected params by `path`. It does not replace a running chain or await effect readiness. Its signal owns the newly constructed chain, as with the constructor. `EffectChainFromJSONOptions` describes factory ownership; `EffectChainRestoreOptions` describes one live load job.
 
 The DAW's built-in track inserts are a [separate, data-driven rack](./daw.md#effect-rack) built on `EffectChain`.
 
@@ -335,5 +361,6 @@ const wav = await renderOffline({ seconds: 8, channels: 2, sampleRate: 44100 }, 
 | `Effect failed to load.`                                                                                                      | An effect's `ready` promise rejected with a value that is not an `Error`; `cells.error` holds this wrapper with the original as `cause`. | Read `error.cause`; fix the load (URL, decode, worklet support) and call `load()` again where the effect has one.                                |
 | `EffectChain: effect is already in the chain.`                                                                                | `add()` (or the constructor's list) received an effect instance the chain already holds.                                                 | Add each instance once; `move()` it instead, or construct a second effect.                                                                       |
 | `EffectChain: effect is not in this chain.`                                                                                   | `remove()` or `move()` received an effect the chain does not hold.                                                                       | Pass an instance from `chain.cells.effects.value`.                                                                                               |
-| `EffectChain is disposed.`                                                                                                    | `add`, `remove` or `move` ran after `dispose()` or an aborted `signal`.                                                                  | Build a new chain.                                                                                                                               |
+| `EffectChain restore was cancelled.` (`AbortError`)                                                                           | A newer restore, its job signal, or chain disposal cancelled pending preparation.                                                        | Ignore this cancelled load; the job signal leaves the chain alive. A newer request may still commit.                                             |
+| `EffectChain is disposed.`                                                                                                    | `add`, `remove`, `move` or `restore` ran after `dispose()` or an aborted `signal`.                                                       | Build a new chain.                                                                                                                               |
 | `Equalizer needs valid bands with frequency 20–20000 Hz, gain ±24 dB, and Q 0.1–20.`                                          | A band is outside the supported ranges.                                                                                                  | Supply one or more bands with values in the supported ranges.                                                                                    |

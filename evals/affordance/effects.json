@@ -87,7 +87,8 @@
             "\\*\\s*60\\s*\\)?\\s*/\\s*\\w+"
           ]
         }
-      ]
+      ],
+      "hostDeclarations": "declare const synthOut: AudioNode;"
     },
     {
       "id": "E5-editable-chain",
@@ -124,7 +125,8 @@
             "(project|target|song)[A-Za-z]*\\s*/\\s*(source|loop|file)[A-Za-z]*",
             "(loop|file|orig)[A-Za-z]*[Bb]pm\\s*/\\s*[A-Za-z]*[Bb]pm",
             "[A-Za-z]*[Bb]pm\\s*/\\s*(loop|file|orig|source)[A-Za-z]*",
-            "[Ff]rames\\w*\\s*\\)?\\s*/\\s*\\(?\\s*\\w*[Ff]rames"
+            "[Ff]rames\\w*\\s*\\)?\\s*/\\s*\\(?\\s*\\w*[Ff]rames",
+            "\\bfromBpm\\s*/\\s*toBpm\\b"
           ]
         }
       ]

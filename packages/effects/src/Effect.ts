@@ -2,6 +2,7 @@ import {
   AudioProcessor,
   cell,
   readonlyCell,
+  untracked,
   type BuildHelpers,
   type BuildResult,
   type Cell,
@@ -45,6 +46,13 @@ type EffectCells<C> = C & { status: ReadonlyCell<EffectStatus>; error: ReadonlyC
 /** Time constant of the bypass/ready gate, seconds: about 15 ms to settle. */
 const GATE = 0.003;
 
+const detachedInitializers = new WeakMap<object, () => void>();
+
+/** @internal Initialize a detached snapshot without turning its saved bypass into a live fade. */
+export function initializeEffectSnapshot(effect: object): void {
+  untracked(() => detachedInitializers.get(effect)?.());
+}
+
 /**
  * Base for every effect: stable `input`/`output` gains and a linear wet/dry
  * crossfade. `wet` is one automation signal that drives the wet gain directly
@@ -58,12 +66,14 @@ const GATE = 0.003;
  */
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export abstract class Effect<P extends ParamRegistry = {}, C extends CellRegistry = {}> extends AudioProcessor<EffectParams<P>, EffectCells<C>> {
-  /** Name `toJSON()` writes and `EffectChain.restore` looks up. Built-in effects set it; a custom subclass falls back to its class name. */
+  /** Name `toJSON()` writes and `EffectChain.fromJSON` and `chain.restore` look up. Built-in effects set it; a custom subclass falls back to its class name. */
   static readonly type: string | undefined = undefined;
 
   private readonly _input: GainNode;
   private readonly _output: GainNode;
   private readonly _sources: ConstantSourceNode[];
+  private readonly _mixControl: { dry: readonly AudioNode[]; wet: AudioNode; wetValue: AudioParam; enabled: AudioParam };
+  private readonly _mixCleanups: Array<() => void> = [];
   private readonly _status: Cell<EffectStatus>;
   private readonly _error: Cell<Error | null>;
   private _ready: Promise<void> = Promise.resolve();
@@ -144,6 +154,26 @@ export abstract class Effect<P extends ParamRegistry = {}, C extends CellRegistr
     this.effect(() => fadeTo(ctx, ready.offset, status.value === "ready" ? 1 : 0, GATE));
 
     this._sources = [one, wetSignal, enabled, ready];
+    this._mixControl = { dry: [one, negate], wet: wetReady, wetValue: wetSignal.offset, enabled: enabled.offset };
+    detachedInitializers.set(this, () => {
+      const now = ctx.currentTime;
+      enabled.offset.cancelScheduledValues(now);
+      enabled.offset.setValueAtTime(this.params.bypass.value ? 0 : 1, now);
+    });
+  }
+
+  /** Internal audio-rate mix coefficients for a subclass's applied-gain meter; these are the same signals that drive the audible mix. */
+  protected connectMixControls(dry: AudioNode, wet: AudioNode): void {
+    const wires = [...this._mixControl.dry.map((source) => ({ source, destination: dry })), { source: this._mixControl.wet, destination: wet }];
+    for (const { source, destination } of wires) source.connect(destination);
+    this._mixCleanups.push(() => {
+      for (const { source, destination } of wires) source.disconnect(destination);
+    });
+  }
+
+  /** The native dry coefficient while no processing engine can report a meter yet. */
+  protected get dryMixValue(): number {
+    return Math.max(0, 1 - this._mixControl.wetValue.value * this._mixControl.enabled.value);
   }
 
   override get input(): GainNode {
@@ -196,6 +226,8 @@ export abstract class Effect<P extends ParamRegistry = {}, C extends CellRegistr
 
   override dispose(): void {
     this._gone = true;
+    detachedInitializers.delete(this);
+    for (const cleanup of this._mixCleanups.splice(0)) cleanup();
     for (const s of this._sources) {
       s.stop();
       s.disconnect();

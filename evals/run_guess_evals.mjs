@@ -296,17 +296,19 @@ const JSX_HINT = /<\/[A-Za-z][\w.-]*\s*>|(?:\breturn|=>|\()\s*\(?\s*<[A-Za-z][\w
 
 // Type-checks as main.ts. Code that fails to parse as .ts and looks like JSX is checked again as
 // main.tsx (react-jsx transform) and that result is kept, so valid .ts code keeps its .ts meaning.
-function compile(variant, tsCode) {
-  const first = compileAs(variant, tsCode, false);
+function compile(variant, tsCode, hostDeclarations = "") {
+  const first = compileAs(variant, tsCode, false, hostDeclarations);
   if (first.error || first.passed || !JSX_HINT.test(tsCode) || !first.all.some((l) => /error TS1\d{3}:/.test(l))) return first;
-  return compileAs(variant, tsCode, true);
+  return compileAs(variant, tsCode, true, hostDeclarations);
 }
 
-function compileAs(variant, tsCode, tsx) {
+function compileAs(variant, tsCode, tsx, hostDeclarations) {
   const dir = scratch("guess-tsc-");
   const main = tsx ? "main.tsx" : "main.ts";
   writeFileSync(join(dir, "variant.d.ts"), variant);
   writeFileSync(join(dir, main), tsCode.trim() ? tsCode : "export {};\n");
+  // Only explicit typed host bindings from the task; never infer missing names.
+  if (hostDeclarations) writeFileSync(join(dir, "host.d.ts"), hostDeclarations);
   if (reactTypes) {
     mkdirSync(join(dir, "node_modules/@types"), { recursive: true });
     symlinkSync(reactTypes, join(dir, "node_modules/@types/react"), "dir");
@@ -332,6 +334,7 @@ function compileAs(variant, tsCode, tsx) {
       ...(tsx ? ["--jsx", "react-jsx"] : []),
       main,
       "variant.d.ts",
+      ...(hostDeclarations ? ["host.d.ts"] : []),
     ],
     { cwd: dir, encoding: "utf8", timeout: 120_000 },
   );
@@ -341,7 +344,14 @@ function compileAs(variant, tsCode, tsx) {
     .split("\n")
     .filter((l) => /\berror TS\d+:/.test(l))
     .map((l) => l.trim());
-  return { passed: r.status === 0 && lines.length === 0, diagnostics: lines.length, first: lines.slice(0, 5), all: lines, tsx };
+  return {
+    passed: r.status === 0 && lines.length === 0,
+    diagnostics: lines.length,
+    first: lines.slice(0, 5),
+    all: lines,
+    tsx,
+    ...(hostDeclarations ? { hostDeclarations } : {}),
+  };
 }
 
 // ---- grader ----------------------------------------------------------------
@@ -511,7 +521,7 @@ async function runOne(task, replay) {
     calls: replay ? [] : [{ role: "solver", usage: solved.usage, metadata: solved.metadata }],
   };
   if (mode === "desire") return base;
-  const tscResult = compile(variantDts, ts);
+  const tscResult = compile(variantDts, ts, task.hostDeclarations);
   if (tscResult.error) return { ...base, error: tscResult.error };
   const graded = await gradeWithRetry(task, ts, html, tscResult);
   base.costUsd = addCost(base.costUsd, graded.cost);
@@ -625,7 +635,14 @@ const results = tasks.map((task, ti) => {
     loc: x.loc ?? null,
     chars: x.chars ?? null,
     raw: x.raw ?? null,
-    tsc: x.tsc ? { passed: x.tsc.passed, diagnostics: x.tsc.diagnostics, first: x.tsc.first } : null,
+    tsc: x.tsc
+      ? {
+          passed: x.tsc.passed,
+          diagnostics: x.tsc.diagnostics,
+          first: x.tsc.first,
+          ...(x.tsc.hostDeclarations ? { hostDeclarations: x.tsc.hostDeclarations } : {}),
+        }
+      : null,
     grade: x.grade ?? null,
     costUsd: backend === "codex" ? null : (x.costUsd ?? 0),
     calls: x.calls ?? [],
@@ -756,6 +773,11 @@ if (jsonOut)
         suite: suite.area,
         mode,
         variant: variantPath,
+        ...(stored
+          ? {
+              replay: { source: resolve(regradePath), solverVariant: stored.variant, kind: checksOnlyPath ? "checks-only" : "regrade-and-recompile" },
+            }
+          : {}),
         backend,
         model,
         graderModel,

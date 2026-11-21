@@ -6,6 +6,8 @@ export type { TimeStretchAnchor, TimeStretchLoadOptions, TimeStretchOptions } fr
 export type { WetArm, EffectOptions, EffectStatus } from "./Effect";
 export { EffectChain } from "./EffectChain";
 export type {
+  AnyEffect,
+  EffectChainFromJSONOptions,
   EffectChainIssue,
   EffectChainJSON,
   EffectChainJSONEffect,

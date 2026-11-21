@@ -18,6 +18,7 @@ class DuckerProcessor extends AudioWorkletProcessor {
     this.env = 0;
     this.reduction = 0;
     this.sinceReport = 0;
+    this.appliedReduction = 0;
     this.disposed = false;
     this.port.onmessage = (e) => {
       if (e.data?.dispose) {
@@ -29,6 +30,7 @@ class DuckerProcessor extends AudioWorkletProcessor {
   process(inputs, outputs, p) {
     if (this.disposed) return false;
     const audio = inputs[0], side = inputs[1], output = outputs[0];
+    const dry = inputs[2]?.[0], wet = inputs[3]?.[0];
     const n = output[0].length;
     const depth = p.depth[0];
     const attackStep = p.attack[0] <= 0 ? Infinity : depth / (p.attack[0] * sampleRate);
@@ -46,6 +48,8 @@ class DuckerProcessor extends AudioWorkletProcessor {
       if (this.reduction < target) this.reduction = Math.min(target, this.reduction + attackStep);
       else this.reduction = Math.max(target, this.reduction - releaseStep);
       const gain = Math.pow(10, -this.reduction / 20);
+      const appliedGain = Math.max(0, (dry?.[i] ?? 0) + (wet?.[i] ?? 1) * gain);
+      this.appliedReduction = Math.min(0, 20 * Math.log10(appliedGain));
       for (let c = 0; c < output.length; c++) {
         const channel = audio[c] ?? audio[0];
         output[c][i] = channel ? channel[i] * gain : 0;
@@ -53,7 +57,7 @@ class DuckerProcessor extends AudioWorkletProcessor {
     }
     this.sinceReport += n;
     if (this.sinceReport >= 512) {
-      this.port.postMessage({ reduction: -this.reduction });
+      this.port.postMessage({ reduction: this.appliedReduction });
       this.sinceReport = 0;
     }
     return true;

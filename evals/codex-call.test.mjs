@@ -42,7 +42,8 @@ else {
   if (scenario === 'null-json') process.stdout.write('null\\n');
   item({type:'reasoning',text:'Thinking'});
   if (scenario !== 'no-message') {
-    const code = 'export const answer: number = 42;' + (scenario === 'dom-iterable' ? '\\ndeclare const parameters: AudioParamMap; const gain = parameters.get("gain"); for (const [name, param] of parameters) { void name; void param.value; }' : '');
+    let code = 'export const answer: number = 42;' + (scenario === 'dom-iterable' ? '\\ndeclare const parameters: AudioParamMap; const gain = parameters.get("gain"); for (const [name, param] of parameters) { void name; void param.value; }' : '');
+    if (scenario === 'host-binding') code += '\\nconst borrowed: AudioNode = synthOut;';
     const text = prompt.includes('You are grading code') ? JSON.stringify({expectations:[{met:false,evidence:'deliberately false; deterministic check must win'}],errors:[]}) : '\x60\x60\x60ts\\n' + code + '\\n\x60\x60\x60';
     item({type:'agent_message',text:scenario==='reader-denied'?'MCP tool call requires approval, but approval policy is never.':text});
   }
@@ -371,4 +372,43 @@ test("reader approval-denial final text is an infrastructure error even without 
   assert.match(result.error, /reader blocked.*approval policy is never/);
   assert.equal(result.text, undefined);
   assert.deepEqual(result.metadata.readerCalls, []);
+});
+
+test("guess compiler supplies only explicitly typed task host bindings", async () => {
+  const originalSuite = JSON.parse(readFileSync(join(scratch, "suite.json"), "utf8"));
+  for (const [name, declaration, expected] of [
+    ["valid", "declare const synthOut: AudioNode;", 1],
+    ["wrong-type", "declare const synthOut: number;", 0],
+    ["wrong-name", "declare const anotherSource: AudioNode;", 0],
+  ]) {
+    const suite = structuredClone(originalSuite);
+    suite.tasks[0].hostDeclarations = declaration;
+    const suitePath = join(scratch, `host-${name}.json`);
+    const output = join(scratch, `host-${name}-result.json`);
+    writeFileSync(suitePath, JSON.stringify(suite));
+    const result = await runGuess(
+      [
+        suitePath,
+        "--mode",
+        "guess",
+        "--variant",
+        join(scratch, "variant.d.ts"),
+        "--backend",
+        "codex",
+        "--model",
+        "pinned-model",
+        "--reasoning-effort",
+        "high",
+        "--runs",
+        "1",
+        "--json",
+        output,
+      ],
+      { SCENARIO: "host-binding" },
+    );
+    assert.equal(result.code, 0, result.stderr + result.stdout);
+    const json = JSON.parse(readFileSync(output, "utf8"));
+    assert.equal(json.results[0].compilePassed, expected, JSON.stringify(json.results[0].samples[0].tsc));
+    assert.equal(json.results[0].samples[0].tsc.hostDeclarations, declaration);
+  }
 });
