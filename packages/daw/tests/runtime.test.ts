@@ -65,7 +65,7 @@ vi.mock("@audiorective/host/webclap", () => ({
         output: { connect: vi.fn() },
         loadState: vi.fn(async (bytes: Uint8Array) => fakes.loadStateImpl?.(bytes)),
         saveState: vi.fn(async () => new Uint8Array([9, 9])),
-        panic: vi.fn(),
+        allNotesOff: vi.fn(),
         dispose: vi.fn(),
       };
       fakes.hosts.push(host);
@@ -270,6 +270,22 @@ describe("workspace automatic application", () => {
     await tick();
     expect(fakes.hosts[0].loadState.mock.calls.length).toBe(loads);
     expect(clock.seek.mock.calls.length).toBe(seeks);
+    workspace.dispose();
+    project.dispose();
+  });
+
+  test("a MIDI note edit refreshes Clock only while playing", async () => {
+    const project = new Project({ bpm: 120 });
+    const track = project.addTrack("Keys", "midi");
+    const clip = project.addMidiClip(track.id, { duration: 4, notes: [] }, 0);
+    const workspace = await Workspace.create(context(), project);
+    const clock = fakes.clocks[fakes.clocks.length - 1];
+    const refreshes = clock.refresh.mock.calls.length;
+    clip.midi.setNotes([{ pitch: 60, velocity: 0.5, start: 0, duration: 1 }]);
+    expect(clock.refresh.mock.calls.length).toBe(refreshes);
+    clock.state.value = "playing";
+    clip.midi.setNotes([{ pitch: 62, velocity: 0.5, start: 1, duration: 1 }]);
+    expect(clock.refresh.mock.calls.length).toBe(refreshes + 1);
     workspace.dispose();
     project.dispose();
   });

@@ -38,7 +38,7 @@ export class ClipScheduler {
         if (clip.kind === "midi") {
           if (!runtime.midiHost) continue;
           for (const event of clip.playbackEvents()) {
-            const beat = clip.timeUnit === "beats" ? clip.time + event.time : map.secondsToBeat(clip.time + event.time);
+            const beat = clip.time + event.beat;
             if (beat < window.beat.start - 1e-8 || beat >= window.beat.end - 1e-8) continue;
             const when = timeline.beatToTime(beat);
             window.own(runtime.midiHost.scheduleMidi(event.data, when), when);

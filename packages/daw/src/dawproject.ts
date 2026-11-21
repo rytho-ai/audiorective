@@ -1,7 +1,8 @@
 import { DOMImplementation, DOMParser, XMLSerializer } from "@xmldom/xmldom";
 import type { Document, Element } from "@xmldom/xmldom";
 import { unzipSync, zipSync, Unzip, UnzipInflate } from "fflate";
-import type { MidiNote } from "@audiorective/midi";
+import { untracked } from "@audiorective/core";
+import type { NoteInit } from "@audiorective/midi";
 import type { RackEffect, RackMacroSettings } from "@audiorective/effects/rack-preset";
 import { MidiClip, Project, audioChannelCount, normalizeClipGainAutomation } from "./model";
 import type { ClipStretchAnchor } from "./clip-time-map";
@@ -23,7 +24,7 @@ type StoredClip = {
   warpAnchors?: readonly ClipStretchAnchor[];
   gainAutomation?: AudioClipGainAutomation;
 };
-type PrivateState = { version: 1 | 2; clips: StoredClip[]; rackMacros?: Record<string, readonly RackMacroSettings[]> };
+type PrivateState = { version: 1 | 2 | 3; clips: StoredClip[]; rackMacros?: Record<string, readonly RackMacroSettings[]> };
 type HostManifest = { version: 1; devices: Record<string, { kind: "webclap"; bundleUrl: string }> };
 type ControlPoint = { time: number; channel: number; controller: number; value: number };
 type MediaEntry = { blob: Blob; header: Uint8Array };
@@ -80,10 +81,11 @@ function attr(element: Element, name: string): string {
   return value;
 }
 
-function numberAttr(element: Element, name: string, minimum = 0): number {
+function numberAttr(element: Element, name: string, minimum = 0, maximum = Infinity): number {
   const text = attr(element, name);
   const value = Number(text);
-  if (!text.trim() || !Number.isFinite(value) || value < minimum) throw new Error(`Project XML has invalid ${name} on ${element.tagName}.`);
+  if (!text.trim() || !Number.isFinite(value) || value < minimum || value > maximum)
+    throw new Error(`Project XML has invalid ${name} on ${element.tagName}.`);
   return value;
 }
 
@@ -107,18 +109,18 @@ function parseXml(bytes: Uint8Array, rootName: string): Element {
 
 /** A cheap change detector for sidecar alignment, not a security hash. */
 function fingerprint(
-  notes: readonly MidiNote[],
+  notes: readonly NoteInit[],
   controls: readonly ControlPoint[],
   time: number,
   duration: number,
-  unit?: "seconds" | "beats",
+  unit: "seconds" | "beats",
 ): string {
   const ordered = [...controls].sort((a, b) => a.time - b.time || a.channel - b.channel || a.controller - b.controller || a.value - b.value);
   const plain = JSON.stringify({
     time,
     duration,
-    ...(unit ? { unit } : {}),
-    notes: notes.map(({ start, end, pitch, velocity, channel }) => [start, end, pitch, velocity, channel]),
+    unit,
+    notes: notes.map(({ start, duration, pitch, velocity, channel }) => [start, duration, pitch, velocity, channel]),
     controls: ordered,
   });
   let hash = 2166136261;
@@ -161,7 +163,7 @@ function writeClip(
   track: ProjectTrack,
   index: number,
 ): void {
-  const unit = clip.kind === "midi" ? clip.timeUnit : "seconds";
+  const unit = clip.kind === "midi" ? "beats" : "seconds";
   const element = append(clips, "Clip", { time: clip.time, duration: clip.duration, contentTimeUnit: unit });
   if (clip.kind === "audio") {
     const path = `audio/${clip.id}.wav`;
@@ -194,15 +196,15 @@ function writeClip(
     return;
   }
   const content = append(element, "Lanes", { id: `${clip.id}-content`, timeUnit: unit });
-  const notes = clip.sequence.getState().notes;
+  const notes = untracked(() => clip.midi.notes.value);
   const notesNode = append(content, "Notes", { id: `${clip.id}-notes`, timeUnit: unit });
   for (const note of notes)
     append(notesNode, "Note", {
       time: note.start,
-      duration: note.end - note.start,
+      duration: note.duration,
       channel: note.channel,
       key: note.pitch,
-      vel: note.velocity / 127,
+      vel: note.velocity,
     });
   const controls = controlsFromEvents(clip.events);
   const groups = new Map<string, ControlPoint[]>();
@@ -298,14 +300,14 @@ function prepareDawProject(project: Project): { entries: Record<string, Uint8Arr
   append(masterChannel, "Volume", { id: "masterVolume", unit: "linear", value: project.masterVolume });
   const arrangement = append(root, "Arrangement", { id: "arrangement" });
   const lanes = append(arrangement, "Lanes", { id: "projectLanes", timeUnit: "seconds" });
-  const state: PrivateState = { version: 2, clips: [] };
+  const state: PrivateState = { version: 3, clips: [] };
   const racks = project.tracks.filter((track) => track.effectMacros.length);
   if (racks.length) state.rackMacros = Object.fromEntries(racks.map((track) => [track.id, track.effectMacros]));
   for (const track of project.tracks) {
     const lane = append(lanes, "Lanes", { id: `${track.id}-lane`, track: track.id, timeUnit: "seconds" });
     let index = 0;
     for (const unit of ["seconds", "beats"] as const) {
-      const group = track.clips.filter((clip) => (clip.kind === "audio" ? unit === "seconds" : clip.timeUnit === unit));
+      const group = track.clips.filter((clip) => (clip.kind === "audio" ? unit === "seconds" : unit === "beats"));
       if (!group.length && (unit === "beats" || track.clips.length)) continue;
       const clips = append(lane, "Clips", { id: `${track.id}-clips${unit === "beats" ? "-beats" : ""}`, timeUnit: unit });
       for (const clip of group) writeClip(clip, clips, entries, mediaEntries, state, track, index++);
@@ -372,7 +374,7 @@ function readPrivate(bytes: Uint8Array | undefined, warnings: string[]): Private
   if (!bytes) return undefined;
   try {
     const value: unknown = JSON.parse(decoder.decode(bytes));
-    if (!value || typeof value !== "object" || ![1, 2].includes((value as PrivateState).version) || !Array.isArray((value as PrivateState).clips))
+    if (!value || typeof value !== "object" || ![1, 2, 3].includes((value as PrivateState).version) || !Array.isArray((value as PrivateState).clips))
       throw new Error();
     return value as PrivateState;
   } catch {
@@ -418,16 +420,14 @@ function readMidi(clip: Element, trackId: string, index: number, unit: "seconds"
     attributesOnly(element, ["time", "duration", "channel", "key", "vel"]);
     childrenOnly(element, []);
     const start = numberAttr(element, "time"),
-      end = start + numberAttr(element, "duration");
-    const velocity = Math.round(numberAttr(element, "vel") * 127);
+      duration = numberAttr(element, "duration");
     return {
       id: `imported-${trackId}-${index}-${noteIndex}`,
       start,
-      end,
+      duration,
       pitch: integerAttr(element, "key", 0, 127),
-      velocity,
+      velocity: numberAttr(element, "vel", 0, 1),
       channel: integerAttr(element, "channel", 0, 15),
-      track: 0,
     };
   });
   const controls: ControlPoint[] = [];
@@ -448,10 +448,10 @@ function readMidi(clip: Element, trackId: string, index: number, unit: "seconds"
     }
   }
   const match = stored?.clips.find((item) => item.track === trackId && item.index === index);
-  const expected = fingerprint(notes, controls, time, duration, stored?.version === 2 ? unit : undefined);
+  const expected = fingerprint(notes, controls, time, duration, unit);
   const usable =
     match &&
-    (stored?.version === 2 || unit === "seconds") &&
+    stored?.version === 3 &&
     match.fingerprint === expected &&
     Array.isArray(match.noteIds) &&
     match.noteIds.length === notes.length &&
@@ -476,7 +476,7 @@ function readMidi(clip: Element, trackId: string, index: number, unit: "seconds"
   const events: ProjectMidiEvent[] = usable
     ? match.events!.map((event) => ({ time: event.time, data: new Uint8Array(event.data), noteId: event.noteId }))
     : controls.map(({ time, channel, controller, value }) => ({ time, data: new Uint8Array([0xb0 | channel, controller, value]) }));
-  return { time, duration, notes, events, id: usable ? match.id : undefined, timeUnit: unit };
+  return { time, duration, notes, events, id: usable ? match.id : undefined };
 }
 
 /** Open the supported slice. Unknown structural content fails instead of disappearing. */
@@ -755,6 +755,7 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
     const arrangement = one(root, "Arrangement")!;
     attributesOnly(arrangement, ["id"]);
     childrenOnly(arrangement, ["Lanes", "Markers", "TempoAutomation"]);
+    const secondsMidi: Array<{ trackId: string; midi: ReturnType<typeof readMidi> }> = [];
     const lanes = one(arrangement, "Lanes")!;
     attributesOnly(lanes, ["id", "timeUnit"]);
     if (attr(lanes, "timeUnit") !== "seconds") throw new Error("Project arrangement needs seconds time.");
@@ -780,7 +781,9 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
           childrenOnly(clip, ["Lanes", "Audio"]);
           if (track.kind === "midi") {
             const midi = readMidi(clip, trackId, index, unit, stored, warnings);
-            project.addMidiClip(trackId, midi, midi.time, { id: midi.id, timeUnit: midi.timeUnit });
+            // Seconds content converts to beats once the tempo map is known, after the arrangement is read.
+            if (unit === "beats") project.addMidiClip(trackId, midi, midi.time, { id: midi.id });
+            else secondsMidi.push({ trackId, midi });
           } else {
             attributesOnly(clip, ["time", "duration", "contentTimeUnit", "fadeTimeUnit", "fadeInTime", "fadeOutTime"]);
             if (clip.hasAttribute("fadeTimeUnit") && attr(clip, "fadeTimeUnit") !== "seconds") throw new Error("Project audio fades need seconds.");
@@ -892,6 +895,21 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
       const initial = changes.find((point) => point.beat === 0);
       if (initial && initial.bpm !== bpm) throw new Error("Project tempo automation disagrees with transport BPM.");
       project.setTempoChanges(changes.filter((point) => point.beat !== 0));
+    }
+    for (const { trackId, midi } of secondsMidi) {
+      const map = project.tempoMap;
+      const first = map.secondsToBeat(midi.time);
+      const beat = (local: number) => map.secondsToBeat(midi.time + local) - first;
+      project.addMidiClip(
+        trackId,
+        {
+          duration: beat(midi.duration),
+          notes: midi.notes.map((note) => ({ ...note, start: beat(note.start), duration: beat(note.start + note.duration) - beat(note.start) })),
+          events: midi.events.map((event) => ({ ...event, time: beat(event.time) })),
+        },
+        first,
+        { id: midi.id },
+      );
     }
     if (Object.keys(entries).some((path) => !usedPaths.has(path))) throw new Error("Project archive has unsupported files.");
     return { project, warnings: Object.freeze(warnings) };

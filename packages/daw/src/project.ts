@@ -1,7 +1,7 @@
 /** The Project model and its pure helpers. Loads without a DOM or AudioContext. */
 export { Project, MidiClip, audioClipSourceDuration, audioClipTimeMap } from "./model";
 export type {
-  MidiTimeUnit,
+  ProjectMidiData,
   ProjectOptions,
   ProjectContent,
   ProjectTrack,

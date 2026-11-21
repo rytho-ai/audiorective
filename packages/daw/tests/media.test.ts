@@ -40,7 +40,7 @@ describe("file-backed audio", () => {
       midi.id,
       {
         duration: 1,
-        notes: [{ id: "note1", start: 0, end: 0.5, pitch: 60, velocity: 100, channel: 0, track: 0 }],
+        notes: [{ id: "note1", start: 0, duration: 1, pitch: 60, velocity: 0.8, channel: 0 }],
       },
       0,
     );
@@ -56,16 +56,16 @@ describe("file-backed audio", () => {
     const originalAudio = project.tracks[0].clips[0];
     if (originalAudio.kind !== "audio" || !originalAudio.channels) throw new Error("Expected audio clip");
     originalAudio.channels[0][0] = 0;
-    clip.sequence.setData({ duration: 1, notes: [] });
+    clip.midi.setNotes([]);
     project.setDeviceState(device.id, new Uint8Array([9]));
     const copiedAudio = copy.tracks[0].clips[0];
     const copiedMidi = copy.tracks[1].clips[0];
     if (copiedAudio.kind !== "audio" || copiedMidi.kind !== "midi" || !copiedAudio.channels) throw new Error("Expected copied clips");
     expect(copiedAudio.channels[0][0]).toBe(0.25);
-    expect(copiedMidi.sequence.getState().notes).toHaveLength(1);
+    expect(copiedMidi.midi.notes.value).toHaveLength(1);
     expect([...copy.tracks[1].devices[0].state]).toEqual([3]);
     project.dispose();
-    expect(copiedMidi.sequence.getState().notes).toHaveLength(1);
+    expect(copiedMidi.midi.notes.value).toHaveLength(1);
     copy.dispose();
   });
 

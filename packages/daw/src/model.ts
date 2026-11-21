@@ -9,8 +9,8 @@ import {
 import type { PCMData } from "@audiorective/core";
 import { batch, Cell, readonlyCell, ReadonlyCell, untracked } from "@audiorective/core";
 import { AutomationCurve, type AutomationPoint } from "@audiorective/core/automation";
-import { compileMidiPlaybackEvents, MidiSequence } from "@audiorective/midi";
-import type { MidiData, MidiNote, MidiPlaybackEvent, RecordedMidi, RecordedMidiEvent } from "@audiorective/midi";
+import { compileMidiPlaybackEvents, MidiClip as MidiNotes } from "@audiorective/midi";
+import type { MidiNote, MidiPlaybackEvent, MidiTake, NoteInit } from "@audiorective/midi";
 import { AudioMedia } from "./media";
 import { TempoMap } from "./tempo-map";
 import type { TempoChange } from "./tempo-map";
@@ -22,8 +22,7 @@ export type BusRole = "submix" | "effect";
 export type ProjectSend = Readonly<{ busId: string; gain: number }>;
 export type TrackRouting = Readonly<{ outputBusId: string | null; sends: readonly ProjectSend[] }>;
 const masterRouting: TrackRouting = Object.freeze({ outputBusId: null, sends: Object.freeze([]) });
-export type MidiTimeUnit = "seconds" | "beats";
-/** A message at a clip-relative time in its owning MidiClip.timeUnit. */
+/** A message at a clip-relative time in beats. */
 export type ProjectMidiEvent = Readonly<{ time: number; data: Uint8Array; noteId?: string }>;
 export type ProjectAudio = Pick<PCMData, "sampleRate" | "channels">;
 export type ProjectMarker = Readonly<{ time: number; name: string }>;
@@ -161,19 +160,28 @@ function snapshotAudioClip(clip: AudioClip): AudioClip {
 
 const midiClipTimes = new WeakMap<MidiClip, Cell<number>>();
 
-/** One owner for editable notes and ordered events; position, duration and content share timeUnit. */
+/** What a MIDI clip holds: notes, the clip length and the non-note messages, all in beats from the clip's start. */
+export type ProjectMidiData = Readonly<{ notes: readonly NoteInit[]; duration: number; events?: readonly ProjectMidiEvent[] }>;
+
+/**
+ * A MIDI clip of the project. Everything is in beats: `time` is the position in project beats, `duration` the clip length in beats, and note and
+ * event times are beats from the clip's start. `midi` owns the editable notes; notes beyond `duration` are cut at playback. `duration` changes
+ * only through the project's clip operations (`trimClip`, `splitClip`, ...), which replace the clip.
+ */
 export class MidiClip {
   readonly kind = "midi" as const;
-  readonly sequence: MidiSequence;
+  /** The note model: `clip.midi.notes.value`, `clip.midi.edit(draft => ...)`, `clip.midi.setNotes(notes)`. */
+  readonly midi: MidiNotes;
+  /** The clip length in beats. */
+  readonly duration: number;
   private readonly sourceEvents: readonly ProjectMidiEvent[];
 
   constructor(
     readonly id: string,
     time: number,
-    data: MidiData & Readonly<{ events?: readonly ProjectMidiEvent[] }>,
-    readonly timeUnit: MidiTimeUnit = "seconds",
+    data: ProjectMidiData,
   ) {
-    if (timeUnit !== "seconds" && timeUnit !== "beats") throw new RangeError("Project MIDI time unit must be seconds or beats.");
+    if (!Number.isFinite(data.duration) || data.duration < 0) throw new RangeError("Project MIDI duration must be finite non-negative beats.");
     midiClipTimes.set(this, new Cell(time));
     this.sourceEvents = Object.freeze(
       (data.events ?? []).map((event) => {
@@ -182,13 +190,11 @@ export class MidiClip {
         return Object.freeze({ time: event.time, data: new Uint8Array(event.data), ...(event.noteId ? { noteId: event.noteId } : {}) });
       }),
     );
-    this.sequence = new MidiSequence(data);
+    this.duration = data.duration;
+    this.midi = new MidiNotes(data.notes);
   }
 
-  get duration(): number {
-    return this.sequence.cells.duration.value;
-  }
-
+  /** The position in project beats. Tracked. */
   get time(): number {
     return midiClipTimes.get(this)!.value;
   }
@@ -198,19 +204,21 @@ export class MidiClip {
     return this.sourceEvents.map((event) => ({ ...event, data: new Uint8Array(event.data) }));
   }
 
+  /** The clip's MIDI messages in order, `beat` in beats from the clip's start: notes cut at `duration`, then the non-note events inside it. */
   playbackEvents(): readonly MidiPlaybackEvent[] {
-    const source: { startTime: number; events: RecordedMidiEvent[] } = {
-      startTime: 0,
-      events: this.sourceEvents.map(({ time, data, noteId }) => ({ audioTime: time, data, ...(noteId ? { noteId } : {}) })),
-    };
-    return compileMidiPlaybackEvents(
-      source,
-      untracked(() => this.sequence.getState()),
-    );
+    const duration = this.duration;
+    const notes = untracked(() => this.midi.notes.value).flatMap((note) => {
+      const end = Math.min(note.start + note.duration, duration);
+      return note.start < duration && end > note.start ? [{ ...note, duration: end - note.start }] : [];
+    });
+    const events = this.sourceEvents
+      .filter((event) => event.time <= duration)
+      .map(({ time, data, noteId }) => ({ beat: time, data, ...(noteId ? { noteId } : {}) }));
+    return compileMidiPlaybackEvents({ events }, { notes, duration });
   }
 
   dispose(): void {
-    this.sequence.dispose();
+    this.midi.dispose();
   }
 }
 
@@ -243,7 +251,7 @@ export type ProjectTrack = Readonly<{
   clips: readonly ProjectClip[];
 }>;
 
-/** Everything a Project persists: its structural revision plus each MIDI clip's notes, which the clip's sequence owns. */
+/** Everything a Project persists: its structural revision plus each MIDI clip's notes, which the clip's `midi` model owns. */
 export type ProjectContent = Readonly<{
   revision: number;
   midi: ReadonlyMap<string, Readonly<{ notes: readonly MidiNote[]; duration: number }>>;
@@ -266,7 +274,7 @@ type ProjectState = Readonly<{
 
 const clipSeconds = (tempoMap: TempoMap, clip: ProjectClip, localTime = 0): number => {
   const position = clip.time + localTime;
-  return clip.kind === "midi" && clip.timeUnit === "beats" ? tempoMap.beatToSeconds(position) : position;
+  return clip.kind === "midi" ? tempoMap.beatToSeconds(position) : position;
 };
 
 const validId = (id: string) => /^[A-Za-z_][A-Za-z0-9_.-]*$/.test(id);
@@ -280,8 +288,8 @@ export class Project {
   private readonly store: Cell<ProjectState>;
   private readonly ids = new Set<string>();
   /**
-   * `revision` counts structural commits. `content` also re-runs for note and duration edits made through a
-   * `MidiClip.sequence`, which owns its notes; selection changes do not re-run it.
+   * `revision` counts structural commits. `content` also re-runs for note edits made through a
+   * `MidiClip.midi`, which owns its notes.
    */
   readonly cells: Readonly<{ revision: ReadonlyCell<number>; content: ReadonlyCell<ProjectContent> }>;
   private nextId = 1;
@@ -327,8 +335,7 @@ export class Project {
         const state = store.value;
         const midi = new Map<string, { notes: readonly MidiNote[]; duration: number }>();
         for (const track of state.tracks)
-          for (const clip of track.clips)
-            if (clip instanceof MidiClip) midi.set(clip.id, { notes: clip.sequence.cells.notes.value, duration: clip.sequence.cells.duration.value });
+          for (const clip of track.clips) if (clip instanceof MidiClip) midi.set(clip.id, { notes: clip.midi.notes.value, duration: clip.duration });
         return Object.freeze({ revision: state.revision, midi });
       }),
     });
@@ -356,19 +363,19 @@ export class Project {
     return this.store.value.tempoMap;
   }
 
-  /** Convert a clip's native position and offset to project seconds. Tracks tempo changes. */
+  /** Convert a clip's native position and offset (seconds for audio, beats for MIDI) to project seconds. Tracks tempo changes. */
   clipTimeSeconds(clip: ProjectClip, localTime = 0): number {
     return clipSeconds(this.store.value.tempoMap, clip, localTime);
   }
 
-  private sortClips(clips: ProjectClip[], tempoMap: TempoMap = this.s.tempoMap): readonly ProjectClip[] {
-    return Object.freeze(untracked(() => clips.sort((a, b) => clipSeconds(tempoMap, a) - clipSeconds(tempoMap, b))));
+  /** A track holds one clip kind, so the native position (seconds for audio, beats for MIDI) orders it. */
+  private sortClips(clips: ProjectClip[]): readonly ProjectClip[] {
+    return Object.freeze(untracked(() => clips.sort((a, b) => a.time - b.time)));
   }
 
   setTempoChanges(changes: readonly TempoChange[]): void {
     const tempoMap = new TempoMap(this.bpm, changes);
-    const tracks = Object.freeze(this.s.tracks.map((track) => Object.freeze({ ...track, clips: this.sortClips([...track.clips], tempoMap) })));
-    this.commit({ tempoMap, tracks });
+    this.commit({ tempoMap });
   }
 
   get markers(): readonly ProjectMarker[] {
@@ -391,7 +398,7 @@ export class Project {
           clips: Object.freeze(
             track.clips.map((clip) =>
               clip instanceof MidiClip
-                ? new MidiClip(clip.id, clip.time, { ...clip.sequence.getState(), events: clip.events }, clip.timeUnit)
+                ? new MidiClip(clip.id, clip.time, { notes: clip.midi.notes.value, duration: clip.duration, events: clip.events })
                 : snapshotAudioClip(clip),
             ),
           ),
@@ -718,17 +725,12 @@ export class Project {
     return clip;
   }
 
-  addMidiClip(
-    trackId: string,
-    data: MidiData & Readonly<{ events?: readonly ProjectMidiEvent[] }>,
-    time: number,
-    options: { id?: string; timeUnit?: MidiTimeUnit } = {},
-  ): MidiClip {
+  addMidiClip(trackId: string, data: ProjectMidiData, time: number, options: { id?: string } = {}): MidiClip {
     const track = this.track(trackId, "midi");
     if (!validTime(time)) throw new RangeError("Project clip time must be finite and non-negative.");
     const id = this.reserve(options.id, "clip");
     try {
-      const clip = new MidiClip(id, time, data, options.timeUnit);
+      const clip = new MidiClip(id, time, data);
       this.replace(track, { clips: this.sortClips([...track.clips, clip]) });
       return clip;
     } catch (error) {
@@ -737,21 +739,13 @@ export class Project {
     }
   }
 
-  /** A take arrives in seconds; beat placement converts notes and every captured message together. */
-  addMidiTake(trackId: string, take: RecordedMidi, time: number, options: { timeUnit?: MidiTimeUnit } = {}): MidiClip {
+  /** Adds a recorded take as a clip: its notes, duration and non-note messages are already beats from its start. `time` is the clip position in project beats, default the take's `startBeat` (0 when it has none). */
+  addMidiTake(trackId: string, take: MidiTake, time: number = take.startBeat ?? 0): MidiClip {
     if (!validTime(time)) throw new RangeError("Project clip time must be finite and non-negative.");
-    const beats = options.timeUnit === "beats";
-    const startBeat = beats ? this.s.tempoMap.secondsToBeat(time) : 0;
-    const convert = (relative: number) => (beats ? this.s.tempoMap.secondsToBeat(time + relative) - startBeat : relative);
     return this.addMidiClip(
       trackId,
-      {
-        notes: take.notes.map((note) => ({ ...note, start: convert(note.start), end: convert(note.end) })),
-        duration: convert(take.duration),
-        events: take.events.map((event) => ({ time: convert(event.audioTime - take.startTime), data: event.data, noteId: event.noteId })),
-      },
-      beats ? startBeat : time,
-      options,
+      { notes: take.notes, duration: take.duration, events: take.events.map((event) => ({ time: event.beat, data: event.data })) },
+      time,
     );
   }
 
@@ -793,7 +787,7 @@ export class Project {
         ? this.addAudioMediaClip(target, clip.media, time, { ...options, startFrame: clip.startFrame, frameCount: clip.frameCount })
         : this.addAudioClip(target, clip, time, options);
     }
-    return this.addMidiClip(target, { ...clip.sequence.getState(), events: clip.events }, time, { timeUnit: clip.timeUnit });
+    return this.addMidiClip(target, { notes: untracked(() => clip.midi.notes.value), duration: clip.duration, events: clip.events }, time);
   }
 
   private clipAndTrack(clipId: string): { track: ProjectTrack; clip: ProjectClip } {
@@ -936,10 +930,10 @@ export class Project {
         ...(gainAutomation ? { gainAutomation } : {}),
       });
     }
-    const notes = clip.sequence.getState().notes.flatMap((note) => {
+    const notes = untracked(() => clip.midi.notes.value).flatMap((note) => {
       const from = Math.max(start, note.start);
-      const to = Math.min(end, note.end);
-      return to > from ? [{ ...note, start: from - start, end: to - start }] : [];
+      const to = Math.min(end, note.start + note.duration);
+      return to > from ? [{ ...note, start: from - start, duration: to - from }] : [];
     });
     const playback = clip.playbackEvents();
     const priorControls = new Map<string, Uint8Array>();
@@ -947,22 +941,22 @@ export class Project {
     for (const event of playback) {
       const data = event.data;
       if ((data[0] & 0xf0) !== 0xb0 || data.length < 3 || data[1] >= 120) continue;
-      if (event.time < start) priorControls.set(`${data[0] & 15}:${data[1]}`, data);
-      if (event.time < end && data[1] === 64) sustainAtEnd.set(data[0] & 15, data[2]);
+      if (event.beat < start) priorControls.set(`${data[0] & 15}:${data[1]}`, data);
+      if (event.beat < end && data[1] === 64) sustainAtEnd.set(data[0] & 15, data[2]);
     }
     for (const event of playback)
-      if (event.time === start && (event.data[0] & 0xf0) === 0xb0 && event.data.length >= 3)
+      if (event.beat === start && (event.data[0] & 0xf0) === 0xb0 && event.data.length >= 3)
         priorControls.delete(`${event.data[0] & 15}:${event.data[1]}`);
     const events: ProjectMidiEvent[] = [
       ...[...priorControls.values()].map((data) => ({ time: 0, data })),
       ...playback.flatMap((event) =>
-        event.time >= start && event.time < end
-          ? [{ time: event.time - start, data: event.data, ...(event.noteId ? { noteId: event.noteId } : {}) }]
+        event.beat >= start && event.beat < end
+          ? [{ time: event.beat - start, data: event.data, ...(event.noteId ? { noteId: event.noteId } : {}) }]
           : [],
       ),
       ...[...sustainAtEnd].flatMap(([channel, value]) => (value >= 64 ? [{ time: end - start, data: new Uint8Array([0xb0 | channel, 64, 0]) }] : [])),
     ];
-    return new MidiClip(id, clip.time + start, { duration: end - start, notes, events }, clip.timeUnit);
+    return new MidiClip(id, clip.time + start, { duration: end - start, notes, events });
   }
 
   /** Keep the clip ID while removing material outside its local interval. */
