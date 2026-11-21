@@ -125,3 +125,18 @@ test("stop() ends a take early and resolves record() with the partial take; canc
   await expect(discarded).rejects.toMatchObject({ name: "AbortError" });
   expect(recorder.cells.state.value).toBe("idle");
 });
+
+test.each([
+  ["clock.stop()", (r: Awaited<ReturnType<typeof rig>>) => r.clock.stop()],
+  ["clock.pause()", (r: Awaited<ReturnType<typeof rig>>) => r.clock.pause()],
+  ["clock.seek()", (r: Awaited<ReturnType<typeof rig>>) => r.clock.seek(2)],
+  ["detach", (r: Awaited<ReturnType<typeof rig>>) => r.detach()],
+])("a take armed for a future `when` is cancelled by %s; a running take is not", async (_name, leave) => {
+  const r = await rig(120);
+  r.clock.start();
+  const waiting = r.recorder.record({ when: r.context.currentTime + 30 });
+  await vi.waitFor(() => expect(r.recorder.cells.state.value).toBe("armed"));
+  leave(r);
+  await expect(waiting).rejects.toMatchObject({ name: "AbortError" });
+  expect(r.recorder.cells.state.value).toBe("idle");
+});

@@ -119,3 +119,29 @@ test.each([
   expect(r.player.cells.startsAt.value).toBeNull();
   expect(r.player.cells.isPlaying.value).toBe(false);
 });
+
+test.each([
+  ["clock.stop()", (r: Awaited<ReturnType<typeof rig>>) => r.clock.stop()],
+  ["clock.pause()", (r: Awaited<ReturnType<typeof rig>>) => r.clock.pause()],
+  ["clock.seek()", (r: Awaited<ReturnType<typeof rig>>) => r.clock.seek(2)],
+  ["detach", (r: Awaited<ReturnType<typeof rig> & { detach: () => void }>) => r.detach()],
+])("a start queued for a future `when` is cancelled by %s; sounding playback is not", async (_name, leave) => {
+  const r = await rig(120);
+  const detach = r.clock.attach(r.player);
+  r.clock.start();
+  const started = r.player.play({ when: r.context.currentTime + 30 });
+  await vi.waitFor(() => expect(r.player.cells.startsAt.value).not.toBeNull());
+  leave({ ...r, detach });
+  await started;
+  expect(r.player.cells.startsAt.value).toBeNull();
+  expect(r.player.cells.isPlaying.value).toBe(false);
+});
+
+test("playback already sounding continues when the clock stops", async () => {
+  const { clock, player } = await rig(120);
+  clock.attach(player);
+  clock.start();
+  await player.play();
+  clock.stop();
+  expect(player.cells.isPlaying.value).toBe(true);
+});

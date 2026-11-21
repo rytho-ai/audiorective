@@ -180,9 +180,9 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
 
   /** Clock scheduler contract: a recorder schedules nothing per window; `clock.attach(recorder)` only gives it the transport `record({ quantize })` reads. */
   schedule(): void {}
-  /** Clock scheduler contract: leaving the transport (stop, pause, seek, detach) before a quantized start arrives cancels that take; a take already recording continues. */
+  /** Clock scheduler contract: leaving the transport (stop, pause, seek, detach) cancels a take that is armed but has not started, quantized or `when`; a take already recording continues until `stop()` or its length. */
   reset(reason: RecorderResetReason): void {
-    if (reason !== "start" && this.active?.quantized && untracked(() => this.stateStore.value) === "armed") this.cancel();
+    if (reason !== "start" && this.active && untracked(() => this.stateStore.value) === "armed") this.cancel();
   }
   /** Clock scheduler contract: called by `clock.attach`. */
   attached(handle: RecorderTransport): () => void {
@@ -208,6 +208,7 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
   }
 
   /**
+   * While attached to a Clock, the clock stopping, pausing, seeking or detaching cancels a take that is armed but has not started (a `when` or `quantize` start still ahead), rejecting with `AbortError`; a take already recording continues until `stop()` or its `length`.
    * Records one take and resolves with it after it ends, at `length` or at `stop()`. A quantized start waits for the clock's next boundary, and the take
    * reports it as `startBeat`. With `quantize` (or a note-value `length`) it rejects with `InvalidStateError` when the recorder is not attached to a Clock or, for `quantize`, the clock is not playing. Late worklet registration starts at the first available frame. Call it from a gesture on a running context.
    */
