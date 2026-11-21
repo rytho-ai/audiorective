@@ -72,7 +72,7 @@ Capability packages and widgets cover specific workflows. When a request does no
 
 Full text of the table cells that the skill abbreviates:
 
-- **Editable sequenced hits with future choke groups:** `pads` `PadBank` + clock window `own(hit, when)`; `routePad(id, node)` gives a pad its own effect. Not an irreversible future `Voice.stop(when)`.
+- **Editable sequenced hits with future choke groups:** `pads` `PadBank` + clock window `own(hit, when)`; `routePad(id, node)` gives a pad its own effect. Not an irreversible future `voice.stop(when)` on a `Sampler` voice.
 - **Audition an audio clip or shared range already placed in a Project:** `workspace.auditionAudioClip(clipId)` or `workspace.auditionRange(range, { trackIds })`; see [DAW](./daw.md). Not seeking and starting the arrangement.
 - **Automate a non-looping waveform selection in source seconds:** `WavePlayer.attachSourceAutomation(binding)` with core automation. Not an app-owned play token and duplicated time mapping.
 - **Play, edit and save a DAWproject with WebCLAP devices:** `@audiorective/daw` + `@audiorective/host/webclap`; pass `workspace.player` to `mountPlayer`. Not separate project or player state.

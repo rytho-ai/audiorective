@@ -3,6 +3,7 @@
 // in place of decoded files, and the test's own assertions.
 import { afterEach, expect, test, vi } from "vitest";
 import { Clock } from "@audiorective/clock";
+import type { Voice } from "@audiorective/core";
 import { PadBank } from "@audiorective/pads";
 import { StepSequencer } from "../src/StepSequencer";
 
@@ -22,12 +23,12 @@ async function drumMachine() {
 
   // ---- begin: same code as docs/sequencer.md ----
   const bank = new PadBank(context, [
-    { id: "kick", buffer: kick },
-    { id: "snare", buffer: snare },
-    { id: "closed", buffer: closedHat, group: "hat" },
-    { id: "open", buffer: openHat, group: "hat" }, // a one-shot (no gate) is still choked by a later closed hit
+    { id: "kick", sound: kick },
+    { id: "snare", sound: snare },
+    { id: "closed", sound: closedHat, group: "hat" },
+    { id: "open", sound: openHat, group: "hat" }, // the open hat rings until a later closed hit chokes it
   ]);
-  bank.output.connect(context.destination);
+  bank.connect(context.destination);
 
   const sequencer = new StepSequencer(
     {
@@ -38,8 +39,8 @@ async function drumMachine() {
     },
     {
       onHit: (hit) => {
-        const pad = bank.trigger(hit.lane, hit.velocity, hit.when, { pitch: hit.pitch, duration: hit.duration });
-        return () => pad?.cancel(); // runs if the hit is retracted before it sounds
+        const voice = bank.trigger(hit.lane, { velocity: hit.velocity, when: hit.when, pitch: hit.pitch });
+        return () => voice?.stop(); // runs if the hit is retracted before it sounds
       },
     },
   );
@@ -60,7 +61,7 @@ test("hits fire at step times with pattern velocities", async () => {
   const spy = vi.spyOn(bank, "trigger");
   clock.start();
   await until(() => spy.mock.calls.length >= 12);
-  const calls = spy.mock.calls.map(([id, velocity, when]) => ({ id, velocity, when: when! }));
+  const calls = spy.mock.calls.map(([id, options]) => ({ id, velocity: options!.velocity, when: options!.when! }));
   // Step 0 may have started before the first window and plays "now", so anchor on the snare at step 4.
   const first = calls.find((c) => c.id === "snare")!.when - 4 * 0.125;
   const at = (id: string, step: number) => calls.find((c) => c.id === id && Math.abs(c.when - (first + step * 0.125)) < 1e-6);
@@ -87,10 +88,10 @@ async function openHatEndedAfterStep4(deleteClosed: boolean) {
   const call = (lane: string, nth: number) => spy.mock.calls.filter(([id]) => id === lane)[nth];
   // closed #0 is step 0, closed #1 is step 4; open #0 is step 2
   await until(() => call("closed", 1) !== undefined);
-  const when = call("closed", 1)![2]!;
-  const open = spy.mock.results[spy.mock.calls.findIndex(([id]) => id === "open")].value as { onEnded(l: () => void): void };
+  const when = call("closed", 1)![1]!.when!;
+  const open = spy.mock.results[spy.mock.calls.findIndex(([id]) => id === "open")].value as Voice;
   let ended = false;
-  open.onEnded(() => (ended = true));
+  open.playing.subscribe((playing) => playing || (ended = true));
 
   if (deleteClosed) {
     // The edit is synchronous, so checking the audio clock right before it is race-free.
@@ -104,7 +105,7 @@ async function openHatEndedAfterStep4(deleteClosed: boolean) {
 
   await until(() => context.currentTime > when + 0.5);
   if (!deleteClosed) await until(() => ended);
-  return { ended, closedAfter: spy.mock.calls.filter(([id, , w]) => id === "closed" && Math.abs(w! - when) < 1e-6).length };
+  return { ended, closedAfter: spy.mock.calls.filter(([id, options]) => id === "closed" && Math.abs(options!.when! - when) < 1e-6).length };
 }
 
 /** Margin (s) the audio clock must leave before the step so the edit cannot lose the race. */

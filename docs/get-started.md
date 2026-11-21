@@ -27,7 +27,7 @@ const engine = createEngine((context) => {
   for (let i = 0; i < samples.length; i++) {
     samples[i] = Math.sin((2 * Math.PI * 440 * i) / context.sampleRate);
   }
-  return { tone: new Sampler(context, { buffer, volume: 0.15, fadeIn: 0.01, fadeOut: 0.05 }) };
+  return { tone: new Sampler(context, { sound: buffer, volume: 0.15, release: 0.05 }) };
 });
 
 engine.core.defineGraph(() => [[engine.tone, engine.core.context.destination]]);
@@ -38,7 +38,7 @@ document.querySelector<HTMLButtonElement>("#play")!.onclick = async () => {
 };
 ```
 
-The click starts the audio context. `Sampler` plays the buffer and applies short fades at its edges. Change `engine.tone.params.volume.value` to adjust its level. When your application unmounts, call `engine.core.dispose()` to release the engine and its processors.
+The click starts the audio context. `Sampler` plays the buffer as a voice and fades it out over `release` when it is stopped. Change `engine.tone.params.volume.value` to adjust its level. When your application unmounts, call `engine.core.dispose()` to release the engine and its processors.
 
 For Astro, Next.js, or another server-rendered framework, use a [client-only boundary](/docs/client-boundary).
 

@@ -1,0 +1,99 @@
+{
+  "area": "midi",
+  "description": "API-shape experiment for MIDI in a browser audio app: playing MIDI data in time with a transport, launching MIDI clips, recording a take, editing notes, driving a WebCLAP instrument and live input. The same six tasks are given with no API (desire mode) or with one variant's type declarations only (guess mode). Expectations are variant-agnostic: they describe behaviour, not names. Where a prompt mentions a synth it is an app-owned object, described in the prompt; the WebCLAP task cannot run a real plug-in bundle in a guess run, so its grading is type- and shape-level.",
+  "tasks": [
+    {
+      "id": "M1-play-file-with-clock",
+      "prompt": "A browser app already has an AudioContext, a song transport at 100 BPM in 4/4 that starts and stops from a Play/Stop button (resume the audio context in the click handler), and an app-owned `synth` object with `noteOn(pitch: number, velocity: number, when: number)` (MIDI pitch 0-127, velocity 0-1, `when` in AudioContext seconds) and `noteOff(pitch: number, when: number)`. The user picks a .mid file in an <input type=file>. Load it and play it through the synth in time with the transport: Play starts it from the first bar, Stop silences it immediately (no hanging notes), and playing again restarts from the beginning. The file was authored at 120 BPM but must follow the song's 100 BPM, and the transport tempo may be changed while it plays.",
+      "expectations": [
+        "Reads the chosen file's bytes and parses them as a standard MIDI file with the toolkit (no hand-written MIDI file parser).",
+        "Notes are scheduled against the transport/clock's timeline (look-ahead against the audio clock), not with setTimeout/setInterval per note and not by playing everything at once.",
+        "Note times follow the song tempo (100 BPM) rather than the file's 120 BPM, for example by working in beats; a tempo change while playing keeps later notes locked to the transport.",
+        "Converts velocity from MIDI 0-127 to the synth's 0-1 range and passes MIDI pitch 0-127 unchanged.",
+        "Pressing Stop sends note-offs (or otherwise silences) for notes still sounding, and pressing Play again plays from the first bar with no leftover scheduled notes from the previous run.",
+        "The resume of the audio context happens inside the click handler (or through an API documented as doing so)."
+      ]
+    },
+    {
+      "id": "M2-loop-midi-clip",
+      "prompt": "A browser session view at 120 BPM in 4/4 already launches looping audio clips on bar boundaries with a button per clip. Add a MIDI clip to the same session: a 2-bar pattern (a list of notes with pitch 0-127, velocity 0-1, start and length in beats from the clip start) that plays through an app-owned `synth` (`noteOn(pitch, velocity, when)`, `noteOff(pitch, when)`, `when` in AudioContext seconds). It must be launched from a button and stop the same way the audio clips do: both start and stop take effect on the next bar line, and while it plays it loops every 2 bars without gaps, stuck notes or doubled notes at the seam. Launching it a second time while it is playing or queued must not start a second copy.",
+      "expectations": [
+        "The MIDI clip is launched and stopped through the same launching mechanism and quantisation as the audio clips (on the next bar line from the transport), not through its own setTimeout/setInterval loop.",
+        "Notes are scheduled at audio-clock times derived from the transport tempo and the clip's start beat (a 2-bar loop is 8 beats), looping seamlessly every 8 beats.",
+        "A note that straddles the loop boundary or a stop is released (noteOff) at the right time; stopping leaves no hanging notes.",
+        "Launching an already playing or queued clip again does not create a second concurrent loop.",
+        "Does not hand-write a separate transport; it uses the app's existing transport/clock rather than creating a second clock."
+      ]
+    },
+    {
+      "id": "M3-record-take",
+      "prompt": "The user has granted Web MIDI access and chosen a MIDIInput (a keyboard). The song runs at 120 BPM in 4/4 on a transport that is already playing. Add a Record button: pressing it arms recording, recording must start exactly at the start of bar 5 and stop at the end of bar 8 (counting bars from 1), then the notes the user played become a take. Express the take's notes in beats relative to the start of bar 5 (a note played on the second beat of bar 5 starts at beat 1), with pitch 0-127 and velocity 0-1, held as note data the app can show and edit later. Notes still held when recording ends must be closed at the take end. Playing outside bars 5-8 must be ignored.",
+      "expectations": [
+        "Uses the actual MIDIInput's messages (midimessage) via the toolkit's recorder or an equivalent listener, with note-on/note-off pairing (note-on with velocity 0 counts as note-off).",
+        "Recording is aligned to the transport's timeline: it starts at the start of bar 5 and ends at the end of bar 8 (beats 16 and 32 from a transport started at beat 0), not 'whenever the button was pressed'.",
+        "Notes are expressed in beats relative to the take start, not absolute seconds, with velocity normalised to 0-1.",
+        "Notes still held at the end are closed at the take end; messages outside the window are ignored.",
+        "The MIDI event timestamps are related to the audio clock (the Web MIDI event timestamp is a performance.now()-based clock, not AudioContext time); it does not simply use Date.now() or the button-click time."
+      ],
+      "checks": [
+        {
+          "expectation": 2,
+          "label": "mentions the take being relative / beats conversion",
+          "any": ["beat", "Beat"]
+        }
+      ]
+    },
+    {
+      "id": "M4-edit-notes",
+      "prompt": "A 4-bar MIDI clip (120 BPM, 4/4) is looping through an app-owned `synth` (`noteOn(pitch, velocity, when)`, `noteOff(pitch, when)`) on a transport. Add two buttons: 'Quantize' snaps every note's start to the nearest 16th note while keeping each note's length, and 'Up an octave' transposes every note by +12 semitones (clamped to 0-127). The edit must be heard on the next pass of the loop without stopping the transport: the pass that is already scheduled must not play a mix of old and new notes, and no old-pitch note may be left hanging. Each button press is one undoable edit as far as observers are concerned (a piano-roll view re-renders once).",
+      "expectations": [
+        "Quantize rounds each note start to a multiple of a 16th note (0.25 beat), preserving each note's duration; does not round the end instead.",
+        "Transpose adds exactly 12 to every pitch and clamps to the valid MIDI range 0-127.",
+        "Edits go through the toolkit's note model (not a separate hand-kept copy of the notes), and the playback schedule is rebuilt or re-read from it after an edit so the next pass uses the new notes.",
+        "Notes already sounding with the old pitch are released correctly; no note is played at both old and new pitch in the same pass.",
+        "All notes are changed in one observable commit (a single batch / single update) rather than one render per note, if the toolkit offers it."
+      ],
+      "checks": [
+        {
+          "expectation": 1,
+          "label": "transpose by 12 and clamp to 127",
+          "all": ["\\b12\\b", "\\b127\\b"]
+        },
+        {
+          "expectation": 0,
+          "label": "snaps to a 16th (0.25 beat or a 4/16 divisor)",
+          "any": ["0\\.25\\b", "\\b16\\b", "\\b4\\b"]
+        }
+      ]
+    },
+    {
+      "id": "M5-clap-instrument",
+      "prompt": "A WebCLAP synth plug-in is available as a bundle at `https://example.com/plugins/pad-synth.wclap` (it is not a real file here; write the code you would ship). In a browser app with an AudioContext and a song transport at 90 BPM in 4/4, load the plug-in, connect its audio to the speakers, and play a 4-bar MIDI clip (notes with pitch 0-127, velocity 0-1, start and length in beats) through it in time with the transport. Stop must silence any hanging notes. Add a Save button that stores the plug-in's current state (its own preset/state blob, not the notes) in IndexedDB or localStorage and a Restore button that loads it back into the running plug-in before the next play. Also show the plug-in's first three parameters as sliders that update the plug-in and follow changes the plug-in makes itself.",
+      "expectations": [
+        "Loads the plug-in from the bundle URL with the toolkit's WebCLAP host (no hand-written worklet/WASM loader) and connects its output node to the audio destination.",
+        "Notes are sent to the plug-in as MIDI messages (note-on 0x90 / note-off 0x80 bytes, velocity converted from 0-1 to 1-127) scheduled at audio-clock times derived from the transport, not with setTimeout per note.",
+        "Stop silences hanging notes (note-offs or the host's panic/all-notes-off) and cancels already scheduled but unplayed messages.",
+        "Saves and restores the plug-in state as an opaque byte blob through the host's save/load state, awaiting the promises, and stores it with the browser storage API (e.g. IndexedDB or base64 in localStorage).",
+        "Parameters are bound reactively in both directions (slider writes update the plug-in; plug-in-originated changes update the sliders) using the host's parameter objects, without polling."
+      ]
+    },
+    {
+      "id": "M6-live-keyboard",
+      "prompt": "Route a connected MIDI keyboard to an app-owned `synth` (`noteOn(pitch, velocity, when)`, `noteOff(pitch, when)`, `when` in AudioContext seconds; velocity 0-1) so the user can play it live with the lowest practical latency. Request MIDI access from a 'Connect keyboard' click, listen to every available input (including ones plugged in later), handle note-on, note-off, and note-on with velocity 0, and ignore other message types. If the keyboard is unplugged while keys are held, the held notes must be released. Also support a sustain pedal (controller 64): while it is down, released keys keep sounding until the pedal is lifted.",
+      "expectations": [
+        "Requests MIDI access in response to the click (navigator.requestMIDIAccess) and attaches a message listener to every input, including inputs that connect later (statechange).",
+        "Notes are triggered immediately from the message handler (play now / current audio time), not routed through a transport look-ahead or setTimeout delay.",
+        "Decodes status bytes correctly: note-on 0x90 with velocity > 0, note-off 0x80, note-on with velocity 0 as note-off, ignoring the channel nibble; velocity is divided by 127.",
+        "Held notes are released when the input disconnects.",
+        "Sustain pedal (CC 64, value >= 64 is down) defers note-offs until the pedal is released."
+      ],
+      "checks": [
+        {
+          "expectation": 2,
+          "label": "divides velocity by 127",
+          "any": ["/\\s*127", "\\*\\s*\\(?\\s*1\\s*/\\s*127", "127\\b"]
+        }
+      ]
+    }
+  ]
+}

@@ -26,7 +26,7 @@ Turn the feature list into a feature→primitive table before coding — gaps an
 
 - `FilePlayer` — long-form / streamed parts (music, backing tracks, podcasts).
 - `BufferPlayer` — beat-locked loops & stems that need sample-accurate `start()` and a schedulable rate (in-memory deck).
-- `Sampler` / `Voice` — one-shots and short loops (SFX, hits, pads).
+- `Sampler` — one-shots and keyboards of one sound, a buffer or a synth factory (SFX, hits, pads).
 - An `AudioProcessor` synth — generated parts.
 
 Unify them behind a **source-agnostic channel strip** — a `Channel` that accepts anything exposing `{ output }` — so EQ / fader / meter / spatial / routing are identical regardless of source. `Channel` is not a core primitive; it's a small `AudioProcessor` you write on top of `defineGraph`:

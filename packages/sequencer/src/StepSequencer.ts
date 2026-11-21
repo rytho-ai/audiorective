@@ -1,5 +1,7 @@
 import {
   applyEventTransforms,
+  assertSound,
+  playSound,
   batch,
   cell,
   effect,
@@ -11,12 +13,13 @@ import {
   type ParamSpec,
   type SecondsOf,
   type TimedBeatEvent,
+  type Voice,
 } from "@audiorective/core";
 import { describePattern, parsePattern, parseSwing, parseTime, type Pattern, type Time } from "./notation";
-import { assertSound, playSound, type Sound } from "./sounds";
+import type { Sound } from "@audiorective/core";
 
-export type { NoteName, Pattern, Time } from "./notation";
-export type { Sound, SoundFactory, SoundHit } from "./sounds";
+export type { Pattern, Time } from "./notation";
+export type { NoteName, Sound, SoundFactory, SoundHit } from "@audiorective/core";
 
 export type StepRate = "1/2" | "1/4" | "1/8" | "1/16" | "1/32" | "1/64" | "1/2T" | "1/4T" | "1/8T" | "1/16T" | "1/32T" | "1/64T";
 export type StepDirection = "forward" | "backward" | "bounce";
@@ -68,7 +71,7 @@ export type LaneOptions = Readonly<{
   swing?: number | `${number}%`;
   /** Order the lane walks its steps in. Default "forward". */
   direction?: StepDirection;
-  /** Plays a voice per hit into `lane.output`; needs `options.context`. Without it the lane only reports hits. */
+  /** Plays one voice per hit into `lane.output` with the hit's `velocity`, `when` and `pitch`, held for the step's length, like `Sampler.trigger`; a retracted hit's voice is dropped. Needs `options.context`. Without it the lane only reports hits. */
   sound?: Sound;
   /** Per-step numbers by name; each step holds one, and `hit.values` carries them. */
   params?: Readonly<Record<string, ParamRange>>;
@@ -634,10 +637,15 @@ export class StepSequencer extends EventTarget {
   private fire(hit: StepHit): CancellableEvent | null {
     const pub = this.publicHit(hit);
     const sound = this.data.value[hit.laneId]!.sound;
-    let voice: CancellableEvent | null = null;
+    let voice: Voice | null = null;
     if (sound !== undefined && this.context) {
       try {
-        voice = playSound(this.context, sound, this.outputFor(hit.laneId), pub);
+        voice = playSound(this.context, sound, this.outputFor(hit.laneId), {
+          when: pub.when,
+          velocity: pub.velocity,
+          pitch: pub.pitch,
+          duration: pub.duration,
+        });
       } catch (error) {
         console.error("Step Sequencer sound failed:", error);
       }
@@ -663,7 +671,7 @@ export class StepSequencer extends EventTarget {
       done = true;
       this.pending.delete(record);
       if (retract) {
-        voice?.cancel();
+        voice?.stop();
         for (const cleanup of cleanups.reverse()) {
           try {
             cleanup();

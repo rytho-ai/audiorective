@@ -47,14 +47,14 @@
     },
     {
       "id": 4,
-      "prompt": "In our audiorective project, calling `sampler.params.mute.value = true` throws 'Cannot read properties of undefined (reading value)'. The docs you have say Sampler has a mute param. What's going on and what should I do?",
+      "prompt": "In our audiorective project, calling `sampler.noteOn('C4')` throws 'sampler.noteOn is not a function'. The docs you have say Sampler has noteOn and noteOff. What's going on and what should I do?",
       "expected_output": "Diagnoses a version mismatch between the installed @audiorective/core and the documented API, checks the changelog and the installed version, and recommends upgrading",
       "files": [],
       "expectations": [
         "Suspects the installed package predates the documented API rather than assuming the docs are wrong",
-        "Consults the changelog reference to find which version added Sampler.params.mute",
+        "Consults the changelog reference to find which version added Sampler.noteOn",
         "Checks the installed version via node_modules/@audiorective/core/package.json or an equivalent command",
-        "Recommends upgrading the @audiorective/* packages together instead of hand-rolling a mute gain node"
+        "Recommends upgrading the @audiorective/* packages together instead of hand-rolling a per-key voice map"
       ]
     },
     {
@@ -244,7 +244,7 @@
       "files": [],
       "expectations": [
         "Chooses the timing primitive from @audiorective/clock (Clock/Timeline tick windows or rulers) for transport, tempo and swing, rather than setInterval, setTimeout or requestAnimationFrame scheduling",
-        "Chooses a one-shot playback primitive from @audiorective/core (Sampler/Voice, or an equivalent buffer source scheduled with audio-clock times), PadBank, or a StepSequencer lane `sound`, for the hits, with per-step velocity applied as gain at trigger time (a lane `sound` scales gain by velocity itself)",
+        "Chooses a one-shot playback primitive from @audiorective/core (Sampler, or an equivalent buffer source scheduled with audio-clock times), PadBank, or a StepSequencer lane `sound`, for the hits, with per-step velocity applied as gain at trigger time (a lane `sound` scales gain by velocity itself)",
         "Does not import a daw package; either builds on the @audiorective/sequencer StepSequencer lane-record form, optionally with @audiorective/pads, or writes its own scheduling in the app's audio layer from clock windows",
         "Keeps pattern and velocity in reactive state owned by the audio layer (a Cell, a plain class holding Cells, or a StepSequencer's lane steps) and reads it in React with useValue (or an equivalent tracked read of that same state); no second copy of the pattern in useState, a context or an external store",
         "Scheduling lives in an audio-layer class or method; React handlers only write params/cells or call methods",
@@ -257,10 +257,10 @@
       "expected_output": "Pads trigger polyphonic voices from core's Sampler (or an equivalent per-pad voice primitive); releasing a pad fades that pad's own voice. Equivalent wiring is acceptable.",
       "files": [],
       "expectations": [
-        "Chooses core's Sampler/Voice (or an equivalent polyphonic one-shot primitive from @audiorective/core) for playback, one voice per press",
+        "Chooses core's Sampler (or an equivalent polyphonic one-shot primitive from @audiorective/core) for playback, one voice per press",
         "Does not use WavePlayer, mountWaveformSelector or BufferPlayer as the pad voice: they are single-playhead players and cannot overlap hits of the same pad",
         "Release fades the voice that this press started, using the voice's own fade/stop with a release time (or an equivalent scheduled gain ramp), so overlapping presses release independently",
-        "Keeps independent one-shot pads on core Sampler/Voice; PadBank is for cancellable grouped choke, which this request does not need",
+        "Keeps independent one-shot pads on core Sampler; PadBank is for cancellable grouped choke, which this request does not need",
         "Triggering goes through a method on the audio-layer object; pointer and keyboard handlers do not create audio nodes themselves",
         "Starts or resumes the AudioContext from a user gesture"
       ]
@@ -301,7 +301,7 @@
       "expectations": [
         "Does not use WavePlayer (or mountWaveformSelector) to play grains: it has one playhead and one selection, so it cannot overlap dozens of grains",
         "Builds the grain engine as an AudioProcessor subclass (or an equivalent audio-layer class) that owns its nodes and exposes an output",
-        "Each grain is its own short-lived source (Sampler/Voice triggers with offset, rate and duration, or raw AudioBufferSourceNode + gain envelope + panner) started with audio-clock times, so grains overlap",
+        "Each grain is its own short-lived source (Sampler triggers with offset, pitch and duration, or raw AudioBufferSourceNode + gain envelope + panner) started with audio-clock times, so grains overlap",
         "Grain start times are scheduled ahead on the audio clock (a clock tick window or an equivalent look-ahead loop), not fired from the main thread at playback time",
         "Density and spread are reactive params/cells on the processor that the UI writes directly",
         "May use loadAudioBuffer, Param/Cell and effects from the library; reaching below the blocks to core is the expected choice here and is not treated as a failure to use the library"
@@ -341,7 +341,7 @@
       "expected_output": "PadBank owns reversible grouped choke; Clock owns only sequenced event handles registered with window.own(hit, when), and refreshes owned hits at or after the captured audio time while manual hits stay unregistered.",
       "files": [],
       "expectations": [
-        "Chooses PadBank from @audiorective/pads for grouped sample hits instead of scheduling an irreversible Voice.stop(when) on the open hat",
+        "Chooses PadBank from @audiorective/pads for grouped sample hits instead of scheduling an irreversible voice.stop(when) on the open hat",
         "Creates open and closed pads with different IDs in one group; routes the block output once and keeps context ownership with the caller",
         "Schedules a hit in a Clock tick window using absolute point.time and registers its returned handle with window.own(hit, point.time)",
         "Leaves a manually triggered pad event unregistered with Clock so sequencer transport changes do not cancel it",
@@ -353,10 +353,10 @@
     {
       "id": 24,
       "prompt": "Make a vanilla TypeScript game soundboard: each button plays a short independent one-shot sound, and rapid clicks may overlap. There are no choke groups, step edits or transport. Use our audiorective packages; don't run anything.",
-      "expected_output": "Core Sampler/Voice handles independent overlapping one-shots; no Clock or PadBank block is needed.",
+      "expected_output": "Core Sampler handles independent overlapping one-shots; no Clock or PadBank block is needed.",
       "files": [],
       "expectations": [
-        "Chooses core Sampler or Voice for overlapping one-shot playback",
+        "Chooses core Sampler for overlapping one-shot playback",
         "Does not add Clock, an event-ownership registry or PadBank because there is no future choke or editable sequencer",
         "Routes the sampler output once and starts the AudioContext from a user gesture",
         "Keeps soundboard button callbacks thin; audio scheduling and voice lifetime stay with the audio owner"
@@ -646,7 +646,7 @@
       "expected_output": "Uses StepSequencer and PadBank under the Workspace Clock, with separate manual pad triggers and borrowed widgets.",
       "files": [],
       "expectations": [
-        "Constructs the lanes as patterns and triggers a PadBank hit from each StepSequencer `onHit`, returning a cleanup that cancels that pad hit so a retracted hit is retracted together with its choke",
+        "Constructs the lanes as patterns and triggers a PadBank hit from each StepSequencer `onHit`, returning a cleanup that stops that pad voice (`voice?.stop()`) so a retracted hit is retracted together with its choke",
         "Attaches the sequencer with workspace.transport.attach(seq) and keeps manual hits outside the scheduled ownership",
         "Assigns both hats the same choke group and calls mountStepGrid and mountPadGrid over the borrowed model/actions",
         "Explains that pending hits and their chokes are revoked together and live patterns are session state"

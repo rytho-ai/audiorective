@@ -86,12 +86,12 @@ The names differ across the package boundary, and that is the single easiest thi
 
 ```typescript
 for (const { time } of window.rulers.bar.grid(16)) {
-  sampler.trigger({ when: time }); // Sampler / Voice
+  sampler.trigger({ when: time }); // Sampler
   bufferPlayer.start(time); // BufferPlayer takes it positionally
 }
 ```
 
-Writing `trigger({ time })` is the natural first draft and it does not compile — TypeScript rejects it (`'time' does not exist in type 'VoiceOptions'`). That error is the fix instruction: rename the key, don't reshape the call.
+Writing `trigger({ time })` is the natural first draft and it does not compile — TypeScript rejects it (`'time' does not exist in type 'PlayOptions'`). That error is the fix instruction: rename the key, don't reshape the call.
 
 ### Typing the window
 
@@ -262,7 +262,7 @@ clock.start({ atBeat: -0.5 }); // beat 0, the first launch boundary, is half a b
 
 ### Own cancellable events when transport edits must cut queued sound
 
-The default remains unchanged: `Clock` does not cancel sound scheduled by `onTick`, so an unowned event may keep playing for up to the look-ahead interval after `pause()`. For a hard stop or an editable pattern, register a returned event handle with `window.own(event, when)`. `when` is its finite, nonnegative absolute `AudioContext` start time. The handle is a core `CancellableEvent` (`cancel()` and `onEnded(listener)`, re-exported by this package); Clock drops naturally ended events from its registry. `PadBank.trigger()` in [Pads](./pads.md#pad-bank) returns a compatible handle. `Timeline` satisfies core's `BeatTiming`, so it can be passed to `StepSequencer.schedule(window, timing)` without any other package in between.
+The default remains unchanged: `Clock` does not cancel sound scheduled by `onTick`, so an unowned event may keep playing for up to the look-ahead interval after `pause()`. For a hard stop or an editable pattern, register a returned event handle with `window.own(event, when)`. `when` is its finite, nonnegative absolute `AudioContext` start time. The handle is a core `CancellableEvent` (`cancel()` and `onEnded(listener)`, re-exported by this package); Clock drops naturally ended events from its registry. A core `Voice` (from `PadBank.trigger()` in [Pads](./pads.md#pad-bank) or `Sampler.trigger()`) is wrapped as one: `{ cancel: () => voice.stop(), onEnded: (done) => void voice.playing.subscribe((playing) => playing || done()) }`. `Timeline` satisfies core's `BeatTiming`, so it can be passed to `StepSequencer.schedule(window, timing)` without any other package in between.
 
 ```typescript
 const clock = new Clock({
@@ -270,8 +270,11 @@ const clock = new Clock({
   onTick(window) {
     for (const { time, step } of window.rulers.pattern.grid(16)) {
       if (!pattern.value[step]) continue;
-      const hit = instruments.trigger("closed-hat", 1, time);
-      if (hit) window.own(hit, time); // this sequencer owns this hit and its choke
+      const voice = instruments.trigger("closed-hat", { when: time });
+      if (voice) {
+        // this sequencer owns this hit and its choke
+        window.own({ cancel: () => voice.stop(), onEnded: (done) => void voice.playing.subscribe((playing) => playing || done()) }, time);
+      }
     }
   },
 });
@@ -391,8 +394,8 @@ import { Sampler, loadAudioBuffer } from "@audiorective/core";
 import { Clock, Timeline, CycleBarRuler, renderTimeline } from "@audiorective/clock";
 
 const wav = await renderTimeline({ seconds: 8, channels: 2, sampleRate: 44100 }, async (ctx, tickSource) => {
-  const kick = new Sampler(ctx, { buffer: await loadAudioBuffer(ctx, "/kick.wav") });
-  kick.output.connect(ctx.destination);
+  const kick = new Sampler(ctx, { sound: await loadAudioBuffer(ctx, "/kick.wav") });
+  kick.connect(ctx.destination);
 
   const timeline = new Timeline({ audioContext: ctx, bpm: 120 }).addRuler("pattern", new CycleBarRuler({ numerator: 4, denominator: 4, bars: 1 }));
   const clock = new Clock({

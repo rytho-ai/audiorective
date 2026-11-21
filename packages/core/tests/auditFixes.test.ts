@@ -223,7 +223,7 @@ describe("BufferPlayer", () => {
 
 describe("Sampler", () => {
   test("activeVoices is read-only", () => {
-    const s = new Sampler(ctx, { buffer: makeBuffer(ctx, 1) });
+    const s = new Sampler(ctx, { sound: makeBuffer(ctx, 1) });
     expect(() => {
       (s.cells.activeVoices as unknown as { value: number }).value = 3;
     }).toThrow();
@@ -232,21 +232,13 @@ describe("Sampler", () => {
     s.dispose();
   });
 
-  test("buffer and reverse are observable params", () => {
+  test("sound is an observable reader", () => {
     const s = new Sampler(ctx);
-    const seen: Array<AudioBuffer | null> = [];
-    const stop = effect(() => void seen.push(s.params.buffer.value));
+    const seen: Array<unknown> = [];
+    const stop = effect(() => void seen.push(s.sound));
     const b = makeBuffer(ctx);
-    s.buffer = b;
-    expect(s.params.buffer.value).toBe(b);
+    s.sound = b;
     expect(seen).toEqual([null, b]);
-    s.reverse = true;
-    expect(s.params.reverse.value).toBe(true);
-    // The reversed copy follows a swapped buffer.
-    s.trigger();
-    const b2 = makeBuffer(ctx);
-    s.buffer = b2;
-    expect(s.trigger()).not.toBeNull();
     stop();
     s.dispose();
   });

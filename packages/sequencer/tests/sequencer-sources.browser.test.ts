@@ -36,22 +36,36 @@ const sortHits = (hits: Played[]) => [...hits].sort((a, b) => a.when - b.when ||
 function instrumentSource(context: AudioContext) {
   const buffer = context.createBuffer(1, context.sampleRate, context.sampleRate);
   const bank = new PadBank(context, [
-    { id: "kick", buffer },
-    { id: "snare", buffer },
+    { id: "kick", sound: buffer },
+    { id: "snare", sound: buffer },
   ]);
   disposers.push(() => bank.dispose());
   const played: Played[] = [];
+  let pending = 0;
   const spy = vi.spyOn(bank, "trigger");
   return {
     played: () => {
       played.length = 0;
-      for (const [lane, velocity, when] of spy.mock.calls) played.push({ lane, velocity: velocity!, when: when! });
+      for (const [lane, options] of spy.mock.calls) played.push({ lane, velocity: options!.velocity!, when: options!.when! });
       return played;
     },
-    live: () => bank.cells.activeEvents.value,
+    // `activeVoices` counts only started voices, and every hit here is scheduled ahead, so the bank reports 0 sounding.
+    // `live` counts hits still pending (scheduled and not cancelled) and requires the cancel to reach the voice.
+    live: () => {
+      expect(bank.cells.activeVoices.value).toBe(0);
+      return pending;
+    },
     onHit: (hit: Hit) => {
-      const played = bank.trigger(hit.lane, hit.velocity, hit.when);
-      return () => played?.cancel();
+      const played = bank.trigger(hit.lane, { velocity: hit.velocity, when: hit.when });
+      pending++;
+      let cancelled = false;
+      return () => {
+        if (cancelled) return;
+        cancelled = true;
+        pending--;
+        played?.stop();
+        expect(played?.playing.value).toBe(false);
+      };
     },
   };
 }

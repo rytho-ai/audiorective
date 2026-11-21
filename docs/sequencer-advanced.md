@@ -33,9 +33,9 @@ const seq = new StepSequencer(lanes, {
 Units and ranges are in the `Step` JSDoc. Semantics the types do not say:
 
 - **`offset`** shifts the hit by a fraction of the lane's step in beats, before swing is added, so it follows tempo. For a fixed per-step push prefer `offset` (or lane `swing`) over a `transform`. A hit moved before the current time plays at once.
-- **`length`** is the hit's duration in lane steps, divided among the repeats of that step. It matters for sustained sounds and gated pads; a one-shot buffer plays to its end.
+- **`length`** is the hit's duration in lane steps, divided among the repeats of that step. It is the `hit.duration` a lane's factory voice is held for before it fades out; a one-shot buffer plays to its end.
 - **`repeat`** `r` plays `r` hits evenly spaced inside the step; each lasts `length / r` steps. All repeats of one step share one `chance` draw: all play or none.
-- **`pitch`** is semitones, carried as `hit.pitch`. A note-name or `AudioBuffer` `sound` transposes itself (frequency, playback rate); a source factory `(context, hit)` or a `PadBank.trigger(..., { pitch })` call applies it.
+- **`pitch`** is semitones, carried as `hit.pitch`. A note name or `AudioBuffer` `sound` transposes itself (frequency, playback rate); a sound factory `(context, hit)` or a `PadBank.trigger(id, { pitch })` call receives it and applies it.
 - **`chance`** is the probability a step plays. The draw is a pure function of `seed`, lane, loop and the step's position in the loop, so the same step gives the same answer in every window, after any edit, re-queue or seek, and at any tick size. Pass a different `seed` per instance or run for a different pattern.
 - **`random` option vs `seed`.** `random: () => number` replaces the `chance` draw with a sequential source: each call advances it, so a re-queue draws fresh numbers and pending chance steps can flip. Use it to script exact draws in tests. `transform`'s `random(key?)` always uses the stable draw from `seed`.
 - **Direction.** `"forward"`, `"backward"`, and `"bounce"` (`0 1 2 1 0 1 ...` for 3 steps, ends not repeated; a 1-step lane stays on step 0). `hit.index` is the step played; `hit.loop` counts every `length` counter steps from beat 0 whatever the direction.

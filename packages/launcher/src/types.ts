@@ -1,4 +1,4 @@
-import type { BeatTiming, CancellableEvent } from "@audiorective/core";
+import type { BeatTiming, CancellableEvent, Sound } from "@audiorective/core";
 
 /** What a transport hands a scheduler when it attaches (the part of a clock's `SchedulerHandle` a clip's own scheduler may use). */
 export type TransportHandle = Readonly<{ refresh(): void; detach(): void }>;
@@ -52,19 +52,6 @@ export type Quantize = "none" | `${number}m` | `${number}n`;
 export type ClipLength = number | Exclude<Quantize, "none">;
 
 /**
- * What a factory returns: a source that is not connected anywhere (`new OscillatorNode(context)`), or, when a voice needs a small subgraph, `{ source, output }`
- * with `source` the node that starts and stops and `output` the last node of the subgraph (connect `source` through your own nodes to `output`, nothing beyond it).
- */
-export type ClipVoice = AudioScheduledSourceNode | { source: AudioScheduledSourceNode; output: AudioNode };
-
-/**
- * Makes one voice per start. Return the voice unconnected: the launcher starts and stops its source (`start(when)`, `stop(when)`) and connects it (or its `output`) to the
- * track's output, so the track's gain, mute and `connect` routing apply. The factory never calls `connect` towards `context.destination` or the track.
- * A looping clip's node loops itself; `pitch` is semitones, which the factory applies itself (read once, at the start).
- */
-export type ClipFactory = (context: BaseAudioContext, clip: { loop: boolean; pitch: number }) => ClipVoice;
-
-/**
  * A scheduler a clip can play. The launcher routes its sound into the track's output: for a `StepSequencer` it connects every lane's output to the clip's gain on the track
  * (the caller does not call `lanes.x.connect`); for another scheduler that has `connect(node)` it calls `connect` once. A scheduler with neither makes no sound of its own (it drives something else).
  * It sees windows whose beat 0 is the clip's start; the clip's `pitch` is not applied to it.
@@ -77,8 +64,8 @@ export type ClipScheduler = {
   readonly lanes?: Readonly<Record<string, { connect(node: AudioNode): AudioNode }>>;
 };
 
-/** A clip: an AudioBuffer, a source factory, or any of these as options. A buffer or factory alone plays once. */
-export type ClipSpec = AudioBuffer | ClipFactory | ClipOptions;
+/** A clip: an AudioBuffer, or options with one of `buffer`, `sound` or `scheduler`. A buffer alone plays once. */
+export type ClipSpec = AudioBuffer | ClipOptions;
 
 /**
  * How a clip reacts: "trigger" starts it; "gate" plays while held (`release()` ends it); "toggle" stops it when launched while playing or waiting;
@@ -130,7 +117,8 @@ export type ClipSettings = Readonly<{
 export type ClipPatch = { -readonly [K in keyof ClipSettings]?: ClipSettings[K] };
 
 /**
- * One clip, from exactly one of `buffer`, `sound` or `scheduler`. Material is measured in beats from its first beat (a buffer's seconds x `bpm` / 60; a factory or scheduler
+ * One clip, from exactly one of `buffer`, `sound` or `scheduler`. `sound` takes a `Sound`: a buffer plays like `buffer`; a factory is one hit held for the clip's `length` (endless without one, or while it loops),
+ * built with `hit.pitch` = the clip's `pitch` at its start and released over the shared 5 ms fade when the clip ends. Material is measured in beats from its first beat (a buffer's seconds x `bpm` / 60; a factory or scheduler
  * clip's beats are transport beats), and one rule relates the options: the material is [0, `length`) (a buffer's own length when `length` is not given, endless for a factory or
  * scheduler); `loop` picks the part that repeats (`true`: all of it, a region: that region of a buffer; a factory or scheduler clip loops its whole `length`); `offsetBeats` only
  * says where the first pass begins inside the material; `bpm` only converts a buffer's seconds into material beats.
@@ -168,7 +156,7 @@ export type ClipOptions = {
   bpm?: number;
   /** Buffer clips: how the clip follows tempo changes and ramps of the transport, scene tempo included. Default "repitch": it plays at clock tempo / `bpm` times its natural speed, so every buffer clip follows the song tempo; `false` plays at its own speed. Real-time time stretching is not offered. */
   warp?: ClipWarp;
-} & ({ buffer: AudioBuffer } | { sound: ClipFactory } | { scheduler: ClipScheduler });
+} & ({ buffer: AudioBuffer } | { sound: Sound } | { scheduler: ClipScheduler });
 
 /** One scene: the clips at one slot across all tracks. */
 export interface SceneSpec {
