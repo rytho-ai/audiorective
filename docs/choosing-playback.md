@@ -77,6 +77,8 @@ For several pads that cut each other off (closed hat chokes open hat) and hits t
 
 **Avoid when** the source is long enough that decoding it all into an `AudioBuffer` is wasteful (→ `FilePlayer`), or when you want overlapping retriggers (→ `Sampler`).
 
+Read `player.cells.isPlaying` (true from `start()` until `stop()` or the natural end) in an effect to react to the end; there is no ended event to wrap.
+
 **Layered "instruments"** (a beat made of several stems) are **N `BufferPlayer`s** sharing one `start(t0)` and ramped together — the primitive stays one buffer; layering is composition.
 
 ### `FilePlayer` — the track

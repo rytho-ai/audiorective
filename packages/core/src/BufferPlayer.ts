@@ -40,6 +40,7 @@ export class BufferPlayer extends AudioProcessor<
     loopEnd: Param<number>;
     buffer: Param<AudioBuffer | null>;
   },
+  /** `isPlaying`: true from `start()` until the source ends (`stop()` or its natural end); read it in an effect for an "ended" reaction instead of wrapping an event. */
   { isPlaying: ReadonlyCell<boolean> }
 > {
   private readonly _output: GainNode;

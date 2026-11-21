@@ -45,7 +45,7 @@ export type Scheduler = {
   transport?(change: TransportChange): void;
 };
 
-/** "none" starts at once; otherwise the next boundary: "1m" a bar of `clock.meter` (4 beats in 4/4), "2m" two bars, "4n" a beat, "8n" half a beat. */
+/** "none" starts at once; otherwise the next boundary: "1m" a bar of `clock.meter` (4 beats in 4/4), "2m" two bars, "4n" a beat, "8n" half a beat. A call exactly on a boundary starts there, not on the next one. */
 export type Quantize = "none" | `${number}m` | `${number}n`;
 
 /** A length: seconds, or a note value ("1m" is a bar, "4n" a beat) measured at the tempo when the clip starts. */

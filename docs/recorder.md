@@ -29,7 +29,7 @@ recorder.dispose();
 
 `record(options?)` returns `Promise<RecordedAudio>`. `when` is absolute AudioContext seconds (default now; a time already past starts at the first available frame). `length` is seconds, or a note value such as `"4m"` (see below); without it the take runs until `stop({ when? })`. `signal` discards the take with `AbortError`, like `cancel()`. `stop` while the capture graph is still being built ends the take as soon as it starts, and on a take with `length` it can only shorten it. `await recorder.ready` preloads the AudioWorklet before a precise start. An `OfflineAudioContext` renders only what is armed: wait for `cells.startsAt` to be non-null before `startRendering()`.
 
-The result reports **actual** inclusive `startFrame` and exclusive `endFrame`; divide by `sampleRate` for `startTime` and `endTime`. Each channel's `Float32Array` has exactly `endFrame - startFrame` samples, and the caller may edit or transfer them. A take with no captured frames rejects rather than masquerading as aligned silence. `toAudioBuffer(take, context)` copies a take into an `AudioBuffer` for `BufferPlayer`, a clip launcher or `WavePlayer.load`.
+The result reports **actual** inclusive `startFrame` and exclusive `endFrame`; divide by `sampleRate` for `startTime` and `endTime` (AudioContext seconds); `startBeat` is in beats from the clock's beat 0. Each channel's `Float32Array` has exactly `endFrame - startFrame` samples, and the caller may edit or transfer them. A take with no captured frames rejects rather than masquerading as aligned silence. `toAudioBuffer(take, context)` copies a take into an `AudioBuffer` for `BufferPlayer`, a clip launcher or `WavePlayer.load`.
 
 ### Start on a bar for N bars
 
@@ -49,7 +49,7 @@ take.startTime; // the same instant on the audio clock
 detach();
 ```
 
-`quantize` is `"none"` (default), `"1m"` (the next bar of `clock.meter`), `"2m"`, or a note value such as `"4n"` (the next beat); the boundary is the first one at least 50 ms ahead, so the capture graph exists before it. `length: "4m"` is measured from the start at the clock's tempo. Start and end land on the frames of those instants (`startFrame` is the ceiling of the boundary time in frames). Both note values need the attached clock; `quantize` also needs it playing. `take.startBeat` is the clock beat at `startTime` whenever the recorder is attached to a playing clock, else `null`. Leaving the transport (stop, pause, seek, detach) before a quantized start arrives cancels that take with `AbortError`; a take already recording continues. `cells.startsAt` and `cells.startedAt` read like the launcher's.
+`quantize` is `"none"` (default), `"1m"` (the next bar of `clock.meter`), `"2m"`, or a note value such as `"4n"` (the next beat); a call exactly on a boundary starts there, like the launcher, otherwise the boundary is the first one at least 50 ms ahead, so the capture graph exists before it. `length: "4m"` is measured from the start at the clock's tempo. Start and end land on the frames of those instants (`startFrame` is the ceiling of the boundary time in frames). Both note values need the attached clock; `quantize` also needs it playing. `take.startBeat` is the clock beat at `startTime` whenever the recorder is attached to a playing clock, else `null`. Leaving the transport (stop, pause, seek, detach) before a quantized start arrives cancels that take with `AbortError`; a take already recording continues. `cells.startsAt` and `cells.startedAt` read like the launcher's.
 
 ### Observing a take
 

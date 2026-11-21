@@ -516,7 +516,10 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
       this.loadProgress = Object.freeze(progress);
     });
   }
-  /** Replacing the source cancels playback, selection, loop and any older load. */
+  /**
+   * Replacing the source cancels playback, selection, loop and any older load. A failed load rejects with the cause and also writes `cells.error`, so handle it in one place.
+   * A load superseded by a newer `load()`, `cancelLoad()` or `dispose()` resolves silently and touches neither `cells.error` nor the new load's state.
+   */
   async load(source: WavePlayerSource): Promise<void> {
     this.assertAlive();
     const request = ++this.request;

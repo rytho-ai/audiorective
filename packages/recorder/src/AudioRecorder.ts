@@ -13,7 +13,7 @@ import type { PCMData } from "@audiorective/core/peaks";
 import { AUDIO_RECORDER_WORKLET, AUDIO_RECORDER_WORKLET_NAME } from "./recording/audio-recorder.worklet";
 export * from "./MicrophoneInput";
 
-/** "none" starts at once; otherwise the next boundary of an attached playing clock: "1m" a bar of its meter (4 beats in 4/4), "2m" two bars, "4n" a beat, "8n" half a beat. */
+/** "none" starts at once; otherwise the next boundary of an attached playing clock: "1m" a bar of its meter (4 beats in 4/4), "2m" two bars, "4n" a beat, "8n" half a beat. A call exactly on a boundary starts there, not on the next one. */
 export type Quantize = "none" | `${number}m` | `${number}n`;
 /** A length measured at the clock's tempo from the take's start: "4m" four bars, "4n" one beat. */
 export type NoteLength = Exclude<Quantize, "none">;
@@ -46,7 +46,10 @@ export interface AudioRecorderOptions {
 export interface RecordOptions {
   /** Absolute AudioContext seconds the take starts at; a past time starts at the first available frame. Default: now. Not with `quantize`. */
   when?: number;
-  /** Start at the next boundary of the attached, playing clock (`"1m"` the next bar line). Default `"none"`. Needs `clock.attach(recorder)`. */
+  /**
+   * Start at the next boundary of the attached, playing clock (`"1m"` the next bar line); a call exactly on a boundary starts there, not on the next one.
+   * Default `"none"`. `record()` rejects with `InvalidStateError` when the recorder is not attached to a Clock (`clock.attach(recorder)`) or the clock is not playing.
+   */
   quantize?: Quantize;
   /** Take length: seconds, or a note value from the start (`"4m"` four bars at the clock's tempo, which needs the clock). Default: until `stop()`. */
   length?: number | NoteLength;
@@ -58,9 +61,11 @@ export interface RecordedAudio extends PCMData {
   readonly startFrame: number;
   /** Exclusive final captured sample frame on the AudioContext clock. */
   readonly endFrame: number;
+  /** `startFrame` in AudioContext seconds (`startFrame / sampleRate`). */
   readonly startTime: number;
+  /** `endFrame` in AudioContext seconds (`endFrame / sampleRate`). */
   readonly endTime: number;
-  /** The clock beat at `startTime` when the recorder was attached to a playing clock at the start, else null. */
+  /** The clock beat, in beats from the clock's beat 0, at `startTime` when the recorder was attached to a playing clock at the start, else null. */
   readonly startBeat: number | null;
   readonly dropouts?: readonly Readonly<{ startFrame: number; endFrame: number }>[];
 }
@@ -203,7 +208,7 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
 
   /**
    * Records one take and resolves with it after it ends, at `length` or at `stop()`. A quantized start waits for the clock's next boundary, and the take
-   * reports it as `startBeat`. Late worklet registration starts at the first available frame. Call it from a gesture on a running context.
+   * reports it as `startBeat`. With `quantize` (or a note-value `length`) it rejects with `InvalidStateError` when the recorder is not attached to a Clock or, for `quantize`, the clock is not playing. Late worklet registration starts at the first available frame. Call it from a gesture on a running context.
    */
   record(options: RecordOptions = {}): Promise<RecordedAudio> {
     return new Promise<RecordedAudio>((resolve, reject) => {
@@ -306,8 +311,13 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
       if (take && take.quantize !== "none") {
         const clock = this.requirePlayingClock("quantize");
         const size = noteBeats(take.quantize, this.barBeats(clock));
-        const base = clock.timeline.timeToBeat(this.context.currentTime + QUANTIZE_LEAD);
-        boundaryBeat = Math.ceil(base / size - EPS) * size;
+        const nowBeat = clock.timeline.timeToBeat(this.context.currentTime);
+        // Exactly on a boundary starts there, like the launcher; otherwise the first boundary at least QUANTIZE_LEAD ahead.
+        if (Math.abs(nowBeat / size - Math.round(nowBeat / size)) < EPS) boundaryBeat = Math.round(nowBeat / size) * size;
+        else {
+          const base = clock.timeline.timeToBeat(this.context.currentTime + QUANTIZE_LEAD);
+          boundaryBeat = Math.ceil(base / size - EPS) * size;
+        }
         when = clock.timeline.beatToTime(boundaryBeat);
       }
       if (!Number.isFinite(when) || when < 0) throw new RangeError("AudioRecorder time must be finite, non-negative seconds.");
