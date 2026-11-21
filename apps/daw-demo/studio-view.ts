@@ -12,7 +12,7 @@ import {
   type Workspace,
 } from "@audiorective/daw";
 import type { MidiNote } from "@audiorective/midi";
-import { mountPianoRoll } from "@audiorective/widgets/piano-roll";
+import { mountPianoRoll, pianoRollModel, type ClipPianoRollModel } from "@audiorective/widgets/piano-roll";
 import {
   attachClipGesture,
   attachTimeRangeGesture,
@@ -59,6 +59,11 @@ type StudioActions = {
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const pitchName = (pitch: number) => `${["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"][pitch % 12]}${Math.floor(pitch / 12) - 1}`;
+const updateNote = (clip: MidiClip, id: string, patch: Partial<Omit<MidiNote, "id">>): void =>
+  clip.midi.edit((draft) => {
+    const note = draft.find((item) => item.id === id);
+    if (note) Object.assign(note, patch);
+  });
 const button = (label: string, action: () => void | Promise<void>, title?: string) => {
   const element = document.createElement("button");
   element.type = "button";
@@ -96,6 +101,7 @@ export class StudioView {
     getAmplitudeZoom?(): number;
     scrollTo(seconds: number): void;
   };
+  private rollModel?: ClipPianoRollModel;
   private editorClipId?: string;
   private readonly clipEditingTool = cell<AudioClipEditorTool>(null);
   private stopGainView?: () => void;
@@ -125,7 +131,7 @@ export class StudioView {
         if (this.selectedClipId && !selectedTrack) this.selectedClipId = undefined;
         if (selectedTrack) this.selectedTrackId = selectedTrack.id;
         const clip = this.selectedClip();
-        if (this.selectedNote && (clip?.kind !== "midi" || !clip.sequence.getState().notes.some((note) => note.id === this.selectedNote?.noteId)))
+        if (this.selectedNote && (clip?.kind !== "midi" || !clip.midi.notes.value.some((note) => note.id === this.selectedNote?.noteId)))
           this.selectedNote = undefined;
         this.render();
       },
@@ -380,9 +386,7 @@ export class StudioView {
     const start = this.snap(time);
     const startBeat = map.secondsToBeat(start);
     const bar = this.workspace.project.signature[0] * 2;
-    const clip = this.history.record("新增 MIDI 片段", () =>
-      this.workspace.project.addMidiClip(track.id, { duration: bar, notes: [] }, startBeat, { timeUnit: "beats" }),
-    );
+    const clip = this.history.record("新增 MIDI 片段", () => this.workspace.project.addMidiClip(track.id, { duration: bar, notes: [] }, startBeat));
     this.selectedTrackId = track.id;
     this.selectedClipId = clip.id;
     this.selectedNote = undefined;
@@ -392,13 +396,20 @@ export class StudioView {
     this.actions.status(`已在 ${track.name} 建立 MIDI 片段；雙擊琴卷格線加入音符。`);
   }
 
+  private disposeClipView(): void {
+    this.clipView?.dispose();
+    this.clipView = undefined;
+    this.rollModel?.dispose();
+    this.rollModel = undefined;
+  }
+
   private async duplicate(): Promise<void> {
     const clip = this.selectedClip();
     if (!clip) return;
     try {
       const end = this.workspace.project.clipTimeSeconds(clip, clip.duration);
       const time = this.snap(end);
-      const target = clip.kind === "midi" && clip.timeUnit === "beats" ? this.workspace.project.tempoMap.secondsToBeat(time) : time;
+      const target = clip.kind === "midi" ? this.workspace.project.tempoMap.secondsToBeat(time) : time;
       const copy = this.history.record("複製片段", () => this.workspace.project.duplicateClip(clip.id, target));
       this.selectedClipId = copy.id;
       this.render();
@@ -411,8 +422,7 @@ export class StudioView {
   private delete(): void {
     if (!this.selectedClipId) return;
     try {
-      this.clipView?.dispose();
-      this.clipView = undefined;
+      this.disposeClipView();
       this.history.record("刪除片段", () => this.workspace.project.removeClip(this.selectedClipId!));
       this.editorViewStates.delete(this.selectedClipId);
       this.selectedClipId = undefined;
@@ -428,8 +438,7 @@ export class StudioView {
     const clip = this.selectedClip();
     if (!clip) return;
     const snapped = this.snap(this.workspace.position);
-    const offset =
-      clip.kind === "midi" && clip.timeUnit === "beats" ? this.workspace.project.tempoMap.secondsToBeat(snapped) - clip.time : snapped - clip.time;
+    const offset = clip.kind === "midi" ? this.workspace.project.tempoMap.secondsToBeat(snapped) - clip.time : snapped - clip.time;
     if (offset <= 0 || offset >= clip.duration) {
       this.actions.status("請先把播放游標放在所選片段內部。");
       return;
@@ -567,14 +576,17 @@ export class StudioView {
     svg.setAttribute("class", "clip-visual");
     svg.setAttribute("viewBox", `0 0 ${Math.max(1, width)} 37`);
     svg.setAttribute("preserveAspectRatio", "none");
-    const notes = clip.sequence.getState().notes;
+    const notes = clip.midi.notes.value;
+    const map = this.workspace.project.tempoMap;
+    const startSeconds = this.workspace.project.clipTimeSeconds(clip);
+    const seconds = (beat: number) => map.beatToSeconds(clip.time + beat) - startSeconds;
     const high = Math.max(72, ...notes.map((note) => note.pitch));
     const low = Math.min(48, ...notes.map((note) => note.pitch));
     for (const note of notes) {
       const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-      rect.setAttribute("x", String(note.start * this.pixelsPerSecond));
+      rect.setAttribute("x", String(seconds(note.start) * this.pixelsPerSecond));
       rect.setAttribute("y", String(4 + ((high - note.pitch) / Math.max(1, high - low)) * 26));
-      rect.setAttribute("width", String(Math.max(3, (note.end - note.start) * this.pixelsPerSecond)));
+      rect.setAttribute("width", String(Math.max(3, (seconds(note.start + note.duration) - seconds(note.start)) * this.pixelsPerSecond)));
       rect.setAttribute("height", "3.5");
       rect.setAttribute("rx", "1");
       rect.setAttribute("fill", "var(--clip-wave)");
@@ -630,7 +642,7 @@ export class StudioView {
         clipId: clip.id,
         trackId: track.id,
         time: clip.time,
-        timeUnit: clip.kind === "midi" ? clip.timeUnit : "seconds",
+        timeUnit: clip.kind === "midi" ? "beats" : "seconds",
         timeMap: this.workspace.project.tempoMap,
         pixelsPerSecond: () => this.pixelsPerSecond,
         trackAt: (x, y) => {
@@ -941,10 +953,7 @@ export class StudioView {
     const left = Math.min(this.rulerWidth, Math.max(0, time * this.pixelsPerSecond));
     for (const line of this.playheads) line.style.left = `${left}px`;
     const clip = this.selectedClip();
-    const local =
-      clip?.kind === "midi" && clip.timeUnit === "beats"
-        ? this.workspace.project.tempoMap.secondsToBeat(time) - clip.time
-        : time - this.editorClipTime;
+    const local = clip?.kind === "midi" ? this.workspace.project.tempoMap.secondsToBeat(time) - clip.time : time - this.editorClipTime;
     this.clipView?.setPlayhead?.(Math.max(0, local));
   }
 
@@ -952,9 +961,9 @@ export class StudioView {
     const clip = this.selectedClip();
     const id = this.selectedNote?.noteId;
     if (clip?.kind !== "midi" || this.selectedNote?.clipId !== clip.id || !id) return;
-    const state = clip.sequence.getState();
-    if (!state.notes.some((note) => note.id === id)) return;
-    this.history.record("刪除音符", () => clip.sequence.setData({ duration: state.duration, notes: state.notes.filter((note) => note.id !== id) }));
+    const notes = clip.midi.notes.value;
+    if (!notes.some((note) => note.id === id)) return;
+    this.history.record("刪除音符", () => clip.midi.setNotes(notes.filter((note) => note.id !== id)));
     this.selectedNote = undefined;
     this.render();
     this.actions.status("已刪除音符");
@@ -986,8 +995,7 @@ export class StudioView {
 
   private renderNoteInspector(clip: MidiClip, root: HTMLElement): void {
     root.replaceChildren();
-    const note =
-      this.selectedNote?.clipId === clip.id ? clip.sequence.getState().notes.find((item) => item.id === this.selectedNote?.noteId) : undefined;
+    const note = this.selectedNote?.clipId === clip.id ? clip.midi.notes.value.find((item) => item.id === this.selectedNote?.noteId) : undefined;
     if (!note) {
       const hint = document.createElement("span");
       hint.textContent = "選取音符後可修改音高、時間與力度；Delete 刪除音符。";
@@ -1022,17 +1030,13 @@ export class StudioView {
           return;
         }
         try {
-          const current = clip.sequence.getState().notes.find((item) => item.id === note.id)!;
-          this.history.record("修改音符", () => clip.sequence.updateNote(note.id, update(next, current)));
-          const updated = clip.sequence.getState().notes.find((item) => item.id === note.id)!;
+          const current = clip.midi.notes.value.find((item) => item.id === note.id)!;
+          this.history.record("修改音符", () => updateNote(clip, note.id, update(next, current)));
+          const updated = clip.midi.notes.value.find((item) => item.id === note.id)!;
           this.refreshClipVisual(clip);
           title.textContent = pitchName(updated.pitch);
-          root.querySelector<HTMLInputElement>(`input[aria-label="起點 (${clip.timeUnit === "beats" ? "拍" : "秒"})"]`)!.max = String(
-            Math.max(0, clip.duration - (updated.end - updated.start)),
-          );
-          root.querySelector<HTMLInputElement>(`input[aria-label="長度 (${clip.timeUnit === "beats" ? "拍" : "秒"})"]`)!.max = String(
-            clip.duration - updated.start,
-          );
+          root.querySelector<HTMLInputElement>(`input[aria-label="起點 (拍)"]`)!.max = String(Math.max(0, clip.duration - updated.duration));
+          root.querySelector<HTMLInputElement>(`input[aria-label="長度 (拍)"]`)!.max = String(clip.duration - updated.start);
           if (updated.pitch < (this.editorPitchRange?.low ?? 0) || updated.pitch > (this.editorPitchRange?.high ?? 127)) this.render();
           this.actions.status(`已更新 ${pitchName(updated.pitch)} 音符`);
         } catch (error) {
@@ -1043,16 +1047,10 @@ export class StudioView {
       wrapper.append(input);
       root.append(wrapper);
     };
-    const length = note.end - note.start;
     field("音高", note.pitch, 0, 127, "1", (pitch) => ({ pitch }));
-    field(`起點 (${clip.timeUnit === "beats" ? "拍" : "秒"})`, note.start, 0, Math.max(0, clip.duration - length), "0.01", (start, current) => ({
-      start,
-      end: start + current.end - current.start,
-    }));
-    field(`長度 (${clip.timeUnit === "beats" ? "拍" : "秒"})`, length, 0.01, clip.duration - note.start, "0.01", (duration, current) => ({
-      end: current.start + duration,
-    }));
-    field("力度", note.velocity, 0, 127, "1", (velocity) => ({ velocity }));
+    field("起點 (拍)", note.start, 0, Math.max(0, clip.duration - note.duration), "0.01", (start) => ({ start }));
+    field("長度 (拍)", note.duration, 0.01, clip.duration - note.start, "0.01", (duration) => ({ duration }));
+    field("力度", Math.round(note.velocity * 127), 0, 127, "1", (velocity) => ({ velocity: velocity / 127 }));
     const remove = button("刪除音符", () => this.deleteSelectedNote());
     remove.className = "note-delete";
     root.append(remove);
@@ -1078,8 +1076,7 @@ export class StudioView {
     }
     this.noteHighlightObserver?.disconnect();
     this.noteHighlightObserver = undefined;
-    this.clipView?.dispose();
-    this.clipView = undefined;
+    this.disposeClipView();
     this.editorClipId = undefined;
     const root = $("editor-panel");
     root.replaceChildren();
@@ -1099,7 +1096,7 @@ export class StudioView {
     const name = document.createElement("strong");
     name.textContent = clip.kind === "midi" ? "音符" : "波形";
     const meta = document.createElement("span");
-    meta.textContent = `${this.workspace.project.clipTimeSeconds(clip).toFixed(2)}–${this.workspace.project.clipTimeSeconds(clip, clip.duration).toFixed(2)} s${clip.kind === "midi" && clip.timeUnit === "beats" ? " · 拍位鎖定" : ""}`;
+    meta.textContent = `${this.workspace.project.clipTimeSeconds(clip).toFixed(2)}–${this.workspace.project.clipTimeSeconds(clip, clip.duration).toFixed(2)} s${clip.kind === "midi" ? " · 拍位鎖定" : ""}`;
     const spacer = document.createElement("span");
     spacer.className = "spacer";
     top.append(name, meta, spacer);
@@ -1131,15 +1128,12 @@ export class StudioView {
     mount.className = clip.kind === "midi" ? "roll" : "wave";
     root.append(mount);
     if (clip.kind === "midi") {
-      const map = this.workspace.project.tempoMap;
-      const clipStartBeat = clip.timeUnit === "beats" ? clip.time : map.secondsToBeat(clip.time);
-      const clipEndBeat = clip.timeUnit === "beats" ? clip.time + clip.duration : map.secondsToBeat(clip.time + clip.duration);
-      const firstBeat = Math.ceil(clipStartBeat);
-      const lastBeat = Math.floor(clipEndBeat);
+      const firstBeat = Math.ceil(clip.time);
+      const lastBeat = Math.floor(clip.time + clip.duration);
       const beats: number[] = [];
       const downbeats: number[] = [];
       for (let beat = firstBeat; beat <= lastBeat; beat++) {
-        const localTime = clip.timeUnit === "beats" ? beat - clip.time : map.beatToSeconds(beat) - clip.time;
+        const localTime = beat - clip.time;
         beats.push(localTime);
         if (beat % this.workspace.project.signature[0] === 0) downbeats.push(localTime);
       }
@@ -1147,31 +1141,30 @@ export class StudioView {
         beats,
         downbeats,
       };
-      const notes = clip.sequence.getState().notes;
+      const notes = clip.midi.notes.value;
       const lowest = notes.length ? Math.min(...notes.map((note) => note.pitch)) : 60;
       const highest = notes.length ? Math.max(...notes.map((note) => note.pitch)) : 72;
       const center = (lowest + highest) / 2;
       const span = Math.max(12, highest - lowest + 3);
       const low = Math.max(0, Math.min(127 - span, Math.floor(center - span / 2)));
       this.editorPitchRange = { low, high: Math.min(127, low + span) };
+      const model = pianoRollModel(clip.midi, { duration: () => clip.duration });
+      this.rollModel = model;
       this.clipView = mountPianoRoll(mount, {
-        model: clip.sequence,
-        timeUnit: clip.timeUnit,
+        model,
         grid,
         snap: "beat",
         pitches: { low, high: Math.min(127, low + span) },
         onNoteEdit: ({ note }) => {
           this.selectedNote = { clipId: clip.id, noteId: note.id };
-          this.history.record("拖曳音符", () => clip.sequence.updateNote(note.id, { start: note.start, end: note.end, pitch: note.pitch }));
+          this.history.record("拖曳音符", () => updateNote(clip, note.id, { start: note.start, duration: note.duration, pitch: note.pitch }));
           requestAnimationFrame(() => this.render());
         },
         onNoteClick: (note) => {
           this.selectedNote = { clipId: clip.id, noteId: note.id };
           this.renderNoteInspector(clip, inspector!);
           this.highlightSelectedNote(mount);
-          this.actions.status(
-            `${pitchName(note.pitch)} · ${note.start.toFixed(2)} ${clip.timeUnit === "beats" ? "拍" : "s"} · 力度 ${note.velocity}`,
-          );
+          this.actions.status(`${pitchName(note.pitch)} · ${note.start.toFixed(2)} 拍 · 力度 ${Math.round(note.velocity * 127)}`);
         },
       });
       const drawing = mount.querySelector<HTMLElement>(".ar-pr-notes")!;
@@ -1187,12 +1180,8 @@ export class StudioView {
         this.selectedNote = {
           clipId: clip.id,
           noteId: this.history.record("新增音符", () => {
-            const map = this.workspace.project.tempoMap;
-            const beat = Math.floor(clip.timeUnit === "beats" ? clip.time + rawTime : map.secondsToBeat(clip.time + rawTime));
-            return this.actions.addNote(clip, {
-              start: Math.max(0, clip.timeUnit === "beats" ? beat - clip.time : map.beatToSeconds(beat) - clip.time),
-              pitch,
-            });
+            const beat = Math.floor(clip.time + rawTime);
+            return this.actions.addNote(clip, { start: Math.max(0, beat - clip.time), pitch });
           }),
         };
         this.render();
@@ -1558,8 +1547,7 @@ export class StudioView {
     const title = document.createElement("strong");
     title.textContent = track.name;
     const remove = button("刪除軌道", async () => {
-      this.clipView?.dispose();
-      this.clipView = undefined;
+      this.disposeClipView();
       this.workspace.project.removeTrack(track.id);
       this.history.clear();
       await this.workspace.flush();
@@ -1726,8 +1714,7 @@ export class StudioView {
     this.playheads = [];
     this.noteHighlightObserver?.disconnect();
     this.noteHighlightObserver = undefined;
-    this.clipView?.dispose();
-    this.clipView = undefined;
+    this.disposeClipView();
     this.editorClipId = undefined;
     this.editorViewStates.clear();
     this.stopGainView?.();

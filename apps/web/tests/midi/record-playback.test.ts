@@ -26,7 +26,7 @@ test("the showroom records, edits and auditions one take with its pedal messages
     makeAuditioner: (read) => ({
       async play() {
         const state = read();
-        heard = planMidiVoices(compileMidiPlaybackEvents(state.source ?? { startTime: 0, events: [] }, state), state.duration);
+        heard = planMidiVoices(compileMidiPlaybackEvents(state.source ?? { events: [] }, state), state.duration);
       },
       pause() {},
       seek() {},
@@ -56,12 +56,13 @@ test("the showroom records, edits and auditions one take with its pedal messages
     emit([0xb0, 64, 0], 0.06);
     pair.contextTime = 10.1;
     pair.performanceTime = 1100;
+    context.currentTime = 10.1;
     now.mockReturnValue(1100);
     click("stop-record");
-    expect(app.getState().notes).toHaveLength(1);
+    await vi.waitFor(() => expect(app.getState().notes).toHaveLength(1));
     app.editNote(app.getState().notes[0].id, { pitch: 62 });
     await app.play();
-    expect(heard).toMatchObject([{ pitch: 62, start: 0, end: 0.06, velocity: 90 }]);
+    expect(heard).toMatchObject([{ pitch: 62, start: 0, end: 0.12, velocity: 90 / 127 }]);
     expect(root.querySelector('[data-control="status"]')?.textContent).toContain("Edit, then Play");
   } finally {
     app.dispose();

@@ -717,7 +717,7 @@ sampler.trigger(options?: PlayOptions): Voice | null
 // null when there is no sound, or steal:"none" dropped the hit.
 sampler.noteOn(note: number | NoteName, options?: PlayOptions): Voice | null
 // pitch = note - rootNote + options.pitch. A note struck again adds a voice. null outside lowNote..highNote.
-sampler.noteOff(note: number | NoteName, when?: number): void // releases the held voices of `note` started by `when`
+sampler.noteOff(note: number | NoteName, when?: number): void // releases the held voices of `note` started by `when`; an earlier `when` than a voice's pending release moves it earlier, a later one is ignored
 sampler.stopAll(when?: number): void
 sampler.dispose(): void
 ```
@@ -1340,6 +1340,8 @@ type EventTransform<E extends BeatEvent = BeatEvent> = Readonly<{ id: string; pa
   );
 applyEventTransforms<E extends BeatEvent>(events: readonly E[], transforms: readonly EventTransform<E>[], context: EventTransformInput): SecondsOf<E>[];
 withCancel(event: CancellableEvent | null, undo: () => void): CancellableEvent;
+// Resolves what a per-event `transform` returned (a moved `beat` or `when`, a resized `durationBeats` or `duration`) against the event it was given; StepSequencer and MidiClip share it.
+resolveHitEdit(hit: HitTiming, result: HitTiming, timing: BeatTiming): HitTiming; // HitTiming = { when, duration, beat, durationBeats }
 ```
 
 A structural contract that exposes reactive state, such as a sequencer's `pattern` or a plugin context's cells, types it as `Readable<T>` (see [Readable](#readablet)). Read it with `.value` or with the raw accessor `$()`; both are tracked inside an effect and give the same value.
@@ -1385,7 +1387,7 @@ signals/src/
 ├── Spatial.ts           # AudioProcessor wrapping a PannerNode
 ├── Analyser.ts          # AudioProcessor wrapping an AnalyserNode (spectrum/waveform tap)
 ├── peaks.ts             # pure PCM summaries and frame/time bin ranges
-├── contracts.ts         # CancellableEvent, BeatTiming and EventTransform contracts (beat and seconds event forms) + applyEventTransforms, withCancel; hash.ts: hash01
+├── contracts.ts         # CancellableEvent, BeatTiming and EventTransform contracts (beat and seconds event forms) + applyEventTransforms, resolveHitEdit, withCancel; hash.ts: hash01
 ├── types.ts             # SignalAccessor, ComputedAccessor, Readable, ParamBind, etc.
 └── index.ts             # public exports
 ```
@@ -1405,7 +1407,7 @@ export { EngineEnvironmentError, LatencyUnknownError, WorkletUnavailableError };
 export { createEngine, cell, readonlyCell, defineGraph };
 export { batch, untracked, effect, computed };
 export { loadAudioBuffer, registerWorklet, reverseBuffer, renderOffline, playSound, assertSound, noteNumber };
-export { applyEventTransforms, withCancel, hash01 };
+export { applyEventTransforms, resolveHitEdit, withCancel, hash01 };
 export { summarizePeaks, peakFrameRange };
 
 // Constants
@@ -1445,6 +1447,8 @@ export type {
   TimedBeatEvent,
   SecondsOf,
   EventTransformUnit,
+  Random,
+  HitTiming,
   EventTransformContext,
   EventTransformInput,
   EventTransform,

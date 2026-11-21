@@ -60,4 +60,4 @@ Audiorective's audio engine runs in the browser. For Astro, Next.js, or other se
 
 ### MIDI notes and piano roll
 
-Use the pure `@audiorective/midi` entry to parse SMF note data, preserve source-tempo coordinates, edit notes and share a selection. Use `@audiorective/midi/web` to record a caller-selected Web MIDI input. Mount independent piano-roll views through `widgets/piano-roll`; the caller chooses instruments and playback. See [MIDI and Piano Roll](/docs/midi) and the [showroom](/showroom/piano-roll).
+Use the pure `@audiorective/midi` entry to parse SMF note data into beats, edit notes in a `MidiClip` and play it on a `Clock`. Use `@audiorective/midi/web` to record a caller-selected Web MIDI input (`MidiRecorder`) or play one live (`MidiKeyboard`). Mount independent piano-roll views through `widgets/piano-roll`; the caller chooses instruments and playback. See [MIDI and Piano Roll](/docs/midi) and the [showroom](/showroom/piano-roll).

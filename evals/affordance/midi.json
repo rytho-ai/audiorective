@@ -72,7 +72,7 @@
       "expectations": [
         "Loads the plug-in from the bundle URL with the toolkit's WebCLAP host (no hand-written worklet/WASM loader) and connects its output node to the audio destination.",
         "Notes are sent to the plug-in as MIDI messages (note-on 0x90 / note-off 0x80 bytes, velocity converted from 0-1 to 1-127) scheduled at audio-clock times derived from the transport, not with setTimeout per note.",
-        "Stop silences hanging notes (note-offs or the host's panic/all-notes-off) and cancels already scheduled but unplayed messages.",
+        "Stop silences hanging notes (note-offs or the host's all-notes-off) and cancels already scheduled but unplayed messages.",
         "Saves and restores the plug-in state as an opaque byte blob through the host's save/load state, awaiting the promises, and stores it with the browser storage API (e.g. IndexedDB or base64 in localStorage).",
         "Parameters are bound reactively in both directions (slider writes update the plug-in; plug-in-originated changes update the sliders) using the host's parameter objects, without polling."
       ]
@@ -83,15 +83,15 @@
       "expectations": [
         "Requests MIDI access in response to the click (navigator.requestMIDIAccess) and attaches a message listener to every input, including inputs that connect later (statechange).",
         "Notes are triggered immediately from the message handler (play now / current audio time), not routed through a transport look-ahead or setTimeout delay.",
-        "Decodes status bytes correctly: note-on 0x90 with velocity > 0, note-off 0x80, note-on with velocity 0 as note-off, ignoring the channel nibble; velocity is divided by 127.",
+        "Decodes status bytes correctly: note-on 0x90 with velocity > 0, note-off 0x80, note-on with velocity 0 as note-off, ignoring the channel nibble; velocity is divided by 127 (or the decoding is delegated to a toolkit input API whose declarations state 0..1 velocity, such as `MidiKeyboard.open` with an `instrument`).",
         "Held notes are released when the input disconnects.",
         "Sustain pedal (CC 64, value >= 64 is down) defers note-offs until the pedal is released."
       ],
       "checks": [
         {
           "expectation": 2,
-          "label": "divides velocity by 127",
-          "any": ["/\\s*127", "\\*\\s*\\(?\\s*1\\s*/\\s*127", "127\\b"]
+          "label": "divides velocity by 127, or delegates it to a toolkit input API that states 0..1 velocity (MidiKeyboard.open with an instrument)",
+          "any": ["/\\s*127", "\\*\\s*\\(?\\s*1\\s*/\\s*127", "127\\b", "MidiKeyboard\\s*\\.\\s*open\\s*\\([^)]*\\binstrument\\b"]
         }
       ]
     }

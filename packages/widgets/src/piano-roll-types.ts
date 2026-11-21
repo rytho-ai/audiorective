@@ -1,9 +1,9 @@
-/** Borrowed MIDI models, replaceable appearance and widget-owned gesture contracts. */
+/** Borrowed MIDI models (note times, duration, grid and playhead are in beats), replaceable appearance and widget-owned gesture contracts. */
 import type { MidiData, MidiNote, MidiRange } from "@audiorective/midi";
 import type { PluginTarget, SelectionCommit, SnapMode, TimeViewPluginContext, WaveformViewport } from "./types";
 export type PitchRange = Readonly<{ low: number; high: number }>;
-/** Piano-roll viewport scale in the borrowed model's time unit. */
-export type PianoRollViewport = WaveformViewport & Readonly<{ timeUnit: "seconds" | "beats"; pixelsPerUnit: number }>;
+/** Piano-roll viewport; scale is in pixels per beat (`pixelsPerUnit`, also reported as `pixelsPerSecond` for plugins shared with the waveform). */
+export type PianoRollViewport = WaveformViewport & Readonly<{ pixelsPerUnit: number }>;
 export interface PianoRollModel {
   getState(): MidiData & Readonly<{ selection: MidiRange | null }>;
   getSelection(): MidiRange | null;
@@ -14,7 +14,6 @@ export type PianoRollEditKind = "move" | "resize-start" | "resize-end";
 export type PianoRollNoteEdit = Readonly<{ kind: PianoRollEditKind; previous: MidiNote; note: MidiNote }>;
 export type PianoRollRenderFrame = Readonly<{
   notes: readonly MidiNote[];
-  timeUnit: "seconds" | "beats";
   width: number;
   height: number;
   duration: number;
@@ -43,8 +42,6 @@ export type PianoRollLayout = (
 };
 export type PianoRollOptions = {
   model: PianoRollModel;
-  /** Unit of the borrowed model's note times, duration, grid and playhead. Default: seconds. */
-  timeUnit?: "seconds" | "beats";
   label?: string;
   pitches?: PitchRange;
   grid?: Readonly<{ beats: readonly number[]; downbeats: readonly number[] }>;

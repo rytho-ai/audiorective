@@ -26,8 +26,8 @@ function fixture(): Ctx {
   const project = watch(new Project({ bpm: 120 }), touchedProject);
   const trackId = project.addTrack("Keys", "midi").id;
   const audioTrackId = project.addTrack("Audio", "audio").id;
-  const clip = watch(project.addMidiClip(trackId, { duration: 1, notes: [] }, 1), touchedClip);
-  const beatClip = watch(project.addMidiClip(trackId, { duration: 1, notes: [] }, 4, { timeUnit: "beats" }), touchedClip);
+  const clip = watch(project.addMidiClip(trackId, { duration: 1, notes: [] }, 2), touchedClip);
+  const beatClip = watch(project.addMidiClip(trackId, { duration: 1, notes: [] }, 8), touchedClip);
   const audioClipId = project.addAudioClip(audioTrackId, { sampleRate: 8000, channels: [new Float32Array(800)] }, 0).id;
   const busId = project.addTrack("Bus", "bus").id;
   const deviceId = project.addWebClapDevice(trackId, { pluginId: "q", name: "Q", vendor: "v", version: "1", bundleUrl: "/q" }).id;
@@ -131,7 +131,11 @@ const rows: Array<{ name: string; read: (ctx: Ctx) => unknown; mutate: (ctx: Ctx
     mutate: (c) => c.project.setTempoChanges([{ beat: 1, bpm: 60 }]),
   },
   { name: "MidiClip.time", read: (c) => c.clip.time, mutate: (c) => c.project.moveClip(c.clip.id, c.trackId, 3) },
-  { name: "MidiClip.duration", read: (c) => c.clip.duration, mutate: (c) => c.clip.sequence.setData({ duration: 9, notes: [] }) },
+  {
+    name: "Project.cells.content (note edit)",
+    read: (c) => c.project.cells.content.value.midi.get(c.clip.id)?.notes,
+    mutate: (c) => c.clip.midi.setNotes([{ id: "n", pitch: 60, velocity: 0.5, start: 0, duration: 1 }]),
+  },
 ];
 
 describe("Project and MidiClip public readers are tracked", () => {
@@ -191,7 +195,7 @@ describe("Project commands do not subscribe a calling effect", () => {
     ctx.project.addTrack("Another", "audio");
     for (const clip of [ctx.clip, ctx.beatClip]) {
       try {
-        clip.sequence.setData({ duration: 7, notes: [] });
+        clip.midi.setNotes([]);
       } catch {
         // A command may have replaced and disposed the clip it read.
       }
@@ -211,17 +215,6 @@ describe("Project has one store", () => {
     project.setTempoChanges([{ beat: 4, bpm: 60 }]);
     stop();
     expect(seen).toHaveLength(1);
-    project.dispose();
-  });
-
-  test("tempo changes re-sort beat clips against the new tempo map", () => {
-    const project = new Project({ bpm: 120 });
-    const id = project.addTrack("Keys", "midi").id;
-    const seconds = project.addMidiClip(id, { duration: 1, notes: [] }, 3);
-    const beats = project.addMidiClip(id, { duration: 1, notes: [] }, 4, { timeUnit: "beats" });
-    expect(project.tracks[0].clips.map((clip) => clip.id)).toEqual([beats.id, seconds.id]);
-    project.setTempoChanges([{ beat: 1, bpm: 30 }]);
-    expect(project.tracks[0].clips.map((clip) => clip.id)).toEqual([seconds.id, beats.id]);
     project.dispose();
   });
 });

@@ -1,9 +1,8 @@
 /** Note gestures stay in the widget across replaceable layout and SVG/default drawing. */
 import { afterEach, expect, test, vi } from "vitest";
 import { userEvent } from "vitest/browser";
-import { MidiSequence } from "@audiorective/midi";
 import { mountPianoRoll, type PianoRollLayout, type PianoRollOptions, type PianoRollRenderer, type WaveformPluginContext } from "../src/piano-roll";
-import { cleanup, host, own, pointer } from "./helpers";
+import { cleanup, host, own, pointer, rollModel } from "./helpers";
 afterEach(async () => {
   await cleanup();
   vi.restoreAllMocks();
@@ -49,7 +48,7 @@ const svgRenderer: PianoRollRenderer = (root) => {
           rect.dataset.customNote = n.id;
           rect.setAttribute("x", String(f.timeToX(n.start)));
           rect.setAttribute("y", String(f.pitchToY(n.pitch)));
-          rect.setAttribute("width", String(f.timeToX(n.end) - f.timeToX(n.start)));
+          rect.setAttribute("width", String(f.timeToX(n.start + n.duration) - f.timeToX(n.start)));
           rect.setAttribute("height", String(f.height / (f.pitches.high - f.pitches.low + 1) - 1));
           rect.setAttribute("fill", "orange");
           rect.onpointerdown = (e) => f.onNotePointerDown(n, e);
@@ -63,14 +62,15 @@ const svgRenderer: PianoRollRenderer = (root) => {
     },
   };
 };
-function model() {
-  const m = new MidiSequence({ duration: 8, notes: [{ id: "n", start: 1, end: 2, pitch: 60, velocity: 100, channel: 0, track: 0 }] });
-  own(() => m.dispose());
-  return m;
-}
+const model = () => rollModel([{ id: "n", start: 1, duration: 1, pitch: 60, velocity: 0.8 }], 8);
+const end = (n: { start: number; duration: number }) => n.start + n.duration;
 function mount(m = model(), extra: Partial<PianoRollOptions> = {}) {
   const root = host();
-  const commit = vi.fn((e: any) => m.updateNote(e.note.id, { start: e.note.start, end: e.note.end, pitch: e.note.pitch }));
+  const commit = vi.fn((e: any) =>
+    m.clip.edit(
+      (draft) => void Object.assign(draft.find((n) => n.id === e.note.id)!, { start: e.note.start, duration: e.note.duration, pitch: e.note.pitch }),
+    ),
+  );
   const inspect = vi.fn();
   const roll = mountPianoRoll(root, { model: m, pitches: { low: 48, high: 72 }, onNoteEdit: commit, onNoteClick: inspect, ...extra });
   own(() => roll.dispose());
@@ -93,10 +93,10 @@ async function begin(f: ReturnType<typeof mount>, edge: "body" | "start" | "end"
   await pointer({ action: "down", x, y });
   return { x, y };
 }
-async function move(f: ReturnType<typeof mount>, anchor: { x: number; y: number }, seconds: number, pitches = 0, alt = false) {
+async function move(f: ReturnType<typeof mount>, anchor: { x: number; y: number }, beats: number, pitches = 0, alt = false) {
   await pointer({
     action: "move",
-    x: anchor.x + seconds * f.ctx.getViewport().pixelsPerSecond,
+    x: anchor.x + beats * f.ctx.getViewport().pixelsPerSecond,
     y: anchor.y - (pitches * f.ctx.getViewport().height) / 25,
     alt,
   });
@@ -106,16 +106,16 @@ const state = (f: ReturnType<typeof mount>) => f.m.getState().notes[0];
 test("move previews locally and commits once to shared model on release", async () => {
   const a = mount(),
     b = mount(a.m);
-  const before = a.m.getState().revision,
+  const before = a.m.clip.revision.value,
     anchor = await begin(a);
   await move(a, anchor, 1, 2);
   expect(state(a).start).toBe(1);
-  expect(a.m.getState().revision).toBe(before);
+  expect(a.m.clip.revision.value).toBe(before);
   expect(note(a).getBoundingClientRect().left - note(b).getBoundingClientRect().left).toBeCloseTo(a.ctx.getViewport().pixelsPerSecond, 0);
   await pointer({ action: "up" });
   expect(a.commit).toHaveBeenCalledTimes(1);
-  expect(state(a)).toMatchObject({ start: 2, end: 3, pitch: 62 });
-  expect(a.m.getState().revision).toBe(before + 1);
+  expect(state(a)).toMatchObject({ start: 2, duration: 1, pitch: 62 });
+  expect(a.m.clip.revision.value).toBe(before + 1);
   expect(note(a).textContent).toBe("D4");
   expect(note(b).textContent).toBe("D4");
   expect(a.inspect).not.toHaveBeenCalled();
@@ -135,7 +135,7 @@ test.each(["start", "end"] as const)("default note %s edge resizes without movin
   await move(a, anchor, edge === "start" ? -0.5 : 0.5, 3);
   await pointer({ action: "up" });
   expect(state(a).start).toBeCloseTo(edge === "start" ? 0.5 : 1, 3);
-  expect(state(a).end).toBeCloseTo(edge === "end" ? 2.5 : 2, 3);
+  expect(end(state(a))).toBeCloseTo(edge === "end" ? 2.5 : 2, 3);
   expect(state(a).pitch).toBe(60);
   expect(a.commit).toHaveBeenCalledTimes(1);
   expect(a.commit.mock.calls[0][0].kind).toBe(`resize-${edge}`);
@@ -149,7 +149,7 @@ test("shared nearest-grid snap and Alt bypass apply to move/resize", async () =>
   anchor = await begin(a, "end");
   await move(a, anchor, 0.65, 0, true);
   await pointer({ action: "up", alt: true });
-  expect(state(a).end).toBeCloseTo(3.65, 1);
+  expect(end(state(a))).toBeCloseTo(3.65, 1);
   a.roll.setSnap("downbeat");
   a.roll.setGrid({ beats: [0, 1, 2, 3, 4, 5], downbeats: [0, 4, 8] });
   anchor = await begin(a);
@@ -162,7 +162,7 @@ test("move is bounded by source duration and visible MIDI pitch range", async ()
     anchor = await begin(a);
   await move(a, anchor, 20, 30);
   await pointer({ action: "up" });
-  expect(state(a)).toMatchObject({ start: 7, end: 8, pitch: 72 });
+  expect(state(a)).toMatchObject({ start: 7, duration: 1, pitch: 72 });
   expect(a.commit).toHaveBeenCalledTimes(1);
 });
 test("resize cannot invert a note or leave source bounds", async () => {
@@ -170,13 +170,13 @@ test("resize cannot invert a note or leave source bounds", async () => {
   let anchor = await begin(a, "start");
   await move(a, anchor, 5);
   await pointer({ action: "up" });
-  expect(state(a).start).toBeCloseTo(1.99, 3);
-  expect(state(a).end).toBe(2);
-  a.m.updateNote("n", { start: 1, end: 2 });
+  expect(state(a).start).toBeCloseTo(2 - 1 / 64, 6);
+  expect(end(state(a))).toBe(2);
+  a.m.clip.edit((d) => void Object.assign(d[0], { start: 1, duration: 1 }));
   anchor = await begin(a, "end");
   await move(a, anchor, 20);
   await pointer({ action: "up" });
-  expect(state(a).end).toBe(8);
+  expect(end(state(a))).toBe(8);
 });
 test.each(["Escape", "source", "zoom", "resize", "dispose", "blur", "pointercancel"] as const)(
   "%s cancels preview without stale commit",
@@ -185,7 +185,7 @@ test.each(["Escape", "source", "zoom", "resize", "dispose", "blur", "pointercanc
       anchor = await begin(a);
     await move(a, anchor, 0.75, 1);
     if (kind === "Escape") await userEvent.keyboard("{Escape}");
-    if (kind === "source") a.m.setData({ duration: 8, notes: [{ ...state(a), pitch: 67 }] });
+    if (kind === "source") a.m.clip.setNotes([{ ...state(a), pitch: 67 }]);
     if (kind === "zoom") a.roll.setZoom(2);
     if (kind === "resize") {
       a.root.style.width = "320px";
@@ -207,7 +207,7 @@ test.each(["Escape", "source", "zoom", "resize", "dispose", "blur", "pointercanc
     }
     await pointer({ action: "up" });
     expect(a.commit).not.toHaveBeenCalled();
-    expect(state(a)).toMatchObject({ start: 1, end: 2, pitch: kind === "source" ? 67 : 60 });
+    expect(state(a)).toMatchObject({ start: 1, duration: 1, pitch: kind === "source" ? 67 : 60 });
   },
 );
 test("custom layout and SVG rendering keep widget-owned move and native range selection", async () => {
@@ -222,7 +222,7 @@ test("custom layout and SVG rendering keep widget-owned move and native range se
   await move(a, anchor, 0.5, 1);
   await pointer({ action: "up" });
   expect(state(a).start).toBeCloseTo(1.5, 3);
-  expect(state(a).end).toBeCloseTo(2.5, 3);
+  expect(end(state(a))).toBeCloseTo(2.5, 3);
   expect(state(a).pitch).toBe(61);
   expect(a.commit).toHaveBeenCalledTimes(1);
   a.m.setSelection(null);
@@ -268,7 +268,7 @@ test("throwing custom layout cleanup preserves renderer cleanup and borrowed mod
   a.roll.dispose();
   expect(dead).toHaveBeenCalledTimes(1);
   expect(a.root.childElementCount).toBe(0);
-  a.m.updateNote("n", { pitch: 70 });
+  a.m.clip.edit((d) => void (d[0].pitch = 70));
   expect(state(a).pitch).toBe(70);
 });
 
@@ -279,7 +279,7 @@ test("borrowed edit callback owns commit; rejected/no-op commands leave no previ
   await move(a, anchor, 0.5, 1);
   await pointer({ action: "up" });
   expect(command).toHaveBeenCalledTimes(1);
-  expect(state(a)).toMatchObject({ start: 1, end: 2, pitch: 60 });
+  expect(state(a)).toMatchObject({ start: 1, duration: 1, pitch: 60 });
   expect(note(a).textContent).toBe("C4");
   const log = vi.spyOn(console, "error").mockImplementation(() => {}),
     b = mount(undefined, {
@@ -290,17 +290,17 @@ test("borrowed edit callback owns commit; rejected/no-op commands leave no previ
   anchor = await begin(b);
   await move(b, anchor, 0.5, 1);
   await pointer({ action: "up" });
-  expect(state(b)).toMatchObject({ start: 1, end: 2, pitch: 60 });
+  expect(state(b)).toMatchObject({ start: 1, duration: 1, pitch: 60 });
   expect(log).toHaveBeenCalledTimes(1);
 });
 
-test("a custom application model needs no MidiSequence inheritance or mirrored UI store", async () => {
+test("a custom application model needs no MidiClip or mirrored UI store", async () => {
   const root = host(),
     listeners = new Set<() => void>();
   let state = {
     duration: 8,
     selection: null as { start: number; end: number } | null,
-    notes: [{ id: "n", start: 1, end: 2, pitch: 60, velocity: 100, channel: 0, track: 0 }],
+    notes: [{ id: "n", start: 1, duration: 1, pitch: 60, velocity: 0.8, channel: 0 }],
   };
   const publish = () => {
     for (const listener of [...listeners]) listener();
@@ -349,11 +349,11 @@ test("a custom application model needs no MidiSequence inheritance or mirrored U
 
 test("a vertical-only move preserves an unsnapped onset and freezes the command snapshots", async () => {
   const a = mount(undefined, { snap: "beat", grid: { beats: [0, 1, 2, 3, 4], downbeats: [0, 4] } });
-  a.m.updateNote("n", { start: 1.25, end: 2.25 });
+  a.m.clip.edit((d) => void Object.assign(d[0], { start: 1.25, duration: 1 }));
   const anchor = await begin(a);
   await move(a, anchor, 0, 2);
   await pointer({ action: "up" });
-  expect(state(a)).toMatchObject({ start: 1.25, end: 2.25, pitch: 62 });
+  expect(state(a)).toMatchObject({ start: 1.25, duration: 1, pitch: 62 });
   const edit = a.commit.mock.calls[0][0];
   expect(Object.isFrozen(edit)).toBe(true);
   expect(Object.isFrozen(edit.previous)).toBe(true);

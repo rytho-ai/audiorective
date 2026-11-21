@@ -1,4 +1,6 @@
-/** Browser MIDI capture; the caller owns permission, device selection and the AudioContext. */
+/** Browser MIDI: take recording and live keyboard playing. The caller owns permission, the AudioContext and the instrument. */
 export { MidiRecorder } from "./MidiRecorder";
-export type { MidiRecorderState } from "./MidiRecorder";
-export type { RecordedMidi, RecordedMidiEvent } from "./midi-data";
+export type { MidiRecorderState, MidiRecordOptions, Quantize, NoteLength, RecorderTransport, RecorderResetReason } from "./MidiRecorder";
+export { MidiKeyboard } from "./MidiKeyboard";
+export type { MidiKeyboardOptions, MidiSource } from "./MidiKeyboard";
+export type { MidiTake, MidiTakeEvent } from "./midi-data";

@@ -2,7 +2,8 @@ import { hash01 } from "./hash";
 
 /** A consumer-owned audio event that a scheduler may revoke after a transport or edit change. */
 export interface CancellableEvent {
-  cancel(): void;
+  /** `time` is the audio-context time the retraction takes effect (a scheduler's `cancelFrom(time)`, or now for a transport change or refresh); an event that is already sounding may stop at it. Omitted: now. */
+  cancel(time?: number): void;
   onEnded(listener: () => void): void;
 }
 
@@ -178,4 +179,44 @@ export function applyEventTransforms<E extends BeatEvent>(
   }
   const seconds = unit === "beat" ? current.map((event) => beatToSeconds(event, timing)) : current;
   return seconds.map((event) => ((event.when as number) < context.now ? { ...event, when: context.now } : event)) as unknown as SecondsOf<E>[];
+}
+
+/** A number in [0, 1) fixed by the seed, the event and `key`: the same event gets the same number in every window, re-queue, seek and loop pass. */
+export type Random = (key?: number | string) => number;
+
+/** The timing fields of an event a per-event `transform` may move: absolute audio seconds and the beat position, and the length in seconds and in beats. */
+export type HitTiming = Readonly<{ when: number; duration: number; beat: number; durationBeats: number }>;
+
+/**
+ * Resolves what a per-event `transform` returned against the event it was given. Beats win: a changed `beat` or `durationBeats` is mapped through `timing`,
+ * then any `when` / `duration` delta is added; a changed `when` or `duration` alone moves the event in seconds and updates its beats.
+ * Throws `Event transform "transform" returned an event without a finite "beat"` (likewise `when`, `durationBeats`) for a bad value.
+ */
+export function resolveHitEdit(hit: HitTiming, result: HitTiming, timing: BeatTiming): HitTiming {
+  const bad = (field: string): never => {
+    throw new Error(`Event transform "transform" returned an event without a finite "${field}".`);
+  };
+  if (typeof result !== "object") return bad("when");
+  const beatMoved = result.beat !== undefined && result.beat !== hit.beat;
+  const lengthMoved = result.durationBeats !== undefined && result.durationBeats !== hit.durationBeats;
+  if (beatMoved && !Number.isFinite(result.beat)) bad("beat");
+  if (lengthMoved && !(Number.isFinite(result.durationBeats) && result.durationBeats > 0)) bad("durationBeats");
+  const whenMoved = result.when !== hit.when;
+  const durationMoved = result.duration !== hit.duration;
+  let when = result.when;
+  let beat = hit.beat;
+  if (beatMoved) {
+    when = timing.beatToTime(result.beat) + (whenMoved ? result.when - hit.when : 0);
+    beat = whenMoved ? timing.timeToBeat(when) : result.beat;
+  } else if (whenMoved && Number.isFinite(when)) beat = timing.timeToBeat(when);
+  let duration = result.duration;
+  let durationBeats = hit.durationBeats;
+  if (beatMoved || lengthMoved) {
+    const start = beatMoved ? result.beat : hit.beat;
+    duration = timing.beatToTime(start + result.durationBeats) - timing.beatToTime(start) + (durationMoved ? result.duration - hit.duration : 0);
+    durationBeats = result.durationBeats;
+  }
+  if (durationMoved && Number.isFinite(when) && Number.isFinite(duration))
+    durationBeats = timing.timeToBeat(when + duration) - timing.timeToBeat(when);
+  return { when, duration, beat, durationBeats };
 }

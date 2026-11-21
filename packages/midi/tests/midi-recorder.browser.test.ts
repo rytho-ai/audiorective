@@ -1,125 +1,288 @@
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { effect } from "@audiorective/core";
+import { Clock, ManualTickSource } from "@audiorective/clock";
+import { MidiClip } from "../src";
 import { MidiRecorder } from "../src/web";
-import { MidiSequence } from "../src";
 
-function setup() {
-  const input = new EventTarget();
-  const pair = { contextTime: 10, performanceTime: 1000 };
-  const clock = {
+/** A context whose clock is `ctx.currentTime`; a Web MIDI timestamp of T ms is context time T / 1000. */
+function setup(start = 10) {
+  const ctx = {
     state: "running",
-    currentTime: 10.05,
-    getOutputTimestamp: () => ({ ...pair }),
+    currentTime: start,
+    getOutputTimestamp: () => ({ contextTime: ctx.currentTime, performanceTime: ctx.currentTime * 1000 }),
   };
-  vi.spyOn(performance, "now").mockReturnValue(1000);
-  const recorder = new MidiRecorder(clock as unknown as AudioContext, input as MIDIInput);
-  function emit(data: number[], timeStamp: number) {
+  vi.spyOn(performance, "now").mockImplementation(() => ctx.currentTime * 1000);
+  const input = new EventTarget();
+  const recorder = new MidiRecorder(ctx as unknown as AudioContext, input as MIDIInput);
+  const emit = (data: number[], time: number) => {
     const event = new Event("midimessage");
-    Object.defineProperties(event, {
-      data: { value: new Uint8Array(data) },
-      timeStamp: { value: timeStamp },
-    });
+    Object.defineProperties(event, { data: { value: new Uint8Array(data) }, timeStamp: { value: time * 1000 } });
     input.dispatchEvent(event);
-  }
-  return { input, pair, clock, recorder, emit };
+  };
+  const clock = new Clock({ context: ctx, tickSource: new ManualTickSource(), bpm: 120 });
+  return { ctx, input, recorder, emit, clock };
 }
+const settled = <T>(promise: Promise<T>) =>
+  promise.then(
+    (value) => ({ value }),
+    (error: unknown) => ({ error }),
+  );
 
-afterEach(() => vi.restoreAllMocks());
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
 
-test("captures raw MIDI and projects paired notes into a MidiSequence-compatible take", () => {
-  const { input, pair, recorder, emit } = setup();
-  const otherListener = vi.fn();
-  input.addEventListener("midimessage", otherListener);
-  expect(recorder.start({ when: 10.1 })).toBe(10.1);
-  emit([0x90, 60, 50], 1110);
-  emit([0x90, 60, 70], 1120);
-  emit([0x91, 60, 80], 1130);
-  emit([0xb0, 64, 127], 1140); // sustain/control is retained, but note projection follows key release
-  emit([0x80, 60, 0], 1150);
-  emit([0x90, 60, 0], 1160); // velocity-zero note-on is note-off
-  emit([0x81, 60, 0], 1170);
-  pair.contextTime = 10.2;
-  pair.performanceTime = 1200;
-  vi.spyOn(performance, "now").mockReturnValue(1200);
-  const take = recorder.stop();
-
-  expect(take.startTime).toBe(10.1);
-  expect(take.endTime).toBe(10.2);
-  expect(take.events).toHaveLength(7);
-  expect(take.events[3]).toMatchObject({ audioTime: 10.14, data: new Uint8Array([0xb0, 64, 127]) });
-  expect(take.notes.map(({ pitch, velocity, channel, track }) => ({ pitch, velocity, channel, track }))).toEqual([
-    { pitch: 60, velocity: 50, channel: 0, track: 0 },
-    { pitch: 60, velocity: 70, channel: 0, track: 0 },
-    { pitch: 60, velocity: 80, channel: 1, track: 0 },
-  ]);
-  take.notes.forEach((note, index) => {
-    expect(note.start).toBeCloseTo((index + 1) / 100, 6);
-    expect(note.end).toBeCloseTo((index + 5) / 100, 6);
+describe("MidiRecorder without a clock", () => {
+  test("records notes in beats at 120 BPM with 0..1 velocity; held notes close at the end; outside the window is ignored", async () => {
+    const { ctx, recorder, emit } = setup();
+    emit([0x90, 59, 100], 10.05); // before the take starts
+    const take = recorder.record({ when: 10.1 });
+    expect(recorder.cells.state.value).toBe("armed");
+    expect(recorder.cells.startsAt.value).toBe(10.1);
+    emit([0x90, 60, 127], 10.1);
+    emit([0x90, 60, 64], 10.2); // second press of the same pitch before the first release (FIFO pairing)
+    emit([0xb0, 64, 127], 10.3); // controller goes to events
+    emit([0x80, 60, 0], 10.35);
+    emit([0x90, 60, 0], 10.4); // velocity-0 note-on is note-off
+    emit([0x91, 64, 90], 10.45); // held when the take ends
+    emit([0xf8], 10.46); // real-time clock bytes are not events
+    ctx.currentTime = 10.6;
+    const stopped = recorder.stop();
+    emit([0x80, 64, 0], 10.7); // after the end: ignored
+    const result = await take;
+    expect(await stopped).toBe(result);
+    expect(result.startBeat).toBeNull();
+    expect(result.startTime).toBe(10.1);
+    expect(result.endTime).toBe(10.6);
+    expect(result.duration).toBeCloseTo(1, 6);
+    expect(result.notes.map((n) => [n.pitch, n.channel, +n.start.toFixed(6), +n.duration.toFixed(6), +n.velocity.toFixed(6)])).toEqual([
+      [60, 0, 0, 0.5, 1],
+      [60, 0, 0.2, 0.4, +(64 / 127).toFixed(6)],
+      [64, 1, 0.7, 0.3, +(90 / 127).toFixed(6)],
+    ]);
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0].beat).toBeCloseTo(0.4, 6);
+    expect([...result.events[0].data]).toEqual([0xb0, 64, 127]);
+    expect(recorder.cells.state.value).toBe("idle");
+    expect(recorder.cells.startsAt.value).toBeNull();
+    const clip = new MidiClip(result.notes);
+    expect(clip.notes.value).toHaveLength(3);
   });
-  const sequence = new MidiSequence({ notes: take.notes, duration: take.duration });
-  expect(sequence.getState().notes).toHaveLength(3);
-  sequence.dispose();
-  expect(recorder.cells.state.value).toBe("idle");
-  emit([0x90, 61, 80], 1210);
-  expect(otherListener).toHaveBeenCalledTimes(8);
-  recorder.dispose();
+
+  test("a numeric length ends the take by itself", async () => {
+    const { ctx, recorder, emit } = setup();
+    const take = recorder.record({ length: 0.5 });
+    expect(recorder.cells.state.value).toBe("recording");
+    expect(recorder.cells.startedAt.value).toBe(10);
+    emit([0x90, 60, 80], 10.1);
+    emit([0x80, 60, 0], 10.2);
+    emit([0x90, 62, 80], 10.7); // after the end
+    ctx.currentTime = 10.5;
+    vi.advanceTimersByTime(600);
+    const result = await take;
+    expect(result.duration).toBeCloseTo(1, 6);
+    expect(result.notes.map((n) => n.pitch)).toEqual([60]);
+  });
+
+  test("stop() ends early with what was captured; cancel() discards and rejects AbortError", async () => {
+    const { ctx, recorder, emit } = setup();
+    const kept = recorder.record();
+    emit([0x90, 60, 80], 10.1);
+    ctx.currentTime = 10.2;
+    const early = await recorder.stop();
+    expect(early.notes).toHaveLength(1);
+    expect(await kept).toBe(early);
+
+    const discarded = settled(recorder.record());
+    emit([0x90, 62, 80], 10.3);
+    recorder.cancel();
+    const outcome = await discarded;
+    expect((outcome as { error: DOMException }).error).toMatchObject({ name: "AbortError" });
+    expect(recorder.cells.state.value).toBe("idle");
+    recorder.cancel(); // nothing active: no-op
+    expect(((await settled(recorder.stop())) as { error: DOMException }).error).toMatchObject({ name: "InvalidStateError" });
+  });
+
+  test("an abort signal cancels the take; one recorder cannot record twice at once", async () => {
+    const { recorder } = setup();
+    const controller = new AbortController();
+    const take = settled(recorder.record({ signal: controller.signal }));
+    expect(((await settled(recorder.record())) as { error: Error }).error.message).toBe("MidiRecorder already has an active take.");
+    controller.abort();
+    expect(((await take) as { error: DOMException }).error).toMatchObject({ name: "AbortError" });
+    expect(recorder.cells.state.value).toBe("idle");
+  });
+
+  test("validation", async () => {
+    const { ctx, recorder } = setup();
+    const error = async (options: Parameters<MidiRecorder["record"]>[0]) => ((await settled(recorder.record(options))) as { error: Error }).error;
+    expect(await error({ length: -1 })).toBeInstanceOf(RangeError);
+    expect(await error({ when: Number.NaN })).toBeInstanceOf(RangeError);
+    expect(await error({ quantize: "1m", when: 11 })).toBeInstanceOf(RangeError);
+    expect(await error({ quantize: "1m" })).toMatchObject({
+      name: "InvalidStateError",
+      message: "MidiRecorder quantize needs clock.attach(recorder).",
+    });
+    expect(await error({ length: "4m" })).toMatchObject({ name: "InvalidStateError" });
+    ctx.state = "suspended";
+    expect((await error({})).message).toBe("MidiRecorder needs a running AudioContext.");
+    recorder.dispose();
+    ctx.state = "running";
+    expect((await error({})).message).toBe("MidiRecorder is disposed.");
+    expect(recorder.cells.state.value).toBe("disposed");
+  });
+
+  test("dispose cancels an active take", async () => {
+    const { recorder } = setup();
+    const take = settled(recorder.record());
+    recorder[Symbol.dispose]();
+    expect(((await take) as { error: DOMException }).error).toMatchObject({ name: "AbortError" });
+  });
 });
 
-test("future start filters early messages; cancellation discards and a later take closes held notes", () => {
-  const { pair, recorder, emit } = setup();
-  recorder.start({ when: 10.2 });
-  expect(() => recorder.stop()).toThrow("MidiRecorder stop must follow its start time.");
-  emit([0x90, 60, 80], 1100);
-  emit([0x90, 60, 80], 1210);
-  recorder.cancel();
-  expect(recorder.cells.state.value).toBe("idle");
-  pair.contextTime = 10.3;
-  pair.performanceTime = 1300;
-  vi.spyOn(performance, "now").mockReturnValue(1300);
-  recorder.start();
-  emit([0x90, 64, 100], 1310);
-  emit([0xb0, 64, 127], 1320);
-  pair.contextTime = 10.4;
-  pair.performanceTime = 1400;
-  vi.spyOn(performance, "now").mockReturnValue(1400);
-  const take = recorder.stop();
-  expect(take.startTime).toBe(10.3);
-  expect(take.notes).toHaveLength(1);
-  expect(take.notes[0]).toMatchObject({ pitch: 64, velocity: 100, end: take.duration });
-  expect(take.events).toHaveLength(2);
-  recorder.dispose();
+describe("MidiRecorder on a clock", () => {
+  test("a quantized take starts on the next bar line and reports its beat; notes are relative to the take at the clock's tempo", async () => {
+    const { ctx, recorder, emit, clock } = setup();
+    clock.attach(recorder);
+    clock.start(10); // beat b is at 10 + b / 2
+    ctx.currentTime = 10.3; // beat 0.6
+    const take = recorder.record({ quantize: "1m", length: "1m" });
+    await Promise.resolve();
+    expect(recorder.cells.state.value).toBe("armed");
+    expect(recorder.cells.startsAt.value).toBeCloseTo(12, 6); // beat 4
+    emit([0x90, 60, 100], 11.5); // before the take: ignored
+    ctx.currentTime = 12;
+    vi.advanceTimersByTime(1800);
+    expect(recorder.cells.state.value).toBe("recording");
+    expect(recorder.cells.startedAt.value).toBeCloseTo(12, 6);
+    emit([0x90, 62, 100], 12.25); // beat 4.5
+    emit([0x80, 62, 0], 12.75); // beat 5.5
+    emit([0x90, 64, 100], 13.5); // beat 7, held at the end
+    emit([0x90, 65, 100], 14.5); // after the end: ignored
+    ctx.currentTime = 14;
+    vi.advanceTimersByTime(2100);
+    const result = await take;
+    expect(result.startBeat).toBeCloseTo(4, 6);
+    expect(result.startTime).toBeCloseTo(12, 6);
+    expect(result.endTime).toBeCloseTo(14, 6);
+    expect(result.duration).toBeCloseTo(4, 6);
+    expect(result.notes.map((n) => [n.pitch, +n.start.toFixed(6), +n.duration.toFixed(6)])).toEqual([
+      [62, 0.5, 1],
+      [64, 3, 1],
+    ]);
+    clock.dispose();
+  });
+
+  test("a call exactly on a boundary starts there", async () => {
+    const { ctx, recorder, clock } = setup();
+    clock.attach(recorder);
+    clock.start(10);
+    ctx.currentTime = 12; // beat 4
+    const take = recorder.record({ quantize: "1m", length: 1 });
+    await Promise.resolve();
+    expect(recorder.cells.startsAt.value ?? recorder.cells.startedAt.value).toBeCloseTo(12, 6);
+    ctx.currentTime = 13;
+    vi.advanceTimersByTime(1100);
+    expect((await take).startBeat).toBeCloseTo(4, 6);
+    clock.dispose();
+  });
+
+  test("a quantized start needs a playing clock; leaving the transport before the start cancels the take", async () => {
+    const { ctx, recorder, clock } = setup();
+    clock.attach(recorder);
+    const idle = (await settled(recorder.record({ quantize: "1m" }))) as { error: DOMException };
+    expect(idle.error).toMatchObject({ name: "InvalidStateError", message: "MidiRecorder quantize needs a playing clock." });
+    clock.start(10);
+    ctx.currentTime = 10.3;
+    const take = settled(recorder.record({ quantize: "1m" }));
+    expect(recorder.cells.state.value).toBe("armed");
+    clock.stop();
+    expect(((await take) as { error: DOMException }).error).toMatchObject({ name: "AbortError" });
+    clock.dispose();
+  });
+
+  test.each(["stop", "pause", "seek", "detach"] as const)("a take armed with `when` is cancelled when the clock %s", async (reason) => {
+    const { ctx, recorder, clock } = setup();
+    const detach = clock.attach(recorder);
+    clock.start(10);
+    ctx.currentTime = 10.3;
+    const take = settled(recorder.record({ when: 11 }));
+    expect(recorder.cells.state.value).toBe("armed");
+    if (reason === "stop") clock.stop();
+    else if (reason === "pause") clock.pause();
+    else if (reason === "seek") clock.seek(8);
+    else detach();
+    expect(((await take) as { error: DOMException }).error).toMatchObject({ name: "AbortError" });
+    expect(recorder.cells.state.value).toBe("idle");
+    expect(recorder.cells.startsAt.value).toBeNull();
+    clock.dispose();
+  });
+
+  test.each(["stop", "pause", "seek", "detach"] as const)("a running take survives the clock %s and is closed by stop()", async (reason) => {
+    const { ctx, recorder, emit, clock } = setup();
+    const detach = clock.attach(recorder);
+    clock.start(10);
+    ctx.currentTime = 10.3;
+    const take = recorder.record();
+    emit([0x90, 60, 100], 10.35);
+    if (reason === "stop") clock.stop();
+    else if (reason === "pause") clock.pause();
+    else if (reason === "seek") clock.seek(8);
+    else detach();
+    expect(recorder.cells.state.value).toBe("recording");
+    emit([0x80, 60, 0], 10.4);
+    ctx.currentTime = 10.5;
+    await recorder.stop();
+    expect((await take).notes).toHaveLength(1);
+    clock.dispose();
+  });
+
+  test("a take that is already recording survives a transport stop; the clock's bpm sets beats when it is not playing", async () => {
+    const { ctx, recorder, emit, clock } = setup();
+    clock.attach(recorder);
+    clock.bpm.value = 60;
+    const take = recorder.record({ when: 10 });
+    emit([0x90, 60, 100], 10);
+    emit([0x80, 60, 0], 11);
+    ctx.currentTime = 12;
+    const result = await recorder.stop();
+    expect(result.startBeat).toBeNull();
+    expect(result.notes[0].duration).toBeCloseTo(1, 6); // 1 s at 60 bpm
+    expect(result.duration).toBeCloseTo(2, 6);
+    await take;
+    clock.dispose();
+  });
+
+  test("cells.state is tracked", async () => {
+    const { ctx, recorder } = setup();
+    const states: string[] = [];
+    const stop = effect(() => void states.push(recorder.cells.state.value));
+    const take = recorder.record();
+    ctx.currentTime = 10.1;
+    await recorder.stop();
+    await take;
+    recorder.dispose();
+    stop();
+    expect(states).toEqual(["idle", "recording", "idle", "disposed"]);
+  });
 });
 
-test("lifecycle errors leave the input borrowed and dispose is final", () => {
-  const { clock, input, recorder, emit } = setup();
-  const other = vi.fn();
-  input.addEventListener("midimessage", other);
-  expect(() => recorder.stop()).toThrow("MidiRecorder has no active take to stop.");
-  clock.state = "suspended";
-  expect(() => recorder.start()).toThrow("MidiRecorder needs a running AudioContext.");
-  clock.state = "running";
-  expect(() => recorder.start({ when: NaN })).toThrow("MidiRecorder time must be finite, non-negative seconds.");
-  recorder.start();
-  expect(() => recorder.start()).toThrow("MidiRecorder already has an active take.");
-  recorder.dispose();
-  expect(recorder.cells.state.value).toBe("disposed");
-  emit([0x90, 60, 90], 1100);
-  expect(other).toHaveBeenCalledTimes(1);
-  expect(() => recorder.start()).toThrow("MidiRecorder is disposed.");
-  expect(() => recorder.stop()).toThrow("MidiRecorder is disposed.");
-});
-
-test("before an output timestamp exists, event times use a sampled performance/audio pair", () => {
-  const { clock, pair, recorder, emit } = setup();
-  pair.contextTime = 0;
-  pair.performanceTime = 0;
-  clock.currentTime = 2;
-  recorder.start();
-  emit([0x90, 67, 90], 1050);
-  clock.currentTime = 2.1;
-  vi.spyOn(performance, "now").mockReturnValue(1100);
-  const take = recorder.stop();
-  expect(take.startTime).toBe(2);
-  expect(take.notes[0].start).toBeCloseTo(0.05, 6);
-  expect(take.notes[0].end).toBeCloseTo(0.1, 6);
-  recorder.dispose();
+describe("MidiRecorder output latency", () => {
+  test("a note played right after record() counts even though the output position trails the context time", async () => {
+    const { ctx, recorder, emit } = setup();
+    ctx.getOutputTimestamp = () => ({ contextTime: ctx.currentTime - 0.05, performanceTime: ctx.currentTime * 1000 });
+    vi.spyOn(performance, "now").mockImplementation(() => ctx.currentTime * 1000);
+    const take = recorder.record();
+    emit([0x90, 60, 100], 10); // heard at 9.95, the output position when it was played
+    emit([0x80, 60, 0], 10.5);
+    ctx.currentTime = 11;
+    await recorder.stop();
+    const result = await take;
+    expect(result.notes).toHaveLength(1);
+    expect(result.startTime).toBeCloseTo(9.95, 6);
+  });
 });

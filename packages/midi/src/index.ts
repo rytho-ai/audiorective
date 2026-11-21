@@ -1,9 +1,18 @@
-/** Pure MIDI note data, editing, queries and playback-event projection. */
-export type { MidiRange, MidiNote, MidiTempo, MidiSignature, MidiData, RecordedMidiEvent, RecordedMidi, ParsedMidi } from "./midi-data";
-export { visibleMidiNotes } from "./midi-data";
-export { parseMidi, tickToSeconds } from "./midi-file";
+/** Pure MIDI note data, the playable `MidiClip`, file parsing and playback-event projection. No DOM, no AudioContext. */
+export type { MidiNote, NoteInit, DraftNote, MidiRange, MidiData, ParsedMidi, Instrument, MidiTake, MidiTakeEvent } from "./midi-data";
+export { visibleMidiNotes, noteBeats } from "./midi-data";
+export { parseMidi } from "./midi-file";
 export { midiGrid } from "./midi-grid";
 export { compileMidiPlaybackEvents } from "./midi-playback";
-export type { MidiPlaybackSource, MidiPlaybackEvent } from "./midi-playback";
-export { MidiSequence } from "./MidiSequence";
-export type { MidiSequenceState, MidiSequenceCells } from "./MidiSequence";
+export type { MidiPlaybackSource, MidiPlaybackSourceEvent, MidiPlaybackEvent } from "./midi-playback";
+export { MidiClip } from "./MidiClip";
+export type {
+  MidiClipOptions,
+  NoteHit,
+  NoteTransform,
+  ClipLength,
+  ClipResetReason,
+  ClipWindow,
+  ClipTransport,
+  ClipTransportChange,
+} from "./MidiClip";

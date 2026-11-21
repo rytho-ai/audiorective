@@ -1,8 +1,8 @@
 /** MIDI inspector: contrasting layouts/drawing share widget-owned gestures, data and caller audition. */
 import { MidiRecorder } from "@audiorective/midi/web";
-import type { RecordedMidi } from "@audiorective/midi";
-import { MidiSequence, midiGrid } from "@audiorective/midi";
-import { mountPianoRoll, type PianoRollRenderer, type PianoRollHandle } from "@audiorective/widgets/piano-roll";
+import { batch, cell } from "@audiorective/core";
+import { MidiClip, midiGrid, parseMidi, type MidiPlaybackSource, type MidiTake } from "@audiorective/midi";
+import { mountPianoRoll, pianoRollModel, type PianoRollRenderer, type PianoRollHandle } from "@audiorective/widgets/piano-roll";
 import { rightKeyboardLayout } from "./layout";
 import type { Dependencies, MidiApp, Note, Range } from "./audition";
 
@@ -19,7 +19,7 @@ const ribbonRenderer: PianoRollRenderer = (root) => {
       const row = frame.height / (frame.pitches.high - frame.pitches.low + 1);
       const elements = frame.notes.map((note) => {
         const x = frame.timeToX(note.start),
-          end = frame.timeToX(note.end);
+          end = frame.timeToX(note.start + note.duration);
         const y = frame.pitchToY(note.pitch) + row / 2;
         const half = Math.max(2, row * 0.34),
           width = Math.max(4, end - x);
@@ -29,14 +29,14 @@ const ribbonRenderer: PianoRollRenderer = (root) => {
           "points",
           `${x},${y} ${x + Math.min(5, width / 2)},${y - half} ${x + width},${y - half * 0.5} ${x + width},${y + half * 0.5} ${x + Math.min(5, width / 2)},${y + half}`,
         );
-        ribbon.setAttribute("fill", `hsl(${210 - note.velocity * 1.3} 85% 62%)`);
+        ribbon.setAttribute("fill", `hsl(${210 - note.velocity * 165} 85% 62%)`);
         ribbon.setAttribute("stroke", "#eefaff");
         ribbon.setAttribute("stroke-width", ".6");
         ribbon.setAttribute("tabindex", "0");
         ribbon.setAttribute("role", "button");
         ribbon.setAttribute(
           "aria-label",
-          `Pitch ${note.pitch}, velocity ${note.velocity}, ${note.start.toFixed(3)} to ${note.end.toFixed(3)} seconds`,
+          `Pitch ${note.pitch}, velocity ${note.velocity.toFixed(2)}, ${note.start.toFixed(3)} to ${(note.start + note.duration).toFixed(3)} beats`,
         );
         ribbon.style.cssText = "pointer-events:auto;cursor:pointer";
         ribbon.onpointerdown = (event) => frame.onNotePointerDown(note, event);
@@ -58,8 +58,10 @@ const ribbonRenderer: PianoRollRenderer = (root) => {
 };
 
 export function mountMidiApp(root: HTMLElement, deps: Dependencies): MidiApp {
-  const model = new MidiSequence();
-  let recordedSource: RecordedMidi | null = null;
+  const clip = new MidiClip();
+  const length = cell(4);
+  const model = pianoRollModel(clip, { duration: () => length.value });
+  let recordedSource: MidiPlaybackSource | null = null;
   const sound = deps.makeAuditioner(() => ({ ...model.getState(), source: recordedSource }));
   const events = new AbortController();
   let midiAccess: MIDIAccess | null = null;
@@ -78,8 +80,8 @@ export function mountMidiApp(root: HTMLElement, deps: Dependencies): MidiApp {
       <label>Open MIDI <input data-control="source" type="file" accept=".mid,.midi,audio/midi"></label>
       <button data-control="play" type="button">Play</button><button data-control="pause" type="button">Pause</button>
       <label>Snap <select data-control="snap"><option value="beat">Beat</option><option value="downbeat">Bar</option><option value="off">Off</option></select></label>
-      <label>Scroll to seconds <input data-control="scroll" type="number" min="0" value="0" step="0.1" style="width:80px"></label>
-      <label>Seek seconds <input data-control="seek" type="number" min="0" value="0" step="0.1" style="width:80px"></label>
+      <label>Scroll to beat <input data-control="scroll" type="number" min="0" value="0" step="0.1" style="width:80px"></label>
+      <label>Seek beat <input data-control="seek" type="number" min="0" value="0" step="0.1" style="width:80px"></label>
       <button data-control="remove" type="button">Remove second view</button>
     </div>
     <fieldset><legend>Record MIDI take</legend><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
@@ -92,7 +94,7 @@ export function mountMidiApp(root: HTMLElement, deps: Dependencies): MidiApp {
     <output data-control="summary"></output><output data-control="status" aria-live="polite"></output>
     <fieldset><legend>Inspected note</legend><output data-control="inspection">Click a note in either view.</output>
       <label>Pitch <input data-control="pitch" type="number" min="0" max="127" step="1" disabled></label>
-      <label>Velocity <input data-control="velocity" type="number" min="0" max="127" step="1" disabled></label>
+      <label>Velocity <input data-control="velocity" type="number" min="0" max="1" step="0.01" disabled></label>
     </fieldset>
     <div data-app-view="0"></div><div data-app-view="1" style="--waveform-accent:#df9dff"></div>`;
   root.append(host);
@@ -110,7 +112,7 @@ export function mountMidiApp(root: HTMLElement, deps: Dependencies): MidiApp {
     updateSummary();
   };
   const onNoteEdit: NonNullable<Parameters<typeof mountPianoRoll>[1]["onNoteEdit"]> = ({ note }) =>
-    editNote(note.id, { start: note.start, end: note.end, pitch: note.pitch });
+    editNote(note.id, { start: note.start, duration: note.duration, pitch: note.pitch });
   const first = mountPianoRoll(firstRoot, { model, snap: "beat", label: "Note buttons", onNoteClick: inspect, onNoteEdit });
   let second: PianoRollHandle | null = mountPianoRoll(secondRoot, {
     model,
@@ -125,13 +127,13 @@ export function mountMidiApp(root: HTMLElement, deps: Dependencies): MidiApp {
   function updateSummary() {
     const state = model.getState(),
       range = state.selection;
-    summary.textContent = `${state.notes.length} notes · ${state.duration.toFixed(3)} seconds · ${range ? `Selection ${range.start.toFixed(3)}–${range.end.toFixed(3)} seconds` : recordedSource ? "Full take" : "Full file"}`;
+    summary.textContent = `${state.notes.length} notes · ${state.duration.toFixed(3)} beats · ${range ? `Selection ${range.start.toFixed(3)}–${range.end.toFixed(3)} beats` : recordedSource ? "Full take" : "Full file"}`;
     const note = state.notes.find((value) => value.id === inspectedId);
     pitch.disabled = velocity.disabled = !note;
     if (note) {
-      inspection.textContent = `${note.id}: ${note.start.toFixed(3)}–${note.end.toFixed(3)}s, channel ${note.channel}, track ${note.track}. `;
+      inspection.textContent = `${note.id}: ${note.start.toFixed(3)}–${(note.start + note.duration).toFixed(3)} beats, channel ${note.channel}. `;
       pitch.value = String(note.pitch);
-      velocity.value = String(note.velocity);
+      velocity.value = note.velocity.toFixed(2);
     } else inspection.textContent = "Click a note in either view. ";
   }
   const unsubscribe = model.subscribe(updateSummary);
@@ -139,10 +141,14 @@ export function mountMidiApp(root: HTMLElement, deps: Dependencies): MidiApp {
   function alive() {
     if (dead) throw new Error("MIDI app is disposed");
   }
-  function editNote(id: string, patch: Partial<Pick<Note, "pitch" | "velocity" | "start" | "end">>) {
+  function editNote(id: string, patch: Partial<Pick<Note, "pitch" | "velocity" | "start" | "duration">>) {
     alive();
     sound.pause();
-    model.updateNote(id, patch);
+    clip.edit((draft) => {
+      const note = draft.find((value) => value.id === id);
+      if (!note) throw new Error(`MIDI note ${id} does not exist.`);
+      Object.assign(note, patch);
+    });
     fitPitches();
   }
   function fitPitches() {
@@ -159,7 +165,12 @@ export function mountMidiApp(root: HTMLElement, deps: Dependencies): MidiApp {
     alive();
     cancelRecording();
     sound.pause();
-    const parsed = model.load(bytes);
+    const parsed = parseMidi(bytes);
+    batch(() => {
+      clip.setNotes(parsed.notes);
+      length.value = parsed.duration;
+      model.setSelection(null);
+    });
     recordedSource = null;
     sound.seek(0);
     inspectedId = null;
@@ -197,7 +208,7 @@ export function mountMidiApp(root: HTMLElement, deps: Dependencies): MidiApp {
       }),
     );
     if (inputs.some((input) => input.id === previous)) midiInput.value = previous;
-    if (recorder && !inputs.some((input) => input.id === recorder?.input.id)) {
+    if (recorder && !inputs.some((input) => input.id === (recorder?.input as MIDIInput | undefined)?.id)) {
       cancelRecording();
       status.textContent = "MIDI input disconnected; take discarded.";
     }
@@ -253,13 +264,19 @@ export function mountMidiApp(root: HTMLElement, deps: Dependencies): MidiApp {
       if (input.state !== "connected") throw new Error("MIDI input disconnected before recording.");
       sound.pause();
       const next = new MidiRecorder(deps.context, input);
-      try {
-        next.start();
-        recorder = next;
-      } catch (error) {
-        next.dispose();
-        throw error;
-      }
+      recorder = next;
+      next.record().then(
+        (take) => {
+          if (recorder === next) finishRecording(next, take);
+        },
+        (error: unknown) => {
+          if (recorder !== next || (error instanceof DOMException && error.name === "AbortError")) return;
+          next.dispose();
+          recorder = null;
+          refreshInputs();
+          report(error);
+        },
+      );
       status.textContent = "Recording MIDI take…";
     } finally {
       startingRecord = false;
@@ -268,13 +285,20 @@ export function mountMidiApp(root: HTMLElement, deps: Dependencies): MidiApp {
   }
   function stopRecording() {
     alive();
-    if (!recorder) return;
-    const take = recorder.stop();
-    recorder.dispose();
+    if (recorder) void recorder.stop().catch(report);
+  }
+  /** The take's notes are beats at the demo tempo (no clock is attached); its other messages keep the pedal in playback. */
+  function finishRecording(finished: MidiRecorder, take: MidiTake) {
+    if (dead) return;
+    finished.dispose();
     recorder = null;
     sound.pause();
-    recordedSource = take;
-    model.setData(take);
+    recordedSource = { events: take.events };
+    batch(() => {
+      clip.setNotes(take.notes);
+      length.value = take.duration;
+      model.setSelection(null);
+    });
     sound.seek(0);
     inspectedId = null;
     const emptyGrid = { beats: [], downbeats: [] };
@@ -329,12 +353,12 @@ export function mountMidiApp(root: HTMLElement, deps: Dependencies): MidiApp {
     if (mode === "off" || mode === "beat" || mode === "downbeat") for (const view of views()) view.setSnap(mode);
   });
   listen("scroll", "change", () => {
-    const seconds = control<HTMLInputElement>("scroll").valueAsNumber;
-    if (Number.isFinite(seconds)) for (const view of views()) view.scrollTo(seconds);
+    const beat = control<HTMLInputElement>("scroll").valueAsNumber;
+    if (Number.isFinite(beat)) for (const view of views()) view.scrollTo(beat);
   });
   listen("seek", "change", () => {
-    const seconds = control<HTMLInputElement>("seek").valueAsNumber;
-    if (Number.isFinite(seconds)) sound.seek(seconds);
+    const beat = control<HTMLInputElement>("seek").valueAsNumber;
+    if (Number.isFinite(beat)) sound.seek(beat);
   });
   listen("pitch", "change", () => {
     if (inspectedId)
@@ -380,9 +404,9 @@ export function mountMidiApp(root: HTMLElement, deps: Dependencies): MidiApp {
     pause() {
       if (!dead) sound.pause();
     },
-    seek(seconds: number) {
+    seek(beat: number) {
       alive();
-      sound.seek(seconds);
+      sound.seek(beat);
       for (const view of views()) view.setPlayhead(sound.position);
     },
     get position() {
@@ -407,6 +431,7 @@ export function mountMidiApp(root: HTMLElement, deps: Dependencies): MidiApp {
       second = null;
       unsubscribe();
       model.dispose();
+      clip.dispose();
       host.remove();
     },
   };

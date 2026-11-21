@@ -1,108 +1,198 @@
 import { describe, expect, test } from "vitest";
 import { unzipSync, zipSync } from "fflate";
-import type { RecordedMidi } from "@audiorective/midi";
+import type { MidiTake } from "@audiorective/midi";
 import { effect } from "@audiorective/core";
 import { Project, TempoMap, openDawProject, saveDawProject } from "../src";
+import type { ProjectMidiData } from "../src";
 
 const text = new TextDecoder();
 const bytes = new TextEncoder();
+/** MIDI velocity 90 as the 0..1 note velocity. */
+const v90 = 90 / 127;
 
-function midiTake(releaseFirst: boolean): RecordedMidi {
-  const off = { audioTime: 10.03, data: new Uint8Array([0x80, 60, 0]), noteId: "note-1" };
-  const pedal = { audioTime: 10.03, data: new Uint8Array([0xb0, 64, 127]) };
+const pedalOn = () => new Uint8Array([0xb0, 64, 127]);
+
+/** A recorded take: one note (note messages are not in `events`) and a pedal press at beat 0.06. */
+function midiTake(): MidiTake {
   return {
     startTime: 10,
     endTime: 10.1,
-    duration: 0.1,
-    notes: [{ id: "note-1", start: 0, end: 0.03, pitch: 60, velocity: 90, channel: 0, track: 0 }],
-    events: [{ audioTime: 10, data: new Uint8Array([0x90, 60, 90]), noteId: "note-1" }, ...(releaseFirst ? [off, pedal] : [pedal, off])],
+    startBeat: null,
+    duration: 0.2,
+    notes: [{ id: "note-1", start: 0, duration: 0.06, pitch: 60, velocity: v90, channel: 0 }],
+    events: [{ beat: 0.06, data: pedalOn() }],
+  };
+}
+
+/** Clip content whose source events carry the note messages too, so the private detail can keep the order of equal-time messages. */
+function pedalClip(releaseFirst: boolean): ProjectMidiData {
+  const off = { time: 0.06, data: new Uint8Array([0x80, 60, 0]), noteId: "note-1" };
+  const pedal = { time: 0.06, data: pedalOn() };
+  return {
+    duration: 0.2,
+    notes: [{ id: "note-1", start: 0, duration: 0.06, pitch: 60, velocity: v90, channel: 0 }],
+    events: [{ time: 0, data: new Uint8Array([0x90, 60, 90]), noteId: "note-1" }, ...(releaseFirst ? [off, pedal] : [pedal, off])],
   };
 }
 
 const midiBytes = (events: readonly { data: Uint8Array }[]) => events.map((event) => [...event.data]);
 
 describe("project tempo map", () => {
-  test("mixed MIDI units remain ordered by audible project time after a tempo edit", () => {
+  test("MIDI clips stay ordered by beat position, whatever the tempo", () => {
     const project = new Project({ bpm: 120 });
     project.setTempoChanges([{ beat: 4, bpm: 60 }]);
     const track = project.addTrack("Keys", "midi");
-    const seconds = project.addMidiClip(track.id, { duration: 1, notes: [] }, 3.5);
-    const beats = project.addMidiClip(track.id, { duration: 1, notes: [] }, 6, { timeUnit: "beats" });
-    expect(project.tracks[0].clips.map((clip) => clip.id)).toEqual([seconds.id, beats.id]);
-    project.setTempoChanges([{ beat: 4, bpm: 120 }]);
-    expect(project.tracks[0].clips.map((clip) => clip.id)).toEqual([beats.id, seconds.id]);
+    const late = project.addMidiClip(track.id, { duration: 1, notes: [] }, 6);
+    const early = project.addMidiClip(track.id, { duration: 1, notes: [] }, 2);
+    expect(project.tracks[0].clips.map((clip) => clip.id)).toEqual([early.id, late.id]);
+    project.setTempoChanges([{ beat: 1, bpm: 30 }]);
+    expect(project.tracks[0].clips.map((clip) => clip.id)).toEqual([early.id, late.id]);
     project.dispose();
   });
 
-  test("beat MIDI stretches across tempo changes while seconds MIDI stays fixed", () => {
+  test("a take placed in beats follows tempo changes and round trips", () => {
     const project = new Project({ bpm: 120 });
     project.setTempoChanges([{ beat: 4, bpm: 60 }]);
     const track = project.addTrack("Keys", "midi");
-    const take: RecordedMidi = {
+    const take: MidiTake = {
       startTime: 10,
       endTime: 12,
-      duration: 2,
-      notes: [{ id: "held", start: 0, end: 1.5, pitch: 60, velocity: 90, channel: 0, track: 0 }],
+      startBeat: 7,
+      duration: 2.5,
+      notes: [{ id: "held", start: 0, duration: 2, pitch: 60, velocity: v90, channel: 0 }],
       events: [
-        { audioTime: 10, data: new Uint8Array([0x90, 60, 90]), noteId: "held" },
-        { audioTime: 10.5, data: new Uint8Array([0xb0, 64, 127]) },
-        { audioTime: 11.5, data: new Uint8Array([0x80, 60, 0]), noteId: "held" },
-        { audioTime: 12, data: new Uint8Array([0xb0, 64, 0]) },
+        { beat: 1, data: pedalOn() },
+        { beat: 2.5, data: new Uint8Array([0xb0, 64, 0]) },
       ],
     };
-    const beatClip = project.addMidiTake(track.id, take, 1.5, { timeUnit: "beats" });
-    const secondsClip = project.addMidiTake(track.id, take, 1.5);
+    expect(project.addMidiTake(track.id, take).time).toBe(7);
+    const beatClip = project.addMidiTake(track.id, take, 3);
+    expect(project.tracks[0].clips[0]).toBe(beatClip);
+    expect(project.addMidiTake(track.id, { ...take, startBeat: null }).time).toBe(0);
     expect(beatClip.time).toBe(3);
     expect(beatClip.duration).toBe(2.5);
-    expect(beatClip.sequence.getState().notes[0]).toMatchObject({ start: 0, end: 2 });
-    expect(beatClip.playbackEvents().map((event) => event.time)).toEqual([0, 1, 2, 2.5]);
-    expect(midiBytes(beatClip.playbackEvents())).toEqual(midiBytes(secondsClip.playbackEvents()));
+    expect(beatClip.midi.notes.value[0]).toMatchObject({ start: 0, duration: 2 });
+    expect(beatClip.playbackEvents().map((event) => event.beat)).toEqual([0, 1, 2, 2.5]);
+    expect(project.clipTimeSeconds(beatClip, 2)).toBe(3);
     project.setTempoChanges([{ beat: 4, bpm: 120 }]);
     expect(project.clipTimeSeconds(beatClip, 2)).toBe(2.5);
-    expect(project.clipTimeSeconds(secondsClip, 1.5)).toBe(3);
     const opened = openDawProject(saveDawProject(project));
     expect(opened.warnings).toEqual([]);
-    const roundTrip = opened.project.tracks[0].clips.find((clip) => clip.kind === "midi" && clip.timeUnit === "beats");
-    expect(roundTrip).toBeDefined();
-    if (roundTrip?.kind !== "midi") throw new Error("Expected beat MIDI clip");
-    expect(roundTrip.playbackEvents().map((event) => event.time)).toEqual([0, 1, 2, 2.5]);
+    const roundTrip = opened.project.tracks[0].clips.find((clip) => clip.time === 3);
+    if (roundTrip?.kind !== "midi") throw new Error("Expected MIDI clip");
+    expect(roundTrip.playbackEvents().map((event) => event.beat)).toEqual([0, 1, 2, 2.5]);
     expect(midiBytes(roundTrip.playbackEvents())).toEqual(midiBytes(beatClip.playbackEvents()));
     const [left, right] = opened.project.splitClip(roundTrip.id, 1);
     expect([left.time, right.time]).toEqual([3, 4]);
-    expect(right.kind === "midi" && right.timeUnit).toBe("beats");
+    expect(right.kind).toBe("midi");
     opened.project.dispose();
     project.dispose();
   });
 
-  test("a legacy seconds sidecar cannot attach to beat-labelled XML", () => {
+  test("notes beyond the clip duration are cut at playback", () => {
     const project = new Project();
     const track = project.addTrack("Keys", "midi");
-    project.addMidiTake(track.id, midiTake(true), 0);
+    const clip = project.addMidiClip(
+      track.id,
+      {
+        duration: 2,
+        notes: [
+          { id: "long", start: 1, duration: 4, pitch: 60, velocity: 0.5 },
+          { id: "after", start: 2, duration: 1, pitch: 62, velocity: 0.5 },
+        ],
+        events: [{ time: 3, data: pedalOn() }],
+      },
+      0,
+    );
+    expect(clip.playbackEvents().map((event) => [event.beat, ...event.data])).toEqual([
+      [1, 0x90, 60, 64],
+      [2, 0x80, 60, 0],
+    ]);
+    project.dispose();
+  });
+
+  test("MIDI is written in beats with note velocity 0..1", () => {
+    const project = new Project();
+    const track = project.addTrack("Keys", "midi");
+    project.addMidiClip(track.id, { duration: 4, notes: [{ id: "n", start: 1, duration: 0.5, pitch: 64, velocity: 0.5, channel: 3 }] }, 2);
+    const xml = text.decode(unzipSync(saveDawProject(project))["project.xml"]);
+    expect(xml).toMatch(/<Clips id="[^"]+" timeUnit="beats">/);
+    expect(xml).toContain('<Clip time="2" duration="4" contentTimeUnit="beats">');
+    expect(xml).toMatch(/<Notes id="[^"]+" timeUnit="beats">/);
+    expect(xml).toContain('<Note time="1" duration="0.5" channel="3" key="64" vel="0.5"/>');
+    const opened = openDawProject(saveDawProject(project));
+    expect(opened.warnings).toEqual([]);
+    const clip = opened.project.tracks[0].clips[0];
+    if (clip.kind !== "midi") throw new Error("Expected MIDI clip");
+    expect(clip.midi.notes.value[0]).toMatchObject({ start: 1, duration: 0.5, pitch: 64, velocity: 0.5, channel: 3 });
+    opened.project.dispose();
+    project.dispose();
+  });
+
+  test("a seconds-unit MIDI clip converts to beats through the tempo map", () => {
+    const project = new Project({ bpm: 120 });
+    project.setTempoChanges([{ beat: 4, bpm: 60 }]);
+    const track = project.addTrack("Keys", "midi");
+    project.addMidiClip(
+      track.id,
+      {
+        duration: 4,
+        notes: [
+          { id: "a", start: 0, duration: 4, pitch: 60, velocity: 1 },
+          { id: "b", start: 2, duration: 1, pitch: 62, velocity: 0.5 },
+        ],
+        events: [{ time: 2, data: new Uint8Array([0xb0, 1, 80]) }],
+      },
+      2,
+    );
     const files = unzipSync(saveDawProject(project));
-    const privateState = JSON.parse(text.decode(files["audiorective/state.json"]));
-    privateState.version = 1;
-    const plain = JSON.stringify({
-      time: 0,
-      duration: 0.1,
-      notes: [[0, 0.03, 60, 90, 0]],
-      controls: [{ time: 10.03 - 10, channel: 0, controller: 64, value: 127 }],
-    });
-    let hash = 2166136261;
-    for (const char of plain) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
-    privateState.clips[0].fingerprint = (hash >>> 0).toString(16).padStart(8, "0");
-    files["audiorective/state.json"] = bytes.encode(JSON.stringify(privateState));
-    const legacy = openDawProject(zipSync(files));
-    expect(legacy.warnings).toEqual([]);
-    legacy.project.dispose();
+    delete files["audiorective/state.json"];
+    // The clip spans beats 2..6: one second at 120 bpm, then two at 60 bpm. Beat 4 is 1 s into the clip.
     const xml = text
       .decode(files["project.xml"])
-      .replaceAll('contentTimeUnit="seconds"', 'contentTimeUnit="beats"')
-      .replace(/(<Clips[^>]*?)timeUnit="seconds"/, '$1timeUnit="beats"')
-      .replace(/(<(?:Lanes|Notes|Points) id="clip[^"]+" )timeUnit="seconds"/g, '$1timeUnit="beats"');
+      .replace(/(<Clips[^>]*?)timeUnit="beats"/, '$1timeUnit="seconds"')
+      .replace(/(<(?:Lanes|Notes|Points) id="clip[^"]+" )timeUnit="beats"/g, '$1timeUnit="seconds"')
+      .replace('<Clip time="2" duration="4" contentTimeUnit="beats">', '<Clip time="1" duration="3" contentTimeUnit="seconds">')
+      .replace('<Note time="0" duration="4"', '<Note time="0" duration="3"')
+      .replace('<Note time="2" duration="1"', '<Note time="1" duration="1"')
+      .replace('<IntegerPoint time="2"', '<IntegerPoint time="1"');
     files["project.xml"] = bytes.encode(xml);
+    const opened = openDawProject(zipSync(files));
+    expect(opened.warnings.some((warning) => warning.includes("no matching Audiorective event details"))).toBe(true);
+    const clip = opened.project.tracks[0].clips[0];
+    if (clip.kind !== "midi") throw new Error("Expected MIDI clip");
+    expect(clip.time).toBeCloseTo(2, 9);
+    expect(clip.duration).toBeCloseTo(4, 9);
+    const [a, b] = clip.midi.notes.value;
+    expect([a.start, a.duration]).toEqual([expect.closeTo(0, 9), expect.closeTo(4, 9)]);
+    expect([b.start, b.duration, b.velocity]).toEqual([expect.closeTo(2, 9), expect.closeTo(1, 9), 0.5]);
+    expect(clip.events[0].time).toBeCloseTo(2, 9);
+    opened.project.dispose();
+    project.dispose();
+  });
+
+  test("a note velocity above 1 is rejected", () => {
+    const project = new Project();
+    const track = project.addTrack("Keys", "midi");
+    project.addMidiClip(track.id, { duration: 1, notes: [{ id: "n", start: 0, duration: 1, pitch: 60, velocity: 0.5 }] }, 0);
+    const files = unzipSync(saveDawProject(project));
+    files["project.xml"] = bytes.encode(text.decode(files["project.xml"]).replace('vel="0.5"', 'vel="64"'));
+    expect(() => openDawProject(zipSync(files))).toThrow("Project XML has invalid vel on Note.");
+    project.dispose();
+  });
+
+  test("a version 2 private detail does not attach to MIDI clips", () => {
+    const project = new Project();
+    const track = project.addTrack("Keys", "midi");
+    project.addMidiClip(track.id, pedalClip(true), 0);
+    const files = unzipSync(saveDawProject(project));
+    const privateState = JSON.parse(text.decode(files["audiorective/state.json"]));
+    privateState.version = 2;
+    files["audiorective/state.json"] = bytes.encode(JSON.stringify(privateState));
     expect(openDawProject(zipSync(files)).warnings.some((warning) => warning.includes("no matching Audiorective event details"))).toBe(true);
     project.dispose();
   });
+
   test("converts both sides of a step and snaps in musical beats", () => {
     const map = new TempoMap(120, [{ beat: 4, bpm: 60 }]);
     expect([0, 2, 4, 6, 8].map((beat) => map.beatToSeconds(beat))).toEqual([0, 1, 2, 4, 6]);
@@ -251,21 +341,21 @@ describe("DAWproject native slice", () => {
       track.id,
       {
         duration: 2,
-        notes: [{ id: "held", start: 0.5, end: 1.5, pitch: 60, velocity: 90, channel: 0, track: 0 }],
+        notes: [{ id: "held", start: 0.5, duration: 1, pitch: 60, velocity: v90, channel: 0 }],
         events: [{ time: 1.25, data: new Uint8Array([0xb0, 1, 80]) }],
       },
       4,
     );
     const [left, right] = project.splitClip(clip.id, 1);
     if (left.kind !== "midi" || right.kind !== "midi") throw new Error("Expected MIDI clips");
-    expect(left.sequence.getState().notes[0]).toMatchObject({ start: 0.5, end: 1 });
-    expect(right.sequence.getState().notes[0]).toMatchObject({ start: 0, end: 0.5 });
-    expect(right.playbackEvents().find((event) => event.data[0] === 0xb0)?.time).toBe(0.25);
+    expect(left.midi.notes.value[0]).toMatchObject({ start: 0.5, duration: 0.5 });
+    expect(right.midi.notes.value[0]).toMatchObject({ start: 0, duration: 0.5 });
+    expect(right.playbackEvents().find((event) => event.data[0] === 0xb0)?.beat).toBe(0.25);
     const trimmed = project.trimClip(right.id, 0.25, 1);
     if (trimmed.kind !== "midi") throw new Error("Expected MIDI clip");
     expect(trimmed.time).toBe(5.25);
-    expect(trimmed.sequence.getState().notes[0]).toMatchObject({ start: 0, end: 0.25 });
-    expect(trimmed.playbackEvents().find((event) => event.data[0] === 0xb0)?.time).toBe(0);
+    expect(trimmed.midi.notes.value[0]).toMatchObject({ start: 0, duration: 0.25 });
+    expect(trimmed.playbackEvents().find((event) => event.data[0] === 0xb0)?.beat).toBe(0);
     const opened = openDawProject(saveDawProject(project));
     expect(opened.project.tracks[0].clips).toHaveLength(2);
     opened.project.dispose();
@@ -279,7 +369,7 @@ describe("DAWproject native slice", () => {
       track.id,
       {
         duration: 2,
-        notes: [{ id: "held", start: 0.5, end: 1.5, pitch: 60, velocity: 90, channel: 0, track: 0 }],
+        notes: [{ id: "held", start: 0.5, duration: 1, pitch: 60, velocity: v90, channel: 0 }],
         events: [
           { time: 0.75, data: new Uint8Array([0xb0, 64, 127]) },
           { time: 1.75, data: new Uint8Array([0xb0, 64, 0]) },
@@ -293,7 +383,7 @@ describe("DAWproject native slice", () => {
       part
         .playbackEvents()
         .filter((event) => event.data[1] === 64)
-        .map((event) => [event.time, event.data[2]]);
+        .map((event) => [event.beat, event.data[2]]);
     expect(controls(left)).toEqual([
       [0.75, 127],
       [1, 0],
@@ -368,8 +458,10 @@ describe("DAWproject native slice", () => {
     const project = new Project({ title: "A & B", bpm: 120, signature: [4, 4] });
     const midiTrack = project.addTrack("Keys", "midi");
     const audioTrack = project.addTrack("Mic", "audio");
-    const midi = project.addMidiTake(midiTrack.id, midiTake(true), 0.5);
-    midi.sequence.updateNote("note-1", { pitch: 62 });
+    const midi = project.addMidiClip(midiTrack.id, pedalClip(true), 0.5);
+    midi.midi.edit((draft) => {
+      draft[0].pitch = 62;
+    });
     const samples = new Float32Array([0, 0.25, -0.3, 0.75]);
     project.addAudioClip(audioTrack.id, { sampleRate: 48_000, channels: [samples] }, 1);
     project.setVolumeAutomation(midiTrack.id, [
@@ -379,7 +471,7 @@ describe("DAWproject native slice", () => {
     const archive = saveDawProject(project);
     const entries = unzipSync(archive);
     expect(Object.keys(entries).sort()).toEqual(["audio/clip4.wav", "audiorective/state.json", "metadata.xml", "project.xml"]);
-    expect(text.decode(entries["project.xml"])).toContain('contentTimeUnit="seconds"');
+    expect(text.decode(entries["project.xml"])).toContain('contentTimeUnit="beats"');
     expect(text.decode(entries["metadata.xml"])).toContain("A &amp; B");
 
     const opened = openDawProject(archive);
@@ -390,8 +482,9 @@ describe("DAWproject native slice", () => {
     const loadedMidi = opened.project.tracks[0].clips[0];
     expect(loadedMidi.kind).toBe("midi");
     if (loadedMidi.kind !== "midi") throw new Error("Expected MIDI clip");
-    expect(loadedMidi.sequence.getState().notes[0].id).toBe("note-1");
-    expect(loadedMidi.sequence.getState().notes[0].pitch).toBe(62);
+    expect(loadedMidi.time).toBe(0.5);
+    expect(loadedMidi.midi.notes.value[0].id).toBe("note-1");
+    expect(loadedMidi.midi.notes.value[0].pitch).toBe(62);
     expect(midiBytes(loadedMidi.playbackEvents())).toEqual([
       [0x90, 62, 90],
       [0x80, 62, 0],
@@ -416,8 +509,10 @@ describe("DAWproject native slice", () => {
     const files = [true, false].map((releaseFirst) => {
       const project = new Project();
       const track = project.addTrack("Keys", "midi");
-      const clip = project.addMidiTake(track.id, midiTake(releaseFirst), 0);
-      clip.sequence.updateNote("note-1", { pitch: 62 });
+      const clip = project.addMidiClip(track.id, pedalClip(releaseFirst), 0);
+      clip.midi.edit((draft) => {
+        draft[0].pitch = 62;
+      });
       const archive = saveDawProject(project);
       project.dispose();
       return archive;
@@ -444,19 +539,19 @@ describe("DAWproject native slice", () => {
   });
 
   test("interleaved controller lanes keep their private event alignment", () => {
-    const take = midiTake(false);
     const project = new Project();
     const track = project.addTrack("Keys", "midi");
-    project.addMidiTake(
+    const base = pedalClip(false);
+    project.addMidiClip(
       track.id,
       {
-        ...take,
+        ...base,
         events: [
-          take.events[0],
-          { audioTime: 10.01, data: new Uint8Array([0xb0, 64, 127]) },
-          { audioTime: 10.02, data: new Uint8Array([0xb0, 1, 80]) },
-          { audioTime: 10.025, data: new Uint8Array([0xb0, 64, 0]) },
-          take.events[2],
+          base.events![0],
+          { time: 0.01, data: pedalOn() },
+          { time: 0.02, data: new Uint8Array([0xb0, 1, 80]) },
+          { time: 0.025, data: new Uint8Array([0xb0, 64, 0]) },
+          base.events![2],
         ],
       },
       0,
@@ -479,8 +574,8 @@ describe("DAWproject native slice", () => {
   test("unsupported MIDI messages fail on save before portable content can be lost", () => {
     const project = new Project();
     const track = project.addTrack("Keys", "midi");
-    const take = midiTake(true);
-    project.addMidiTake(track.id, { ...take, events: [...take.events, { audioTime: 10.05, data: new Uint8Array([0xc0, 12]) }] }, 0);
+    const take = midiTake();
+    project.addMidiTake(track.id, { ...take, events: [...take.events, { beat: 0.1, data: new Uint8Array([0xc0, 12]) }] }, 0);
     expect(() => saveDawProject(project)).toThrow("Project MIDI has events outside supported portable content.");
     project.dispose();
   });
@@ -488,14 +583,14 @@ describe("DAWproject native slice", () => {
   test("an externally changed XML clip cannot reuse stale private MIDI events", () => {
     const project = new Project();
     const track = project.addTrack("Keys", "midi");
-    project.addMidiTake(track.id, midiTake(true), 0);
+    project.addMidiTake(track.id, midiTake(), 0);
     const entries = unzipSync(saveDawProject(project));
     entries["project.xml"] = bytes.encode(text.decode(entries["project.xml"]).replace('key="60"', 'key="65"'));
     const opened = openDawProject(zipSync(entries));
     expect(opened.warnings).toHaveLength(1);
     const clip = opened.project.tracks[0].clips[0];
     if (clip.kind !== "midi") throw new Error("Expected MIDI clip");
-    expect(clip.sequence.getState().notes[0].pitch).toBe(65);
+    expect(clip.midi.notes.value[0].pitch).toBe(65);
     expect(midiBytes(clip.playbackEvents())).toEqual([
       [0x90, 65, 90],
       [0xb0, 64, 127],
@@ -535,12 +630,12 @@ describe("DAWproject native slice", () => {
     const first = project.addTrack("Keys A", "midi");
     const second = project.addTrack("Keys B", "midi");
     const audio = project.addTrack("Drums", "audio");
-    const clip = project.addMidiTake(first.id, midiTake(true), 0);
-    const sequence = clip.sequence;
+    const clip = project.addMidiTake(first.id, midiTake(), 0);
+    const notes = clip.midi;
     project.moveClip(clip.id, second.id, 2);
     expect(project.tracks[0].clips).toHaveLength(0);
     expect(project.tracks[1].clips[0]).toBe(clip);
-    expect(clip.sequence).toBe(sequence);
+    expect(clip.midi).toBe(notes);
     expect(clip.time).toBe(2);
     const copy = project.duplicateClip(clip.id, 4);
     expect(copy.id).not.toBe(clip.id);
@@ -585,22 +680,22 @@ describe("DAWproject native slice", () => {
 });
 
 describe("project content tracking", () => {
-  test("a note edit does not bump the structural revision, but cells.content re-runs; selection does not", () => {
+  test("a note edit does not bump the structural revision, but cells.content re-runs", () => {
     const project = new Project();
     const track = project.addTrack("Keys", "midi");
-    const clip = project.addMidiTake(track.id, midiTake(true), 0);
+    const clip = project.addMidiTake(track.id, midiTake(), 0);
     const structural: number[] = [];
     const content: number[] = [];
     const stopStructural = effect(() => void structural.push(project.cells.revision.value));
     const stopContent = effect(() => void content.push(project.cells.content.value.revision));
     const revision = project.cells.revision.value;
-    clip.sequence.updateNote("note-1", { pitch: 65 });
+    clip.midi.edit((draft) => {
+      draft[0].pitch = 65;
+    });
     expect(project.cells.revision.value).toBe(revision);
     expect(structural).toHaveLength(1);
     expect(content).toHaveLength(2);
     expect(project.cells.content.value.midi.get(clip.id)!.notes[0].pitch).toBe(65);
-    clip.sequence.setSelection({ start: 0, end: 0.05 });
-    expect(content).toHaveLength(2);
     project.setTrackVolume(track.id, 0.5);
     expect(content).toHaveLength(3);
     expect(project.cells.content.value.revision).toBe(project.cells.revision.value);

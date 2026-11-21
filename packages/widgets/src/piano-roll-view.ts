@@ -63,19 +63,19 @@ export const defaultPianoRollRenderer: PianoRollRenderer = (root) => ({
         el.dataset.noteId = note.id;
         el.className = "ar-pr-note";
         const x = frame.timeToX(note.start),
-          end = frame.timeToX(note.end),
+          end = frame.timeToX(note.start + note.duration),
           h = frame.height / (frame.pitches.high - frame.pitches.low + 1);
         Object.assign(el.style, {
           left: `${x}px`,
           top: `${frame.pitchToY(note.pitch)}px`,
           width: `${Math.max(2, end - x)}px`,
           height: `${Math.max(2, h - 1)}px`,
-          opacity: String(0.3 + (0.7 * note.velocity) / 127),
+          opacity: String(0.3 + 0.7 * note.velocity),
         });
         el.textContent = name(note.pitch);
         el.setAttribute(
           "aria-label",
-          `${name(note.pitch)}, ${note.start.toFixed(3)} to ${note.end.toFixed(3)} ${frame.timeUnit}, velocity ${note.velocity}`,
+          `${name(note.pitch)}, ${note.start.toFixed(3)} to ${(note.start + note.duration).toFixed(3)} beats, velocity ${Math.round(note.velocity * 127)}`,
         );
         if (frame.editable) {
           el.title = "Drag to move; drag either edge to resize. Hold Alt to bypass snap.";

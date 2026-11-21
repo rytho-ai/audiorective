@@ -1,26 +1,15 @@
-/** Standard MIDI file decoding into source seconds, adapted from tactus-ui-dev core/midi.ts.
+/** Standard MIDI file decoding into beats (ticks / ppq), adapted from tactus-ui-dev core/midi.ts.
  * Track/channel/pitch pairing uses the reference FIFO policy.
  */
-import type { MidiNote, MidiTempo, MidiSignature, ParsedMidi } from "./midi-data";
+import type { MidiNote, ParsedMidi } from "./midi-data";
 
 const fail = (): never => {
   throw new Error("Invalid MIDI file.");
 };
 const freeze = <T extends object>(v: T): Readonly<T> => Object.freeze(v);
-export function tickToSeconds(tempos: readonly MidiTempo[], ppq: number, tick: number): number {
-  if (!Number.isInteger(ppq) || ppq <= 0 || !Number.isFinite(tick) || tick < 0)
-    throw new RangeError("MIDI ticks need positive PPQ and finite non-negative time.");
-  let seconds = 0,
-    from = 0,
-    us = 500_000;
-  for (const t of tempos) {
-    if (t.tick >= tick) break;
-    seconds += ((t.tick - from) * us) / ppq / 1e6;
-    from = t.tick;
-    us = t.usPerQuarter;
-  }
-  return seconds + ((tick - from) * us) / ppq / 1e6;
-}
+type RawTempo = { tick: number; usPerQuarter: number };
+type RawSignature = { tick: number; numerator: number; denominator: number };
+/** Parses a standard MIDI file (type 0 or 1). Notes are in beats and velocity 0..1; the file's own tempo is not applied. Throws `Invalid MIDI file.` on malformed bytes. */
 export function parseMidi(input: ArrayBuffer | Uint8Array): ParsedMidi {
   const bytes = input instanceof Uint8Array ? input : new Uint8Array(input),
     view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -34,8 +23,8 @@ export function parseMidi(input: ArrayBuffer | Uint8Array): ParsedMidi {
   if (format > 1) throw new Error("Only MIDI format 0 and 1 are supported.");
   if (ppq & 0x8000) throw new Error("SMPTE MIDI time division is not supported.");
   if (!ppq) fail();
-  const tempos: MidiTempo[] = [],
-    signatures: MidiSignature[] = [];
+  const tempos: RawTempo[] = [],
+    signatures: RawSignature[] = [];
   type Raw = { tick: number; on: boolean; pitch: number; velocity: number; channel: number; track: number };
   const raws: Raw[] = [];
   let at = 8 + headerLength,
@@ -120,12 +109,11 @@ export function parseMidi(input: ArrayBuffer | Uint8Array): ParsedMidi {
     notes.push(
       freeze({
         id: `note-${id++}`,
-        start: tickToSeconds(map, ppq, on.tick),
-        end: tickToSeconds(map, ppq, tick),
         pitch: on.pitch,
-        velocity: on.velocity,
+        velocity: on.velocity / 127,
+        start: on.tick / ppq,
+        duration: (tick - on.tick) / ppq,
         channel: on.channel,
-        track: on.track,
       }),
     );
   for (const raw of raws.sort((a, b) => a.tick - b.tick)) {
@@ -143,10 +131,9 @@ export function parseMidi(input: ArrayBuffer | Uint8Array): ParsedMidi {
   notes.sort((a, b) => a.start - b.start || a.pitch - b.pitch);
   return freeze({
     ppq,
-    tempos: freeze(map.map(freeze)),
-    signatures: freeze(signatures.map(freeze)),
+    tempos: freeze(map.map((t) => freeze({ beat: t.tick / ppq, bpm: 60_000_000 / t.usPerQuarter }))),
+    signatures: freeze(signatures.map((s) => freeze({ beat: s.tick / ppq, numerator: s.numerator, denominator: s.denominator }))),
     notes: freeze(notes),
-    duration: tickToSeconds(map, ppq, endTick),
-    endTick,
+    duration: endTick / ppq,
   });
 }

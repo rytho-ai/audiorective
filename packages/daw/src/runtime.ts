@@ -103,7 +103,7 @@ export class Workspace {
   }
   private readonly tracks = new Map<string, TrackRuntime>();
   private readonly scheduler: ClipScheduler;
-  private readonly sequenceOff: Array<() => void> = [];
+  private readonly noteOff: Array<() => void> = [];
   private readonly seekPoint = cell({ seconds: 0 });
   private activeTempoMap: TempoMap;
   private commitTail: Promise<void> = Promise.resolve();
@@ -347,7 +347,7 @@ export class Workspace {
       this.mixer.applyRouting(tracks);
       this.mixer.applyMixer();
       this.sessionRevision.value++;
-      this.bindSequences();
+      this.bindNotes();
       this.seek(position);
       this.topologyPending.value = false;
     } catch (error) {
@@ -509,7 +509,7 @@ export class Workspace {
     if (tempoChanged) this.seek(position);
     else if (refreshClips) this.refreshArrangement();
     else if (gainEdits.size) this.scheduler.setGainAutomation(gainEdits);
-    if (tempoChanged && refreshClips) this.bindSequences();
+    if (tempoChanged && refreshClips) this.bindNotes();
     this.topologyPending.value = false;
   }
 
@@ -633,7 +633,7 @@ export class Workspace {
     untracked(() => this.positionAutomation(this.position, false));
     this.clock.pause();
     this.cancelAudio();
-    this.panic();
+    this.allNotesOff();
   }
   stop(): void {
     this.playRequest++;
@@ -643,7 +643,7 @@ export class Workspace {
     });
     untracked(() => this.positionAutomation(0, false));
     this.cancelAudio();
-    this.panic();
+    this.allNotesOff();
   }
   seek(seconds: number): void {
     untracked(() => this.seekUntracked(seconds));
@@ -651,7 +651,7 @@ export class Workspace {
   private seekUntracked(seconds: number): void {
     if (!Number.isFinite(seconds) || seconds < 0) throw new RangeError("Workspace seek needs non-negative seconds.");
     this.playRequest++;
-    this.panic();
+    this.allNotesOff();
     this.cancelAudio();
     this.activeTempoMap = this.project.tempoMap;
     const beat = this.activeTempoMap.secondsToBeat(seconds);
@@ -663,7 +663,7 @@ export class Workspace {
     if (this.clock.state.value === "playing") this.clock.refresh();
   }
   refresh(): void {
-    this.panic();
+    this.allNotesOff();
     this.clock.refresh();
   }
 
@@ -680,17 +680,17 @@ export class Workspace {
     }
     this.reconcileSession();
     this.cancelAudio();
-    this.bindSequences();
+    this.bindNotes();
     this.refresh();
   }
 
-  private bindSequences(): void {
-    for (const off of this.sequenceOff.splice(0)) off();
+  private bindNotes(): void {
+    for (const off of this.noteOff.splice(0)) off();
     for (const track of this.tracks.values())
       for (const clip of track.clips)
         if (clip instanceof MidiClip)
-          this.sequenceOff.push(
-            clip.sequence.subscribe(() => {
+          this.noteOff.push(
+            clip.midi.revision.subscribe(() => {
               if (this.clock.state.value === "playing") this.refresh();
             }),
           );
@@ -870,8 +870,8 @@ export class Workspace {
     this.scheduler.scheduleArrangement(this.tracks.values(), window, this.activeTempoMap, this.timeline);
   }
 
-  private panic(): void {
-    for (const track of this.tracks.values()) for (const host of track.hosts.values()) host.panic();
+  private allNotesOff(): void {
+    for (const track of this.tracks.values()) for (const host of track.hosts.values()) host.allNotesOff();
   }
 
   private cancelAudio(): void {
@@ -888,7 +888,7 @@ export class Workspace {
   }
 
   private disposeTracks(): void {
-    for (const off of this.sequenceOff.splice(0)) off();
+    for (const off of this.noteOff.splice(0)) off();
     this.sessionLauncher?.dispose();
     this.sessionLauncher = undefined;
     for (const runtime of this.tracks.values()) this.disposeTrack(runtime);

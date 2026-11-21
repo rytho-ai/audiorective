@@ -28,9 +28,7 @@ test("open, move a clip to bar 9, save and reopen keeps media, envelope and rack
   const midi = project.addTrack("Keys", "midi");
   const pcm = Float32Array.from({ length: rate }, (_, index) => Math.sin((index / rate) * 2 * Math.PI * 220) * 0.5);
   project.addAudioClip(audio.id, { sampleRate: rate, channels: [pcm] }, 0, { envelope });
-  project.addMidiClip(midi.id, { duration: 4, notes: [{ id: "n1", start: 0, end: 1, pitch: 60, velocity: 90, channel: 0, track: 0 }] }, 0, {
-    timeUnit: "beats",
-  });
+  project.addMidiClip(midi.id, { duration: 4, notes: [{ id: "n1", start: 0, duration: 1, pitch: 60, velocity: 0.7, channel: 0 }] }, 0);
   project.setTrackRackPreset(audio.id, preset);
 
   const first = openDawProject(saveDawProject(project));
@@ -41,7 +39,7 @@ test("open, move a clip to bar 9, save and reopen keeps media, envelope and rack
   expect(audioClip.kind).toBe("audio");
   expect(midiClip.kind).toBe("midi");
 
-  // Bar 9 at 4/4 is beat 32: audio clips are placed in seconds (16 s at 120 bpm), beat-unit MIDI clips in beats.
+  // Bar 9 at 4/4 is beat 32: audio clips are placed in seconds (16 s at 120 bpm), MIDI clips in beats.
   first.project.moveClip(audioClip.id, audioTrack.id, first.project.tempoMap.beatToSeconds(32));
   first.project.moveClip(midiClip.id, midiTrack.id, 32);
 

@@ -1,10 +1,10 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { userEvent } from "vitest/browser";
 import { parseMidi, midiGrid } from "@audiorective/midi";
-import { MidiSequence } from "@audiorective/midi";
-import { mountPianoRoll } from "../src/piano-roll";
+import { MidiClip } from "@audiorective/midi";
+import { mountPianoRoll, pianoRollModel } from "../src/piano-roll";
 import { end, file, off, on, sig, tempo, track } from "../../midi/tests/midi-fixture";
-import { drag } from "./helpers";
+import { drag, rollModel } from "./helpers";
 const disposers: Array<() => void> = [];
 afterEach(() => {
   for (const fn of disposers.splice(0).reverse()) fn();
@@ -20,10 +20,14 @@ const complex = () =>
   );
 
 function owner() {
-  const m = new MidiSequence();
-  m.load(complex());
-  disposers.push(() => m.dispose());
-  return m;
+  const parsed = parseMidi(complex());
+  const clip = new MidiClip(parsed.notes);
+  const model = Object.assign(pianoRollModel(clip, { duration: parsed.duration }), { clip });
+  disposers.push(() => {
+    model.dispose();
+    clip.dispose();
+  });
+  return model;
 }
 function view(model = owner(), extra: Partial<Parameters<typeof mountPianoRoll>[1]> = {}) {
   const root = document.createElement("div");
@@ -55,24 +59,20 @@ test("two views share background range drag, snap and keyboard handles", async (
     grid = midiGrid(parseMidi(complex()));
   const a = view(m, { grid, snap: "beat" }),
     b = view(m, { grid, snap: "beat" });
-  await drag(a.surface, m.getState().duration, 0.3, 1.8);
-  expect(m.getSelection()).toEqual({ start: 0.5, end: 2 });
-  expect(overlays(a.root)).toEqual([0.5, 2]);
-  expect(overlays(b.root)).toEqual([0.5, 2]);
+  await drag(a.surface, m.getState().duration, 0.6, 1.8);
+  expect(m.getSelection()).toEqual({ start: 1, end: 2 });
+  expect(overlays(a.root)).toEqual([1, 2]);
+  expect(overlays(b.root)).toEqual([1, 2]);
   const grip = b.root.querySelector<HTMLButtonElement>("[data-testid=selection-end]")!;
   grip.focus();
   await userEvent.keyboard("{ArrowRight}");
   expect(m.getSelection()!.end).toBeCloseTo(2.01);
   expect(overlays(a.root)[1]).toBeCloseTo(2.01);
 });
-test("beat model keeps note labels, grid snap and playhead in beats", async () => {
-  const model = new MidiSequence({
-    duration: 4,
-    notes: [{ id: "beat-note", start: 1, end: 2, pitch: 60, velocity: 90, channel: 0, track: 0 }],
-  });
-  disposers.push(() => model.dispose());
-  const { root, roll, surface } = view(model, { timeUnit: "beats", grid: { beats: [0, 1, 2, 3, 4], downbeats: [0, 4] }, snap: "beat" });
-  expect(roll.getViewport()).toMatchObject({ timeUnit: "beats", pixelsPerUnit: surface.clientWidth / 4 });
+test("note labels, grid snap and playhead are in beats", async () => {
+  const model = rollModel([{ id: "beat-note", start: 1, duration: 1, pitch: 60, velocity: 0.7 }], 4);
+  const { root, roll, surface } = view(model, { grid: { beats: [0, 1, 2, 3, 4], downbeats: [0, 4] }, snap: "beat" });
+  expect(roll.getViewport()).toMatchObject({ pixelsPerUnit: surface.clientWidth / 4 });
   expect(root.querySelector('[data-note-id="beat-note"]')?.getAttribute("aria-label")).toContain("1.000 to 2.000 beats");
   roll.setPlayhead(2);
   expect(root.querySelector<HTMLElement>("[data-testid=piano-playhead]")!.style.left).toBe(`${surface.clientWidth / 2}px`);
@@ -85,7 +85,8 @@ test("view cleanup preserves owner, selection, peer and caller context", () => {
     b = view(m);
   m.setSelection({ start: 1, end: 2 });
   a.roll.dispose();
-  m.updateNote(m.getState().notes[0].id, { pitch: 71 });
+  const first = m.getState().notes[0];
+  m.clip.edit((draft) => void (draft.find((n) => n.id === first.id)!.pitch = 71));
   expect(overlays(b.root)).toEqual([1, 2]);
   expect(b.root.querySelector("[data-note-id]")).not.toBeNull();
   expect(m.getState().notes.some((n) => n.pitch === 71)).toBe(true);
@@ -108,25 +109,20 @@ test("custom renderer, pitch geometry, external playhead and resize/zoom", async
   a.roll.dispose();
   expect(dead).toHaveBeenCalledTimes(1);
 });
-test("empty sequence and invalid viewport commands leave state intact", () => {
-  const m = new MidiSequence();
-  disposers.push(() => m.dispose());
-  const a = view(m);
+test("empty clip and invalid viewport commands leave state intact", () => {
+  const a = view(rollModel());
   expect(a.root.querySelectorAll("[data-note-id]")).toHaveLength(0);
   for (const n of [0, Infinity, 65]) expect(() => a.roll.setZoom(n)).toThrow();
   expect(() => a.roll.setPitchRange({ low: -1, high: 72 })).toThrow();
   expect(() => a.roll.setPlayhead(NaN)).toThrow();
   a.roll.dispose();
-  m.dispose();
-  expect(() => m.setSelection(null)).toThrow("disposed");
 });
 
 test("compressed keys label octaves without overlapping and large data avoids spread limits", () => {
-  const m = new MidiSequence({
-    duration: 1,
-    notes: Array.from({ length: 150000 }, (_, i) => ({ id: String(i), start: 0, end: 1, pitch: i % 128, velocity: 100, track: 0, channel: 0 })),
-  });
-  disposers.push(() => m.dispose());
+  const m = rollModel(
+    Array.from({ length: 150000 }, (_, i) => ({ id: String(i), start: 0, duration: 1, pitch: i % 128, velocity: 1 })),
+    1,
+  );
   const a = view(m, { renderer: () => ({ render() {} }) });
   expect(a.roll.getViewport().duration).toBe(1);
   const keys = [...a.root.querySelectorAll<HTMLElement>(".ar-pr-key")];

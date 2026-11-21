@@ -20,6 +20,8 @@ export type WebClapParameter = ValueRange &
     value: number;
     text: string;
     flags?: number;
+    /** Editing granularity: 1 when the plug-in marks the parameter stepped (`CLAP_PARAM_IS_STEPPED`, flag bit 0), else absent (continuous). */
+    step?: number;
   }>;
 export type WebClapBundle = Readonly<{ url: string; pluginId?: string; pluginIndex?: number; workletUrl?: string }>;
 export type WebClapEvent = CancellableEvent;
@@ -38,12 +40,14 @@ export type WebClapParams = Record<`${number}`, Param<number>>;
 type HostMessage = LoadedMessage | { type: string; [key: string]: unknown };
 type Waiter<T> = { resolve(value: T): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> };
 
+const withStep = (info: WebClapParameter): WebClapParameter =>
+  info.flags !== undefined && info.flags & 1 && info.step === undefined ? { ...info, step: 1 } : info;
 const sameBytes = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((value, index) => value === b[index]);
 const modules = new WeakMap<AudioContext, Map<string, Promise<void>>>();
 
 /**
- * Browser host for one WebCLAP plug-in. The audio graph sees a latency-declared processor.
- * Each CLAP parameter is a `Param<number>` in `params`, keyed by its CLAP id (`host.params["7"].value`).
+ * Browser host for one WebCLAP plug-in: an AudioProcessor (`host.connect(context.destination)`) that plays notes with the `Sampler` shape (`noteOn(note, { velocity, when })`, `noteOff(note, when)`), so a `MidiClip` or `MidiKeyboard` takes it as `instrument`.
+ * Each CLAP parameter is a `Param<number>` in `params`, keyed by its CLAP id (`host.params["7"].value`); writes reach the plug-in and the plug-in's own changes update the Param.
  */
 export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: ReadonlyCell<readonly WebClapParameter[]> }> {
   readonly node: AudioWorkletNode;
@@ -61,25 +65,29 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
   /** Last value known to both sides, per CLAP id. Param writes equal to it are not echoed to the worklet. */
   private readonly synced: Map<number, number>;
   private readonly infoStore: Cell<readonly WebClapParameter[]>;
+  /** Channels each sounding note was started on, so `noteOff(note)` releases it where it plays. */
+  private readonly noteChannels = new Map<number, Set<number>>();
   private disposed = false;
 
-  /** Tracked frozen parameter metadata (id, name, min, max, default, text) as last reported by the plug-in; the same value as `cells.parameterInfo`. Live values are in `params`. */
+  /** Tracked frozen parameter metadata in the plug-in's order (id, name, min, max, default, text, step); `host.params[String(info.id)]` is its live Param. Last reported by the plug-in; the same value as `cells.parameterInfo`. Live values are in `params`. */
   get parameterInfo(): readonly WebClapParameter[] {
     return this.cells.parameterInfo.value;
   }
 
   private constructor(context: AudioContext, node: AudioWorkletNode, bundleUrl: string, loaded: LoadedMessage, early: HostMessage[]) {
     const synced = new Map<number, number>();
-    const infoStore = cell<readonly WebClapParameter[]>(Object.freeze(loaded.params));
+    const loadedParams = loaded.params.map(withStep);
+    const infoStore = cell<readonly WebClapParameter[]>(Object.freeze(loadedParams));
     super(context, ({ param }) => {
       const params: Record<string, Param<number>> = {};
-      for (const info of loaded.params) {
+      for (const info of loadedParams) {
         synced.set(info.id, info.value);
         params[String(info.id)] = param<number>({
           default: info.value,
           label: info.name,
           min: info.min,
           max: info.max,
+          step: info.step,
           bind: {
             set: (value) => {
               if (!Number.isFinite(value)) {
@@ -158,6 +166,36 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
     return this.node;
   }
 
+  /** Plays `note` (0-127) at `when` (audio seconds, default now) with `velocity` 0..1 (default 1) on `channel` 0-15 (default 0), sent as a MIDI note-on. */
+  noteOn(note: number, options: Readonly<{ velocity?: number; when?: number; channel?: number }> = {}): WebClapEvent {
+    if (!Number.isInteger(note) || note < 0 || note > 127) throw new RangeError("WebCLAP note must be an integer 0-127.");
+    const velocity = options.velocity ?? 1;
+    if (!Number.isFinite(velocity) || velocity < 0 || velocity > 1) throw new RangeError("WebCLAP velocity must be 0..1.");
+    const channel = options.channel ?? 0;
+    if (!Number.isInteger(channel) || channel < 0 || channel > 15) throw new RangeError("WebCLAP channel must be an integer 0-15.");
+    const channels = this.noteChannels.get(note) ?? new Set<number>();
+    channels.add(channel);
+    this.noteChannels.set(note, channels);
+    return this.scheduleMidi([0x90 | channel, note, Math.max(1, Math.round(velocity * 127))], options.when ?? this.context.currentTime);
+  }
+
+  /** Releases `note` at `when` (audio seconds, default now) on every channel it was started on. */
+  noteOff(note: number, when: number = this.context.currentTime): WebClapEvent {
+    if (!Number.isInteger(note) || note < 0 || note > 127) throw new RangeError("WebCLAP note must be an integer 0-127.");
+    const channels = this.noteChannels.get(note);
+    this.noteChannels.delete(note);
+    const events = [...(channels ?? [0])].map((channel) => this.scheduleMidi([0x80 | channel, note, 0], when));
+    if (events.length === 1) return events[0]!;
+    return {
+      cancel: () => events.forEach((event) => event.cancel()),
+      onEnded: (listener) => {
+        let left = events.length;
+        for (const event of events) event.onEnded(() => --left === 0 && listener());
+      },
+    };
+  }
+
+  /** Sends raw MIDI bytes other than notes (controllers, program change) at `when`; `noteOn` and `noteOff` play notes. */
   scheduleMidi(data: Uint8Array | readonly number[], when: number): WebClapEvent {
     if (this.disposed || !Number.isFinite(when) || when < 0) throw new RangeError("WebCLAP MIDI needs a finite non-negative audio time.");
     const id = this.nextId++;
@@ -175,7 +213,9 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
     };
   }
 
-  panic(): void {
+  /** Releases every sounding note now (MIDI All Notes Off on every channel) and drops scheduled messages not yet played. */
+  allNotesOff(): void {
+    this.noteChannels.clear();
     this.node.port.postMessage({ type: "clearScheduled" });
     for (let channel = 0; channel < 16; channel++) this.node.port.postMessage({ type: "midi", data: [0xb0 | channel, 123, 0] });
     for (const listeners of this.pending.values()) for (const listener of listeners) listener();
@@ -288,7 +328,7 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
         this.applyParam(message.id as number, message.value as number);
         break;
       case "params": {
-        const infos = message.params as WebClapParameter[];
+        const infos = (message.params as WebClapParameter[]).map(withStep);
         batch(() => {
           this.infoStore.value = Object.freeze(infos);
           for (const info of infos) this.applyParam(info.id, info.value);
@@ -332,7 +372,7 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
     this.disposed = true;
     this.rejectWaiters(new Error("WebCLAP host is disposed."));
     if (this.editor) this.unmountEditor();
-    this.panic();
+    this.allNotesOff();
     this.node.port.postMessage({ type: "dispose" });
     this.node.disconnect();
     this.node.port.close();

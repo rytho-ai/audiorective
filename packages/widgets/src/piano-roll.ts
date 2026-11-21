@@ -13,6 +13,7 @@ import { cell, readonlyCell } from "@audiorective/core";
 import { visibleMidiNotes, type MidiNote } from "@audiorective/midi";
 import type { PianoRollOptions, PianoRollHandle, PianoRollRenderer, PianoRollLayout, PitchRange } from "./piano-roll-types";
 export type * from "./piano-roll-types";
+export { pianoRollModel, type PianoRollModelOptions, type ClipPianoRollModel } from "./piano-roll-model";
 export type {
   PluginAttachment,
   PluginTarget,
@@ -25,7 +26,6 @@ export type {
 } from "./types";
 const clamp = (n: number, low: number, high: number) => Math.max(low, Math.min(high, n));
 export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): PianoRollHandle {
-  const timeUnit = options.timeUnit ?? "seconds";
   const container = document.createElement("section");
   container.className = "ar-widget ar-piano-roll";
   container.setAttribute("aria-label", options.label ?? "Piano roll");
@@ -91,7 +91,6 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
   const snapshot = () =>
     Object.freeze({
       duration: state.duration,
-      timeUnit,
       pixelsPerUnit: scale,
       pixelsPerSecond: scale,
       scrollLeft: viewport.scrollLeft,
@@ -127,7 +126,6 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
     renderer?.render(
       Object.freeze({
         notes: visibleMidiNotes(editor.notes(), range, pitches),
-        timeUnit,
         duration: state.duration,
         width,
         height,
@@ -172,7 +170,7 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
   }
   const plugins = createPluginHost<TimeViewPluginContext>("piano roll", ({ isActive, own }) => ({
     surface,
-    timeUnit,
+    timeUnit: "beats",
     get duration() {
       return state.duration;
     },

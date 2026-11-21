@@ -2,6 +2,7 @@ import {
   applyEventTransforms,
   assertSound,
   playSound,
+  resolveHitEdit,
   batch,
   cell,
   effect,
@@ -10,6 +11,7 @@ import {
   type BeatTiming,
   type CancellableEvent,
   type EventTransform,
+  type Random,
   type ParamSpec,
   type SecondsOf,
   type TimedBeatEvent,
@@ -105,8 +107,7 @@ export type Hit = Readonly<{
   loop: number;
 }>;
 
-/** A number in [0, 1) fixed by the seed, this hit and `key`. */
-export type Random = (key?: number | string) => number;
+export type { Random } from "@audiorective/core";
 /** Returns the hit to schedule, or `null` to drop it. */
 export type HitTransform = (hit: Hit, random: Random) => Hit | null;
 
@@ -453,38 +454,21 @@ export class StepSequencer extends EventTarget {
       apply: (events, context) => {
         const out: SecondsOf<StepEvent>[] = [];
         const { timing } = context;
-        const bad = (field: string): never => {
-          throw new Error(`Event transform "transform" returned an event without a finite "${field}".`);
-        };
         for (const event of events) {
           const hit = this.publicHit(event);
           const result = transform(hit, (key) => context.randomFor(event, key));
           if (result === null) continue;
-          if (typeof result !== "object") return bad("when");
-          // Beats win: a changed `beat` or `durationBeats` is mapped through the transport's timing, then any `when` / `duration` delta is added.
-          const beatMoved = result.beat !== undefined && result.beat !== hit.beat;
-          const lengthMoved = result.durationBeats !== undefined && result.durationBeats !== hit.durationBeats;
-          if (beatMoved && !Number.isFinite(result.beat)) bad("beat");
-          if (lengthMoved && !(Number.isFinite(result.durationBeats) && result.durationBeats > 0)) bad("durationBeats");
-          const whenMoved = result.when !== hit.when;
-          const durationMoved = result.duration !== hit.duration;
-          let when = result.when;
-          let beatAt = hit.beat;
-          if (beatMoved) {
-            when = timing.beatToTime(result.beat) + (whenMoved ? result.when - hit.when : 0);
-            beatAt = whenMoved ? timing.timeToBeat(when) : result.beat;
-          } else if (whenMoved && Number.isFinite(when)) beatAt = timing.timeToBeat(when);
-          let duration = result.duration;
-          let durationBeatsAt = hit.durationBeats;
-          if (beatMoved || lengthMoved) {
-            const start = beatMoved ? result.beat : hit.beat;
-            duration =
-              timing.beatToTime(start + result.durationBeats) - timing.beatToTime(start) + (durationMoved ? result.duration - hit.duration : 0);
-            durationBeatsAt = result.durationBeats;
-          }
-          if (durationMoved && Number.isFinite(when) && Number.isFinite(duration))
-            durationBeatsAt = timing.timeToBeat(when + duration) - timing.timeToBeat(when);
-          out.push({ ...event, when, duration, velocity: result.velocity, pitch: result.pitch, custom: result.values, beatAt, durationBeatsAt });
+          const { when, duration, beat, durationBeats } = resolveHitEdit(hit, result, timing);
+          out.push({
+            ...event,
+            when,
+            duration,
+            velocity: result.velocity,
+            pitch: result.pitch,
+            custom: result.values,
+            beatAt: beat,
+            durationBeatsAt: durationBeats,
+          });
         }
         return out;
       },

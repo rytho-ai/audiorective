@@ -6,7 +6,7 @@ import { WorkerTickSource } from "./TickSource";
 import type { TickSource } from "./TickSource";
 import type { CoreTickWindow, TimeSignature, TimeSource, TransportState } from "./types";
 
-export type { CancellableEvent };
+export type { BeatTiming, CancellableEvent };
 
 export interface MissedGap {
   gapStart: number;
@@ -82,7 +82,7 @@ export interface SchedulerHandle {
   refresh(): void;
   /**
    * Retract the events this scheduler registered with `window.own` whose start time is `time` (audio-context seconds) or later, and only those: other schedulers' events, `onTick` events and this
-   * scheduler's earlier events stay. Each is cancelled as on a transport change (`event.cancel()`, an error is logged), synchronously; an event already ended is gone already. It does not re-emit any window
+   * scheduler's earlier events stay. Each is cancelled as on a transport change (`event.cancel(time)`, an error is logged), synchronously; an event already ended is gone already. It does not re-emit any window
    * and does not move the clock's refill point: the span from `time` to the end of the last window this scheduler was given stays empty until the scheduler registers new events for it (through the
    * `own` of the most recent window, valid until the transport jumps). `time` earlier than now also cuts events that are sounding. Does nothing after detach. It does not stop `refresh()`: a later or pending
    * `refresh()` still retracts and re-emits everything from now, so a scheduler that called `cancelFrom` and then `refresh()` must not also re-register by hand.
@@ -396,7 +396,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
         this._owned.delete(event);
         this._owners.delete(event);
         try {
-          event.cancel();
+          event.cancel(now);
         } catch (error) {
           console.error("Clock event cancellation failed:", error);
         }
@@ -415,7 +415,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
         this._owned.delete(event);
         this._owners.delete(event);
         try {
-          event.cancel();
+          event.cancel(time);
         } catch (error) {
           console.error("Clock event cancellation failed:", error);
         }

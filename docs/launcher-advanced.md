@@ -45,7 +45,7 @@ A `scheduler` clip plays a `StepSequencer` (or any clock scheduler) as a clip: `
 
 - The launcher routes the sound into the track for you: a sequencer's lanes connect to the clip's gain on the track (the caller does not call `lanes.x.connect`), another scheduler's `connect(node)` is called once. `gainDb` works; `pitch` is not applied.
 - The scheduler sees windows whose beat 0 is the clip's start, so a loop is the sequencer's own loop or a `length` period. Do not also `clock.attach` it.
-- Switching, stopping and replacing land on the boundary beat with no doubled or missing hit. Several pattern clips playing at once share the launcher's one scheduler on the clock; a switch inside the look-ahead retracts the launcher's events from the boundary (`handle.cancelFrom`) and feeds every playing pattern clip again. Another sequencer attached to the same clock is untouched.
+- Switching, stopping and replacing land on the boundary beat with no doubled or missing hit. Several pattern clips playing at once share the launcher's one scheduler on the clock; a switch inside the look-ahead retracts the launcher's events from the boundary (`handle.cancelFrom`) and feeds every playing pattern clip again. Another sequencer attached to the same clock is untouched. When a scheduler clip stops, is replaced or reaches the end of its material, the launcher cancels that clip's own events that reach the boundary or later, passing the boundary time to `event.cancel(time)`, so a `MidiClip` cuts a sounding note exactly there; other clips' events are not touched.
 - Edits to a playing pattern re-queue the look-ahead through the sequencer's own `attached` handle.
 
 ## Sharing a transport

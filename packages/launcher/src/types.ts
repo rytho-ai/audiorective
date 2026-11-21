@@ -1,7 +1,14 @@
 import type { BeatTiming, CancellableEvent, Sound } from "@audiorective/core";
 
 /** What a transport hands a scheduler when it attaches (the part of a clock's `SchedulerHandle` a clip's own scheduler may use). */
-export type TransportHandle = Readonly<{ refresh(): void; detach(): void }>;
+export type TransportHandle = Readonly<{
+  refresh(): void;
+  detach(): void;
+  /** The beats the launcher clip's `loop` and `length` repeat every, or null when the clip does not loop (or has no `length`). A scheduler that loops itself, such as a `MidiClip`, follows it. */
+  loopBeats(): number | null;
+  /** The audio-context time now. */
+  now(): number;
+}>;
 
 /** The part of a transport window `schedule` reads. Internal to transports: `clock.attach(launcher)` passes it; applications never build one. */
 export type TransportWindow = Readonly<{

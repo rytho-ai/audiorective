@@ -6,6 +6,8 @@ import type { MidiData, MidiNote } from "@audiorective/midi";
 import type { WaveformPlugin, WaveformPluginContext } from "./types";
 import type { PianoRollEditKind, PianoRollNoteEdit, PitchRange } from "./piano-roll-types";
 const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n));
+/** The shortest note a resize gesture produces, in beats (a 64th note in 4/4). */
+export const MIN_NOTE_BEATS = 1 / 64;
 type Gesture = {
   id: number;
   original: MidiNote;
@@ -56,19 +58,19 @@ export function createNoteEditor(options: {
       original = g.original;
     const delta = v.pixelsPerSecond ? (event.clientX - g.x) / v.pixelsPerSecond : 0;
     const movedX = Math.abs(event.clientX - g.x) >= 3;
-    let { start, end, pitch } = original;
+    const originalEnd = original.start + original.duration;
+    let { start, pitch } = original,
+      end = originalEnd;
     if (g.kind === "move") {
-      start = movedX
-        ? clamp(options.snap(original.start + delta, event.altKey), 0, Math.max(0, v.duration - (original.end - original.start)))
-        : original.start;
-      end = start + original.end - original.start;
+      start = movedX ? clamp(options.snap(original.start + delta, event.altKey), 0, Math.max(0, v.duration - original.duration)) : original.start;
+      end = start + original.duration;
       pitch = clamp(original.pitch + Math.round(((g.y - event.clientY) * (p.high - p.low + 1)) / v.height), p.low, p.high);
     } else if (movedX) {
-      const minimum = Math.min(0.01, original.end - original.start);
+      const minimum = Math.min(MIN_NOTE_BEATS, original.duration);
       if (g.kind === "resize-start") start = clamp(options.snap(original.start + delta, event.altKey), 0, end - minimum);
-      else end = clamp(options.snap(original.end + delta, event.altKey), start + minimum, v.duration);
+      else end = clamp(options.snap(originalEnd + delta, event.altKey), start + minimum, v.duration);
     }
-    g.preview = Object.freeze({ ...original, start, end, pitch });
+    g.preview = Object.freeze({ ...original, start, duration: end - start, pitch });
     options.redraw();
   }
   const plugin: WaveformPlugin = {
@@ -98,7 +100,7 @@ export function createNoteEditor(options: {
         }, 0);
         if (g.moved) options.redraw();
         if (!g.moved) options.inspect(g.original);
-        else if (g.preview.start !== g.original.start || g.preview.end !== g.original.end || g.preview.pitch !== g.original.pitch) {
+        else if (g.preview.start !== g.original.start || g.preview.duration !== g.original.duration || g.preview.pitch !== g.original.pitch) {
           try {
             options.commit?.(Object.freeze({ kind: g.kind, previous: g.original, note: g.preview }));
           } catch (error) {
@@ -149,7 +151,7 @@ export function createNoteEditor(options: {
       const current = options.read().notes.find((n) => n.id === note.id);
       if (!current) return;
       const start = context.surface.getBoundingClientRect().left + context.timeToX(current.start),
-        end = context.surface.getBoundingClientRect().left + context.timeToX(current.end),
+        end = context.surface.getBoundingClientRect().left + context.timeToX(current.start + current.duration),
         edge = Math.min(6, (end - start) / 4);
       kind ??= event.clientX < start + edge ? "resize-start" : event.clientX > end - edge ? "resize-end" : "move";
       gesture = {

@@ -1,48 +1,45 @@
-/** Project source ticks to denominator-beat and bar positions. */
-import { tickToSeconds } from "./midi-file";
-import type { MidiSignature, ParsedMidi } from "./midi-data";
+/** Denominator-beat and bar positions of a parsed file's time signatures, in beats. */
+import type { ParsedMidi } from "./midi-data";
 
 const freeze = <T extends object>(v: T): Readonly<T> => Object.freeze(v);
-/** Denominator-beat and bar grid, expressed in the same source seconds as notes. */
+const EPS = 1e-9;
+/** Denominator-beat (`beats`) and bar (`downbeats`) positions, in beats from the file's start up to its end. */
 export function midiGrid(data: ParsedMidi): Readonly<{ beats: readonly number[]; downbeats: readonly number[] }> {
   if (
-    !Number.isInteger(data.ppq) ||
-    data.ppq <= 0 ||
-    !Number.isSafeInteger(data.endTick) ||
-    data.endTick < 0 ||
+    !Number.isFinite(data.duration) ||
+    data.duration < 0 ||
     data.signatures.some(
       (s) =>
-        !Number.isInteger(s.tick) ||
-        s.tick < 0 ||
+        !Number.isFinite(s.beat) ||
+        s.beat < 0 ||
         !Number.isInteger(s.numerator) ||
         s.numerator <= 0 ||
         !Number.isFinite(s.denominator) ||
         s.denominator <= 0,
     )
   )
-    throw new RangeError("MIDI grid needs valid PPQ, end tick and time signatures.");
+    throw new RangeError("MIDI grid needs a valid duration and time signatures.");
   const beats: number[] = [],
     downbeats: number[] = [];
-  let tick = 0,
+  let at = 0,
     index = 0,
     within = 0;
-  let signature: MidiSignature = { tick: 0, numerator: 4, denominator: 4 };
-  while (tick <= data.endTick) {
+  let signature: { numerator: number; denominator: number } = { numerator: 4, denominator: 4 };
+  while (at <= data.duration + EPS) {
     if (beats.length >= 100_000) throw new RangeError("MIDI grid exceeds 100000 points.");
-    while (index < data.signatures.length && data.signatures[index].tick <= tick) {
+    while (index < data.signatures.length && data.signatures[index].beat <= at + EPS) {
       signature = data.signatures[index++];
       within = 0;
     }
-    const time = tickToSeconds(data.tempos, data.ppq, tick);
-    beats.push(time);
-    if (within === 0) downbeats.push(time);
-    const next = tick + (data.ppq * 4) / signature.denominator,
-      nextChange = data.signatures[index]?.tick;
-    if (nextChange !== undefined && nextChange < next) {
-      tick = nextChange;
+    beats.push(at);
+    if (within === 0) downbeats.push(at);
+    const next = at + 4 / signature.denominator,
+      nextChange = data.signatures[index]?.beat;
+    if (nextChange !== undefined && nextChange < next - EPS) {
+      at = nextChange;
       within = 0;
     } else {
-      tick = next;
+      at = next;
       within = (within + 1) % signature.numerator;
     }
   }

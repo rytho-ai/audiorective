@@ -4,6 +4,7 @@ export { mountWaveform } from "./waveform";
 export { createSelectionPlugin } from "./selection";
 export type * from "./types";
 export { mountPianoRoll } from "./piano-roll";
+export { pianoRollModel, type PianoRollModelOptions, type ClipPianoRollModel } from "./piano-roll-model";
 export type * from "./piano-roll-types";
 export * from "./player";
 export * from "./parameter";

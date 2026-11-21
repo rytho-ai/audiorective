@@ -15,9 +15,9 @@ const host = await WebClapHost.load(context, {
   workletUrl: "/assets/webclap-worklet.js",
 });
 host.output.connect(mixGain);
-const noteOn = host.scheduleMidi([0x90, 60, 100], context.currentTime + 0.1);
-host.scheduleMidi([0x80, 60, 0], context.currentTime + 0.5);
-// noteOn.cancel() revokes a future event; host.panic() clears scheduled notes.
+const on = host.noteOn(60, { velocity: 0.8, when: context.currentTime + 0.1 });
+host.noteOff(60, context.currentTime + 0.5);
+// on.cancel() revokes a future event; host.allNotesOff() releases every sounding note and clears scheduled messages.
 
 const state = await host.saveState();
 await host.loadState(state);
@@ -25,11 +25,20 @@ const detach = host.hasEditor ? await host.mountEditor(iframe) : undefined;
 // On teardown: detach?.(); host.dispose();
 ```
 
-The [DAW demo](../apps/daw-demo/main.ts) uses a relative worklet asset URL. If `workletUrl` is omitted, `WebClapHost.load` resolves it beside its published JS module. Serve the worklet and bundle from the app's origin. `scheduleMidi` takes absolute `AudioContext` seconds and returns a handle for Clock's `window.own(handle, when)`. A host declares plug-in latency through `AudioProcessor.latency`, in samples (the plug-in's reported latency). Applications using raw `.connect()` own any path delay compensation.
+The [DAW demo](../apps/daw-demo/main.ts) uses a relative worklet asset URL. If `workletUrl` is omitted, `WebClapHost.load` resolves it beside its published JS module. Serve the worklet and bundle from the app's origin. `noteOn`, `noteOff` and `scheduleMidi` take absolute `AudioContext` seconds and return a handle for Clock's `window.own(handle, when)`. A host declares plug-in latency through `AudioProcessor.latency`, in samples (the plug-in's reported latency). Applications using raw `.connect()` own any path delay compensation.
+
+## Play notes
+
+`WebClapHost` has the same note methods as a core `Sampler`, so it is an `Instrument` for [`MidiClip` and `MidiKeyboard`](./midi.md) (`new MidiClip(notes, { instrument: host })`, `MidiKeyboard.open(context, { instrument: host })`) with no adapter.
+
+- `noteOn(note, { velocity?, when?, channel? })` sends a MIDI note-on: `note` is an integer 0-127, `velocity` 0..1 (default 1), `when` absolute AudioContext seconds (default now), `channel` 0-15 (default 0). It returns the cancellable event.
+- `noteOff(note, when?)` releases `note` at `when` (default now) on every channel it was started on.
+- `scheduleMidi(bytes, when)` sends any other raw message (controllers, program change, pitch bend); use the note methods for notes.
+- `allNotesOff()` sends MIDI All Notes Off on every channel and drops scheduled messages not yet played. `dispose()` calls it.
 
 ## Parameters and state
 
-`host.params` holds one `Param<number>` per CLAP parameter, keyed by CLAP ID as a decimal string (`host.params["7"]`). Each has `.value`, `$`, `label` (the CLAP name), `min` and `max`; its initial value is the plug-in's value at load. Writing `.value` sends the value to the plug-in. Changes the plug-in reports, such as edits in its editor or its own automation, update the same Param and its observers without being echoed back. `host.parameterInfo` is the frozen metadata snapshot (id, name, a core `ValueRange` as `min` and `max`, `defaultValue` and display `text`), tracked and mirrored by `host.cells.parameterInfo`; a plug-in rescan replaces it and an effect reading it re-runs. Read live values from the Params. The registry has the parameter IDs reported at load; parameters the plug-in adds later do not appear in `params`.
+`host.params` holds one `Param<number>` per CLAP parameter, keyed by CLAP ID as a decimal string (`host.params["7"]`). Each has `.value`, `$`, `label` (the CLAP name), `min` and `max`; its initial value is the plug-in's value at load. Writing `.value` sends the value to the plug-in. Changes the plug-in reports, such as edits in its editor or its own automation, update the same Param and its observers without being echoed back. `step` is 1 when the plug-in marks the parameter stepped (a choice or switch, so a slider moves in whole numbers) and absent when it is continuous; the Param carries the same `step`. `host.parameterInfo` is the frozen metadata snapshot in the plug-in's order (id, name, a core `ValueRange` as `min` and `max`, `defaultValue`, display `text` and `step`; `host.params[String(info.id)]` is its live Param), tracked and mirrored by `host.cells.parameterInfo`; a plug-in rescan replaces it and an effect reading it re-runs. Read live values from the Params. The registry has the parameter IDs reported at load; parameters the plug-in adds later do not appear in `params`.
 
 ```ts
 const amount = host.params["2"]; // An ID provided by the plug-in.
@@ -62,6 +71,9 @@ This first host covers one AudioWorklet instance per plug-in, MIDI note/control 
 | `WebCLAP state needs bytes.`                                                                                                                                        | Pass opaque state to `loadState()` as a `Uint8Array`.                                                                                                                                 |
 | `WebCLAP plug-in has no editor.`                                                                                                                                    | The CLAP plug-in has no webview; show parameters or a generic editor instead.                                                                                                         |
 | `WebCLAP editor is already mounted.`                                                                                                                                | Detach the current iframe before mounting another one.                                                                                                                                |
+| `WebCLAP note must be an integer 0-127.`                                                                                                                            | `noteOn()` or `noteOff()` got a non-integer or out-of-range note. Pass a MIDI note number 0-127.                                                                                      |
+| `WebCLAP velocity must be 0..1.`                                                                                                                                    | `noteOn()` velocity is outside 0..1 (not a MIDI 0-127 byte). Pass a fraction.                                                                                                         |
+| `WebCLAP channel must be an integer 0-15.`                                                                                                                          | `noteOn()` channel is outside 0-15.                                                                                                                                                   |
 | `WebCLAP MIDI needs a finite non-negative audio time.`                                                                                                              | Schedule with an absolute, non-negative `AudioContext` time.                                                                                                                          |
 | `WebCLAP parameter needs a finite value.`                                                                                                                           | `host.params[id].value` was set to NaN or Infinity; the Param reverts to its last good value. Pass a finite number within `min`..`max`.                                               |
 | `WebCLAP plug-in error: …`                                                                                                                                          | The plug-in reported an error while a `saveState()`, `loadState()` or `mountEditor()` call was pending; the message follows the colon. Check the plug-in's console output and bundle. |
