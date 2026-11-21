@@ -323,7 +323,7 @@ export class MidiClip {
   }
 
   /**
-   * The clock retracts a note: `time` is when. A note that has not started is revoked (its note-on is cancelled if the instrument can);
+   * The clock retracts a note: `time` is when. A note that has not started is revoked: its note-on is cancelled when the instrument returned a cancellable event (no note-off follows), otherwise it gets a note-off at its start time;
    * one that is sounding is cut at `time` unless the next window continues it, which a refresh does.
    */
   private cancel(sent: Sent, time?: number): void {
@@ -346,7 +346,13 @@ export class MidiClip {
     const now = this.currentTime();
     if (sent.offSent && sent.off <= at) return final ? this.finish(sent) : undefined;
     sent.cancelOff?.();
-    if (sent.on > now) sent.cancelOn?.();
+    if (sent.on > now && sent.cancelOn) {
+      // the instrument honoured the revoke: the note never sounds, so it needs no note-off
+      sent.cancelOn();
+      sent.cancelOn = undefined;
+      sent.offSent = true;
+      return this.finish(sent);
+    }
     sent.cancelOn = undefined;
     const when = Math.max(sent.offSent ? at : Math.min(at, sent.off), sent.on);
     sent.off = when;

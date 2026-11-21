@@ -21,7 +21,7 @@ interface Instrument {
 
 `MidiClip` is the note model and the clock scheduler in one object. `clock.attach(clip)` plays it, with the clip's beat 0 at the transport's beat 0; there is no separate sequence, player or note scheduler to write.
 
-The stop rule: when the transport stops, pauses or seeks, the clip detaches, or a `ClipLauncher` stops or replaces the clip, every note-on the clip already sent gets a note-off at `max(that time, the note's start time)` and its pending natural note-off is cancelled. A sounding note is cut at the launcher's quantized boundary, and a note that has not started never sounds (its note-on is cancelled when the instrument returns a cancellable event, as `WebClapHost` does). A `clock.refresh()` never cuts a sounding note and never doubles it.
+The stop rule: when the transport stops, pauses or seeks, the clip detaches, or a `ClipLauncher` stops or replaces the clip, every note-on the clip already sent gets a note-off at `max(that time, the note's start time)` and its pending natural note-off is cancelled. A sounding note is cut at the launcher's quantized boundary, and a note that has not started never sounds (its note-on is cancelled when the instrument returns a cancellable event, as `WebClapHost` does, and then no note-off is sent; an instrument without one, such as `Sampler`, gets the note-off at the note's start time). A `clock.refresh()` never cuts a sounding note and never doubles it.
 
 ```typescript
 import { Clock } from "@audiorective/clock";

@@ -217,35 +217,65 @@ describe("MidiClip on a Clock", () => {
   });
 
   test("stop sends a note-off at max(now, start) for every note-on already sent, including one scheduled in the future", async () => {
-    const { clock, run } = rig(3, 0.5);
-    const { inst, calls, cancels } = instrument(true);
-    const clip = new MidiClip([note(60, 0, 8), note(64, 3, 1)], { instrument: inst });
-    disposers.push(() => clip.dispose());
-    clock.attach(clip);
-    let mark = 0;
-    await run([
-      {
-        at: 1.2,
-        run: () => {
-          mark = calls.length;
-          clock.stop();
+    for (const revocable of [false, true]) {
+      const { clock, run } = rig(3, 0.5);
+      const { inst, calls, cancels } = instrument(revocable);
+      const clip = new MidiClip([note(60, 0, 8), note(64, 3, 1)], { instrument: inst });
+      disposers.push(() => clip.dispose());
+      clock.attach(clip);
+      let mark = 0;
+      await run([
+        {
+          at: 1.2,
+          run: () => {
+            mark = calls.length;
+            clock.stop();
+          },
         },
-      },
-    ]);
-    expect(ons(calls)).toEqual([
-      [60, 0],
-      [64, 1.5],
-    ]);
-    const releases = calls.slice(mark).filter((c) => c.kind === "off");
-    // the sounding note is released now (within one tick of 1.2 s), the future note at its own start
-    expect(releases.map((c) => c.pitch).sort()).toEqual([60, 64]);
-    expect(releases.find((c) => c.pitch === 60)!.when).toBeGreaterThan(1.1);
-    expect(releases.find((c) => c.pitch === 60)!.when).toBeLessThanOrEqual(1.25);
-    expect(releases.find((c) => c.pitch === 64)!.when).toBeCloseTo(1.5, 3);
-    // a revocable instrument has the not-yet-started note-on revoked; no natural note-off was ever sent, so no stray late one follows the cut
-    expect(cancels).toContainEqual({ kind: "on", pitch: 64 });
-    expect(cancels).not.toContainEqual({ kind: "on", pitch: 60 });
-    expect(calls.filter((c) => c.kind === "off")).toHaveLength(2);
+      ]);
+      expect(ons(calls)).toEqual([
+        [60, 0],
+        [64, 1.5],
+      ]);
+      const releases = calls.slice(mark).filter((c) => c.kind === "off");
+      // the sounding note is released now (within one tick of 1.2 s), the future note at its own start
+      expect(releases.map((c) => c.pitch).sort()).toEqual(revocable ? [60] : [60, 64]);
+      expect(releases.find((c) => c.pitch === 60)!.when).toBeGreaterThan(1.1);
+      expect(releases.find((c) => c.pitch === 60)!.when).toBeLessThanOrEqual(1.25);
+      // a plain instrument gets the future note's note-off at its start; a cancellable one has the note-on cancelled and no note-off at all
+      if (!revocable) expect(releases.find((c) => c.pitch === 64)!.when).toBeCloseTo(1.5, 3);
+      expect(cancels.filter((c) => c.kind === "on").map((c) => c.pitch)).toEqual(revocable ? [64] : []);
+      // no natural note-off was ever sent ahead, so no stray late one follows the cut
+      expect(calls.filter((c) => c.kind === "off")).toHaveLength(revocable ? 1 : 2);
+    }
+  });
+
+  test("a refresh that revokes a not-yet-started note: a cancellable note-on is cancelled with no note-off, a plain one gets a note-off at the start", async () => {
+    for (const revocable of [true, false]) {
+      const { clock, run } = rig(3, 0.5);
+      const { inst, calls, cancels } = instrument(revocable);
+      const clip = new MidiClip([note(52, 3, 1)], { instrument: inst }); // sounds at 1.5 s, sent about 1.0 s
+      clock.attach(clip);
+      await run([{ at: 1.2, run: () => clock.refresh() }]);
+      const label = revocable ? "cancellable" : "plain";
+      expect(ons(calls), label).toEqual([
+        [52, 1.5],
+        [52, 1.5],
+      ]);
+      expect(
+        cancels.filter((c) => c.kind === "on"),
+        label,
+      ).toHaveLength(revocable ? 1 : 0);
+      // the revoked note's off exists only for the plain instrument; the re-sent note ends at its natural time either way
+      expect(offs(calls), label).toEqual(
+        revocable
+          ? [[52, 2]]
+          : [
+              [52, 1.5],
+              [52, 2],
+            ],
+      );
+    }
   });
 
   test("pause, seek and detach release sounding notes", async () => {
