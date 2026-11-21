@@ -141,13 +141,15 @@ Observe `workspace.cells.auditioningRange` (also `workspace.auditioningRange`) f
 
 `Workspace.prepareAudioClipStretch(clipId, ratio, processor, { anchors?, signal? })` borrows a `WaveStretchProcessor`. Pass the desired length divided by original length. Call `apply()` on the prepared result inside the app's undo transaction, then await `workspace.flush()` if the next action depends on the applied render. Preparation leaves Project unchanged. Moving, trimming, deleting or replacing the clip invalidates a prepared edit. Preparing a newer result for that clip, cancelling the supplied signal and disposing Workspace all cancel outstanding work. Apply a prepared result once.
 
+The example borrows the app's existing `history` manager: its synchronous `record(label, apply)` captures Project state before and after `apply`. Finish asynchronous preparation before entering that transaction; record only the synchronous application, then flush outside it. `history` belongs to the app, rather than a Workspace export.
+
 ```ts
 import { TimeStretch } from "@audiorective/effects/time-stretch";
 
 const processor = await TimeStretch.load({ wasmUrl: "/wasm/rubberband.wasm" });
 try {
   const edit = await workspace.prepareAudioClipStretch(clipId, 1.5, processor);
-  edit.apply();
+  history.record("Stretch audio clip", () => edit.apply());
   await workspace.flush();
 } finally {
   processor.dispose();

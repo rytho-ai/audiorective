@@ -44,6 +44,8 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Fixed
 
+- **docs / skill:** the prepared audio-stretch example executes `apply()` through the app's synchronous undo history, matching the ownership guidance; warp-editor guidance routes to that example.
+
 - **widgets:** waveform selection previews stay local until release, when the shared model receives one edit. Escape, pointer cancellation, capture loss, external owner replacement and detachment restore the committed range without writing a preview to the model.
 - **widgets:** curve, overlay, warp and arrangement gestures cancel on Escape, pointer cancellation, capture loss, stale owner replacement and disposal. Rejected or throwing edit commands restore the authoritative source view. Disabled curve/warp tools yield hit testing, and a background double click is claimed once across tools.
 - **widgets:** mixer keyed rows preserve focused extension controls and text selection during reorder, optional controls follow owner capability changes, and meter/extension resources clean up once without disposing borrowed owners. Detached editor observers stop updating after view removal.
