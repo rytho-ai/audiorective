@@ -108,7 +108,8 @@ For MIDI, notes are beats with velocity 0..1 and play into an instrument (a `Sam
 | Sequencing, transport, tempo, a step sequencer or drum machine, re-queueing hits after an edit                            | `references/clock.md` + `references/sequencer.md`           |
 | Deciding what goes in the audio layer vs the UI; Cell vs Param; which layer or package owns a feature                     | `references/architecture.md`                                |
 | Writing or modifying an `AudioProcessor` subclass                                                                         | the `audio-processor-authoring` skill                       |
-| Waveform, visual plugins, spectrum, EQ and audio controls                                                                 | `references/widgets.md`                                     |
+| Waveforms, spectrum/EQ, meters, mixer controls, source-bound curves, steps and clip inspectors                            | `references/widgets.md`                                     |
+| Custom drawing, per-cell/visual plugins, source/view mappings, arrangement gestures and zoom                              | `references/widgets-advanced.md`                            |
 | Plain Play/Pause, time, seek and volume controls without a waveform                                                       | `references/widgets.md` → Plain player controls             |
 | Curves, transport beat loops, finite native bindings, macro target adapters                                               | `references/automation.md`                                  |
 | Source-time automation on a stretched WavePlayer selection                                                                | `references/player.md` + `references/automation.md`         |

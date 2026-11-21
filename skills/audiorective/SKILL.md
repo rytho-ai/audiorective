@@ -117,25 +117,26 @@ When no capability package or widget matches, build on core with your own `Audio
 
 Open the one page the task needs; read the section, not the whole file.
 
-| If you're doing…                                                                   | Read                                                   |
-| ---------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| Params, `bind`, automation gotchas, `defineGraph`, engine lifecycle                | `core.md` (section list: `rules-in-depth.md`)          |
-| Designing a whole app; audio layer vs UI; Cell vs Param                            | `designing-audio-apps.md`, `architecture.md`           |
-| Sampler vs BufferPlayer vs FilePlayer                                              | `choosing-playback.md`                                 |
-| Transport, tempo, step sequencer, drum machine                                     | `clock.md` + `sequencer.md`                            |
-| Clip launcher, scenes, launch modes, follow actions, pattern clips                 | `launcher.md` (+ `launcher-advanced.md`)               |
-| Writing or modifying an `AudioProcessor` subclass                                  | the `audio-processor-authoring` skill                  |
-| Waveform, spectrum, EQ, plain player controls                                      | `widgets.md`                                           |
-| Automation curves, beat loops, bindings, macro adapters                            | `automation.md` (+ `player.md` for source-time)        |
-| Stretching audio, pitch-preserving render, seamless loops                          | `effects.md` → TimeStretch                             |
-| MIDI clips, files, piano roll, recording a take, a live keyboard                   | `midi.md`                                              |
-| Project, takes, clips, Session, DAWproject, live edits (`sync()`)                  | `daw.md`                                               |
-| WebCLAP device, CLAP ID, patch save                                                | `host.md` + `daw.md`                                   |
-| Player state (`cells`), loading, cancel, audition                                  | `player.md` + `widgets.md`                             |
-| React, three.js, PlayCanvas, PixiJS                                                | `react.md`, `threejs.md`, `playcanvas.md`, `pixijs.md` |
-| Next.js / Remix / Astro / any server-rendered app                                  | `client-boundary.md`                                   |
-| Effects, bypass, ducking, effect chains, replacing Tone.js effects, offline export | `effects.md`                                           |
-| Rationale ("why does this exist?")                                                 | `overview.md`                                          |
+| If you're doing…                                                                        | Read                                                   |
+| --------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Params, `bind`, automation gotchas, `defineGraph`, engine lifecycle                     | `core.md` (section list: `rules-in-depth.md`)          |
+| Designing a whole app; audio layer vs UI; Cell vs Param                                 | `designing-audio-apps.md`, `architecture.md`           |
+| Sampler vs BufferPlayer vs FilePlayer                                                   | `choosing-playback.md`                                 |
+| Transport, tempo, step sequencer, drum machine                                          | `clock.md` + `sequencer.md`                            |
+| Clip launcher, scenes, launch modes, follow actions, pattern clips                      | `launcher.md` (+ `launcher-advanced.md`)               |
+| Writing or modifying an `AudioProcessor` subclass                                       | the `audio-processor-authoring` skill                  |
+| Waveforms, player controls, meters/mixers, steps, curves and clip inspectors            | `widgets.md`                                           |
+| Custom widget renderers, plugins, time mappings, arrangement gestures and timeline zoom | `widgets-advanced.md`                                  |
+| Automation curves, beat loops, bindings, macro adapters                                 | `automation.md` (+ `player.md` for source-time)        |
+| Stretching audio, pitch-preserving render, seamless loops                               | `effects.md` → TimeStretch                             |
+| MIDI clips, files, piano roll, recording a take, a live keyboard                        | `midi.md`                                              |
+| Project, takes, clips, Session, DAWproject, live edits (`sync()`)                       | `daw.md`                                               |
+| WebCLAP device, CLAP ID, patch save                                                     | `host.md` + `daw.md`                                   |
+| Player state (`cells`), loading, cancel, audition                                       | `player.md` + `widgets.md`                             |
+| React, three.js, PlayCanvas, PixiJS                                                     | `react.md`, `threejs.md`, `playcanvas.md`, `pixijs.md` |
+| Next.js / Remix / Astro / any server-rendered app                                       | `client-boundary.md`                                   |
+| Effects, bypass, ducking, effect chains, replacing Tone.js effects, offline export      | `effects.md`                                           |
+| Rationale ("why does this exist?")                                                      | `overview.md`                                          |
 
 The complete task-to-reference table, with sections, is in `references/rules-in-depth.md`.
 
@@ -172,7 +173,9 @@ Every other thrown message is listed, with cause and fix, in its area's referenc
 
 | Message starts with…                                                                                                                                                                        | Read                                       |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| `Waveform…`, `Step grid…`, `Playhead…`, `Spectrum…`, `Automation overlay…`, `No track is loaded.`, `FilePlayer has no src to play.`                                                         | `widgets.md`                               |
+| `Waveform…`, `Zoom…`, `Amplitude zoom…`, `Playhead…`, `Plugin…`, `Selection plugin…`, `Timeline zoom…`                                                                                      | `widgets.md`                               |
+| `Step grid…`, `Parameter control…`, `Level meter…`, `Frequency plot…`, `Spectrum…`, `EQ editor…`                                                                                            | `widgets.md`                               |
+| `Automation overlay…`, `Automation lane…`, `Warp markers…`, `No audio is loaded.`, `Audio is still loading.`, `FilePlayer has no src to play.`                                              | `widgets.md`                               |
 | `WavePlayer…`, `Audio request…`, `Audio file…`, `Selection must satisfy…`, `Stretch…`                                                                                                       | `player.md`                                |
 | `AudioRecorder…`, `MicrophoneInput…`                                                                                                                                                        | `recorder.md`                              |
 | `Pad Bank…`, `Pad hit…`                                                                                                                                                                     | `pads.md`                                  |
@@ -193,4 +196,4 @@ All under `references/`; each in its "Common errors" section (TimeStretch: `effe
 
 ## References
 
-[Installation](references/installation.md) · [WavePlayer](references/player.md) · [Recorder](references/recorder.md) · [Pads](references/pads.md) · [Sequencer](references/sequencer.md) · [Samples](references/samples.md) · [Launcher](references/launcher.md) · [Launcher: advanced](references/launcher-advanced.md) · [Widgets](references/widgets.md) · [MIDI/Piano Roll](references/midi.md) · [DAW/DAWproject](references/daw.md) · [WebCLAP host](references/host.md) · [Core](references/core.md) · [Automation](references/automation.md) · [Architecture](references/architecture.md) · [Designing Audio Apps](references/designing-audio-apps.md) · [Choosing Playback](references/choosing-playback.md) · [Clock](references/clock.md) · [Effects](references/effects.md) · [Devtools](references/devtools.md) · [React](references/react.md) · [three.js](references/threejs.md) · [PlayCanvas](references/playcanvas.md) · [PixiJS](references/pixijs.md) · [Server-rendered frameworks](references/client-boundary.md) · [Overview](references/overview.md) · [Rules in depth](references/rules-in-depth.md) · [Changelog](references/changelog.md)
+[Installation](references/installation.md) · [WavePlayer](references/player.md) · [Recorder](references/recorder.md) · [Pads](references/pads.md) · [Sequencer](references/sequencer.md) · [Samples](references/samples.md) · [Launcher](references/launcher.md) · [Launcher: advanced](references/launcher-advanced.md) · [Widgets](references/widgets.md) · [Widgets: advanced](references/widgets-advanced.md) · [MIDI/Piano Roll](references/midi.md) · [DAW/DAWproject](references/daw.md) · [WebCLAP host](references/host.md) · [Core](references/core.md) · [Automation](references/automation.md) · [Architecture](references/architecture.md) · [Designing Audio Apps](references/designing-audio-apps.md) · [Choosing Playback](references/choosing-playback.md) · [Clock](references/clock.md) · [Effects](references/effects.md) · [Devtools](references/devtools.md) · [React](references/react.md) · [three.js](references/threejs.md) · [PlayCanvas](references/playcanvas.md) · [PixiJS](references/pixijs.md) · [Server-rendered frameworks](references/client-boundary.md) · [Overview](references/overview.md) · [Rules in depth](references/rules-in-depth.md) · [Changelog](references/changelog.md)

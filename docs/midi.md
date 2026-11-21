@@ -275,7 +275,7 @@ A click without a drag and keyboard activation still inspect the note. Backgroun
 
 ## Add a time-based overlay or interaction
 
-`view.attach(plugin)` uses the shared [`TimeViewPlugin` contract](./widgets.md#write-a-visual-plugin) for piano roll, waveform, and waveform selector. The piano-roll entry exports `TimeViewPlugin`, `TimeViewPluginContext`, and `PluginAttachment`. `ctx.timeUnit` is `"beats"` here.
+`view.attach(plugin)` uses the shared [`TimeViewPlugin` contract](./widgets-advanced.md#write-a-visual-plugin) for piano roll, waveform, and waveform selector. The piano-roll entry exports `TimeViewPlugin`, `TimeViewPluginContext`, and `PluginAttachment`. `ctx.timeUnit` is `"beats"` here.
 
 ```typescript
 import { mountPianoRoll, type TimeViewPlugin } from "@audiorective/widgets/piano-roll";

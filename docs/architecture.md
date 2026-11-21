@@ -103,7 +103,7 @@ A feature the user sees usually spans three layers. To place a decision, ask whe
 
 | Part of the Mixer                                | Owner         | Code                                                                                                                          |
 | ------------------------------------------------ | ------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| Faders, pan, mute and solo buttons, level meters | `widgets`     | `mountMixer`, which takes only `state`, `editTrack` and `editMaster`                                                          |
+| Faders, pan, optional mute/solo and level meters | `widgets`     | `mountMixer` takes `state`, `editTrack`, optional `editMaster` and borrowed dBFS/PCM meter sources                            |
 | Per-track volume, pan, mute, solo and routing    | `daw/project` | `ProjectTrack`                                                                                                                |
 | Which tracks and paths stay audible under solo   | `daw/runtime` | `soloRouting` over `ProjectTrack`                                                                                             |
 | Gain, pan and mute nodes, sends                  | `daw/runtime` | The runtime `Mixer` builds each strip from `effects` `Channel` and `SendBus`; `ProjectTrack` values are written to its params |

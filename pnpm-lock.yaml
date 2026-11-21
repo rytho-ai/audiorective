@@ -145,6 +145,9 @@ importers:
         specifier: ^0.182.0
         version: 0.182.0
     devDependencies:
+      '@astrojs/markdown-remark':
+        specifier: 7.2.1
+        version: 7.2.1
       '@types/three':
         specifier: ^0.182.0
         version: 0.182.0

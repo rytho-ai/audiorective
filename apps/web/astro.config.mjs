@@ -2,10 +2,41 @@
 import { defineConfig } from "astro/config";
 import react from "@astrojs/react";
 import starlight from "@astrojs/starlight";
+import { unified } from "@astrojs/markdown-remark";
+import { readdirSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const docsDirectory = resolve(fileURLToPath(new URL("../../docs", import.meta.url)));
+const publishedDocs = new Set(
+  readdirSync(docsDirectory, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
+    .map((entry) => entry.name),
+);
+
+/** @typedef {{ type: string; url?: string; children?: MarkdownNode[] }} MarkdownNode */
+/** Keep repository/skill Markdown links intact while rendering known sibling docs as site routes.
+ * @returns {(tree: MarkdownNode, file: { path?: string }) => void}
+ */
+function remarkDocLinks() {
+  return (tree, file) => {
+    if (!file.path || dirname(file.path) !== docsDirectory) return;
+    /** @param {MarkdownNode} node */
+    const visit = (node) => {
+      if ((node.type === "link" || node.type === "definition") && node.url) {
+        const target = /^\.\/([^/\\?#]+)\.md([?#].*)?$/.exec(node.url);
+        if (target && publishedDocs.has(`${target[1]}.md`)) node.url = `/docs/${target[1]}/${target[2] ?? ""}`;
+      }
+      for (const child of node.children ?? []) visit(child);
+    };
+    visit(tree);
+  };
+}
 
 export default defineConfig({
   output: "static",
   site: "https://audiorective-showroom.vercel.app",
+  markdown: { processor: unified({ remarkPlugins: [remarkDocLinks] }) },
   integrations: [
     starlight({
       title: "Audiorective",
@@ -54,6 +85,7 @@ export default defineConfig({
               ],
             },
             { label: "Widgets", slug: "docs/widgets" },
+            { label: "Widgets: advanced", slug: "docs/widgets-advanced" },
             { label: "MIDI and Piano Roll", slug: "docs/midi" },
             { label: "DAW and DAWproject", slug: "docs/daw" },
             { label: "WebCLAP host", slug: "docs/host" },

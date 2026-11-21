@@ -57,7 +57,7 @@ workspace.transport.attach(seq); // follows the project transport: play, pause, 
 
 ## Step grid
 
-`mountStepGrid(root, { sequencer: seq })` edits a `StepSequencer` directly: click toggles, drag edits the active per-step field, header controls change length, rate, direction and swing, and each lane shows its `playhead` and `progress`. `laneLabel(name)` names a lane for display (default: the lane name). Disposeing the grid leaves the sequencer running. Options, keyboard and styling are in [Widgets](./widgets.md#step-grid-and-pads).
+`mountStepGrid(root, { sequencer: seq })` edits a `StepSequencer` directly: click toggles, drag edits the active per-step field, header controls change length, rate, direction and swing, and each lane shows its `playhead` and `progress`. `laneLabel(name)` names a lane for display (default: the lane name). Disposeing the grid leaves the sequencer running. Options, keyboard and styling are in [Widgets](./widgets-advanced.md#step-grid-reference).
 
 ## Standalone drum machine
 

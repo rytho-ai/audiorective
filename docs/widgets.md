@@ -2,43 +2,75 @@
 title: Widgets
 ---
 
-Try the [waveform showroom](/showroom/waveform) for a working selector, or the [piano-roll showroom](/showroom/piano-roll) for shared MIDI views. See [MIDI and Piano Roll](./midi.md) for `mountPianoRoll` from the audio-independent `@audiorective/widgets/piano-roll` entry.
+`@audiorective/widgets` mounts browser views over your existing audio and model owners. A view reads tracked values and sends edits through the owner's commands. Call its `dispose()` when removing it; borrowed playback, authored data and audio routing remain with your app.
 
-`@audiorective/widgets` provides browser DOM widgets that mount into an element and return an imperative handle. Use `mountPlayer` for ordinary playback controls without a waveform, `mountWaveformSelector` for loading audio, selecting a range, and auditioning it, or the audio-independent `@audiorective/widgets/waveform` entry for a waveform driven by your own data and playback position.
+| Job                                           | View / entry                                                                                |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Playback bar, long track or stream            | `mountPlayer`, `@audiorective/widgets/player`                                               |
+| Load, select and audition a clip              | `mountWaveformSelector`, widgets root                                                       |
+| Draw existing peaks without audio             | `mountWaveform`, `@audiorective/widgets/waveform`                                           |
+| Edit MIDI notes                               | `mountPianoRoll`, `@audiorective/widgets/piano-roll`; [MIDI](./midi.md)                     |
+| Steps, pads, scenes, meters and clip controls | Widgets root                                                                                |
+| Gestures over app-rendered arrangement DOM    | `@audiorective/widgets/arrangement`; [advanced](./widgets-advanced.md#arrangement-gestures) |
 
-For a DAW arrangement with caller-rendered clips, `@audiorective/widgets/arrangement` exports `attachClipGesture(element, options)`. It borrows a clip element and owns pointer capture, click versus drag, snapped preview, cancellation, and one move commit on release. Arrow Left/Right moves one musical beat; Shift moves four. Pass a structural time map such as `project.tempoMap`; Alt bypasses pointer snapping. `onMove` receives a move intent, so the caller applies its own Project edit, and history; a running `Workspace` applies the Project edit by itself.
+Mount behind a client-only boundary in an app that also renders on the server. These views need the DOM; the audio-independent waveform and piano-roll entries create no audio context or nodes. Try the [waveform showroom](/showroom/waveform) or [piano-roll showroom](/showroom/piano-roll). See [Widgets: advanced](./widgets-advanced.md) for custom renderers, plugins, time projections and full interaction details.
+
+## Mount a selector
+
+Pass a shared [WavePlayer](./player.md) when the app owns playback. Route its output once in the app. Each view keeps its own zoom, drawing and snap settings while observing the same selection and load state.
 
 ```typescript
-import { attachClipGesture } from "@audiorective/widgets/arrangement";
+import { mountWaveformSelector } from "@audiorective/widgets";
 
-const gesture = attachClipGesture(clipElement, {
-  clipId: clip.id,
-  trackId: track.id,
-  time: clip.time,
-  timeUnit: clip.kind === "midi" ? "beats" : "seconds",
-  timeMap: project.tempoMap,
-  pixelsPerSecond: () => zoom,
-  trackAt: (x, y) => findCompatibleTrackAt(x, y),
-  onSelect: () => selectClip(clip.id),
-  onOpen: () => openClipEditor(clip.id),
-  onMove: ({ clipId, trackId, time }) => {
-    history.record("Move clip", () => project.moveClip(clipId, trackId, time));
-  },
+// player is the app-owned WavePlayer; its output is already routed.
+const selector = mountWaveformSelector(root, {
+  player,
+  controls: false,
+  audition: false,
+  onSelectionChange: (selection) => console.log(selection),
 });
-
-// Before removing the element:
-gesture.dispose();
+selector.setZoom(2);
+selector.setAmplitudeZoom(4);
+selector.scrollTo(1); // committed output seconds
+const viewport = selector.getViewport();
+// When this view closes:
+selector.dispose(); // leaves player, selection, playback and pending loads alive
 ```
 
-The caller renders lanes and clip appearance, supplies compatible track hit testing, and keeps shared selection/history. `time` and `onMove.time` use `timeUnit` (seconds by default, or beats); the widget converts through `timeMap` for its second-based pointer geometry and beat keyboard nudges. The widget never creates an AudioContext or changes the Project by itself. This interaction entry has no dependency on `@audiorective/daw`.
+`controls` and `audition` default to true and are independent. `controls: false` hides source/playback controls while retaining the waveform and status. Pointer selection previews stay local until release, when one edit updates the shared owner. Escape, pointer cancellation, capture loss, view removal or external owner replacement cancel that preview. With `audition: false`, completed range edits change metadata and clicks seek without starting playback. With default audition, drawing/resizing a range auditions it in a loop and clicking seeks and plays; clicking outside a selection clears it. Programmatic selection and keyboard edits do not start a stopped player. Handles move by 0.01 seconds with arrow keys, or 0.1 with Shift.
 
-`attachTimelineZoom` from the same entry owns continuous zoom gestures over a caller-rendered time axis. It connects an optional range input and Ctrl/⌘+wheel, keeps the project time under the pointer (or viewport center for the slider), and batches redraws to animation frames. The caller supplies `getScale()` in pixels per project second and `onScale(next)` to redraw its arrangement; `ruler()` returns the current time-axis element after that redraw. Buttons can call `zoom.zoomBy(1.45)` and fit-to-project can call `zoom.zoomTo(scale, leftEdgeX)`. Call `zoom.cancel()` when switching projects and `zoom.dispose()` when removing the view. The default range is 2–2000 pixels per second; `minScale` and `maxScale` can change it. The slider's `aria-valuetext` reads "<n> px/s"; pass `labels: { scale(pixelsPerSecond) }` to localize it.
+For a selector-owned player, supply `createPlayer: () => new WavePlayer(context)` instead of `player`. The app supplies and closes the context; the selector owns and disposes only the player it creates. Connect `selector.output` to your destination or effects. Playback gestures resume the supplied context. Supply optional `source: string | File` or call `load`; loading does not start playback. Catch `ready` and `load` rejections. `cancelLoad()` cancels the shared player's load, whereas detaching a borrowed view leaves it running.
 
-The widgets implement their own waveform display and interaction. They require no UI framework or WaveSurfer dependency. The selector uses [WavePlayer](./player.md) for audio and selection. Pass a shared `player`, or supply `createPlayer` to let the selector construct, own and dispose one. Its public audio connection is `handle.output`.
+Selection callbacks, viewport, playhead and renderer times use committed **output seconds**. Selector `grid: { beats, downbeats }` uses **original source seconds**, remapped after edits. Snap starts off; Alt bypasses pointer snapping. [Full selector API and loading](./widgets-advanced.md#selector-api) cover committed revisions and custom structural owners.
+
+<a id="interaction"></a>
+<a id="selector-api"></a>
+<a id="loading-feedback"></a>
+<a id="displaying-committed-edits"></a>
+
+[Selector API, loading and revisions](./widgets-advanced.md#selector-api) describe the full handle and source/output mapping.
+
+## Plain player controls
+
+Use a [FilePlayer](./core.md#fileplayer) for a long track or stream; a control bar does not decode a waveform. Given an existing player:
+
+```typescript
+import { fromFilePlayer, mountPlayer } from "@audiorective/widgets/player";
+
+const controls = mountPlayer(root, { player: fromFilePlayer(player) });
+// controls.dispose() removes only this view; the caller still owns player.
+```
+
+Adapters support `FilePlayer`, `WavePlayer` and `BufferPlayer`; a Workspace's `player` fits directly. The view shows only available seek/volume controls. Unknown duration displays `--:--` and disables seek until a positive finite duration arrives. A scrub freezes the shown position, seeks once on release and cancels when seeking becomes unavailable. Play failures requested by the view appear as a notice, including autoplay blocks; requests elsewhere report to their own caller. `AbortError` is ignored. [Adapters and custom player renderers](./widgets-advanced.md#plain-player-adapters) describe the structural contract and actions.
+
+<a id="pick-an-adapter"></a>
+<a id="interaction-and-renderer"></a>
+
+[Adapter and renderer contracts](./widgets-advanced.md#plain-player-adapters) include unknown duration, scrub actions and notices.
 
 ## Parameter controls and metering
 
-`mountParameter(root, { param, orientation, scale, min, max, step, label, format })` binds directly to a borrowed numeric `.value`. Use horizontal for a slider, vertical for a fader, or rotary for a knob. The control follows tracked changes such as native parameter automation. It uses parameter metadata when explicit options are omitted. Use a positive minimum for log scaling. Home and End set the range endpoints; arrow keys adjust the value. Drag a knob up or down and hold Shift for smaller movement.
+Bind a slider, fader or knob directly to a numeric `.value`. `mountParameter(root, { param, orientation, scale, min, max, step, label, format })` follows tracked changes and uses parameter metadata when options are omitted. `orientation` is `horizontal`, `vertical` or `rotary`; log scale needs a positive minimum. Home/End set endpoints; arrows adjust; drag a knob vertically and use Shift for finer movement. For an app-owned command, a structural `value` getter reads the tracked owner and its setter invokes the command.
 
 ```typescript
 import { mountParameter, mountLevelMeter } from "@audiorective/widgets";
@@ -53,187 +85,131 @@ const cutoff = mountParameter(controls, {
   label: "Cutoff",
   format: (value) => `${Math.round(value)} Hz`,
 });
-const level = mountLevelMeter(meters, {
-  sampleCount: analyser.fftSize,
-  read: (samples) => analyser.getFloatTimeDomainData(samples),
+const peak = mountLevelMeter(meters, {
+  source: () => channel.cells.level.value, // tracked post-fader peak in dBFS
 });
-// cutoff.dispose() and level.dispose() release just the views.
 ```
 
-For app-owned commands, supply a structural getter that reads the current tracked value and a setter that calls the command. `mountLevelMeter()` reports mono sample peak and RMS per snapshot, including samples over full scale. Call `dispose()` to stop the sampling loop. The caller owns the analyser and audio routing.
+Use the callback for an existing dBFS peak such as Channel's `cells.level`; `-Infinity` means silence. It reads the tracked value without creating an analyser or synthesizing samples. `getLevel()` returns **linear amplitude** `{ peak, rms }`; `rms` is `null` when the source supplies only a scalar peak.
 
-## Clip envelope editor
-
-`mountClipEnvelopeEditor(root, { duration, envelope, onChange })` takes a local `{ gain, fadeIn, fadeOut }` shape (the `ClipEnvelope` in `@audiorective/daw/project` fits) and exposes linear gain, fade-in and fade-out fields for a caller-owned reactive envelope. It commits changes in clip-local seconds and limits the combined fade length to `duration`. Use its `labels` option to localize the controls. The widget updates when the borrowed state changes and tears down its own observer on `dispose()`.
-
-## Automation overlay
-
-`view.attach(createAutomationOverlay({ points, fromView, toView, defaultValue, maxValue, onCommit }))` layers a borrowed curve over a waveform or other time view. Supply a reactive `points` reader and increasing inverse time conversions. The overlay follows zoom and scroll. Double-click to add a point, drag to move it, or use the arrow keys on a focused point. Enter switches between linear and hold. Delete removes the point. An optional `snap` function receives view time, and Alt bypasses it. Dragging commits once on release and cancels on Escape or data replacement.
-
-The attachment owns its gesture and drawing. The caller owns the points and playback. For a project clip, derive the conversion from [the clip's source window](./daw.md#clip-gain-automation) and pass updates to Project in `onCommit`. Supply optional `viewBreakpoints` at slope changes in a piecewise mapping.
-
-## Warp markers
-
-`view.attach(createWarpMarkers({ anchors, sampleRate, sourceFrames, sourceFrameAt, onCommit }))` mounts a seconds-view marker editor. `anchors` is a reactive reader of source/output frame pairs. Supply a conversion from waveform seconds to source frames for new markers. Double-click to add a marker, drag it to change its output position, or move a focused marker with the arrow keys. Shift increases the keyboard step. Delete removes a marker and Escape cancels a drag. The view commits on release and renders neighboring markers in order. It borrows the anchors and leaves audio processing and undo to the caller. An anchor is a local `{ sourceFrame, outputFrame }` pair, the same shape as `ClipStretchAnchor` in `@audiorective/daw/project` and `WaveStretchAnchor` in `@audiorective/player`.
-
-## Spectrum and EQ editor
-
-`mountSpectrum(root, { sampleRate, fftSize, read })` projects borrowed FFT dB values onto a log-frequency axis. A Web Audio analyser can supply the values through `read: (bins) => analyser.getFloatFrequencyData(bins)`. The reader receives `fftSize / 2` entries. The widget releases its animation frame on destruction. The caller owns the analyser and its audio connection.
-
-`mountEqEditor(root, { bands, readResponse })` edits borrowed numeric controls. Each band has a stable ID, label and reactive `frequency`, with optional `gain` and `q` controls. Pass a response function that fills **linear magnitudes** at the supplied frequencies. Drag or use Left and Right to change frequency. Gain-enabled bands also use vertical movement and Up or Down. Page Up, Page Down and the wheel adjust Q when supplied. The widget can run against standalone Params and generated analysis data, or it can borrow feedback from [the DAW runtime](./daw.md#effect-rack).
-
-## Step grid and pads
-
-`mountStepGrid(root, { sequencer, formatStep?, labels?, laneLabel? })` is a lane-aware, pluggable step editor. `sequencer` is a local structural contract, `StepGridSequencer = { lanes: Record<string, StepGridLane> }` (a lane carries `pattern`, `length`, `rate`, `swing`, `direction`, `mute`, `solo`, `params`, `playhead`, `progress` and `steps`); a `StepSequencer` from [Step Sequencer](./sequencer.md) satisfies it directly, as can your own model with the same lane shape (the widget imports no capability-class values). Disposeing the view leaves the borrowed sequencer available.
-
-The grid reads each lane's length, rate, direction, swing, mute, solo, `steps`, `playhead` and `progress` and writes through the lane's setters and `steps[i]` fields. The column count is the longest lane length seen. `laneLabel(name)` names a lane for display (default: the lane name).
-
-Each lane row has a header and a row of cells.
-
-- **Header:** a column header row (`Steps`, `Rate`, `Dir`, `Swing`) sits above the lanes, aligned with fixed-width header columns. Each lane row is as tall as its cells: a filled name block, Mute and Solo square toggles, then the four columns. Every control writes the lane's setter.
-  - `Steps` and `Swing` are number boxes (`role="spinbutton"` with `aria-valuemin`, `aria-valuemax`, `aria-valuenow` and `aria-valuetext`). Drag vertically (8 px per step, 3 px per percent), press Up/Right or Down/Left (Shift moves by 10), PageUp and PageDown (10), Home and End, scroll the wheel while the box is focused, or double-click (or press Enter) to type a value; Enter commits, Escape cancels, and the value is clamped. `Steps` is limited to 1..128; swing is 0 to 100 percent, the lane's `swing` of 0..1 shown as a percentage: it delays every odd step by that share of half a step (100% is half a step late), a fixed beat offset that follows tempo.
-  - `Rate` is a styled `select` over the twelve straight and triplet rates. `Dir` is a button that cycles `→`, `←`, `↔`.
-- **Parameter tabs:** a strip under the grid selects which per-step value the grid shows and edits: Velocity, Offset, Length, Repeat, Pitch and Chance, then one tab for each per-lane custom param (the union by id across lanes; a lane without that param shows its cells inert on that tab). Ranges come from the lane's `params` and the built-in `Step` ranges. Velocity, chance, length and custom values draw as a fill height, offset and pitch as a bar from the centre line, repeat as segment marks.
-- **Cells:** click toggles. A vertical drag edits the active parameter. A fill-height value covers its range over one cell height, repeat takes 12 px per hit and pitch 3 px per semitone; repeat and pitch snap to integers and every value stays inside its range. A value label (`65%`, `+3 st`, `x4`) shows while editing, on hover and on focus. A drag does not also toggle.
-- **Polymeter:** cells beyond a lane's `steps` are dimmed and inert. Each lane's `playhead` cell is highlighted, a bar across the top follows the first lane with a non-null `progress`, and the ruler marks every 4th step (1, 5, 9, 13 …).
-- **Fold:** the Fold toggle hides lanes with no active step.
-- **Keyboard:** the grid is one tab stop (roving `tabindex`). Left and Right (or Home and End) move along a lane, Alt+Up and Alt+Down move between lanes, Enter and Space toggle, Up and Down adjust the active parameter by a fine step, PageUp and PageDown by a coarse one (velocity 5% and 25%; pitch 1 and 12 semitones).
-- **Updates:** the widget keeps every element across pattern changes and repaints only the cells, headers and playheads whose values changed. It rebuilds cells only when the column count or the lane list changes.
-
-`formatStep(label, step)` names each cell for assistive technology (default `Kick step 3`). `labels` overrides the built-in strings (`grid`, `velocity`, `offset`, `length`, `repeat`, `pitch`, `chance`, `fold`, `mute`, `solo`, `steps`, `rate`, `direction`, `swing`, `dir`); custom tabs are labelled with the param name. The lane set is read at mount; the grid does not add or remove lanes afterwards.
-
-**Styling.** Every colour and size is a CSS custom property with a neutral default, so a page themes the grid by setting properties on the root or an ancestor, without overriding selectors:
-
-| Property                                                                                                                    | Controls                                                                     |
-| --------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `--ar-step-font`, `--ar-step-color`, `--ar-step-muted`                                                                      | Text font, colour and secondary text                                         |
-| `--ar-step-background`, `--ar-step-border`, `--ar-step-radius`, `--ar-step-padding`                                         | The grid frame                                                               |
-| `--ar-step-header-width` (default 340px, 300px in a container 900px wide or narrower)                                       | Width of the lane header column                                              |
-| `--ar-step-header-background`, `--ar-step-name-color` (falls back to `--ar-step-header-color`)                              | The lane name block fill and its text                                        |
-| `--ar-step-column-color`                                                                                                    | Column header labels and the ruler (falls back to muted)                     |
-| `--ar-step-cell-height` (40px), `--ar-step-cell-min-width`, `--ar-step-cell-gap`, `--ar-step-lane-gap`, `--ar-step-bar-gap` | Cell and lane sizes, and the extra gap before every 4th step                 |
-| `--ar-step-cell-background`, `--ar-step-cell-border`, `--ar-step-cell-radius`                                               | Off cells                                                                    |
-| `--ar-step-cell-on-background`, `--ar-step-cell-on-border`                                                                  | Active cells                                                                 |
-| `--ar-step-value-color`, `--ar-step-centre-line`                                                                            | The value bar (fill, centre bar, segments) and the centre line               |
-| `--ar-step-cap-height` (4px), `--ar-step-fill-inset` (3px)                                                                  | The on-colour cap above an active cell's value bar, and the bar's side inset |
-| `--ar-step-playhead`, `--ar-step-playhead-value-color`                                                                      | The playhead cell and its value bar                                          |
-| `--ar-step-inert-opacity`                                                                                                   | Cells beyond a lane's `steps`                                                |
-| `--ar-step-focus`                                                                                                           | Keyboard focus outline                                                       |
-| `--ar-step-progress`, `--ar-step-progress-track`, `--ar-step-progress-height`                                               | The loop progress bar                                                        |
-| `--ar-step-label-color`, `--ar-step-label-background`                                                                       | The value label                                                              |
-| `--ar-step-control-background`, `--ar-step-control-color`, `--ar-step-control-border`, `--ar-step-control-radius`           | Header and toolbar controls                                                  |
-| `--ar-step-box-background`, `--ar-step-box-color`, `--ar-step-box-border`                                                   | Number boxes, the rate picker and direction (fall back to control)           |
-| `--ar-step-mute-active-background`, `--ar-step-mute-active-color`                                                           | Pressed Mute (fall back to control active)                                   |
-| `--ar-step-solo-active-background`, `--ar-step-solo-active-color`                                                           | Pressed Solo (fall back to control active)                                   |
-| `--ar-step-tabs-background`                                                                                                 | The segmented track behind the tabs and Fold                                 |
-| `--ar-step-control-active-background`, `--ar-step-control-active-color`, `--ar-step-tab-radius`                             | Selected tab and pressed Fold; the default for Mute/Solo                     |
-
-**Responsive layout.** The widget root is a size container. At 900px or narrower the header column drops to 300px, controls and column labels compact, and cells shrink to a 14px minimum with a 2px gap and 6px bar gap, so a 768px container shows 16 steps and names such as "Tom even" without scrolling. Properties you set (`--ar-step-header-width`, `--ar-step-cell-min-width`, `--ar-step-cell-gap`, `--ar-step-bar-gap`) apply at every width. Below the minimum width the grid scrolls horizontally inside the widget. The widget needs a width from its parent, so avoid mounting it in a shrink-to-fit container.
-
-### Step grid plugins
-
-`mountStepGrid` returns `{ attach(plugin), dispose() }` and implements `PluginTarget<StepGridPluginContext>`, the same host that backs the waveform, piano roll and selector. Registrations are released when the attachment is disposed, and a throwing plugin or listener does not break the grid. Plugin attachments are disposed with the grid.
-
-`StepGridPluginContext` extends `WidgetPluginContext` (`listen`, `onCleanup`) with the members below; `StepGridPlugin` is `WidgetPlugin<StepGridPluginContext>`:
-
-- `surface`: the positioned element that holds the lanes.
-- `sequencer`: the borrowed sequencer, so a plugin writes steps through `sequencer.lanes.<name>.steps[i]` and whole patterns through `lanes.<name>.pattern`. The context types each lane with the writable members of a real lane: `pattern`, `length`, `rate`, `swing`, `direction`, `mute` and `solo`.
-- `cellElement(laneId, step)`: the cell element, or `null` for an unknown lane or step.
-- `cellRect(laneId, step)`: `{ x, y, width, height }` in CSS pixels relative to `surface`, or `null`.
-- `mountOverlay(element)`: add a full-surface overlay (`pointer-events: none` by default). Returns its cleanup.
-- `addToolbarItem(element)`: add an element to the toolbar strip beside the parameter tabs. Returns its cleanup.
-- `activeParameter`: a `Readable<string>` of the selected tab id, and `setActiveParameter(id)` to select a built-in or custom tab.
-- `onPatternChange(listener)`: called after the grid has updated for each change. Returns its cleanup.
+When the app already has genuine PCM to analyse, pass a PCM source:
 
 ```typescript
-import { mountStepGrid, type StepGridPlugin } from "@audiorective/widgets";
+import { mountLevelMeter } from "@audiorective/widgets";
 
-// Fills a lane with N evenly spread pulses from a toolbar button.
-const euclid: StepGridPlugin = {
-  attach(context) {
-    const button = document.createElement("button");
-    button.textContent = "Euclid 5/16 kick";
-    context.addToolbarItem(button);
-    context.listen(button, "click", () => {
-      for (let step = 0; step < 16; step++) {
-        const hit = Math.floor(((step + 1) * 5) / 16) > Math.floor((step * 5) / 16);
-        context.sequencer.lanes.kick.steps[step].velocity = hit ? 1 : 0;
-      }
-      context.setActiveParameter("velocity");
-    });
-    const marker = document.createElement("div");
-    context.mountOverlay(marker);
-    context.onPatternChange(() => {
-      const rect = context.cellRect("kick", 0);
-      if (rect)
-        Object.assign(marker.style, {
-          position: "absolute",
-          left: `${rect.x}px`,
-          top: `${rect.y}px`,
-          width: `${rect.width}px`,
-          height: "2px",
-          background: "orange",
-        });
-    });
+const pcm = mountLevelMeter(meters, {
+  source: {
+    sampleCount: analyser.fftSize,
+    read: (samples) => analyser.getFloatTimeDomainData(samples),
   },
-};
-
-const grid = mountStepGrid(document.querySelector<HTMLElement>("#grid")!, { sequencer });
-const attachment = grid.attach(euclid); // attachment.dispose() removes the button and overlay
+});
 ```
 
-`mountPadGrid(root, { pads, press })` turns pointer or focused keyboard presses into calls to `press(id)`. A one-shot callback returns nothing. For a gated sound, return a release callback for that specific press. The widget releases held inputs on key or pointer release, focus loss and destruction. It leaves the audio engine and pad mapping with the caller.
-
-## Sample browser
-
-`mountSampleBrowser(root, { library, choose, onError, labels? })` renders a borrowed [Sample Library](./samples.md#sample-library), or any `library` with a `state` readable of rows, `preview`, `stopPreview` and `remove`. The caller supplies file input and placement. On `choose(id)`, acquire the buffer, copy or retain it in the destination and release the lease when finished. `dispose()` removes the view, leaving audition and imports available to the caller.
+`sampleCount` defaults to 2048. PCM snapshots measure mono sample peak and RMS, including values above full scale. The caller owns the analyser and route. `dispose()` releases the view's observer or sampling loop and leaves the audio owner alive.
 
 ## Mixer controls
 
-`mountMixer(root, { state, editTrack, editMaster, meter? })` binds volume, pan, mute and solo controls to an external mixer state. Give it a `Readable<MixerState>` and apply edits in the owner. To display meters, return a reader `{ sampleCount?, read(samples), dispose?() }` from `meter(id)` for each track and from `meter(null)` for the master. The caller creates and wires its own analysis node (for example an `AnalyserNode` on a post-fader tap) inside `meter`; the view only calls `read` per animation frame and calls `dispose()` when the strip goes away so the caller can disconnect. The widget touches no audio node. On `dispose()` it removes its own reactive subscription and views. Add app-specific routing controls with `appendControls(id, element)`, whose optional return value cleans up that strip. Strips are created outside the state subscription, so a reactive widget mounted there, such as `mountParameter`, keeps following its value after the mixer state changes.
+`mountMixer` binds volume and pan to a `Readable<MixerState>`, then sends `Partial<MixerStripSettings>` to `editTrack`. Omit `muted` or `solo` when that control is unsupported; the widget creates neither solo logic nor routing. Master needs both `state.masterVolume` and `editMaster`. Track/master volume spans 0..1.5, pan -1..1.
+
+Project arrays can be projected without a mirrored writable store:
 
 ```typescript
-type MixerStrip = Readonly<{ id: string; name: string; volume: number; pan: number; muted: boolean; solo: boolean }>;
-type MixerState = Readonly<{ tracks: readonly MixerStrip[]; masterVolume: number }>;
-// editTrack(id, patch): patch is Partial<{ volume: number; pan: number; muted: boolean; solo: boolean }>, one or more fields per call
-// editMaster(gain: number)
+import { readonlyCell } from "@audiorective/core";
+import { mountMixer } from "@audiorective/widgets";
+
+const mixer = mountMixer(root, {
+  state: readonlyCell(() => {
+    void workspace.project.cells.revision.value;
+    return { tracks: workspace.project.tracks, masterVolume: workspace.project.masterVolume };
+  }),
+  editTrack(id, patch) {
+    if (patch.volume !== undefined) workspace.setTrackVolume(id, patch.volume);
+    if (patch.pan !== undefined) workspace.setTrackPan(id, patch.pan);
+    if (patch.muted !== undefined) workspace.setTrackMuted(id, patch.muted);
+    if (patch.solo !== undefined) workspace.setTrackSolo(id, patch.solo);
+  },
+  editMaster: (gain) => workspace.setMasterVolume(gain),
+});
 ```
 
-Track `volume` spans 0..1.5 on the slider, as does the master; `pan` spans -1..1. A state built with `readonlyCell(() => ({ tracks, masterVolume }))` over your own mixer model is enough.
-
-**Markup and styling.** `mountMixer` ships no stylesheet, so the first render is bare range inputs. Style these hooks inside your own container: `.mixer` (the root), `.mixer-strip` (one per strip, the master first), `.master` (added to the master strip), `.strip-name` (a `button` when `onSelect` is set, otherwise a `span`), `.strip-actions` (holds the buttons `.mute` and `.solo`, which gain `.on` while active), `.selected` (on a strip when `selected(id)` is true), and `.ar-level-meter` (the meter, when `meter` returns a reader). Each track strip carries `data-track-id`. `appendControls(id, element)` receives the strip element, so it can add a colour swatch or routing control inside it.
-
-`mountMixer` imports only core and takes the structural `state`, `editTrack` and `editMaster` contract, so the same view works over a DAW project or your own mixer model. With a DAW `Workspace`, read `project.cells.revision` when projecting `project.tracks` and `project.masterVolume`, and bind the edit callbacks to [Workspace mixer methods](./daw.md#mixer-buses-and-sends).
-
-## Timeline range gesture
-
-`attachTimeRangeGesture(element, { timeAt, onPreview, onSelect })` from `@audiorective/widgets/arrangement` attaches a drag to an existing time surface. Your `timeAt(clientX, bypassSnap)` resolves scrolling, zoom, bounds and snapping. The widget supplies `bypassSnap` while Alt is pressed. It previews an ordered `[start, end]` and calls `onSelect` once when the pointer releases a nonempty range. Clicks and cancelled gestures clear the preview. Call `dispose()` when replacing the borrowed element.
-
-Use a dedicated surface with `touch-action: none` when dragging also needs to work on touchscreens. The app decides how to store or use the returned bounds. The DAW demo converts project seconds to beats before setting its loop.
+`MixerStripSettings` is `{ volume, pan, muted?, solo? }`; `MixerStrip` adds stable `id` and `name`; `MixerState` has `tracks` and optional `masterVolume`. `meter(id)` receives a track ID, or `null` for a mounted master, and returns `{ source, dispose? }`. The source is the same tracked dBFS callback or genuine PCM reader accepted by `mountLevelMeter`. Optional caller cleanup runs when that meter is removed. Rows and controls keep their identity across owner updates and reorder. `onSelect`, tracked `selected`, labels and `appendControls` support app-specific controls; [markup and extension lifetime](./widgets-advanced.md#mixer-markup-and-extension-controls) list the public styling hooks.
 
 ## Automation lane
 
-`mountAutomationLane(root, options)` draws and edits an envelope in project seconds. Pass `duration`, `maxValue`, `defaultValue`, `points` and an `onCommit(next)` callback. Click to add a point or drag a point to move it. The point picker and fields allow precise time and value edits, linear or hold interpolation, and deletion. The first pointer edit after time zero anchors the default value at zero. Each completed gesture emits one replacement point list. A cancelled drag keeps the prior points.
+`mountAutomationLane` edits caller-owned curve snapshots. Give `points` an object with a tracked readonly `.value`; an `AutomationCurve` fits directly. `duration` is a tracked getter. The lane keeps its mounted controls synchronized, with local previews until one `onCommit` per finished gesture.
 
 ```typescript
 import { mountAutomationLane } from "@audiorective/widgets";
 
+// curve is the existing AutomationCurve; length is the owner's tracked beat length.
 const lane = mountAutomationLane(root, {
-  duration: 16,
+  points: curve,
+  duration: () => length.value,
+  timeUnit: "beats",
   maxValue: 1.5,
   defaultValue: 1,
-  points: track.volumeAutomation,
   onCommit(next) {
-    project.setVolumeAutomation(track.id, next);
-    lane.setPoints(project.tracks.find(({ id }) => id === track.id)!.volumeAutomation);
-    void workspace.flush().catch(reportError); // optional: edits apply automatically
+    try {
+      curve.value = next;
+    } catch (error) {
+      showEditError(error);
+    } // caller-owned notice for owner validation
   },
 });
-// On hide or teardown:
-lane.dispose();
 ```
 
-The caller owns the envelope, applies undo and redo, and calls `setPoints()` with the accepted points after each edit or external change. Use a positive finite duration and maximum value. Otherwise the mount reports `Automation lane needs a positive duration and maximum value.` A browser without a 2D canvas reports `Automation lane needs a 2D canvas.`.
+`timeUnit` is `seconds` by default or `beats`; time fields, labels and picker use that unit. The widget performs no beat/second conversion. Click to add or drag to move a point; the picker allows exact time/value, linear/hold and deletion. The first pointer edit after zero anchors the default at zero. Escape, pointer cancellation, capture loss, external point replacement or disposal discard stale previews without a commit. External updates retain control DOM and focus. Owner updates flow through `.value`; the handle only needs `dispose()`. `AutomationCurve` requires a nonempty curve: deleting its final point is an owner validation error. Report the rejection or apply your own owner policy. Generic array owners may accept an empty list. A refused or throwing command restores the source values without replacing controls.
+
+For Project arrays, pass `points: readonlyCell(() => { void project.cells.revision.value; return currentTrack().volumeAutomation; })` and commit with `project.setVolumeAutomation(trackId, next)`. Read the latest track rather than a captured array. A running Workspace applies light Project edits automatically; [DAW](./daw.md) covers flush/error handling.
+
+## Automation overlay
+
+`view.attach(createAutomationOverlay({ points, fromView, toView, defaultValue, maxValue, onCommit }))` uses the same readonly-value source over a waveform or other time view. Supply inverse conversions between the view's time unit and the owner's curve time; pass the **original curve**, not preconverted points. Optional readable `disabled` gates editing. Double-click adds; drag/arrows move; Enter toggles linear/hold; Delete removes. Optional `snap` receives view time, with Alt bypass. Finished gestures commit once; cancellation and external replacement leave authored data intact and preserve mounted identity. See [one curve in two views](./widgets-advanced.md#one-curve-in-two-time-views) for mapping and competing tools.
+
+## Clip envelope editor
+
+`mountClipEnvelopeEditor(root, { duration: () => currentClip().duration, envelope, onChange })` edits linear `{ gain, fadeIn, fadeOut }` in clip-local seconds. Use a tracked readonlyCell projection for a Project envelope and commit through `project.setAudioClipEnvelope(clipId, next)`. Tracked duration changes update fade limits in place; combined fades are limited to the current duration. External envelope changes refresh the same fields. `labels` localizes them; `dispose()` removes only the editor's observer and DOM. The Project's ClipEnvelope shape fits directly.
+
+```typescript
+import { readonlyCell } from "@audiorective/core";
+import { mountClipEnvelopeEditor } from "@audiorective/widgets";
+
+// currentAudioClip() reads the current tracked clip, not an old snapshot.
+const inspector = mountClipEnvelopeEditor(inspectorRoot, {
+  duration: () => currentAudioClip().duration,
+  envelope: readonlyCell(() => currentAudioClip().envelope ?? { gain: 1, fadeIn: 0, fadeOut: 0 }),
+  onChange: (next) => project.setAudioClipEnvelope(clipId, next),
+});
+```
+
+The caller retains its Project and history.
+
+## Sample browser
+
+`mountSampleBrowser(root, { library, choose, onError, labels? })` accepts a [SampleLibrary](./samples.md#sample-library) directly. The structural library reads `state` (`rows`, `previewId`, `previewPlaying`) and supplies `preview`, `stopPreview`, `remove`. The app owns file input and placement. In `choose(id)`, acquire the buffer, retain or copy it to the destination, then release the lease. Disposing the browser leaves the borrowed library and preview alive.
+
+```typescript
+import { mountSampleBrowser } from "@audiorective/widgets";
+
+const browser = mountSampleBrowser(browserRoot, {
+  library, // the app-owned SampleLibrary, directly
+  choose: useSample, // app command: acquire, place/copy, then release the lease
+  onError: reportError,
+});
+// browser.dispose() releases this view; library and preview remain available.
+```
+
+## Step grid and pads
+
+`mountStepGrid(root, { sequencer, formatStep?, labels?, laneLabel? })` accepts a [StepSequencer](./sequencer.md) directly, or the structural `StepGridSequencer` lane contract. It edits lane headers and per-step velocity, offset, length, repeat, pitch, chance and custom params; Fold hides inactive lanes. Arrow keys navigate; Enter/Space toggle; Up/Down edit, PageUp/PageDown use coarse steps. All step indices passed to `formatStep(label, step)` and plugin helpers are **zero-based**: use `${label} step ${step + 1}` for visible numbering. Removing the view leaves its sequencer alive.
+
+For a per-step helper, attach a `StepGridPlugin` with `context.onCell(cell => ...)`. Each cell supplies its tracked `step`, `laneId`, zero-based `stepIndex`, a dedicated positioned `root`, and scoped `listen`/`onCleanup`. Geometry and cleanup follow the cell automatically. Read step fields inside a core effect and register its disposer with `cell.onCleanup`; write authored changes through `cell.step`. [Step grid plugins](./widgets-advanced.md#step-grid-plugins) show the attachment and full keyboard, theme and structural contracts.
+
+`mountPadGrid(root, { pads, press })` calls `press(id)` for pointer or focused keyboard input. Return a release callback for that specific press when the sound is gated; return nothing for a one-shot. Releases run on key/pointer release, focus loss and destruction. The app owns mapping and sound.
+
+<a id="step-grid-plugins"></a>
+
+[Per-cell and toolbar plugins](./widgets-advanced.md#step-grid-plugins) use scoped public attachment contexts.
 
 ## Clip Grid
 
@@ -243,366 +219,32 @@ The caller owns the envelope, applies undo and redo, and calls `setPoints()` wit
 
 `launch(command)` wraps every command a button issues (an app can start playback first); `cancel()` replaces the Cancel button's `launcher.cancelQueued()`. The widget's `dispose()` removes its own DOM and subscription. See the [DAW example](./daw.md#clip-launcher) for wiring.
 
-## Plain player controls
+## Spectrum and EQ editor
 
-`@audiorective/widgets/player` mounts Play/Pause, position, duration and volume controls on a caller-owned player. It works without waveform decoding, so use `FilePlayer` for long tracks, podcasts and streams. The widget borrows the player: removing the controls leaves playback and the audio graph running.
+`mountSpectrum(root, { sampleRate, fftSize, read })` projects borrowed FFT dB values onto a log-frequency axis. A Web Audio analyser can supply the values through `read: (bins) => analyser.getFloatFrequencyData(bins)`. The reader receives `fftSize / 2` entries. The widget releases its animation frame on destruction. The caller owns the analyser and its audio connection.
 
-```typescript
-import { FilePlayer } from "@audiorective/core";
-import { fromFilePlayer, mountPlayer } from "@audiorective/widgets/player";
+`mountEqEditor(root, { bands, readResponse })` edits borrowed numeric controls. Each band has a stable ID, label and reactive `frequency`, with optional `gain` and `q` controls. Pass a response function that fills **linear magnitudes** at the supplied frequencies. Drag or use Left and Right to change frequency. Gain-enabled bands also use vertical movement and Up or Down. Page Up, Page Down and the wheel adjust Q when supplied. The widget can run against standalone Params and generated analysis data, or it can borrow feedback from [the DAW runtime](./daw.md#effect-rack).
 
-const context = new AudioContext();
-const player = new FilePlayer(context, { src: "/music/track.mp3" });
-player.output.connect(context.destination);
+## Warp markers
 
-const controls = mountPlayer(document.querySelector<HTMLElement>("#player")!, {
-  player: fromFilePlayer(player),
-});
-
-// When this view is removed:
-controls.dispose(); // playback continues; the caller still owns player and context
-// At the end of the app's audio lifetime: player.dispose(); await context.close();
-```
-
-Call `mountPlayer` in a browser, behind a client-only boundary when the app also renders on a server. The caller routes and starts its audio context. A single player can drive several views; each view keeps only its own drag and error display state. `dispose()` is idempotent and removes DOM, effects, subscriptions and animation frames without stopping or disposing the player.
-
-### Pick an adapter
-
-`mountPlayer(root, { player, renderer?, label? })` accepts a `PlayerLike`. Use the matching adapter or pass a Workspace's `player` directly.
-
-| Adapter                    | Controls                 | Position and duration                                                                           | Playback failure reported                                |
-| -------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `fromFilePlayer(player)`   | Play/Pause, seek, volume | Reactive `currentTime` and `duration`; unknown length is supported                              | A blocked or rejected `audio.play()` and a missing track |
-| `fromWavePlayer(player)`   | Play/Pause, seek, volume | Audio clock while playing; paused seeks and committed versions update the view                  | Missing/loading audio and a rejected play request        |
-| `fromBufferPlayer(player)` | Play/Stop, volume        | No seek bar or time readout: `BufferPlayer` exposes no persistent playhead or reactive duration | Missing audio or a closed context                        |
-| `workspace.player`         | Play/Pause, seek         | Project seconds, reactive duration and position changes from transport actions                  | A rejected `Workspace.play()` request                    |
-
-When opening or creating a Workspace for speaker playback, pass `{ destination: context.destination }`. For an existing graph, route `workspace.output` from the app. See [DAW playback controls](./daw.md#mount-playback-controls).
-
-`FilePlayer.play()` rejects like `HTMLMediaElement.play()` (`NotAllowedError` for an autoplay block), and the adapter passes that rejection to the view, which shows a notice. A play request made elsewhere rejects to its own caller; the widget reports only its own attempts. `BufferPlayer` starts from the beginning after Stop. For a seekable in-memory track, use `WavePlayer`.
-
-`PlayerLike` is structural, so an app's own player can supply `isPlaying: Readable<boolean>`, `play()`, and `pause()`. Optional `volume` has a writable `.value`; optional `timeline` supplies `position()`, `duration: Readable<number>`, and `seek(seconds)` when seeking is possible. Set `timeline.clock: true` when position advances without reactive writes; the widget reads it per animation frame only while playing. Optional `subscribe(listener)` reports other changes that tracked values miss. `resumes: false` changes the active button label to Stop. Adapters hold no state and need no disposal.
-
-```typescript
-import type { Readable } from "@audiorective/core";
-
-interface PlayerLike {
-  readonly isPlaying: Readable<boolean>;
-  play(): void | Promise<void>; // throw or reject when playback cannot start
-  pause(): void;
-  readonly resumes?: boolean; // false means Stop, then Play starts over
-  readonly volume?: { readonly $: () => number; value: number };
-  readonly timeline?: {
-    position(): number; // current seconds; tracked reads update the widget
-    readonly clock?: boolean; // reread per frame while playing
-    readonly duration: Readable<number>;
-    seek?(seconds: number): void;
-  };
-  subscribe?(listener: () => void): () => void;
-}
-```
-
-### Interaction and renderer
-
-An unknown, zero, negative or non-finite duration displays `--:--` and disables seeking; it re-enables when a finite positive duration arrives. During a drag, incoming time updates do not move the thumb or time text. The player seeks once on release, and the view follows it again. If the duration shrinks during the drag, the committed position is clamped to the latest duration; a track change that makes seeking unavailable cancels the drag. A failed play requested by this view shows a notice; the notice clears when playback starts. `AbortError` from an interrupted request is ignored.
-
-Pass `renderer: PlayerRenderer` to replace the markup while keeping these interaction rules. The factory receives `(container, actions)` and returns `{ render(frame), dispose?() }`. Wire controls to `actions.toggle()`, `hold()`, `scrub(seconds)`, `commit()`, `cancel()`, and `setVolume(value)`. The widget sends one `PlayerFrame` with `isPlaying`, `resumes`, `position`, `duration`, `canSeek`, `scrubbing`, `volume`, and `notice`. `position`, `duration`, `volume` and `notice` can be `null`; numeric fields are finite when present. `render(frame)` runs initially and after state changes. Set an input's `max` before `value`, or the browser can clamp a resumed position to the old maximum. A renderer's `dispose()` releases any resources it created outside its container.
-
-`PlayerActions`, `PlayerFrame`, `PlayerRenderer`, `PlayerRendererInstance`, `PlayerOptions`, `PlayerHandle`, `PlayerTimeline`, `PlayerLike`, and `WritableValue` are exported types from this entry. `PlayerOptions.label` sets the control group's accessible name; its default is `"Player"`.
-
-`formatTime(seconds)` returns `m:ss`, with minutes unwrapped and seconds floored; `null` or a non-finite value returns `--:--`. The default renderer uses `ar-player-*` classes and `--player-font`, `--player-foreground`, `--player-accent`, and `--player-error` CSS variables. Its markup is an implementation detail; use a renderer when an app needs particular elements or text.
-
-## Mount a selector
-
-```typescript
-import { mountWaveformSelector } from "@audiorective/widgets";
-import { WavePlayer } from "@audiorective/player";
-
-const context = new AudioContext(); // or pass your app's existing context
-const root = document.querySelector<HTMLElement>("#waveform")!;
-const selector = mountWaveformSelector(root, {
-  createPlayer: () => new WavePlayer(context), // the selector owns and disposes this player
-  source: "/audio/loop.wav", // optional; also accepts a File
-  onSelectionChange(selection) {
-    console.log(selection); // { start, end } in committed output seconds, or null
-  },
-});
-selector.output.connect(context.destination);
-
-try {
-  await selector.ready;
-} catch (error) {
-  console.error(error); // also available as selector.getState().error
-}
-
-// Later, after a successful load:
-if (selector.getState().duration >= 2) {
-  selector.setSelection({ start: 0.5, end: 2 });
-}
-
-// On unmount:
-// selector.dispose();
-```
-
-The caller owns the context and routing. The selector resumes the player's context when a user initiates playback; it neither creates nor closes a context, and it does not connect its output to the destination. The widget core imports no capability class at runtime: the app supplies the `WavePlayer`, directly or through `createPlayer`. Connect its output to a destination or your effects chain. Mount in the browser with a DOM, Web Audio, and `ResizeObserver`; keep mounting behind a client-only boundary in a server-rendered app.
-
-### Interaction
-
-To share audio and selection across views, call `mountWaveformSelector(root, { player })` with a `WavePlayer` from `@audiorective/player`. Supply either `createPlayer` or `player`. `SelectorPlayer` is a structural contract (`cells` with `selection`, `isLooping`, `isPlaying`, `loading`, `loadProgress`, `error`, `processing`, `version` and `playhead`; `position`, `duration`, `sourceBuffer`, `load`, `cancelLoad`, `play`, `audition`, `pause`, `stop`, `seek`, `setLooping`, `sourceToOutput`, `output`, `dispose`, plus the selection model's `setSelection`); `WavePlayer` satisfies it and so can your own model. The selector follows the cells. The view does not dispose a supplied player or cancel its loads when detached. Route the shared output once. Loading or changing selection through any view updates the player and all its views; renderer, zoom and snap remain local. See [Player](./player.md#share-a-player-between-widgets).
-
-- Load an audio URL or local file using the built-in controls. Loading does not start playback.
-- Drag in either direction to create a range and start looping its audition. The endpoints are normalized to increasing seconds.
-- Click the waveform to seek and play. Clicking outside the selected range clears that range.
-- Resize a range with its handles. Arrow keys adjust a focused handle by 0.01 seconds; Shift uses 0.1 seconds. Pointer handle resizing commits and auditions the resulting range too. Keyboard edits and programmatic `setSelection` leave a stopped player stopped.
-- Use Play/Pause, Stop, Loop, Clear selection, zoom controls, and horizontal scrolling. A zoom factor of 1 fits the entire source.
-- Supply `grid: { beats, downbeats }` as arrays of original source seconds to enable the snap control. The selector maps them to the committed output timeline after each edit. Snap starts off; Alt bypasses pointer snapping.
-
-### Selector API
-
-```typescript
-type Selection = { start: number; end: number };
-
-type WaveformSelectorOptions = {
-  createPlayer: () => SelectorPlayer; // alternatively supply player: SelectorPlayer, without createPlayer
-  source?: string | File;
-  grid?: { beats: number[]; downbeats: number[] };
-  onSelectionChange?: (selection: Selection | null) => void;
-  renderer?: import("@audiorective/widgets").WaveformRenderer;
-};
-```
-
-`mountWaveformSelector(root, options)` returns `WaveformSelectorHandle`:
-
-| Member                                             | Behavior                                                                                                                                                                                                     |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ready: Promise<void>`                             | Resolves after the initial load, or immediately without `source`; rejects if the current initial load fails.                                                                                                 |
-| `output: AudioNode`                                | Caller-routed audio output of the selector's player.                                                                                                                                                         |
-| `load(source: string \| File): Promise<void>`      | Replaces the audio and clears the selection. The latest request wins, including when earlier decoding finishes later. A failed current request rejects and populates `error`; a subsequent load can recover. |
-| `cancelLoad(): void`                               | Cancels the player's active load. On a shared player this affects all observing selectors; disposing a borrowed view still leaves the caller's load running.                                                 |
-| `setSelection(selection: Selection \| null): void` | Sets metadata and updates the player's range without initiating playback. Endpoints must be finite and satisfy `0 <= start < end <= duration`.                                                               |
-| `getState(): WaveformSelectorState`                | Returns a snapshot; selection boundaries and position use committed output seconds.                                                                                                                          |
-| `attach(plugin: TimeViewPlugin)`                   | Adds an overlay or interaction to the selector's waveform in committed output seconds. Returns a `PluginAttachment`.                                                                                         |
-| `dispose(): void`                                  | Idempotently removes mounted DOM, listeners, observers, animation frames, pending load ownership, plugins, and owned audio nodes. Leaves the caller's context open.                                          |
-
-`WaveformSelectorState` is a snapshot read from the player's cells and contains `duration`, `selection`, `position`, `isPlaying`, `isLooping`, `loading`, `loadProgress`, `error: string | null`, `pixelsPerSecond`, `processing`, `stretchRatio`, `revision`, and `sourceDuration`. `duration` is the current output duration; `sourceDuration` belongs to the original source. Loading errors appear in the widget as well as in state. Catch `ready` and `load()` rejections when calling them directly. URL fetches follow the browser's CORS rules; decoding errors keep the browser's message.
-
-### Loading feedback
-
-The complete selector renders the player's download/read byte counts, indeterminate decode/peaks phases, and Cancel loading action. A progress fraction appears only with a known positive byte total; no decode/stretch percentage is fabricated. `getState().loadProgress` is the player's `cells.loadProgress` ([the player contract](./player.md#loading-state-progress-and-cancellation)). Successful completion, errors and cancellation remove loading feedback. A new `load` can retry; a cancelled promise settling does not imply a committed source. Multiple selectors sharing one player show the same progress and cancellation state.
-
-### Displaying committed edits
-
-A selector reads `player.cells.version.value.peaks` when the committed revision changes. The player summarizes PCM once per version; multiple selectors share that result without rescanning PCM for each view. The view copies the peak arrays for drawing. While `setStretch()` is pending, the old waveform stays visible and the processing indicator is active. A successful commit updates audio, peaks, duration and selection together; a failed render leaves the committed waveform in place and rejects to the caller of `setStretch`; the selector does not display it.
-
-Same-source edits preserve each view's zoom factor and map its scroll position to the new duration. A new source resets the viewport. Selector `grid` values remain in **original source seconds** and are remapped through `player.sourceToOutput()` for snapping; selection callbacks, playhead, viewport coordinates, and renderer times use **current output seconds**. To initiate stretch, retain the supplied `WavePlayer` and call `await player.setStretch(ratio)`; the selector handle does not add a second editing API. See the [complete composition example](./player.md#compose-offline-stretch-and-a-selector).
+`view.attach(createWarpMarkers({ anchors, sampleRate, sourceFrames, sourceFrameAt, onCommit, disabled? }))` edits borrowed source/output frame pairs on a seconds view. The public `WaveStretchAnchor` is the player's type. Pass the existing `ReadonlyCell<readonly WaveStretchAnchor[]>` as `anchors`, or project an owner array with `readonlyCell(() => currentAnchors())`. Supply output-seconds-to-source-frame mapping and commit through the owner; the app performs audio processing and owns undo. [Warp editing](./widgets-advanced.md#warp-markers) covers gestures and composition.
 
 ## Use the waveform without audio
 
-The `/waveform` entry may import the pure `@audiorective/core/peaks` helper, but evaluates no core audio-runtime or audio-player implementation. It accepts precomputed peaks or an existing `AudioBuffer`; mounting it creates no audio context or nodes.
+`mountWaveform(root, { data, playhead?, label?, renderer? })` accepts precomputed peaks or an existing AudioBuffer and creates no audio graph. `setData` replaces data; `setPlayhead` follows an external player. The handle has the same viewport, zoom, amplitude and scroll operations exposed by the selector. [Waveform and selection APIs](./widgets-advanced.md#waveform-api) cover data shapes and metadata selection. For MIDI views use [MIDI and Piano Roll](./midi.md); piano-roll times are beats.
 
-```typescript
-import { mountWaveform, createSelectionPlugin } from "@audiorective/widgets/waveform";
+<a id="waveform-api"></a>
+<a id="selection-plugin-api"></a>
+<a id="replace-waveform-drawing"></a>
+<a id="piano-roll"></a>
+<a id="write-a-visual-plugin"></a>
+<a id="timeline-range-gesture"></a>
 
-const view = mountWaveform(document.querySelector<HTMLElement>("#waveform")!, {
-  data: { peaks: new Float32Array([0.2, 0.8, 0.5, 0.3]), duration: 4 },
-  label: "Clip waveform",
-});
-const selection = createSelectionPlugin({
-  onChange(range) {
-    console.log(range);
-  },
-  onCommit(event) {
-    console.log(event.kind, event.selection);
-  },
-});
-const attachment = view.attach(selection);
-selection.setSelection({ start: 1, end: 3 });
-view.setPlayhead(1.5); // feed updates from an external player if needed
-view.setZoom(2);
-view.setAmplitudeZoom(4); // visual height only; original peaks and audio stay unchanged
-
-// Optional early detach; view.dispose() also disposes all attachments.
-attachment.dispose();
-view.dispose();
-```
-
-Selection plugins only manage metadata and interaction. Even pointer commits do not start sound here; applications explicitly choose how to respond.
-
-### Waveform API
-
-`mountWaveform(root, options?)` accepts `WaveformOptions` with optional `data`, `playhead: number | null`, accessible `label`, and a custom `renderer`. `WaveformData` is one of:
-
-- `{ peaks: Float32Array, duration: number }`: symmetric amplitude per bin.
-- `WaveformPeaks = { min: Float32Array, max: Float32Array, duration: number }`: matching, nonempty extrema arrays.
-- An existing `AudioBuffer`, from which extrema are computed across channels.
-
-Peak values must be finite, and duration must be finite and positive. The view copies supplied peak arrays. `null` clears data through `setData`.
-
-| `WaveformHandle` member                | Behavior                                                                                                          |
-| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `setData(data: WaveformData \| null)`  | Replaces data, resets zoom and scroll, and clears attached selection metadata.                                    |
-| `setPlayhead(seconds: number \| null)` | Shows a finite position clamped to the displayed timeline; `null` hides the playhead.                             |
-| `getViewport()`                        | Returns `WaveformViewport`: `duration`, `pixelsPerSecond`, `scrollLeft`, `width`, `height`. Distances are pixels. |
-| `setZoom(factor: number)`              | Requires finite `factor >= 1`; zoom preserves the viewport center and is bounded internally.                      |
-| `setAmplitudeZoom(factor: number)`     | Scales only the displayed waveform height from `1` to `32`; cached peaks and audio remain unchanged.              |
-| `getAmplitudeZoom()`                   | Returns the current display-only amplitude factor.                                                                |
-| `scrollTo(seconds: number)`            | Scrolls toward a displayed timeline position, clamped to the available range.                                     |
-| `attach(plugin: TimeViewPlugin)`       | Returns a `PluginAttachment` with idempotent `dispose()`.                                                         |
-| `dispose()`                            | Idempotently detaches plugins and removes the view and its resources.                                             |
-
-### Selection plugin API
-
-`createSelectionPlugin(options?)` accepts `SelectionPluginOptions`: `grid`, `snap: "off" | "beat" | "downbeat"`, `onChange(selection)`, and `onCommit(event)`. A commit contains `selection`, `kind`, and an optional click `time` in seconds. `kind` is `"pointer"`, `"keyboard"`, `"programmatic"`, or `"click"`; pointer commits include both a newly drawn range and handle resizing.
-
-Attach the plugin before calling `setSelection`. Its methods are `getSelection()`, `setSelection(selection | null)`, `setSnap(mode)`, and `setGrid({ beats, downbeats })`. Pure-plugin grids use **current-view seconds**, matching the displayed data. `setGrid` replaces and copies the arrays; it does not convert original source times. Convert those explicitly when using the pure plugin with edited audio. Each selection plugin attaches to one view at a time; each view has one selection owner. Dispose the attachment before reusing the plugin elsewhere. Without an external model, data replacement and detachment clear its selection.
-
-Pass `model: SelectionModel` to use an existing headless selection owner. The structural interface is a `cells.selection` cell holding `Selection | null` and `setSelection(selection: Selection | null): void`. `WavePlayer` implements it. The plugin reads the model directly and writes gesture changes to it; detaching or replacing a view's display data leaves external selection intact. `onChange`/`onCommit` describe this plugin's edits; external model notifications redraw without inventing a gesture commit. Keep the model's timeline and duration consistent with the displayed data.
-
-## Replace waveform drawing
-
-Pass a `WaveformRenderer` factory as `renderer` to either `mountWaveform` or `mountWaveformSelector`. The factory mounts your SVG, Canvas, or DOM into a dedicated drawing container once and returns `{ render(frame), dispose?() }`. Omitting the option uses the default SVG drawing.
-
-```typescript
-import { mountWaveform, type WaveformRenderer } from "@audiorective/widgets/waveform";
-
-const outline: WaveformRenderer = (container) => {
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  const path = document.createElementNS(svg.namespaceURI, "path");
-  path.setAttribute("fill", "none");
-  path.setAttribute("stroke", "orange");
-  path.setAttribute("stroke-width", "2");
-  svg.append(path);
-  container.append(svg);
-  return {
-    render({ peaks, width, height, amplitudeZoom }) {
-      svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-      const commands: string[] = [];
-      if (peaks) {
-        for (let i = 0; i < peaks.max.length; i++) {
-          const x = ((i + 0.5) / peaks.max.length) * width;
-          const y = ((1 - Math.min(1, peaks.max[i] * amplitudeZoom)) * height) / 2;
-          commands.push(`${i ? "L" : "M"}${x},${y}`);
-        }
-      }
-      path.setAttribute("d", commands.join(" "));
-    },
-    dispose() {
-      svg.remove();
-    },
-  };
-};
-
-const view = mountWaveform(document.querySelector<HTMLElement>("#waveform")!, {
-  data: { peaks: Float32Array.of(0.2, 0.8, 0.4, 0.6), duration: 6 },
-  renderer: outline,
-});
-view.setAmplitudeZoom(4);
-// Selection plugins and external playheads work with this drawing too.
-// view.dispose() also disposes the renderer.
-```
-
-`WaveformRenderFrame` contains `peaks: Readonly<WaveformPeaks> | null`, `width`, `height`, `pixelsPerSecond`, and `amplitudeZoom`. Peaks are cached extrema combined across channels; treat their arrays as read-only. A custom renderer applies `amplitudeZoom` to its drawing if it wants the public amplitude control; the default renderer clips enlarged peaks at the view's top and bottom. Width and height describe the **full scrolling content in CSS pixels**, and a displayed timeline time maps to `seconds * pixelsPerSecond`. `null` means clear the drawing. The widget calls `render` initially and on data, zoom, and size changes. Scrolling is native DOM movement; it does not require redrawing the whole content. Playback position is a separate overlay.
-
-The drawing container is decorative and ignores pointer events. Use plugins for interactive overlays; selection, snapping, ruler, playhead, and audio continue to be owned by the widget. The renderer can change the shape within the same linear time axis; a circular or otherwise different time-coordinate system requires a separate interaction design. Canvas renderers own their backing resolution and device-pixel scaling. A live color/theme change inside a custom renderer is the renderer's responsibility.
-
-The widget calls the returned `dispose()` once, including after an initial `render` failure, and removes the drawing container. Release additional listeners, observers, or timers there. A factory that throws before returning must release its own extra resources; the widget still removes its mounted DOM. Renderer exceptions propagate to the caller on synchronous operations. Cleanup exceptions are logged and do not interrupt the widget's remaining cleanup.
-
-## Piano roll
-
-`mountPianoRoll(root, { model, onNoteEdit })` draws a `PianoRollModel` (`getState(): { notes, duration, selection }`, `getSelection`, `setSelection`, `subscribe`). Note times, `duration`, `grid`, the playhead and plugin coordinates are in beats (quarter notes); velocity is 0..1. `pianoRollModel(clip)` binds a `MidiClip` from `@audiorective/midi` so no adapter is needed:
-
-```typescript
-import { MidiClip } from "@audiorective/midi";
-import { mountPianoRoll, pianoRollModel } from "@audiorective/widgets";
-
-const clip = new MidiClip([{ pitch: 60, velocity: 0.8, start: 0, duration: 1 }]);
-const model = pianoRollModel(clip); // or pianoRollModel(clip, { duration: 16 })
-const view = mountPianoRoll(root, {
-  model,
-  snap: "beat",
-  grid: { beats: [0, 1, 2, 3, 4], downbeats: [0, 4] },
-  onNoteEdit: ({ note }) =>
-    clip.edit((draft) => Object.assign(draft.find((n) => n.id === note.id)!, { start: note.start, duration: note.duration, pitch: note.pitch })),
-});
-// later
-view.dispose();
-model.dispose();
-```
-
-`pianoRollModel(clip, options?)` returns `PianoRollModel & { readonly selection: Cell<MidiRange | null>; dispose(): void }`. `getState()` returns a frozen snapshot that stays the same object until the notes, duration or selection change. `duration` defaults to the end of the last note rounded up to a whole 4-beat bar (at least 4 beats); `options.duration` is a number or a getter, in beats. The selection belongs to the model (assign `model.selection.value` or call `setSelection`) and nothing clears it implicitly. `subscribe(listener)` runs once per commit and not on subscribe; `dispose()` stops every listener and leaves the clip alone.
-
-A move or resize gesture previews inside the widget and calls `onNoteEdit({ kind, previous, note })` once on release, where `note` carries the new `start`, `duration` and `pitch`. A resize never makes a note shorter than 1/64 beat (or its own length when already shorter). A custom model is any object with the four `PianoRollModel` methods.
-
-## Write a visual plugin
-
-Use `view.attach(plugin)` for waveform, piano roll, and waveform selector extensions. All three implement `PluginTarget<TimeViewPluginContext>`. The plugin reads `context.timeUnit` to interpret coordinates. Waveform and selector use seconds, with the selector using the current playback version's output seconds. Piano roll uses beats. The app supplies the appropriate time in each unit.
-
-```typescript
-import { mountWaveform, type TimeViewPlugin } from "@audiorective/widgets/waveform";
-
-const marker: TimeViewPlugin = {
-  attach(context) {
-    const layer = document.createElement("div");
-    const line = document.createElement("div");
-    Object.assign(line.style, {
-      position: "absolute",
-      top: "0",
-      bottom: "0",
-      borderLeft: "2px solid orange",
-    });
-    layer.append(line);
-    context.mountOverlay(layer);
-    const draw = () => {
-      const time = context.timeUnit === "beats" ? 4 : 2;
-      line.hidden = time > context.duration;
-      line.style.left = `${context.timeToX(time)}px`;
-    };
-    context.onViewportChange(draw);
-    context.onDataChange(draw);
-    draw();
-  },
-};
-
-const view = mountWaveform(document.querySelector<HTMLElement>("#markers")!, {
-  data: { peaks: new Float32Array([0.2, 0.8, 0.4]), duration: 5 },
-});
-const attachment = view.attach(marker);
-// Pass marker to a piano roll or selector the same way.
-// attachment.dispose() removes just the marker. view.dispose() removes all attachments.
-```
-
-`timeToX()` returns content pixels and `clientXToTime()` converts browser pixels back to the view's time unit. Use these helpers to place overlays independently of zoom and scroll. `mountOverlay()`, `onViewportChange()`, `onDataChange()`, `listen()`, and `onCleanup()` return cleanup functions and are disposed with the attachment. A plugin can also return a disposer from `attach()`. Keep per-attachment DOM and state inside `attach()` if the same plugin object will serve multiple views.
-
-`WidgetPlugin<Context>` and `WidgetPluginContext` describe lifecycle and resource cleanup for other context shapes. `TimeViewPlugin` is the specialization for these three time views. `WaveformPlugin` and `WaveformPluginContext` are compatibility exports. For clip movement and timeline zoom on an app-rendered arrangement, use the dedicated arrangement gesture functions above.
-
-Overlays default to `pointer-events: none`; interactive children can opt into `pointer-events: auto`. A control handling its own pointer gesture can call `preventDefault()` on pointerdown to keep selection interaction from claiming it. Keep extensions on this public seam rather than querying the widget's internal markup.
+Continue with [waveform/selection](./widgets-advanced.md#waveform-api), [custom drawing](./widgets-advanced.md#replace-waveform-drawing), [piano roll](./widgets-advanced.md#piano-roll), [visual plugins](./widgets-advanced.md#write-a-visual-plugin) or [arrangement range gestures](./widgets-advanced.md#timeline-range-gesture).
 
 ## Style
 
-Default styles mount with the widget. Set the public accent variable on the host:
-
-```css
-#waveform {
-  --waveform-accent: #a878ff;
-}
-```
-
-Other public theme variables:
-
-| Variable                                                     | Controls                                           |
-| ------------------------------------------------------------ | -------------------------------------------------- |
-| `--waveform-font`                                            | CSS font shorthand                                 |
-| `--waveform-foreground`, `--waveform-background`             | Widget text and background                         |
-| `--waveform-border`                                          | Widget, viewport, and ruler borders                |
-| `--waveform-control-background`, `--waveform-control-border` | Input and button surfaces                          |
-| `--waveform-muted`                                           | Help text, ruler labels, and readouts              |
-| `--waveform-surface`                                         | Waveform viewport background                       |
-| `--waveform-height`                                          | Waveform height, with a CSS length such as `220px` |
-| `--waveform-selection-background`                            | Selected range fill                                |
-| `--waveform-playhead`                                        | Playhead color                                     |
-| `--waveform-error`                                           | Error text color                                   |
-
-DOM classes use the `ar-` prefix to scope widget presentation. Internal class names and test attributes are implementation details; use the handle and plugin context for behavior.
+Default waveform styles mount with the widget. Set `--waveform-accent` on its host; [all theme variables](./widgets-advanced.md#style) and step-grid properties are listed in advanced. Mixer ships no stylesheet and keeps its documented generic CSS hooks; [style the mixer](./widgets-advanced.md#mixer-markup-and-extension-controls) within your own container.
 
 ## Common errors
 
@@ -612,37 +254,39 @@ DOM classes use the `ar-` prefix to scope widget presentation. Internal class na
 | `Spectrum needs a valid FFT size and a range within Nyquist.`       | Pass a power-of-two FFT size from 32 through 32768 and limit the upper frequency to half the sample rate. |
 | `EQ editor needs unique band IDs and increasing positive Q limits.` | Supply unique IDs and finite positive Q bounds in increasing order.                                       |
 
-| Control message                                                                           | Fix                                                                            |
-| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `Parameter control needs a finite increasing range and a positive minimum for log scale.` | Provide a finite increasing range, above zero for log scale.                   |
-| `Parameter control step must be positive.`                                                | Supply a finite positive step, or omit it.                                     |
-| `Automation overlay needs a positive maximum and an in-range default.`                    | Provide a positive finite maximum and a default between zero and that maximum. |
-| `Warp markers need a positive sample rate and source frame count.`                        | Supply both from the clip's source.                                            |
-| `Warp markers need a seconds time view.`                                                  | Mount on a seconds-based waveform.                                             |
-| `Level meter sample count must be a positive integer.`                                    | Supply the length of the float buffer your reader needs.                       |
+| Control message                                                                           | Fix                                                                                                                  |
+| ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `Parameter control needs a finite increasing range and a positive minimum for log scale.` | Provide a finite increasing range, above zero for log scale.                                                         |
+| `Parameter control step must be positive.`                                                | Supply a finite positive step, or omit it.                                                                           |
+| `Automation overlay needs a positive maximum and an in-range default.`                    | Provide a positive finite maximum and a default between zero and that maximum.                                       |
+| `Warp markers need a positive sample rate and source frame count.`                        | Supply both from the clip's source.                                                                                  |
+| `Warp markers need a seconds time view.`                                                  | Mount on a seconds-based waveform.                                                                                   |
+| `Level meter sample count must be a positive integer.`                                    | Set `source.sampleCount` to the positive integer buffer length needed by a PCM reader; omit it for the 2048 default. |
 
 Messages thrown by the plain player adapters, waveform view, its plugins and the complete selector. Waveform loading and playback messages come from the borrowed player: see [WavePlayer](./player.md#common-errors).
 
-| Message                                                        | Cause                                                                                   | Fix                                                                                            |
-| -------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `FilePlayer has no src to play.` (`NotSupportedError`)         | The plain player view requested FilePlayer playback with no `src`                       | Set `player.src` before pressing Play.                                                         |
-| `Timeline zoom needs a positive increasing scale range.`       | Invalid arrangement zoom limits                                                         | Use finite positive `minScale` and a larger `maxScale`.                                        |
-| `No audio is loaded.`                                          | A WavePlayer or BufferPlayer adapter has no buffer                                      | Load audio before pressing Play.                                                               |
-| `Audio is still loading.`                                      | The WavePlayer adapter was asked to play before loading finished                        | Await `player.load(...)`.                                                                      |
-| `The audio context is closed.`                                 | The BufferPlayer adapter cannot start a closed context                                  | Create a new context and player.                                                               |
-| `Waveform selector is disposed.`                               | Calling `load` or `setSelection` after cleanup                                          | Mount a new selector.                                                                          |
-| `Waveform is disposed.`                                        | Mutating a disposed waveform or attaching after waveform or selector cleanup            | Mount a new view or selector.                                                                  |
-| `Waveform data needs finite peaks and a positive duration.`    | Invalid peaks or duration                                                               | Supply nonempty finite peaks, matching extrema arrays, and finite positive seconds.            |
-| `Zoom must be finite and at least 1.`                          | Invalid zoom factor                                                                     | Use `1` to fit, or a larger finite factor.                                                     |
-| `Amplitude zoom must be finite and from 1 to 32.`              | Invalid display-only amplitude factor                                                   | Pass a finite factor from `1` through `32`.                                                    |
-| `Playhead must be finite or null.`                             | Invalid playhead                                                                        | Supply finite source seconds or `null` to hide it.                                             |
-| `Plugin is already attached to this waveform.`                 | Duplicate attachment of one instance                                                    | Reuse its attachment or detach it before attaching again.                                      |
-| `Step grid has no parameter "…".`                              | `setActiveParameter` with an id that is not a tab                                       | Use `velocity`, `offset`, `length`, `repeat`, `pitch`, `chance` or a declared custom param id. |
-| `Step grid is disposed.`                                       | Attaching a plugin to a disposed step grid                                              | Mount a new grid.                                                                              |
-| `Plugin is already attached to this step grid.`                | Duplicate attachment of one plugin instance                                             | Detach it first, or create one plugin per grid.                                                |
-| `Plugin attachment is disposed.`                               | Mounting an overlay from a disposed attachment                                          | Stop asynchronous work during cleanup; use a live attachment context.                          |
-| `Selection plugin is not attached.`                            | Setting metadata before attachment or after detach                                      | Call `view.attach(selection)` before `selection.setSelection`.                                 |
-| `Selection plugin is already attached.`                        | Reusing a selection plugin across live views                                            | Detach first, or create one plugin per view.                                                   |
-| `Waveform already has a Selection owner.`                      | Multiple selection plugins on one view                                                  | Keep one selection plugin per view.                                                            |
-| `Automation lane needs a positive duration and maximum value.` | `mountAutomationLane` received a zero, negative or non-finite `duration` or `maxValue`. | Pass finite `duration` and `maxValue` above 0.                                                 |
-| `Automation lane needs a 2D canvas.`                           | The browser could not create a 2D canvas context for the lane.                          | Mount in a browser with canvas support; headless DOM stubs need a 2D context.                  |
+| Message                                                        | Cause                                                                                 | Fix                                                                                                                                                  |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FilePlayer has no src to play.` (`NotSupportedError`)         | The plain player view requested FilePlayer playback with no `src`                     | Set `player.src` before pressing Play.                                                                                                               |
+| `Timeline zoom needs a positive increasing scale range.`       | Invalid arrangement zoom limits                                                       | Use finite positive `minScale` and a larger `maxScale`.                                                                                              |
+| `No audio is loaded.`                                          | A WavePlayer or BufferPlayer adapter has no buffer                                    | Load audio before pressing Play.                                                                                                                     |
+| `Audio is still loading.`                                      | The WavePlayer adapter was asked to play before loading finished                      | Await `player.load(...)`.                                                                                                                            |
+| `The audio context is closed.`                                 | The BufferPlayer adapter cannot start a closed context                                | Create a new context and player.                                                                                                                     |
+| `Waveform selector is disposed.`                               | Calling `load` or `setSelection` after cleanup                                        | Mount a new selector.                                                                                                                                |
+| `Waveform is disposed.`                                        | Mutating a disposed waveform or attaching after waveform or selector cleanup          | Mount a new view or selector.                                                                                                                        |
+| `Waveform data needs finite peaks and a positive duration.`    | Invalid peaks or duration                                                             | Supply nonempty finite peaks, matching extrema arrays, and finite positive seconds.                                                                  |
+| `Zoom must be finite and at least 1.`                          | Invalid zoom factor                                                                   | Use `1` to fit, or a larger finite factor.                                                                                                           |
+| `Amplitude zoom must be finite and from 1 to 32.`              | Invalid display-only amplitude factor                                                 | Pass a finite factor from `1` through `32`.                                                                                                          |
+| `Playhead must be finite or null.`                             | Invalid playhead                                                                      | Supply finite source seconds or `null` to hide it.                                                                                                   |
+| `Plugin is already attached to this waveform.`                 | Duplicate attachment of one instance                                                  | Reuse its attachment or detach it before attaching again.                                                                                            |
+| `Step grid has no parameter "…".`                              | `setActiveParameter` with an id that is not a tab                                     | Use `velocity`, `offset`, `length`, `repeat`, `pitch`, `chance` or a declared custom param id.                                                       |
+| `Step grid is disposed.`                                       | Attaching a plugin to a disposed step grid                                            | Mount a new grid.                                                                                                                                    |
+| `Plugin is already attached to this step grid.`                | Duplicate attachment of one plugin instance                                           | Detach it first, or create one plugin per grid.                                                                                                      |
+| `Step grid cell is disposed.`                                  | An internal per-cell attachment host was reused after cleanup.                        | Use a live grid attachment. If this appears through normal `onCell` calls, report the reproduction; cell contexts expose no public attach operation. |
+| `Plugin is already attached to this step grid cell.`           | An internal per-cell host received a duplicate attachment.                            | Report a reproduction from the live grid/plugin. Reusing `onCell` callbacks does not require managing this private host.                             |
+| `Plugin attachment is disposed.`                               | Mounting an overlay from a disposed attachment                                        | Stop asynchronous work during cleanup; use a live attachment context.                                                                                |
+| `Selection plugin is not attached.`                            | Setting metadata before attachment or after detach                                    | Call `view.attach(selection)` before `selection.setSelection`.                                                                                       |
+| `Selection plugin is already attached.`                        | Reusing a selection plugin across live views                                          | Detach first, or create one plugin per view.                                                                                                         |
+| `Waveform already has a Selection owner.`                      | Multiple selection plugins on one view                                                | Keep one selection plugin per view.                                                                                                                  |
+| `Automation lane needs a positive duration and maximum value.` | `duration()` returned a zero, negative or non-finite value, or `maxValue` is invalid. | Return finite `duration()` and supply finite `maxValue` above 0.                                                                                     |
+| `Automation lane needs a 2D canvas.`                           | The browser could not create a 2D canvas context for the lane.                        | Mount in a browser with canvas support; headless DOM stubs need a 2D context.                                                                        |

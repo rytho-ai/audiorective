@@ -283,9 +283,9 @@ first.dispose(); // player and second view remain usable
 
 Loading through either view replaces the shared source. Each view keeps its own zoom, scroll, renderer, snap policy and plugin resources; audio and selection have one owner. Shared outputs are identical: route `player.output` once to avoid doubling the signal.
 
-The [pure waveform selection plugin](./widgets.md#selection-plugin-api) can use `model: player` without importing audio into the pure view entry. An application can supply any structural model with a `cells.selection` cell and a `setSelection()` method. Detaching a view does not clear an external model.
+The [pure waveform selection plugin](./widgets-advanced.md#selection-plugin-api) can use `model: player` without importing audio into the pure view entry. An application can supply any structural model with a `cells.selection` cell and a `setSelection()` method. Pointer previews stay local to the view; release writes one selection command to the shared model, and `onCommit` runs afterward. Escape, cancellation, capture loss, detachment or external model replacement discards the preview. Detaching a view does not clear an external model.
 
-See [Core](./core.md#pcm-peak-summaries) for pure PCM summaries, [TimeStretch](./effects.md#timestretch) for offline DSP, and [Widgets](./widgets.md) for visual plugins, custom drawing and snapping.
+See [Core](./core.md#pcm-peak-summaries) for pure PCM summaries, [TimeStretch](./effects.md#timestretch) for offline DSP, and [Widgets: advanced](./widgets-advanced.md) for visual plugins, custom drawing and snapping.
 
 ## Common errors
 

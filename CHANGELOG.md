@@ -15,6 +15,10 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Added
 
+- **widgets:** selector `controls` and `audition` flags work independently (both default `true`), with `getViewport`, zoom/amplitude-zoom and scroll methods for shared-player views. `StepGridPluginContext.onCell` supplies each live step's tracked owner, geometry slot and scoped cleanup; step indices are zero-based.
+- **widgets:** direct dBFS peak callbacks or PCM `LevelMeterSource`, explicit `LevelMeterHandle`/`LevelSnapshot` types, public `MixerStripSettings`/`MixerMeter`, and player-owned `WaveStretchAnchor` plus `ClipEnvelope` exports. Scalar peak sources report unknown RMS as `null`; PCM sources retain measured peak/RMS.
+- **docs / skill:** basic Widgets and Widgets: advanced pages route common mounts separately from renderers, plugins, time mappings and arrangement gestures, while retaining historical anchors and widget-area error rows.
+
 - **core/automation:** `AutomationClip(curve, { target, loop?, length?, signal? })` follows `clock.attach(clip)`: curve times are beats, with tempo ramps, seeks, live edits and loop seams handled by the owner. `cells.attached` is read-only; detach and dispose cancel queued changes while holding current audio. `AutomationBinding` remains the finite owner for fixed caller-chosen units.
 
 - **effects:** `Ducker`, a sidechain ducker: `new Ducker(context, { depth, attack, release, threshold })` lowers its audio by `depth` dB (default 8) while the signal connected to `ducker.sidechain` is above `threshold`; `cells.reduction` is the live reduction in dB. `attack` and `release` are the seconds a full-depth change takes.
@@ -40,6 +44,10 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Fixed
 
+- **widgets:** waveform selection previews stay local until release, when the shared model receives one edit. Escape, pointer cancellation, capture loss, external owner replacement and detachment restore the committed range without writing a preview to the model.
+- **widgets:** curve, overlay, warp and arrangement gestures cancel on Escape, pointer cancellation, capture loss, stale owner replacement and disposal. Rejected or throwing edit commands restore the authoritative source view. Disabled curve/warp tools yield hit testing, and a background double click is claimed once across tools.
+- **widgets:** mixer keyed rows preserve focused extension controls and text selection during reorder, optional controls follow owner capability changes, and meter/extension resources clean up once without disposing borrowed owners. Detached editor observers stop updating after view removal.
+
 - **core:** live latency-compensation changes warm a new delay route and crossfade instead of hard-rewiring or moving an audible delay read head. Initial wiring remains exact; steady branches align sample-for-sample after the short phase blend. `arrivalOf()` and snapshots describe the solved target during the handover. Graph disposal disconnects pending helper routes and cancels their cleanup timers.
 
 - **effects:** `Ducker.cells.reduction` reports actual output attenuation after wet/dry and click-free bypass, instead of the wet arm's detector envelope. The worklet reports every 512 audio frames; a meter reads or subscribes directly, without masking bypass to zero. Loading and failure report the remaining dry gain (`-Infinity` for silence, `0` for full bypass), with polling and reports cleaned up on disposal.
@@ -63,6 +71,10 @@ predates that API. See the "Version mismatches" note in the skill.
 - **blocks:** `StepSequencer` randomness is a pure function of a step's position. Before, `chance` and `context.random` drew from one stateful source, so any re-queue (an edit through `refreshOnEdit`, `clock.refresh()`, a seek) redrew every pending step: a chance step could flip between sounding and silent and humanize jitter jumped, and offline renders with different tick sizes differed. Now the chance draw is keyed by `seed`, lane, loop and step counter, and `context.randomFor` by the hit's lane, loop, step counter and repeat index, so the same step gets the same numbers in every window. Pass `options.random` to keep the old sequential source (the old instability comes with it).
 
 ### Changed
+
+- **widgets (breaking):** meter PCM options move from `{ read, sampleCount }` to `{ source: { read, sampleCount } }`; mixer meter factories return `{ source, dispose? }`. Existing dBFS owners use `source: () => channel.cells.level.value`. Mute/solo settings and master are optional; master appears only with `masterVolume` and `editMaster`.
+- **widgets (breaking):** lane `points` changes from a captured array plus `handle.setPoints()` to a tracked readonly `.value` source. Lane and clip-envelope `duration` changes from a number to a tracked callback. Lane `timeUnit` defaults to `"seconds"` and accepts `"beats"` for labels and picker coordinates; projections remain caller-owned. Overlay point sources accept the same `.value` contract, including a direct `AutomationCurve`, with an optional borrowed `disabled` gate.
+- **widgets (breaking):** arrangement clip options replace captured `time`/`trackId` with fixed `clipId` and live `origin()`. Each keyboard nudge reads the latest owner position; external origin changes cancel stale drags. Timeline `getScale()` tracks owner changes and synchronizes the borrowed native slider in place.
 
 - **effects (breaking):** the static preset constructor is `EffectChain.fromJSON(context, json, options)`, with `EffectChainFromJSONOptions`. The static `EffectChain.restore` name is removed; `chain.restore(json, options)` is the asynchronous in-place load, with a job-only cancellation signal.
 
