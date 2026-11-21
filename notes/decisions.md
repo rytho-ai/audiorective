@@ -1,3 +1,19 @@
+# Widgets: constraints before variants (feat/affordance-widgets)
+
+Evidence lives in ignored `blueprints/probes/affordance-widgets/` in the development worktree. C0 contains eight real-public-type tasks, three runs each; every sample has been read. Initial W6/W8 lack exact app-owned producer contracts, so their first results remain preclarification evidence. Clarified controls use explicit producer contracts, rather than adjusting host types to match generated answers. Raw results remain unchanged.
+
+These existing decisions constrain every candidate:
+
+- Widgets borrow audio/model owners. Detaching a view releases view resources and leaves shared playback, preview and authored data alive. `dispose()` is the lifecycle convention.
+- Observable authored state stays on owner cells/params; `.value` reads track automatically. `readonlyCell(() => ...)` can project existing tracked getters without a mirrored store. Local gesture previews belong to a view and commit through owner commands once.
+- Widget drawing and gestures remain independent of DAW runtime. Capability contracts are structural or type-only; widgets must not create an audio engine, analyser or transport to display already available data.
+- Keep the existing mount/renderer/plugin layers. A declaration-only rewrite is not justified by the clean W1–W4 core paths. Extensions use attachment-owned listeners and cleanups, public geometry and view notifications.
+- Keep seconds versus beats explicit and delegate musical projections/snapping to supplied functions. Seventh visible step is index 6; second scene is index 1. Waveform peak data remains audio-independent.
+- Canceled gestures, lost capture, stale external replacements and disposal commit no authored edits. External updates retain mounted control identity/focus; stale previews may be canceled.
+- Public API changes migrate every consumer and update type hints, docs, changelog and functional evals together. No compatibility overloads solely to keep superseded forms.
+
+Measured questions to compare after both desire rounds: a meter over existing dBFS data versus PCM-only readers; direct reactive points/curve options versus explicit synchronization; readable/getter duration discoverability; tracked zoom scale versus a manual refresh; plugin geometry notifications and exclusive gesture composition. Runtime Escape/lost-capture failures are independently reproduced and require correction regardless of which declaration shape wins. Private type imports, grader mistakes, caller arithmetic, and missing producer context are recorded separately from missing toolkit capabilities.
+
 # Record / play decisions (branch feat/affordance-record-play)
 
 Evidence: blueprints/probes/affordance-record-play (R0-current, desire, desire-ctx). Not committed.

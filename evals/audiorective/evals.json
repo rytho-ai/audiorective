@@ -1073,6 +1073,43 @@
         "Observes clip.cells.attached for the toggle state and cleans up its observer",
         "Disposes the clip on close, leaves the borrowed target and app-owned shared context and clock alive, and releases the clip before any later target replacement or disposal"
       ]
+    },
+    {
+      "id": 82,
+      "prompt": "My browser mixer already owns Audiorective Channels and their post-fader dBFS peak level cells. Add toolkit faders, pan and level meters, with a removable custom control row on each strip. An external automation or preset edit must update the UI. Adding or reordering another strip must retain existing custom controls and keyboard focus. Do not create an analyser or fake PCM just to draw the meter. Show cleanup while leaving shared audio alive. Use the current repository packages.",
+      "expected_output": "A borrowed mixer view over tracked controls and existing dBFS levels with keyed strip resources.",
+      "files": [],
+      "expectations": [
+        "Reads and writes actual owner parameters with tracked projections and does not mirror authored settings into a second store.",
+        "Meters display the existing dBFS level directly through the toolkit, without extra analysis nodes, fabricated samples or logarithmic re-encoding.",
+        "Custom controls use public extension hooks and keep resources during unrelated strip additions/reorder; removed strips clean up.",
+        "Disposes views and subscriptions without disposing borrowed channels or stopping audio."
+      ]
+    },
+    {
+      "id": 83,
+      "prompt": "Build an Audiorective arrangement view over our existing project clip elements and commands. Use the toolkit for clip drag/keyboard movement, empty-background time selection, and pointer-anchored timeline zoom. All model edits go through our commands; a pointer drag commits once, Escape, lost capture or disposal cancels without a model edit. Scale may change from another panel; the zoom slider must follow. No audio engine in this view. Use the current repository packages.",
+      "expected_output": "Existing gesture helpers with owner-driven scale and cancellation rather than a second gesture engine.",
+      "files": [],
+      "expectations": [
+        "Uses toolkit clip and background-range gesture helpers instead of manually implementing pointer drag state machines.",
+        "Uses toolkit timeline zoom over the owner scale, keeps the slider synchronized on external changes, and preserves pointer anchoring.",
+        "Escape, pointer cancellation, lost capture and disposal leave authored data unchanged; completed gestures commit once.",
+        "Retains caller ownership and releases gestures, observers and listeners on teardown, with no new audio engine."
+      ]
+    },
+    {
+      "id": 84,
+      "prompt": "In an Audiorective sample editor, show an owner AutomationCurve in beats both in a toolkit lane editor and projected onto a waveform. The host supplies beat/second conversion functions. Edits commit once on completion, Escape cancels, and an external preset cancels a stale preview while retaining mounted control identity and focus. Beside it show toolkit clip gain/fade controls; the owner has a tracked duration getter and an envelope cell, and trimming elsewhere changes the valid fade limits. Leave all borrowed owners alive on teardown. Use current repository packages.",
+      "expected_output": "Borrowed reactive curve and clip envelope editors without mirrored authored state or remounting for external changes.",
+      "files": [],
+      "expectations": [
+        "Uses toolkit automation lane and waveform overlay with the same owner points, tracked reads or an adapter rather than a second authored curve.",
+        "Delegates waveform coordinate projection to the supplied beat/second functions.",
+        "Completed gestures commit once, Escape cancels and external replacement cancels stale previews while retaining control identity.",
+        "Clip envelope controls follow external envelope and tracked duration changes in place, updating valid fade limits without remounting or mirrored state.",
+        "Releases views and observers without disposing borrowed owners."
+      ]
     }
   ]
 }

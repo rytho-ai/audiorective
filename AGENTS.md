@@ -16,7 +16,7 @@ Modular toolkit for web audio development. Independent, composable packages that
 @audiorective/
 ├── core         # Reactive state for audio parameters (alien-signals): Param, AudioProcessor, engine, peaks, automation
 ├── clock        # Timing and scheduling: transport, tempo, look-ahead tick windows, rulers
-├── effects      # DSP effects: filter, delay, dynamics, pitch shift, channel strip, send bus; effect rack (`/rack`, pure data `/rack-preset`)
+├── effects      # DSP effects, editable EffectChain, channel strips, send buses and offline time-stretch
 ├── devtools     # Dev-time validators, e.g. impulse-based latency measurement
 ├── player       # Headless range playback: WavePlayer (selection, loading, offline stretch)
 ├── recorder     # Headless AudioWorklet PCM take capture: AudioRecorder
@@ -49,10 +49,10 @@ Four layers; an import points down, never up, and never sideways inside layer 2 
 
 - `widgets` and `daw` are parallel and never import each other; the app wires them. `widgets` takes local structural contracts, the pure `midi` root and type-only `player` imports, not capability runtime classes.
 - A capability module imports only `core`, never another capability module or layer 3. Each capability is its own package with a root entry. A module is _standalone_ (works given an `AudioContext`) or _borrowing_ (`sequencer`, `launcher` need a `BeatTiming` or transport from the caller). Cross-module contracts such as `CancellableEvent` and `BeatTiming` live in `core`. Importing a sibling capability module is an exception that needs a written reason.
-- `daw/project` imports `core`, the `midi` root and `effects/rack-preset`; it takes PCM as core `PCMData`, not recorder types. `daw/dawproject` imports `daw/project` and `core`. `daw/runtime` imports `daw/project`, `core` and the capability modules it needs, and does not import `daw/dawproject` or `widgets`. Browser-storage helpers (`createOpfsAudioMediaWriter`) and the audio-fallback export (`exportAudioFallbackTo(workspace, …)`) live in `daw/runtime`; `portabilityReport(project)` lives in `daw/dawproject`. The `daw` root re-exports the three entries and adds `openWorkspace`, `openWorkspaceBlob`, `saveWorkspace` and `saveWorkspaceTo`.
+- `daw/project` imports `core`, the `midi` root and pure `effects/equalizer-bands` validation; its rack-preset data lives inside `daw`. It takes PCM as core `PCMData`, not recorder types. `daw/dawproject` imports `daw/project` and `core`. `daw/runtime` imports `daw/project`, `core` and the capability modules it needs, and does not import `daw/dawproject` or `widgets`. Browser-storage helpers (`createOpfsAudioMediaWriter`) and the audio-fallback export (`exportAudioFallbackTo(workspace, …)`) live in `daw/runtime`; `portabilityReport(project)` lives in `daw/dawproject`. The `daw` root re-exports the three entries and adds `openWorkspace`, `openWorkspaceBlob`, `saveWorkspace` and `saveWorkspaceTo`.
 - `pnpm check:layers` enforces these edges over the import graph; run it after adding an import between packages or entries.
 
-Pure entries stay separate from browser-runtime entries so Node and server code can import them: `core/peaks`, `core/automation`, `effects/rack-preset`, `daw/project`, `daw/dawproject` and the `midi` root have no DOM or `AudioContext` dependency, while `midi/web`, `host/webclap`, `daw/runtime` and the widget entries are browser-only. `widgets/waveform` is a DOM view, not a pure entry.
+Pure entries stay separate from browser-runtime entries so Node and server code can import them: `core/peaks`, `core/automation`, `effects/equalizer-bands`, `daw/project`, `daw/dawproject` and the `midi` root have no DOM or `AudioContext` dependency, while `midi/web`, `host/webclap`, `daw/runtime` and the widget entries are browser-only. `widgets/waveform` is a DOM view, not a pure entry.
 
 When placing a feature, consult [Layers and dependency direction](docs/architecture.md#layers-and-dependency-direction). A feature usually spans layers: gestures and drawing in `widgets`, saved content in `daw/project`, sound in a capability module or `daw/runtime`.
 
