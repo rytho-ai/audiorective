@@ -1,194 +1,200 @@
 import { AudioProcessor } from "./AudioProcessor";
-import type { SchedulableParam } from "./SchedulableParam";
 import type { Param } from "./Param";
-import { cell, readonlyCell, untracked, type Cell, type ReadonlyCell } from "./Cell";
-import { Voice, type VoiceOptions } from "./Voice";
-import { reverseBuffer, reverseRegion } from "./reverseBuffer";
+import type { SchedulableParam } from "./SchedulableParam";
+import { batch, cell, readonlyCell, untracked, type Cell, type ReadonlyCell } from "./Cell";
+import { assertSound, noteNumber, playSound, type NoteName, type PlayOptions, type Sound, type Voice } from "./sound";
 
 export interface SamplerOptions {
-  /** Decoded sample. Settable later via `.buffer`. */
-  buffer?: AudioBuffer;
-  /** Default loop for new voices. Default false. */
-  loop?: boolean;
-  /** Default playback rate for new voices. Default 1. */
-  playbackRate?: number;
-  /** Player output gain (0..1). Default 1. */
-  volume?: number;
-  /** Max concurrent voices. Default 1. */
+  /** What each voice plays. Settable later via `sampler.sound`. */
+  sound?: Sound;
+  /** MIDI note at which `sound` plays at its natural pitch; `noteOn(n)` transposes by `n - rootNote` semitones. Default 60. */
+  rootNote?: number;
+  /** Lowest MIDI note `noteOn` plays; lower notes are ignored (it returns null). Default 0. */
+  lowNote?: number;
+  /** Highest MIDI note `noteOn` plays; higher notes are ignored (it returns null). Default 127. */
+  highNote?: number;
+  /** Max voices sounding at once. Default 32. */
   polyphony?: number;
-  /** At the cap: stop the oldest then spawn, or drop the new trigger. Default "oldest". */
+  /** At the cap: release the oldest voice and play the new hit, or drop the new hit. Default "oldest". */
   steal?: "oldest" | "none";
-  /** Default fade-in for new voices, in seconds. Default 0. */
-  fadeIn?: number;
-  /** Default fade-out for new voices, in seconds. Default 0. */
-  fadeOut?: number;
-  /** Play the buffer backwards. Default false. */
-  reverse?: boolean;
-  /** Start muted. Default false. */
-  mute?: boolean;
+  /** Start value of `params.release`: seconds of fade-out applied when a voice is released (`noteOff`, `voice.stop`, steal, `stopAll`); changes apply to voices released afterwards. Default 0.005. */
+  release?: number;
+  /** Start value of `params.volume` (0..1). Default 1. */
+  volume?: number;
+  /** Aborting the signal calls `dispose()`. */
+  signal?: AbortSignal;
 }
 
-export type TriggerOptions = VoiceOptions;
-
 /**
- * Buffer-backed, polyphonic sound source — the "drum pad". You hit it: each
- * `trigger()` fires a new Voice (up to `polyphony`, then `steal` applies), and
- * voices sum into the player output. No transport/playhead — for SFX,
- * one-shots, and loops. For a single playhead, use BufferPlayer (in-memory) or FilePlayer (streamed).
- *
- * Per-voice control (stop/pause/seek) lives on the returned `Voice`. Spatial/EQ
- * compose externally via `player.output -> ...`.
- *
- * With `polyphony: 1` and a short `fadeOut` it is a sample pad: each trigger
- * replaces the last without a click, and `cells.activeVoices` is 1 while the
- * latest hit plays and 0 once it ends or is stopped.
+ * Polyphonic player of one `Sound`: each `trigger` or `noteOn` starts a new voice that layers over the others, up to `polyphony`.
+ * Its output is not connected: `sampler.connect(context.destination)`.
  */
 export class Sampler extends AudioProcessor<
-  { volume: SchedulableParam; mute: Param<boolean>; buffer: Param<AudioBuffer | null>; reverse: Param<boolean> },
-  { activeVoices: ReadonlyCell<number> }
+  { volume: SchedulableParam; release: Param<number>; sustain: Param<boolean> },
+  { activeVoices: ReadonlyCell<number>; heldNotes: ReadonlyCell<readonly number[]> }
 > {
-  // Reversed copy of `_reversedSource`, built once per buffer.
-  private _reversed: AudioBuffer | null = null;
-  private _reversedSource: AudioBuffer | null = null;
-  private readonly _active: Cell<number>;
-
   private readonly _output: GainNode;
-  private readonly _muteGain: GainNode;
-  private readonly _loop: boolean;
-  private readonly _rate: number;
+  private readonly _active: Cell<number>;
+  private readonly _held: Cell<readonly number[]>;
+  private readonly _sound: Cell<Sound | null>;
+  private readonly _rootNote: number;
+  private readonly _lowNote: number;
+  private readonly _highNote: number;
   private readonly _polyphony: number;
   private readonly _steal: "oldest" | "none";
-  private readonly _fadeIn: number;
-  private readonly _fadeOut: number;
+  private readonly _signal: AbortSignal | undefined;
+  private readonly _onAbort = () => this.dispose();
   private _voices: Voice[] = [];
+  /** Voices a `noteOff` kept sounding because `params.sustain` was on; they release when it turns off. */
+  private readonly _sustained = new Set<Voice>();
+  /** Voices a `noteOff` already released, so a later `noteOff` does not move their stop. */
+  private readonly _released = new WeakSet<Voice>();
+  private _closed = false;
 
-  constructor(ctx: BaseAudioContext, opts: SamplerOptions = {}) {
-    const outputGain = new GainNode(ctx, { gain: opts.volume ?? 1 });
-    // Mute sits before the volume gain so queued volume automation survives a mute toggle.
-    const muteGain = new GainNode(ctx, { gain: opts.mute ? 0 : 1 });
-    muteGain.connect(outputGain);
+  constructor(context: BaseAudioContext, options: SamplerOptions = {}) {
+    const output = new GainNode(context, { gain: options.volume ?? 1 });
     const active = cell(0);
-    super(ctx, ({ param }) => ({
+    const held = cell<readonly number[]>([]);
+    super(context, ({ param }) => ({
       params: {
-        volume: param({ default: opts.volume ?? 1, bind: outputGain.gain, min: 0, max: 1 }),
-        mute: param<boolean>({
-          default: opts.mute ?? false,
-          bind: {
-            set: (m) => {
-              muteGain.gain.value = m ? 0 : 1;
-            },
-          },
-        }),
-        buffer: param<AudioBuffer | null>({ default: opts.buffer ?? null }),
-        reverse: param<boolean>({ default: opts.reverse ?? false }),
+        volume: param({ default: options.volume ?? 1, bind: output.gain, min: 0, max: 1 }),
+        release: param({ default: Math.max(0, options.release ?? 0.005), min: 0 }),
+        sustain: param({ default: false }),
       },
-      cells: { activeVoices: readonlyCell(active) },
+      cells: { activeVoices: readonlyCell(active), heldNotes: readonlyCell(held) },
     }));
+    if (options.sound !== undefined) assertSound(options.sound);
+    this._output = output;
     this._active = active;
-    this._output = outputGain;
-    this._muteGain = muteGain;
-    this._loop = opts.loop ?? false;
-    this._rate = opts.playbackRate ?? 1;
-    this._polyphony = Math.max(1, opts.polyphony ?? 1);
-    this._steal = opts.steal ?? "oldest";
-    this._fadeIn = opts.fadeIn ?? 0;
-    this._fadeOut = opts.fadeOut ?? 0;
+    this._held = held;
+    this._sound = cell<Sound | null>(options.sound ?? null);
+    this._rootNote = options.rootNote !== undefined ? noteNumber(options.rootNote) : 60;
+    this._lowNote = options.lowNote ?? 0;
+    this._highNote = options.highNote ?? 127;
+    this._polyphony = Math.max(1, options.polyphony ?? 32);
+    this._steal = options.steal ?? "oldest";
+    // Letting the pedal up releases every sustained voice at the current time.
+    this.effect(() => {
+      if (this.params.sustain.value) return;
+      untracked(() => this.releaseSustained());
+    });
+    this._signal = options.signal;
+    if (this._signal) {
+      if (this._signal.aborted) this.dispose();
+      else this._signal.addEventListener("abort", this._onAbort, { once: true });
+    }
   }
 
-  get output(): AudioNode {
+  override get output(): GainNode {
     return this._output;
   }
 
-  /** Decoded sample; hot-swappable, applies to the next trigger. */
-  get buffer(): AudioBuffer | null {
-    return this.params.buffer.value;
+  /** The sound new voices play; applies to the next hit. */
+  get sound(): Sound | null {
+    return this._sound.value;
   }
 
-  set buffer(b: AudioBuffer | null) {
-    this.params.buffer.value = b;
+  set sound(sound: Sound | null) {
+    if (sound !== null) assertSound(sound);
+    this._sound.value = sound;
   }
 
-  /** Play backwards. Regions passed to trigger() are still measured on the forward buffer. */
-  get reverse(): boolean {
-    return this.params.reverse.value;
+  /** Play the sound once at its natural pitch. Returns the voice, or null if there is no sound or `steal: "none"` dropped it. */
+  trigger(options: PlayOptions = {}): Voice | null {
+    return this.start(null, options.pitch ?? 0, options);
   }
 
-  set reverse(v: boolean) {
-    this.params.reverse.value = v;
+  /** Start a voice for `note` (MIDI number or name), transposed from `rootNote`. A held note struck again adds a voice. Returns null outside `lowNote`..`highNote`. */
+  noteOn(note: number | NoteName, options: PlayOptions = {}): Voice | null {
+    const number = noteNumber(note);
+    if (number < this._lowNote || number > this._highNote) return null;
+    return this.start(number, number - this._rootNote + (options.pitch ?? 0), options);
   }
 
-  /** Fire a new voice. Returns the Voice, or null if no buffer / dropped by steal:"none". */
-  trigger(opts: TriggerOptions = {}): Voice | null {
-    const { buffer, reverse } = untracked(() => ({ buffer: this.params.buffer.value, reverse: this.params.reverse.value }));
-    if (!buffer) {
-      console.warn("Sampler.trigger: no buffer set");
-      return null;
+  /** While `params.sustain` is on, `noteOff` keeps the held voices sounding; turning it off releases them (MIDI CC64). */
+  private releaseSustained(): void {
+    for (const voice of [...this._sustained]) {
+      this._sustained.delete(voice);
+      this._released.add(voice);
+      voice.stop();
     }
-    let victim: Voice | null = null;
-    if (this._voices.length >= this._polyphony) {
-      if (this._steal === "none") return null;
-      victim = this._voices[0]!;
-    }
-    const loop = opts.loop ?? this._loop;
-    const voiceOpts: VoiceOptions = {
-      ...this.region(buffer, reverse, opts.offset ?? 0, opts.duration, loop),
-      when: opts.when,
-      rate: opts.rate ?? this._rate,
-      volume: opts.volume,
-      loop,
-      fadeIn: opts.fadeIn ?? this._fadeIn,
-      fadeOut: opts.fadeOut ?? this._fadeOut,
-    };
-    const voice = new Voice(this.context, this.playBuffer(buffer, reverse), this._muteGain, voiceOpts, () => this._evict(voice));
-    // The new voice joins before the victim leaves and the count is published once
-    // afterwards, so a retrigger never shows 0 or a count above the cap.
-    this._voices.push(voice);
-    victim?.stop(); // synchronous finish -> _evict
-    this._active.value = this._voices.length;
-    return voice;
   }
 
+  /** Releases the held voices of `note` started by `when` (default now) over `params.release`; other notes keep sounding. With `params.sustain` on, the voices keep sounding until it turns off. */
+  noteOff(note: number | NoteName, when?: number): void {
+    const number = noteNumber(note);
+    const time = when ?? this.context.currentTime;
+    const sustain = untracked(() => this.params.sustain.value);
+    for (const voice of [...this._voices]) {
+      if (voice.note !== number || this._released.has(voice) || this._sustained.has(voice) || voice.when > time) continue;
+      if (sustain) this._sustained.add(voice);
+      else {
+        this._released.add(voice);
+        voice.stop(when);
+      }
+    }
+  }
+
+  /** Release every voice at `when` (default now). */
   stopAll(when?: number): void {
-    // Cell updates are driven by each voice's _evict callback, so activeVoices
-    // stays accurate for future-dated stops (voices keep playing until `when`).
-    for (const v of [...this._voices]) v.stop(when);
+    for (const voice of [...this._voices]) voice.stop(when);
   }
 
   override dispose(): void {
-    this.stopAll();
-    this._muteGain.disconnect();
+    if (this._closed) return;
+    this._closed = true;
+    this._signal?.removeEventListener("abort", this._onAbort);
+    for (const voice of [...this._voices]) voice.stop();
     this._output.disconnect();
     super.dispose();
   }
 
-  /** The buffer a voice plays: the forward buffer, or a reversed copy built once per buffer. */
-  private playBuffer(buffer: AudioBuffer, reverse: boolean): AudioBuffer {
-    if (!reverse) return buffer;
-    if (this._reversedSource !== buffer || !this._reversed) {
-      this._reversed = reverseBuffer(buffer);
-      this._reversedSource = buffer;
+  /** Commit the sounding-voice count and held notes together; a voice scheduled ahead counts from its start time. */
+  private publish(): void {
+    const sounding = this._voices.filter((voice) => untracked(() => voice.playing.value));
+    const notes = [...new Set(sounding.map((voice) => voice.note).filter((note): note is number => note !== null))].sort((a, b) => a - b);
+    batch(() => {
+      this._active.value = sounding.length;
+      const current = untracked(() => this._held.value);
+      if (current.length !== notes.length || current.some((note, index) => note !== notes[index])) this._held.value = notes;
+    });
+  }
+
+  private start(note: number | null, pitch: number, options: PlayOptions): Voice | null {
+    if (this._closed) throw new Error("Sampler is disposed.");
+    const sound = untracked(() => this._sound.value);
+    if (!sound) return null;
+    let victim: Voice | undefined;
+    if (this._voices.length >= this._polyphony) {
+      if (this._steal === "none") return null;
+      victim = this._voices[0];
     }
-    return this._reversed;
-  }
-
-  /** A forward-buffer region mapped onto whichever buffer is playing. */
-  private region(
-    buffer: AudioBuffer,
-    reverse: boolean,
-    offset: number,
-    duration: number | undefined,
-    loop: boolean,
-  ): Pick<VoiceOptions, "offset" | "duration"> {
-    if (!reverse) return { offset, duration };
-    const length = buffer.duration;
-    // A whole-buffer loop keeps looping; only its entry point mirrors.
-    if (loop && duration == null) return { offset: (length - Math.min(Math.max(0, offset), length)) % length };
-    return reverseRegion(offset, duration, length);
-  }
-
-  private _evict(voice: Voice): void {
-    const i = this._voices.indexOf(voice);
-    if (i !== -1) this._voices.splice(i, 1);
-    this._active.value = this._voices.length;
+    const voice: Voice = playSound(
+      this.context,
+      sound,
+      this._output,
+      { when: options.when ?? this.context.currentTime, velocity: options.velocity ?? 1, pitch, duration: options.duration ?? Infinity },
+      {
+        release: () => untracked(() => this.params.release.value),
+        note,
+        offset: options.offset,
+        span: options.duration,
+        onEnd: () => {
+          const index = this._voices.indexOf(voice);
+          if (index !== -1) this._voices.splice(index, 1);
+          this._sustained.delete(voice);
+          this.publish();
+        },
+      },
+    );
+    // The new voice joins before the victim leaves and the counts are published once afterwards, so a steal never shows a count above the cap.
+    batch(() => {
+      if (victim) this._voices.shift();
+      this._voices.push(voice);
+      voice.playing.subscribe(() => this.publish());
+      victim?.stop();
+      this.publish();
+    });
+    return voice;
   }
 }

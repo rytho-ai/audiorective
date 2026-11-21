@@ -23,16 +23,16 @@ export function mountRhythmView(
     context,
     lanes.map((lane, index) => ({
       id: lane.id,
-      buffer: defaults[index],
+      sound: defaults[index],
       group: lane.group,
     })),
   );
-  bank.output.connect(workspace.output);
+  bank.connect(workspace.output);
   const sequence = new StepSequencer(Object.fromEntries(lanes.map(({ id, pattern }) => [id, pattern])), {
     context,
-    onHit: ({ lane, velocity, when, pitch, duration }) => {
-      const played = bank.trigger(lane, velocity, when, { pitch, duration });
-      return played ? () => played.cancel() : undefined;
+    onHit: ({ lane, velocity, when, pitch }) => {
+      const played = bank.trigger(lane, { velocity, when, pitch });
+      return played ? () => played.stop() : undefined;
     },
   });
 

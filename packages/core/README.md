@@ -141,29 +141,24 @@ class Mixer extends AudioProcessor<{
 
 ## Sampler
 
-Buffer-backed polyphonic player. `trigger()` spawns a voice; voices overlap up to the `polyphony` cap. Best for SFX, one-shots, percussion, and short loops.
+Polyphonic player of one `Sound`: a decoded `AudioBuffer` or a sound factory. `trigger()` and `noteOn()` spawn voices that overlap up to the `polyphony` cap (default 32). Best for SFX, one-shots, percussion and keyboards of one sound.
 
 ```typescript
 import { Sampler, AudioBufferCache } from "@audiorective/core";
 
 const cache = new AudioBufferCache(ctx);
-const player = new Sampler(ctx, { polyphony: 4 });
-player.output.connect(ctx.destination);
+const player = new Sampler(ctx, { sound: await cache.load("/sounds/kick.wav") });
+player.connect(ctx.destination);
 
-player.buffer = await cache.load("/sounds/kick.wav");
+const voice = player.trigger({ velocity: 0.8, when: ctx.currentTime + 0.1 });
+voice?.playing.subscribe((playing) => playing || console.log("done"));
 
-const voice = player.trigger({ volume: 0.8 });
-voice.onEnded(() => console.log("done"));
-
-// polyphony 1 + steal "oldest" → restart on retrigger (default pad behaviour)
-// polyphony 1 + steal "none"   → ignore while playing
-// polyphony N                  → bounded overlap
-
+player.noteOn("E4"); // transposed from rootNote (60); noteOff("E4") releases it
 player.stopAll();
 player.dispose();
 ```
 
-`trigger()` returns a `Voice` handle for per-voice control (`voice.stop()`, `voice.pause()`, `voice.resume()`, `voice.seek()`, `voice.volume =`, `voice.rate =`). It returns `null` when no buffer is set or `steal: "none"` drops the voice.
+`trigger()` and `noteOn()` return a `Voice` (`note`, `when`, `playing`, `stop(when?)`), or `null` when there is no sound, the note is outside `lowNote`..`highNote`, or `steal: "none"` drops the hit. A factory `(context, hit) => source | { output, sources, duration? }` builds an unconnected, unstarted voice; the player connects, starts, holds, releases and frees it.
 
 ## loadAudioBuffer / AudioBufferCache
 

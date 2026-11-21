@@ -32,7 +32,7 @@ digraph choose_playback {
   long [shape=diamond, label="Long-form file you'd rather\nstream than fully decode?\n(music, podcast, >~1 min)"];
   poly [shape=diamond, label="Need many overlapping or\nretriggered copies?\n(drum hits, SFX, stingers)"];
   file [label="FilePlayer\nplay / pause / seek / stop\nreactive currentTime + duration"];
-  sampler [label="Sampler\ntrigger() → Voice (polyphonic)\nfire-and-forget"];
+  sampler [label="Sampler\ntrigger() / noteOn() → Voice\n(polyphonic, buffer or factory)"];
   buffer [label="BufferPlayer\nstart / stop / loop\nschedulable rate (beat-locked)"];
 
   long -> file [label="yes"];
@@ -52,24 +52,24 @@ In words:
 
 ### `Sampler` — the drum pad
 
-**Use when** you trigger short in-memory samples that may overlap: SFX, percussion, one-shots, stingers, short loops. `trigger()` spawns a `Voice` each call; `polyphony` + `steal` cap the overlap.
+**Use when** you trigger a sound that may overlap: SFX, percussion, one-shots, stingers, a keyboard of one sample or one synth voice. The sound is a note name, a decoded `AudioBuffer` (`offset`/`duration` play a region) or a `SoundFactory`. `trigger()` and `noteOn()` spawn a `Voice` each call; `polyphony` (default 32) + `steal` cap the overlap.
 
-**Avoid when** you need a _stable_ transport you schedule against. A `Voice`'s `rate`/`volume` are immediate setters, and the voice recreates its source on `pause`/`seek`/`rate` — so it has no stable `playbackRate` AudioParam to ramp. For a schedulable rate, that's `BufferPlayer`.
+**Avoid when** you need a _stable_ transport you schedule against. A `Voice` has `stop` and nothing else: no seek, loop region or playback-rate param to ramp. For a schedulable rate, that's `BufferPlayer`.
 
-**Single-voice pad (last trigger wins).** `polyphony: 1` + `steal: "oldest"` + a short `fadeOut`. This is the `Tone.Player` shape for sample pads, metronome clicks, and clip players:
+**Single-voice pad (last trigger wins).** `polyphony: 1` + `steal: "oldest"` + a short `release`. This is the `Tone.Player` shape for sample pads, metronome clicks, and clip players:
 
-| `Tone.Player`                   | `Sampler`                                                             |
-| ------------------------------- | --------------------------------------------------------------------- |
-| `start(when, offset, duration)` | `trigger({ when, offset, duration })`                                 |
-| `fadeIn` / `fadeOut`            | `fadeIn` / `fadeOut` (constructor default or per trigger)             |
-| `reverse`                       | `reverse`                                                             |
-| `mute`                          | `params.mute`                                                         |
-| `volume` (dB, schedulable)      | `params.volume` (linear, schedulable; `dbToGain` for dB)              |
-| `onstop`                        | `cells.activeVoices` → `0`, or `voice.onEnded` on the returned handle |
-| `load(url)` / `loaded`          | `AudioBufferCache.load(url)` then `sampler.buffer = …`                |
-| `new Tone.Player({ context })`  | `new Sampler(ctx)` — live or `OfflineAudioContext`                    |
+| `Tone.Player`                  | `Sampler`                                                             |
+| ------------------------------ | --------------------------------------------------------------------- |
+| `start(when)`                  | `trigger({ when, velocity, pitch })`                                  |
+| `fadeOut`                      | `release` (constructor option or live `params.release`, seconds)      |
+| `reverse`                      | `reverseBuffer(buffer)` as the `sound`                                |
+| `mute`                         | `params.volume.value = 0`                                             |
+| `volume` (dB, schedulable)     | `params.volume` (linear, schedulable; `dbToGain` for dB)              |
+| `onstop`                       | `cells.activeVoices` → `0`, or `voice.playing` on the returned handle |
+| `load(url)` / `loaded`         | `AudioBufferCache.load(url)` then `sampler.sound = …`                 |
+| `new Tone.Player({ context })` | `new Sampler(ctx, { sound })` — live or `OfflineAudioContext`         |
 
-For several pads that cut each other off (closed hat chokes open hat) and hits that a sequencer may still cancel, use `PadBank` from [`@audiorective/pads`](./pads.md#pad-bank): one `Sampler` plays one buffer polyphonically; one `PadBank` plays many pads with choke groups and returns a cancellable `PadHit` per trigger.
+For several pads that cut each other off (closed hat chokes open hat) and hits that a sequencer may still cancel, use `PadBank` from [`@audiorective/pads`](./pads.md#pad-bank): one `Sampler` plays one sound polyphonically; one `PadBank` plays many pads with choke groups and returns a `Voice` per trigger.
 
 ### `BufferPlayer` — the deck
 
@@ -92,23 +92,23 @@ For a plain playback bar, mount [`@audiorective/widgets/player`](./widgets.md#pl
 |                  | `Sampler`                         | `BufferPlayer`                    | `FilePlayer`                               |
 | ---------------- | --------------------------------- | --------------------------------- | ------------------------------------------ |
 | Metaphor         | Drum pad                          | Deck / tape loop                  | Track                                      |
-| Source           | `AudioBuffer`                     | `AudioBuffer`                     | `HTMLAudioElement` (streamed)              |
+| Source           | `AudioBuffer` or sound factory    | `AudioBuffer`                     | `HTMLAudioElement` (streamed)              |
 | Memory           | whole sample resident             | whole sample resident             | low — progressive                          |
 | Voices           | polyphonic (overlap)              | one persistent playhead           | one playhead                               |
 | Clock            | sample-accurate                   | sample-accurate                   | media clock                                |
-| Schedulable rate | no (per-voice immediate setter)   | **yes (`params.rate`)**           | no (immediate setter)                      |
-| Transport        | none — `trigger()`                | `start`/`stop`/loop               | `play`/`pause`/`seek`/`stop`               |
+| Schedulable rate | no (`pitch` per hit)              | **yes (`params.rate`)**           | no (immediate setter)                      |
+| Transport        | none — `trigger()` / `noteOn()`   | `start`/`stop`/loop               | `play`/`pause`/`seek`/`stop`               |
 | Reactive state   | `cells.activeVoices`              | `cells.isPlaying`                 | `cells.isPlaying`/`currentTime`/`duration` |
 | Best for         | SFX, hits, one-shots, sample pads | beat-locked loops/stems, DJ moves | music, long-form, scrubbing                |
 
 ## Capability modules built on these
 
-Higher-level modules reuse these primitives and import only core, so they stay standalone. `@audiorective/player`'s `WavePlayer` wraps `BufferPlayer` with a selection and offline stretch; `@audiorective/samples`'s `SampleLibrary` auditions through a `BufferPlayer` voice; `@audiorective/pads` plays cancellable pad hits for sequencers. See [Player](./player.md), [Samples](./samples.md) and [Pads](./pads.md).
+Higher-level modules reuse these primitives and import only core, so they stay standalone. `@audiorective/player`'s `WavePlayer` wraps `BufferPlayer` with a selection and offline stretch; `@audiorective/samples`'s `SampleLibrary` auditions through a `BufferPlayer` voice; `@audiorective/pads` plays pad voices with choke groups for sequencers. See [Player](./player.md), [Samples](./samples.md) and [Pads](./pads.md).
 
 ## Common mistakes
 
 - **Using `FilePlayer` for a beat-locked loop.** It can't phase-lock (media clock) and the rate isn't schedulable — loops drift. Use `BufferPlayer`.
-- **Using `Sampler` (polyphony 1) for a loop you want to pitch-ramp.** A `Voice` has no stable `playbackRate` AudioParam to schedule. Use `BufferPlayer`, whose `params.rate` is a `SchedulableParam`.
+- **Using `Sampler` (polyphony 1) for a loop you want to pitch-ramp.** A `Voice` has no `playbackRate` AudioParam to schedule. Use `BufferPlayer`, whose `params.rate` is a `SchedulableParam`.
 - **Decoding a long track into an `AudioBuffer` for `Sampler`/`BufferPlayer`.** Wasteful in memory and slow to load. Stream it with `FilePlayer`.
 - **Reaching for a "track" primitive for a microphone / WebRTC stream.** That's live input, not a transport — no seek/loop/duration. Route the `MediaStreamAudioSourceNode` directly for now.
 

@@ -37,7 +37,7 @@ It runs on every launch and stop before it is queued (`launch.source` says why: 
 
 - A scene's `tempo` (a cell on `launcher.scenes[i].tempo`) becomes the clock tempo at the scene's boundary. Buffer clips follow it because `warp` defaults to `"repitch"` (rate = clock tempo / the clip's `bpm`, pitch moves with it); `clock.bpm` ramps are followed too. `bpm` defaults to the clock tempo when the clip is created, or when the launcher is attached for clips made before `clock.attach`. `warp: false` plays at the buffer's own speed; `bpm` then only describes its beat grid. There is no real-time stretch: `@audiorective/effects` `TimeStretch` is an offline `PCM -> PCM` processor, so a pre-stretched buffer is the app's job.
 - A waiting boundary is fixed in beats: when the tempo changes, `when` moves with it and the `queued` cells show the new time. A `scene` boundary is one beat for every track.
-- Material beats of a buffer are its seconds x `bpm` / 60 in `offsetBeats`, `loop`, `length`, `position` and `lengthBeats`; a factory or scheduler clip's beats are transport beats. `clip.duration` is one pass in seconds at the current tempo.
+- Material beats of a buffer are its seconds x `bpm` / 60 in `offsetBeats`, `loop`, `length`, `position` and `lengthBeats`; a `sound` factory or scheduler clip's beats are transport beats. `clip.duration` is one pass in seconds at the current tempo.
 
 ## Pattern clips
 

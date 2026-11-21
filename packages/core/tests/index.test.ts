@@ -663,12 +663,12 @@ describe("AudioProcessor", () => {
 });
 
 describe("playback primitive exports", () => {
-  test("exposes the three players, Voice, loadAudioBuffer, AudioBufferCache", async () => {
+  test("exposes the three players, playSound, loadAudioBuffer, AudioBufferCache", async () => {
     const mod = await import("../src");
     expect(typeof mod.Sampler).toBe("function");
     expect(typeof mod.BufferPlayer).toBe("function");
     expect(typeof mod.FilePlayer).toBe("function");
-    expect(typeof mod.Voice).toBe("function");
+    expect(typeof mod.playSound).toBe("function");
     expect(typeof mod.loadAudioBuffer).toBe("function");
     expect(typeof mod.AudioBufferCache).toBe("function");
   });

@@ -85,8 +85,8 @@ When no capability package or widget matches, build on core with your own `Audio
 <!-- prettier-ignore -->
 | You are building… | Use | Not |
 | --- | --- | --- |
-| One-shot hits, pads, SFX; overlapping voices | core `Sampler` / `Voice` | `WavePlayer` (one playhead) |
-| Step patterns, drum machine, humanize, ratchets, editable sequenced hits (with choke groups) | `clock` + `@audiorective/sequencer` `StepSequencer`; for choke groups `onHit` calls `bank.trigger(hit.lane, hit.velocity, hit.when, ...)` and returns `() => pad?.cancel()`, over a `@audiorective/pads` `PadBank` (choke `group`); runnable code in `references/sequencer.md#standalone-drum-machine` (no `daw`) | a hand-rolled `window.own` loop for a lane/step grid; a private scheduling loop, forking the sequencer; irreversible `Voice.stop(when)` |
+| One-shot hits, pads, SFX, a keyboard of one sound; overlapping voices; a synth one-shot made of nodes | core `Sampler` (`trigger` / `noteOn` / `noteOff`) over one `Sound`: a note name (`"C4"` tone), an `AudioBuffer` (`offset`/`duration` for grains) or a factory returning an unconnected voice `{ output, sources, duration? }` | `WavePlayer` (one playhead); hand-written connect/start/stop/cleanup around oscillators |
+| Step patterns, drum machine, humanize, ratchets, editable sequenced hits (with choke groups) | `clock` + `@audiorective/sequencer` `StepSequencer`; for choke groups `onHit` calls `bank.trigger(hit.lane, { velocity: hit.velocity, when: hit.when, pitch: hit.pitch })` and returns `() => voice?.stop()`, over a `@audiorective/pads` `PadBank` (choke `group`); runnable code in `references/sequencer.md#standalone-drum-machine` (no `daw`) | a hand-rolled `window.own` loop for a lane/step grid; a private scheduling loop, forking the sequencer; irreversible `voice.stop(when)` |
 | Record a short audio take | `@audiorective/recorder` `AudioRecorder`, caller-connected input | `MediaRecorder` chunk intervals |
 | Record MIDI notes from a keyboard | `midi/web` `MidiRecorder`, caller-owned input/context | `MidiSequence` as a live listener |
 | A tempo-locked loop or stem | core `BufferPlayer` + `clock` | `FilePlayer` (media clock) |
@@ -158,23 +158,23 @@ Detail for all of these: `references/rules-in-depth.md`.
 
 Every other thrown message is listed, with cause and fix, in its area's reference (full prefix list: `references/rules-in-depth.md`):
 
-| Message starts with…                                                                                                                       | Read                                       |
-| ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------ |
-| `Waveform…`, `Step grid…`, `Playhead…`, `Spectrum…`, `Automation overlay…`, `No track is loaded.`                                          | `widgets.md`                               |
-| `WavePlayer…`, `Audio request…`, `Audio file…`, `Selection must satisfy…`, `Stretch…`                                                      | `player.md`                                |
-| `AudioRecorder…`                                                                                                                           | `recorder.md`                              |
-| `Pad Bank…`, `Pad hit…`                                                                                                                    | `pads.md`                                  |
-| `Step Sequencer…`                                                                                                                          | `sequencer.md`                             |
-| `Sample Library…`, `Sample lease…`                                                                                                         | `samples.md`                               |
-| `bpm must…`, `TempoParam…`, `Clock owned event time…`, `renderTimeline…`                                                                   | `clock.md`                                 |
-| `EffectRack…`, `Equalizer…`, `Effect: …`, `SendBus…`, `TimeStretch…`, `Rubber Band…`                                                       | `effects.md`                               |
-| `Piano roll…`, `MIDI…`, `MidiRecorder…`, `Invalid MIDI file.`                                                                              | `midi.md`                                  |
-| `Project…`, `AudioMedia…`, `Workspace …`, `Clip gain…`                                                                                     | `daw.md`                                   |
-| `Clip Launcher…`                                                                                                                           | `launcher.md`                              |
-| `WebCLAP…`                                                                                                                                 | `host.md`                                  |
-| `summarizePeaks:…`, `createEngine:…`, `AudioEngine disposed…`, `AudioEngine is disposed.`, `AudioProcessor.connect:…`, `registerWorklet:…` | `core.md`                                  |
-| `measureLatency:…`, `useEngine…`, `attach:…`                                                                                               | `devtools.md`, `react.md`, `playcanvas.md` |
-| `AutomationCurve…`, `AutomationBinding…`                                                                                                   | `automation.md`                            |
+| Message starts with…                                                                                                                                                                        | Read                                       |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| `Waveform…`, `Step grid…`, `Playhead…`, `Spectrum…`, `Automation overlay…`, `No track is loaded.`                                                                                           | `widgets.md`                               |
+| `WavePlayer…`, `Audio request…`, `Audio file…`, `Selection must satisfy…`, `Stretch…`                                                                                                       | `player.md`                                |
+| `AudioRecorder…`                                                                                                                                                                            | `recorder.md`                              |
+| `Pad Bank…`                                                                                                                                                                                 | `pads.md`                                  |
+| `Step Sequencer…`                                                                                                                                                                           | `sequencer.md`                             |
+| `Sample Library…`, `Sample lease…`                                                                                                                                                          | `samples.md`                               |
+| `bpm must…`, `TempoParam…`, `Clock owned event time…`, `renderTimeline…`                                                                                                                    | `clock.md`                                 |
+| `EffectRack…`, `Equalizer…`, `Effect: …`, `SendBus…`, `TimeStretch…`, `Rubber Band…`                                                                                                        | `effects.md`                               |
+| `Piano roll…`, `MIDI…`, `MidiRecorder…`, `Invalid MIDI file.`                                                                                                                               | `midi.md`                                  |
+| `Project…`, `AudioMedia…`, `Workspace …`, `Clip gain…`                                                                                                                                      | `daw.md`                                   |
+| `Clip Launcher…`                                                                                                                                                                            | `launcher.md`                              |
+| `WebCLAP…`                                                                                                                                                                                  | `host.md`                                  |
+| `summarizePeaks:…`, `Sound…`, `Note needs…`, `Sampler is disposed.`, `createEngine:…`, `AudioEngine disposed…`, `AudioEngine is disposed.`, `AudioProcessor.connect:…`, `registerWorklet:…` | `core.md`                                  |
+| `measureLatency:…`, `useEngine…`, `attach:…`                                                                                                                                                | `devtools.md`, `react.md`, `playcanvas.md` |
+| `AutomationCurve…`, `AutomationBinding…`                                                                                                                                                    | `automation.md`                            |
 
 All under `references/`; each in its "Common errors" section (TimeStretch: `effects.md` → TimeStretch).
 

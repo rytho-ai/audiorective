@@ -47,12 +47,12 @@ clip.pitch.value = 3; // semitones, live for a buffer
 clip.configure({ quantize: "1m", loop: false }); // every other option
 ```
 
-- **A clip is a buffer, a `sound` factory or a `scheduler`.** The factory returns an unconnected `AudioScheduledSourceNode` (or `{ source, output }`); the launcher starts, stops and connects it to the track. A `scheduler` is a `StepSequencer` or any clock scheduler (see [advanced](./launcher-advanced.md#pattern-clips)).
+- **A clip is a buffer, a `sound` or a `scheduler`.** `sound` is a core `Sound`: a note name plays the built-in tone for the clip's length; an `AudioBuffer` plays like `buffer`; a factory `(context, hit) => AudioScheduledSourceNode | { output, sources, duration? }` builds an unconnected, unstarted voice per start, and the launcher connects it to the track, starts every source, ends it with the clip (a short release fade) and frees it. The factory sees `hit.duration` = the clip's `length` in seconds (`Infinity` while looping or without a `length`: the voice is held until the clip stops) and `hit.pitch` = the clip's `pitch` at the start. A `scheduler` is a `StepSequencer` or any clock scheduler (see [advanced](./launcher-advanced.md#pattern-clips)).
 - **Material is in beats from its first beat.** A buffer's seconds become beats at its `bpm`, which defaults to the clock tempo when the clip is created. `offsetBeats` sets where the first pass starts; `loop` is `true` or a region `{ startBeat, endBeat }`; `length` is where a one-shot ends. One rule: the material is `[0, length)`, `loop` picks the part that repeats, `offsetBeats` only sets the start, `bpm` only converts seconds to beats.
 - **Buffer clips follow the song tempo.** `warp` defaults to `"repitch"`: the playback rate is clock tempo / `bpm`, so a tempo change or a scene tempo speeds the clip up with the song and moves its pitch. Pass `warp: false` for a clip that must keep its own speed.
 - **`quantize` per clip** overrides `launcher.quantize` for that clip's launch, stop and release. `launch({ quantize, legato })` overrides it for one call.
 - **`track.stop()` quantize:** the explicit option, else the playing clip's `quantize`, else `launcher.quantize`.
-- **`pitch` moves a buffer's playback rate live.** A `sound` factory reads it once, at the start; a `scheduler` clip ignores it.
+- **`pitch` moves a buffer's playback rate live.** A `sound` factory reads it (`hit.pitch`) once, at the start; a `scheduler` clip ignores it.
 - **`configure(patch)`** takes a writable `ClipPatch` (any subset of the options, so `const patch: ClipPatch = {}; patch.loop = true` compiles) and edits any option after construction; the JSDoc says when each takes effect (`loop` at the playing clip's next wrap, `mode`, `length`, `offsetBeats`, `bpm` and `warp` at its next start). It throws `RangeError` for `chance` outside 0..1, `repeatBeats` of 0 or less, or an empty loop.
 
 ## Layer 3: scenes, cancel and the wait

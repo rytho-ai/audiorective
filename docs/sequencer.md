@@ -26,7 +26,7 @@ A pattern is `X` (velocity 1), `x` (0.8), `1`..`9` (tenths), `.` (rest), spaces 
 const seq = new StepSequencer(
   {
     kick: { pattern: "X...X...X...X...", sound: kickBuffer },
-    hat: { pattern: "x.x.x.x.x.x.x.x.", sound: "C6", rate: "16n", swing: "30%", params: { cutoff: { min: 200, max: 8000, default: 1200 } } },
+    hat: { pattern: "x.x.x.x.x.x.x.x.", sound: hatSynth, rate: "16n", swing: "30%", params: { cutoff: { min: 200, max: 8000, default: 1200 } } },
     perc: { pattern: "x..x.", rate: "8t", direction: "bounce" }, // 5 steps against 16: polymeter
   },
   { context },
@@ -37,7 +37,7 @@ seq.lanes.hat.mute = true; // live setters: pattern, rate, swing, direction, mut
 - **Each lane loops on its own length and rate** (true polymeter), starting at beat 0 of the transport.
 - **`rate`** is a `Time` (`"16n"` a quarter of a beat, `"16n."` dotted, `"8t"` triplet, `"1m"` four beats) or a `StepRate` (`"1/16"`). Seconds (`"250ms"`, `"2s"`, a number) convert to beats at the tempo at beat 0, so a later tempo change does not rescale them; use note values to follow tempo.
 - **`swing`** (0..1 or `"30%"`) delays every odd step (counting from 0 at each loop start: steps 1, 3, 5 ...) by `swing` of half a step, a fixed beat offset that follows tempo; 0 is straight and 1 is half a step late. `swing: 1` delays the odd steps by half a step (an eighth of a beat on a `"16n"` lane); `steps[i].offset = 0.5` does the same for one step.
-- **`sound`** is a note name, an `AudioBuffer` or a function `(context, hit) => AudioScheduledSourceNode`, and needs `options.context`. Each hit gets its own voice into `lane.output` (a `GainNode` joined to the destination until `lane.connect(node)`). A note name or buffer follows a step's `pitch` automatically; a factory reads `hit.pitch` itself.
+- **`sound`** is a core `Sound`: a note name (`"C4"`, the built-in triangle tone), an `AudioBuffer` or a factory `(context, hit) => AudioScheduledSourceNode | { output, sources, duration? }`, and needs `options.context`. The factory builds an unconnected, unstarted voice; the lane connects it, starts every source at `hit.when`, scales it by the step's velocity (once; `hit.velocity` is for timbre only), holds it for the step's length (`hit.duration`) then fades it out, and frees it. Each hit gets its own voice into `lane.output` (a `GainNode` joined to the destination until `lane.connect(node)`). A note name or buffer follows a step's `pitch` automatically; a factory reads `hit.pitch` itself. A retracted hit's voice is dropped. See [Core](./core.md) for `Sound`.
 - **`solo`**: while any lane is soloed, only soloed lanes play.
 - **Playhead:** `lane.playhead` is the 0-based step index the transport is on, and `lane.progress` is 0..1 through the lane's own loop; both are `null` while stopped and update once per scheduling window. They are tracked reads, so an effect or a framework hook re-runs on them.
 - **`length` is settable**; growing it brings back the steps a shorter length hid.
@@ -76,7 +76,7 @@ const seq = new StepSequencer(lanes, {
 
 ## Standalone drum machine
 
-A vanilla drum machine with no DAW: your decoded buffers, a `PadBank` for choke groups, a `Clock` and the step grid. Closed and open hat share a choke `group`, and each pad ID is its lane name. `onHit` triggers the pad and returns a cleanup that cancels it, so an edit that deletes a pending closed hat also retracts its choke and the open hat keeps sounding. To give the hats separate effects, call `bank.routePad("open", openFilter)` and `bank.routePad("closed", closedFilter)`: choke still crosses them.
+A vanilla drum machine with no DAW: your decoded buffers, a `PadBank` for choke groups, a `Clock` and the step grid. Closed and open hat share a choke `group`, and each pad ID is its lane name. `onHit` triggers the pad and returns a cleanup that stops its voice, so an edit that deletes a pending closed hat also retracts its choke and the open hat keeps sounding. To give the hats separate effects, call `bank.routePad("open", openFilter)` and `bank.routePad("closed", closedFilter)`: choke still crosses them.
 
 ```ts
 import { Clock } from "@audiorective/clock";
@@ -87,12 +87,12 @@ import { mountStepGrid } from "@audiorective/widgets";
 const context = new AudioContext(); // you own it; resume() it from a user gesture
 // kick, snare, closedHat, openHat: AudioBuffers you decoded yourself
 const bank = new PadBank(context, [
-  { id: "kick", buffer: kick },
-  { id: "snare", buffer: snare },
-  { id: "closed", buffer: closedHat, group: "hat" },
-  { id: "open", buffer: openHat, group: "hat" }, // a one-shot (no gate) is still choked by a later closed hit
+  { id: "kick", sound: kick },
+  { id: "snare", sound: snare },
+  { id: "closed", sound: closedHat, group: "hat" },
+  { id: "open", sound: openHat, group: "hat" }, // the open hat rings until a later closed hit chokes it
 ]);
-bank.output.connect(context.destination);
+bank.connect(context.destination);
 
 const sequencer = new StepSequencer(
   {
@@ -103,8 +103,8 @@ const sequencer = new StepSequencer(
   },
   {
     onHit: (hit) => {
-      const pad = bank.trigger(hit.lane, hit.velocity, hit.when, { pitch: hit.pitch, duration: hit.duration });
-      return () => pad?.cancel(); // runs if the hit is retracted before it sounds
+      const voice = bank.trigger(hit.lane, { velocity: hit.velocity, when: hit.when, pitch: hit.pitch });
+      return () => voice?.stop(); // runs if the hit is retracted before it sounds
     },
   },
 );
@@ -150,8 +150,6 @@ The same wiring runs in `packages/sequencer/tests/drum-machine-doc.browser.test.
 | `Step Sequencer needs a Time such as "16n", "16n.", "8t", "1m", "250ms", "2s" or a number of seconds.` | Use a note value (`n`, `n.`, `t`, `m` suffix), `ms`/`s` or a number for `rate`. |
 | `Step Sequencer needs a rate that is a StepRate or a Time, at least 1/128 of a beat long.` | Use a longer step length such as `"64n"`. |
 | `Step Sequencer swing needs a number from 0 to 1 or a percentage like "30%".` | Pass `0.3` or `"30%"`. |
-| `Step Sequencer sound needs a note name like "C4", an AudioBuffer or a function returning an audio source node.` | Give `sound` a note name, an `AudioBuffer` or a factory. |
-| `Step Sequencer sound factory needs to return an AudioScheduledSourceNode (…).` | Return an oscillator, buffer source or constant source from the factory. |
 | `Step Sequencer needs options.context for a lane with a sound.` | Pass `{ context }` in the options when a lane has a `sound`, or read `lane.output`. |
 | `Step Sequencer onHit and transform need functions.` | Pass functions for `onHit` and `transform`. |
 | `Step Sequencer needs an existing lane.` | `seq.lane(name)` needs a lane name from the constructor record. |
