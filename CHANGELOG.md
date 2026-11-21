@@ -44,6 +44,8 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Changed
 
+- **widgets:** automation lanes intercept Escape only during an active drag; an idle numeric field restores its owner value without blocking native dialog dismissal. Document-level listeners exist only during the drag.
+
 - **widgets / daw-demo:** arrangement and waveform-selection Escape listeners attach only during active drags. The studio looks up current clip origins through one index per Project revision.
 
 - **widgets:** automation lanes retain validation at mount, then cancel previews and disable input when live duration becomes non-positive or non-finite. Valid durations restore the same controls and latest owner points without throwing from the owner edit.

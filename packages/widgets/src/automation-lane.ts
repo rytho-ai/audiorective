@@ -107,21 +107,25 @@ export function mountAutomationLane(root: HTMLElement, options: AutomationLaneOp
   let selectedTime: number | undefined;
   let gesture: { pointerId: number; previous?: AutomationPoint; point: AutomationPoint } | undefined;
   const abort = new AbortController();
-  doc.addEventListener(
+  view.addEventListener(
     "keydown",
     (event) => {
-      if (event.key !== "Escape" || (!gesture && !(event.target instanceof Node && view.contains(event.target)))) return;
-      cancelGesture();
-      syncControls();
-      event.preventDefault();
-      event.stopPropagation();
+      if (event.key === "Escape" && !gesture && (event.target === time || event.target === value)) syncControls();
     },
     { signal: abort.signal },
   );
+  function escape(event: KeyboardEvent): void {
+    if (event.key !== "Escape" || !gesture) return;
+    cancelGesture();
+    syncControls();
+    event.preventDefault();
+    event.stopPropagation();
+  }
 
   function cancelGesture(): void {
     const previous = gesture;
     gesture = undefined;
+    doc.removeEventListener("keydown", escape, true);
     if (previous && graph.hasPointerCapture(previous.pointerId)) graph.releasePointerCapture(previous.pointerId);
   }
 
@@ -249,6 +253,7 @@ export function mountAutomationLane(root: HTMLElement, options: AutomationLaneOp
     graph.focus({ preventScroll: true });
     graph.setPointerCapture(event.pointerId);
     gesture = { pointerId: event.pointerId, previous, point: previous ?? projectPoint(event, "linear") };
+    doc.addEventListener("keydown", escape, true);
     draw();
   };
   graph.onpointermove = (event) => {

@@ -1124,13 +1124,14 @@
     },
     {
       "id": 86,
-      "prompt": "Our Audiorective automation editor already owns an AutomationCurve and a tracked clip-duration cell. Mount a toolkit lane over them. Trimming or deleting a clip may change duration from four beats to zero, NaN or a negative value while a pointer preview is active, and loading another clip later restores a positive duration with new points. Show the view and cleanup. The Project edit must not throw, stale input must never commit, and controls should recover in place. Do not run anything.",
+      "prompt": "Our Audiorective automation editor already owns an AutomationCurve and a tracked clip-duration cell. Mount a toolkit lane over them. Trimming or deleting a clip may change duration from four beats to zero, NaN or a negative value while a pointer preview is active, and loading another clip later restores a positive duration with new points. Show the view and cleanup. The Project edit must not throw, stale input must never commit, and controls should recover in place. Do not run anything. The lane is inside a native dialog: Escape should cancel an active drag first, but close the dialog when no drag is active.",
       "expected_output": "A borrowed automation lane receives owner points and a tracked duration getter; the widget owns disabling, cancellation and recovery.",
       "files": [],
       "expectations": [
         "Passes the existing curve as lane points and a getter reading the existing duration cell, without mirroring authored state or manually remounting on each edit.",
         "Explains that initial duration must be positive and finite, while a later invalid duration disables input and cancels a stale preview without throwing or committing; a valid duration restores current points and limits in place.",
-        "Uses the lane commit callback to update the existing owner once per completed gesture and disposes only the view on close."
+        "Uses the lane commit callback to update the existing owner once per completed gesture and disposes only the view on close.",
+        "Delegates Escape interaction to the lane: active drags cancel, while an idle numeric field restores its owner value and permits native dialog dismissal, without a caller-written global key handler."
       ]
     }
   ]

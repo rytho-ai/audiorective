@@ -271,3 +271,30 @@ test("invalid mount duration is rejected before the lane creates its controls", 
     expect(root.children).toHaveLength(0);
   }
 });
+
+test("Escape cancels a lane drag, then restores an idle field without blocking its dialog", async () => {
+  const root = host();
+  const dialog = document.createElement("dialog");
+  root.append(dialog);
+  own(() => dialog.close());
+  const curve = new AutomationCurve([{ time: 1, value: 0.5, shape: "linear" }]);
+  const commit = vi.fn();
+  const lane = mountAutomationLane(dialog, { duration: () => 4, points: curve, maxValue: 2, defaultValue: 1, onCommit: commit });
+  own(() => lane.dispose());
+  dialog.showModal();
+  const graph = dialog.querySelector("canvas")!;
+  const rect = graph.getBoundingClientRect();
+  await pointer({ action: "down", x: rect.left + rect.width / 4, y: rect.top + rect.height * 0.75 });
+  await pointer({ action: "move", x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+  await userEvent.keyboard("{Escape}");
+  await pointer({ action: "up" });
+  expect(dialog.open).toBe(true);
+  expect(commit).not.toHaveBeenCalled();
+  const field = dialog.querySelector<HTMLInputElement>('[aria-label="Value"]')!;
+  field.focus();
+  field.value = "1.5";
+  await userEvent.keyboard("{Escape}");
+  await expect.poll(() => dialog.open).toBe(false);
+  expect(field.valueAsNumber).toBe(0.5);
+  expect(commit).not.toHaveBeenCalled();
+});

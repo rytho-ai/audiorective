@@ -136,7 +136,7 @@ const mixer = mountMixer(root, {
 
 ## Automation lane
 
-`mountAutomationLane` edits caller-owned curve snapshots. Give `points` an object with a tracked readonly `.value`; an `AutomationCurve` fits directly. `duration` is a tracked getter. The lane keeps its mounted controls synchronized, with local previews until one `onCommit` per finished gesture. Duration must be positive and finite at mount. A later invalid duration cancels previews, clears the graph and disables inputs without throwing or committing; a valid duration restores the same controls with current owner points.
+`mountAutomationLane` edits caller-owned curve snapshots. Give `points` an object with a tracked readonly `.value`; an `AutomationCurve` fits directly. `duration` is a tracked getter. The lane keeps its mounted controls synchronized, with local previews until one `onCommit` per finished gesture. Duration must be positive and finite at mount. A later invalid duration cancels previews, clears the graph and disables inputs without throwing or committing; a valid duration restores the same controls with current owner points. Escape cancels an active drag. In an idle numeric field it restores the owner value and lets the event continue, including native dialog dismissal.
 
 ```typescript
 import { mountAutomationLane } from "@audiorective/widgets";
