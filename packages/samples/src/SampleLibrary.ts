@@ -14,7 +14,12 @@ export type SampleLibraryState = Readonly<{
   previewPlaying: boolean;
 }>;
 export type SampleLease = Readonly<{ buffer: AudioBuffer; release(): void }>;
-export type SampleLibraryOptions = { maxFileBytes?: number; maxDecodedBytes?: number };
+export type SampleLibraryOptions = {
+  maxFileBytes?: number;
+  maxDecodedBytes?: number;
+  /** Aborting the signal calls `dispose()`. */
+  signal?: AbortSignal;
+};
 
 type Resource = { buffer: AudioBuffer; bytes: number; hash?: string; owners: number };
 /** Non-observable bookkeeping for a row. Everything a reader can see lives in `state`. */
@@ -35,6 +40,8 @@ export class SampleLibrary {
   private nextId = 0;
   private working = false;
   private disposed = false;
+  private readonly abortSignal?: AbortSignal;
+  private readonly onAbort = () => this.dispose();
   private previewVoice?: { id: string; player: BufferPlayer; lease: SampleLease; unsubscribe(): void };
 
   private get snapshot(): SampleLibraryState {
@@ -69,6 +76,9 @@ export class SampleLibrary {
     if ([this.maxFileBytes, this.maxDecodedBytes].some((limit) => Number.isNaN(limit) || limit < 0))
       throw new RangeError("Sample Library byte limits must be non-negative.");
     this.output = context.createGain();
+    this.abortSignal = options.signal;
+    if (this.abortSignal?.aborted) this.dispose();
+    else this.abortSignal?.addEventListener("abort", this.onAbort, { once: true });
   }
 
   /** Load files in order. Duplicate bytes resolve to the current row; a removed job resolves to null. */
@@ -169,6 +179,7 @@ export class SampleLibrary {
     };
   }
 
+  /** Removes the row, drops a queued import and stops a running preview of that sample (`state.previewId` goes null); a lease already acquired stays valid until released. Unknown ids do nothing. */
   remove(id: string): void {
     const job = this.jobs.get(id);
     if (!job) return;
@@ -183,6 +194,10 @@ export class SampleLibrary {
     });
   }
 
+  /**
+   * Starts auditioning a ready sample through `output` and resolves once it has started, not when it ends: follow `state.previewPlaying` for the end.
+   * A preview replaces the one running (which stops silently; nothing rejects with `AbortError`). Rejects when the sample is not ready or unknown (`Sample Library needs a ready sample.`).
+   */
   async preview(id: string): Promise<void> {
     const lease = this.acquire(id);
     this.stopPreview();
@@ -217,6 +232,7 @@ export class SampleLibrary {
     }
   }
 
+  /** Stops the running preview and releases its lease; does nothing when none is running. */
   stopPreview(): void {
     const voice = this.previewVoice;
     if (!voice) return;
@@ -242,10 +258,15 @@ export class SampleLibrary {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.abortSignal?.removeEventListener("abort", this.onAbort);
     batch(() => {
       this.stopPreview();
       for (const id of [...this.jobs.keys()]) this.remove(id);
     });
     this.output.disconnect();
+  }
+
+  [Symbol.dispose](): void {
+    this.dispose();
   }
 }

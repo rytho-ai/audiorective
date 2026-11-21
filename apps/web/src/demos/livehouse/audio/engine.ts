@@ -72,7 +72,7 @@ export function createPaEngine() {
       },
       /** Start the gig: play all stems + metering. */
       start(): void {
-        for (const s of streams) void s.play();
+        for (const s of streams) s.play().catch((error: unknown) => console.warn("Stem playback was blocked or interrupted.", error));
         mixer.startMetering();
       },
       /** Stop the gig. */

@@ -117,3 +117,22 @@ describe("Clock.start(when, offsetBeats)", () => {
     expect(() => clock.start(0, Infinity)).toThrow(RangeError);
   });
 });
+
+describe("Clock.beat", () => {
+  test("is the current beat: advancing while playing, frozen by pause, reset by stop, from the count-in offset", () => {
+    const { ctx, clock } = harness(120);
+    expect(clock.beat).toBe(0);
+    clock.start(0, -4);
+    expect(clock.beat).toBeCloseTo(-4, 12);
+    ctx.currentTime = 1; // two beats at 120 bpm
+    expect(clock.beat).toBeCloseTo(-2, 12);
+    clock.pause();
+    ctx.currentTime = 5;
+    expect(clock.beat).toBeCloseTo(-2, 12);
+    clock.resume();
+    ctx.currentTime = 6;
+    expect(clock.beat).toBeCloseTo(0, 12);
+    clock.stop();
+    expect(clock.beat).toBe(0);
+  });
+});

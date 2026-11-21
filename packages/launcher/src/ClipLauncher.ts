@@ -186,7 +186,7 @@ type Inst = {
   s: number; // scheduler clips: sub-beat = beat - s
   swap: Inst | null; // pending loop-wrap swap
 };
-type Pending = { clip: Clip | null; source: LaunchSource; quantize: Quantize; beat: number | null; legato: boolean };
+type Pending = { clip: Clip | null; source: LaunchSource; quantize: Quantize; beat: number | null; legato: boolean; asIf?: boolean };
 type Commit = { kind: "start"; inst: Inst; when: number } | { kind: "stop"; target: Inst; when: number; beat: number };
 type Item = { when: number; rank: number; seq: number; owner: Inst | null; run: () => void };
 
@@ -227,7 +227,8 @@ export class Clip {
   /** @internal */ readonly _queued = cell(false);
   /** @internal */ readonly _startsAt = cell<number | null>(null);
   /** @internal */ readonly _startedAt = cell<number | null>(null);
-  /** @internal */ readonly _src: Src;
+  /** @internal */ _src: Src;
+  /** @internal */ readonly _buffer: Cell<AudioBuffer | null>;
   /** @internal */ readonly _out: GainNode;
   /** @internal */ readonly _uid: string;
   /** @internal */ _count = 0;
@@ -249,6 +250,8 @@ export class Clip {
             ? { kind: "buffer", buffer: o.sound }
             : { kind: "factory", factory: o.sound }
           : { kind: "scheduler", sched: o.scheduler };
+    this._buffer = cell(this._src.kind === "buffer" ? this._src.buffer : null);
+    this.buffer = readonlyCell(this._buffer);
     this._bpmPending = o.bpm === undefined;
     this._opts = cell<ClipSettings>({
       name: o.name ?? `${track.name} ${index + 1}`,
@@ -298,6 +301,8 @@ export class Clip {
       this._out.disconnect();
     };
   }
+  /** The audio of a buffer clip (null for a `sound` factory or `scheduler` clip); replace it with `configure({ buffer })`. */
+  readonly buffer: ReadonlyCell<AudioBuffer | null>;
   /** Display name: `options.value.name`. */
   get name(): string {
     return this._opts.value.name;
@@ -341,10 +346,19 @@ export class Clip {
    */
   configure(patch: ClipPatch): void {
     untracked(() => {
-      const next = { ...this._opts.value, ...patch };
+      const { buffer, ...settings } = patch;
+      if (buffer !== undefined && this._src.kind !== "buffer") throw new TypeError("Clip Launcher can only replace the buffer of a buffer clip.");
+      const next = { ...this._opts.value, ...settings };
       validate(next);
-      batch(() => (this._opts.value = next));
-      this.track.launcher._configured(this, patch);
+      batch(() => {
+        this._opts.value = next;
+        if (buffer !== undefined) {
+          this._src = { kind: "buffer", buffer };
+          this._buffer.value = buffer;
+        }
+      });
+      if (buffer !== undefined) this.track.launcher._swapBuffer(this);
+      this.track.launcher._configured(this, settings);
     });
   }
   /** Withdraws this clip's waiting launch; a playing clip keeps playing. Returns whether one was withdrawn. */
@@ -639,12 +653,14 @@ export class ClipLauncher extends EventTarget implements Scheduler {
       if (cur && cur.clip === clip) return this.requestStop(track, "stop", options?.quantize ?? c.quantize ?? this.quantize.value);
     }
     if (c.mode === "gate" && (waiting || (cur && cur.clip === clip))) return;
+    if (options?.at !== undefined && !Number.isFinite(options.at)) throw new RangeError("Clip Launcher requires a finite beat for `at`.");
     this.request({
       track,
       clip,
       source: "launch",
-      quantize: options?.quantize ?? c.quantize ?? this.quantize.value,
+      quantize: options?.at !== undefined ? "none" : (options?.quantize ?? c.quantize ?? this.quantize.value),
       legato: options?.legato ?? c.legato,
+      ...(options?.at !== undefined ? { fixedBeat: options.at, asIf: true } : {}),
     });
     this.finishCommand();
   }
@@ -756,6 +772,7 @@ export class ClipLauncher extends EventTarget implements Scheduler {
     fixedBeat?: number | null;
     chance?: boolean;
     keepWaiting?: boolean;
+    asIf?: boolean;
   }): void {
     const { track, clip, source } = o;
     let quantize = o.quantize;
@@ -781,7 +798,7 @@ export class ClipLauncher extends EventTarget implements Scheduler {
       if (p < 1 && rnd("chance") >= p) return void this.emit("skipped", track, clip, beat == null ? null : this.whenOf(beat));
     }
     if (!o.keepWaiting) this.withdraw(track, "cancelled");
-    track.pending = { clip, source, quantize, beat, legato };
+    track.pending = { clip, source, quantize, beat, legato, asIf: o.asIf };
     this.emit("queued", track, clip, beat == null ? null : this.beatTime(beat));
     this.syncCells(track);
     if (beat != null && beat < this.lastEnd - EPS) this.commitPending(track);
@@ -832,6 +849,11 @@ export class ClipLauncher extends EventTarget implements Scheduler {
     }
     const prev = track.cur && track.cur.state !== "ended" ? track.cur : null;
     let mat0 = p.clip._opts.value.offsetBeats;
+    if (p.asIf && when > timeB + 1e-9 && p.clip._src.kind === "buffer") {
+      // as if started at p.beat: advance the material by what has elapsed since, at the clip's own rate
+      const cfg = p.clip._opts.value;
+      mat0 += (cfg.warp ? startBeat - p.beat : ((when - timeB) * cfg.bpm) / 60) * semis(p.clip.pitch.value);
+    }
     if (p.legato && prev) mat0 = this.posOf(prev, when);
     const inst = this.startInst(p.clip, when, startBeat, mat0, p.legato && !!prev);
     if (prev) {
@@ -1138,6 +1160,68 @@ export class ClipLauncher extends EventTarget implements Scheduler {
       if ("loop" in patch && inst.kind === "buffer" && inst.state === "live" && inst.frozen == null) this.swapAtWrap(inst, now);
     }
     this.syncAll();
+  }
+  /** @internal Replaces what a clip plays with its new buffer: a playing source hands over at the same position a moment ahead, with no gap; one not yet started is rebuilt. */
+  _swapBuffer(clip: Clip): void {
+    if (!this.timeline) return;
+    const buf = (clip._src as { buffer: AudioBuffer }).buffer;
+    const now = this.now();
+    const lead = 0.02;
+    for (const inst of clip.track.insts) {
+      if (inst.clip !== clip || inst.state === "ended" || inst.kind !== "buffer") continue;
+      const lengthBeats = this._materialBeats(clip, inst.cfg)!;
+      const setting = inst.cfg.loop;
+      const region = inst.loop
+        ? typeof setting === "object"
+          ? { start: setting.startBeat, end: setting.endBeat }
+          : { start: 0, end: lengthBeats }
+        : null;
+      if (inst.frozen != null) {
+        // paused: no source is sounding; the next resume builds from the new buffer
+        inst.loop = region;
+        inst.endMat = region ? null : lengthBeats;
+        continue;
+      }
+      const t = Math.max(inst.startTime, now + lead);
+      let pos = this.posOf(inst, t);
+      if (region && pos >= region.end) pos = region.start + ((pos - region.start) % (region.end - region.start));
+      const old = inst.source;
+      inst.loop = region;
+      inst.endMat = region ? null : lengthBeats;
+      if (inst.state === "scheduled" && inst.startTime >= now + lead) {
+        try {
+          old?.stop();
+          old?.disconnect();
+        } catch {
+          /* already stopped */
+        }
+        inst.source = null;
+        this.buildSource(inst, inst.startTime);
+        this.armEnd(inst);
+        continue;
+      }
+      try {
+        old?.stop(t);
+      } catch {
+        /* already stopped */
+      }
+      inst.source = null;
+      if (inst.endMat != null && pos >= inst.endMat) {
+        this.armEnd(inst);
+        continue;
+      }
+      inst.rate = this.rateAt(inst, t);
+      const node = new AudioBufferSourceNode(this.context, { buffer: buf, playbackRate: inst.rate });
+      if (region) {
+        node.loop = true;
+        node.loopStart = (region.start * 60) / inst.cfg.bpm;
+        node.loopEnd = (region.end * 60) / inst.cfg.bpm;
+      }
+      node.connect(clip._out);
+      node.start(t, (pos * 60) / inst.cfg.bpm);
+      inst.source = node;
+      this.armEnd(inst);
+    }
   }
   /** A new loop applies when the current pass reaches its wrap: the source is replaced there, gaplessly. */
   private swapAtWrap(inst: Inst, now: number): void {
@@ -1525,6 +1609,18 @@ export class ClipLauncher extends EventTarget implements Scheduler {
     if (this.disposed || !listener) return;
     this.listeners.push([type, listener as EventListenerOrEventListenerObject, options]);
     super.addEventListener(type, listener as EventListenerOrEventListenerObject, options);
+  }
+  removeEventListener(
+    type: ClipEventType,
+    listener: (this: ClipLauncher, event: ClipEvent) => unknown,
+    options?: boolean | EventListenerOptions,
+  ): void;
+  removeEventListener(type: string, listener: EventListenerOrEventListenerObject | null, options?: boolean | EventListenerOptions): void;
+  removeEventListener(type: string, listener: unknown, options?: boolean | EventListenerOptions): void {
+    if (!listener) return;
+    const index = this.listeners.findIndex(([t, l]) => t === type && l === listener);
+    if (index !== -1) this.listeners.splice(index, 1);
+    super.removeEventListener(type, listener as EventListenerOrEventListenerObject, options);
   }
   /** Detaches from every clock, silences the clips and removes listeners. Idempotent. */
   dispose(): void {

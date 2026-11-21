@@ -34,6 +34,7 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
 </BaseLayout>
 
 <script>
+  import { effect } from "@audiorective/core";
   import { WavePlayer } from "@audiorective/player";
   import { TimeStretch } from "@audiorective/effects/time-stretch";
   import { mountWaveformSelector, type WaveformSelectorHandle } from "@audiorective/widgets";
@@ -83,11 +84,14 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
       });
       const copied = ctx.createBuffer(source.numberOfChannels, Math.min(source.length, source.sampleRate * 2), source.sampleRate);
       for (let c = 0; c < copied.numberOfChannels; c++) copied.getChannelData(c).set(source.getChannelData(c).subarray(0, copied.length));
-      unsubscribeStretch = stretchPlayer.subscribe(() => {
-        if (!stretchPlayer) return;
-        const state = stretchPlayer.getState();
-        apply.disabled = state.loading || state.processing;
-        status.textContent = state.error ?? (state.processing ? "Processing; the current version stays available…" : `${state.sourceDuration.toFixed(2)}s original → ${state.duration.toFixed(2)}s at ${state.stretchRatio}× duration`);
+      const { cells } = stretchPlayer;
+      unsubscribeStretch = effect(() => {
+        const version = cells.version.value;
+        const busy = cells.loading.value || cells.processing.value;
+        apply.disabled = busy;
+        if (cells.error.value) status.textContent = cells.error.value;
+        else if (cells.processing.value) status.textContent = "Processing; the current version stays available…";
+        else if (version) status.textContent = `${stretchPlayer!.sourceBuffer!.duration.toFixed(2)}s original → ${version.buffer.duration.toFixed(2)}s at ${version.ratio}× duration`;
       });
       await stretchPlayer.load(copied);
     })().catch(error => { if (generation === stretchGeneration) { disposeStretch(); status.textContent = String(error); } });

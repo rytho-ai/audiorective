@@ -35,8 +35,8 @@ test("two selectors share one block; headless edits and gestures update both wit
   two.setSelection({ start: 2, end: 3 });
   expect(one.getState().selection).toEqual({ start: 2, end: 3 });
   await drag(element(a, "waveform"), 6, 4.5, 4.8);
-  await expect.poll(() => player.isPlaying).toBe(true);
-  expect(two.getState().selection).toEqual(player.getSelection());
+  await expect.poll(() => player.cells.isPlaying.value).toBe(true);
+  expect(two.getState().selection).toEqual(player.cells.selection.value);
   expect(two.getState().isLooping).toBe(true);
   expect(one.output).toBe(two.output);
   expect(one.output).toBe(player.output);
@@ -52,15 +52,15 @@ test("removing one shared view preserves loop, peer selection and caller ownersh
   await player.audition();
   one.dispose();
   await delay(400);
-  expect(player.isPlaying).toBe(true);
-  expect(player.getSelection()).toEqual({ start: 3.4, end: 3.7 });
-  expect(two.getState().selection).toEqual(player.getSelection());
+  expect(player.cells.isPlaying.value).toBe(true);
+  expect(player.cells.selection.value).toEqual({ start: 3.4, end: 3.7 });
+  expect(two.getState().selection).toEqual(player.cells.selection.value);
   expect(element(root, "selection").hidden).toBe(false);
   two.dispose();
-  expect(player.isPlaying).toBe(true);
+  expect(player.cells.isPlaying.value).toBe(true);
   expect(context.state).not.toBe("closed");
   player.pause();
-  expect(player.isPlaying).toBe(false);
+  expect(player.cells.isPlaying.value).toBe(false);
 });
 test("external source replacement resets both views and destruction while loading does not cancel caller load", async () => {
   const { player } = await fixture();
@@ -91,9 +91,9 @@ test("pure waveform accepts a structural selection model; disposing or clearing 
   const attachment = view.attach(plugin);
   expect(plugin.getSelection()).toEqual({ start: 1, end: 2 });
   view.setData(null);
-  expect(player.getSelection()).toEqual({ start: 1, end: 2 });
+  expect(player.cells.selection.value).toEqual({ start: 1, end: 2 });
   attachment.dispose();
-  expect(player.getSelection()).toEqual({ start: 1, end: 2 });
+  expect(player.cells.selection.value).toEqual({ start: 1, end: 2 });
   await player.audition();
-  expect(player.isPlaying).toBe(true);
+  expect(player.cells.isPlaying.value).toBe(true);
 });

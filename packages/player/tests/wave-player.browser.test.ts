@@ -1,4 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
+import { view, onChange } from "./view";
 import { WavePlayer } from "../src/WavePlayer";
 
 const disposers: Array<() => void | Promise<unknown>> = [];
@@ -56,8 +57,8 @@ test("decoded source and selection work without constructing DOM; copies and inv
   const range = { start: 1, end: 2 };
   player.setSelection(range);
   range.start = 4;
-  player.getState().selection!.start = 5;
-  expect(player.getSelection()).toEqual({ start: 1, end: 2 });
+  expect(() => ((player.cells.selection.value as { start: number }).start = 5)).toThrow(TypeError); // the committed selection is frozen
+  expect(player.cells.selection.value).toEqual({ start: 1, end: 2 });
   for (const invalid of [
     { start: -1, end: 2 },
     { start: 2, end: 1 },
@@ -65,16 +66,16 @@ test("decoded source and selection work without constructing DOM; copies and inv
     { start: NaN, end: 2 },
   ]) {
     expect(() => player.setSelection(invalid)).toThrow(/Selection must/);
-    expect(player.getSelection()).toEqual({ start: 1, end: 2 });
+    expect(player.cells.selection.value).toEqual({ start: 1, end: 2 });
   }
   expect(() => player.seek(NaN)).toThrow(/finite/);
-  expect(player.getState().isPlaying).toBe(false);
+  expect(view(player).isPlaying).toBe(false);
   player.seek(99);
   expect(player.position).toBe(6);
   player.stop();
   expect(player.position).toBe(1);
   player.setSelection(null);
-  expect(player.getSelection()).toBeNull();
+  expect(player.cells.selection.value).toBeNull();
 });
 
 test("URL failure rejects with observable error, then File decode recovers", async () => {
@@ -82,11 +83,11 @@ test("URL failure rejects with observable error, then File decode recovers", asy
   const buffer = bands(context);
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 404 })));
   await expect(player.load("/missing.wav")).rejects.toThrow(/404/);
-  expect(player.getState()).toMatchObject({ duration: 0, loading: false, error: expect.stringContaining("404") });
+  expect(view(player)).toMatchObject({ duration: 0, loading: false, error: expect.stringContaining("404") });
   const decode = vi.spyOn(context, "decodeAudioData").mockResolvedValue(buffer);
   await player.load(new File([new Uint8Array([1])], "source.wav"));
   expect(decode).toHaveBeenCalledOnce();
-  expect(player.getState()).toMatchObject({ duration: 6, loading: false, error: null });
+  expect(view(player)).toMatchObject({ duration: 6, loading: false, error: null });
   await expect(player.load("  ")).rejects.toThrow("Enter an audio URL.");
 });
 
@@ -129,7 +130,7 @@ test("stale decode and destruction cannot resurrect a source", async () => {
   late.resolve(current);
   await pending;
   expect(player.buffer).toBeNull();
-  expect(player.getState().isPlaying).toBe(false);
+  expect(view(player).isPlaying).toBe(false);
   expect(context.state).not.toBe("closed");
   await expect(player.load(current)).rejects.toThrow(/disposed/);
   expect(() => player.seek(0)).toThrow(/disposed/);
@@ -149,14 +150,14 @@ for (const command of ["pause", "stop", "seek", "load", "dispose"] as const) {
     else player[command]();
     resume.resolve();
     await pending;
-    expect(player.getState().isPlaying).toBe(false);
+    expect(view(player).isPlaying).toBe(false);
   });
 }
 
 test("notifications are coherent, unsubscribe works and shared ownership survives observer removal", async () => {
   const { context, player } = fixture();
-  const states: ReturnType<WavePlayer["getState"]>[] = [];
-  const off = player.subscribe(() => states.push(player.getState()));
+  const states: ReturnType<typeof view>[] = [];
+  const off = onChange(player, () => states.push(view(player)));
   await player.load(bands(context));
   player.setSelection({ start: 1, end: 2 });
   expect(states.at(-1)).toMatchObject({ duration: 6, selection: { start: 1, end: 2 }, loading: false });
@@ -164,11 +165,11 @@ test("notifications are coherent, unsubscribe works and shared ownership survive
   const count = states.length;
   player.setSelection({ start: 2, end: 3 });
   expect(states).toHaveLength(count);
-  expect(player.getSelection()).toEqual({ start: 2, end: 3 });
+  expect(player.cells.selection.value).toEqual({ start: 2, end: 3 });
   player.setSelection(null);
   player.setLooping(true);
   player.setSelection(null);
-  expect(player.isLooping).toBe(false);
+  expect(player.cells.isLooping.value).toBe(false);
 });
 
 test("audition, live disjoint range and obsolete one-shot stop agree with actual sound", async () => {
@@ -190,7 +191,7 @@ test("audition, live disjoint range and obsolete one-shot stop agree with actual
   await delay(160);
   expect(frequency(analyser, context)).toBeGreaterThan(860);
   await delay(750);
-  expect(player.isPlaying).toBe(true);
+  expect(player.cells.isPlaying.value).toBe(true);
   expect(player.position).toBeGreaterThanOrEqual(4.5);
   expect(player.position).toBeLessThan(4.8);
   player.pause();
@@ -207,7 +208,7 @@ test("audition, live disjoint range and obsolete one-shot stop agree with actual
   player.setLooping(false);
   player.setSelection({ start: 2.2, end: 2.4 });
   await player.play();
-  await expect.poll(() => player.isPlaying).toBe(false);
+  await expect.poll(() => player.cells.isPlaying.value).toBe(false);
   expect(player.position).toBeCloseTo(2.4, 2);
   await expect.poll(() => peak(analyser)).toBeLessThan(0.001);
 });
@@ -240,12 +241,12 @@ test("dispose silences owned audio but leaves caller context and peer running", 
   expect(context.state).toBe("running");
 });
 
-test("dispose does not notify subscribers after the player is disposed", async () => {
-  const { context, player } = fixture();
-  await player.load(bands(context, 1));
-  await player.play();
-  const seen: unknown[] = [];
-  player.subscribe(() => seen.push(1));
-  player.dispose();
-  expect(seen).toEqual([]);
+test("aborting the options signal disposes the player, and an aborted signal disposes it at construction", async () => {
+  const { context } = fixture();
+  const controller = new AbortController();
+  const player = new WavePlayer(context, { signal: controller.signal });
+  controller.abort();
+  expect(() => player.stop()).toThrow("WavePlayer is disposed.");
+  const aborted = new WavePlayer(context, { signal: AbortSignal.abort() });
+  expect(() => aborted.stop()).toThrow("WavePlayer is disposed.");
 });

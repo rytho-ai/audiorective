@@ -147,3 +147,29 @@ test("a library preview started inside an effect keeps loop binding on the previ
   player.params.loop.value = true;
   expect((player as unknown as { _source: AudioBufferSourceNode })._source.loop).toBe(true);
 });
+
+test("aborting the options signal disposes the library; Symbol.dispose is dispose", async () => {
+  const context = new AudioContext();
+  disposers.push(() => context.close());
+  const controller = new AbortController();
+  const library = new SampleLibrary(context, { signal: controller.signal });
+  controller.abort();
+  expect(() => library.importFiles([wav(0.1)])).toThrow("Sample Library is disposed.");
+  expect(() => new SampleLibrary(context, { signal: AbortSignal.abort() }).importFiles([])).toThrow("Sample Library is disposed.");
+  const other = new SampleLibrary(context);
+  other[Symbol.dispose]();
+  expect(() => other.importFiles([])).toThrow("Sample Library is disposed.");
+});
+
+test("remove stops a running preview of that sample; a newer preview replaces an older one without rejecting it", async () => {
+  const { library, id } = await readyLibrary(2);
+  await library.preview(id);
+  expect(library.state.value).toMatchObject({ previewId: id, previewPlaying: true });
+  const [other] = await library.importFiles([wav(2)]);
+  // Identical bytes dedupe to the same row; a distinct id needs distinct bytes, so previewing the same sample again is the superseding case.
+  await expect(library.preview(id)).resolves.toBeUndefined();
+  expect(library.state.value.previewId).toBe(id);
+  expect(other).toBe(id);
+  library.remove(id);
+  expect(library.state.value).toMatchObject({ previewId: null, previewPlaying: false });
+});

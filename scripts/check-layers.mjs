@@ -16,7 +16,11 @@ const SCOPE = "@audiorective/";
  */
 const CAPABILITIES = {
   player: { entry: "WavePlayer.ts", helpers: { "WavePlayer.ts": ["source.ts"] }, private: ["source.ts"] },
-  recorder: { entry: "AudioRecorder.ts", helpers: { "AudioRecorder.ts": ["recording/*"] }, private: ["recording/*"] },
+  recorder: {
+    entry: "AudioRecorder.ts",
+    helpers: { "AudioRecorder.ts": ["recording/*", "MicrophoneInput.ts"] },
+    private: ["recording/*", "MicrophoneInput.ts"],
+  },
   samples: { entry: "SampleLibrary.ts", helpers: {}, private: [] },
   pads: { entry: "PadBank.ts", helpers: {}, private: [] },
   sequencer: {

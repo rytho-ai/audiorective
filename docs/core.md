@@ -573,6 +573,8 @@ class Analyser extends AudioProcessor {
   createWaveformBuffer(): Uint8Array; // sized to fftSize
   readFrequencies(out: Uint8Array): void; // 0–255 per bin (getByteFrequencyData)
   readWaveform(out: Uint8Array): void; // 0–255, 128 = silence (getByteTimeDomainData)
+  createFloatWaveformBuffer(): Float32Array; // sized to fftSize
+  readFloatWaveform(out: Float32Array): void; // -1..1, 0 = silence (getFloatTimeDomainData), what a level meter reads
 
   constructor(context: BaseAudioContext, options?: AnalyserOptions);
 }
@@ -904,14 +906,16 @@ player.params.volume: SchedulableParam
 player.params.loop: Param<boolean>
 player.params.playbackRate: Param<number>
 player.cells.isPlaying: ReadonlyCell<boolean>    // cells are written only by the player,
-player.cells.currentTime: ReadonlyCell<number>   // from the element's events and its own methods
+player.cells.currentTime: ReadonlyCell<number>   // from the element's events and its own methods; updates at timeupdate (~4 Hz)
 player.cells.duration: ReadonlyCell<number>      // NaN until loadedmetadata fires
+player.cells.error: ReadonlyCell<MediaError | null> // the element's error after a load/decode failure; null again once src is set
+player.position: number                // the playhead read live from the element; plain getter, read it per frame
 
 // property forms of the params
 player.loop = true;
 player.playbackRate = 1.5;
 
-player.play(): Promise<void>   // swallows autoplay-gesture + AbortError
+player.play(): Promise<void>   // rejects like HTMLMediaElement.play(): NotAllowedError, AbortError, NotSupportedError
 player.pause(): void
 player.seek(t: number): void
 player.stop(): void            // pause + seek(0)
@@ -919,7 +923,7 @@ player.onEnded(cb: () => void): () => void   // returns an unsubscribe
 player.dispose(): void
 ```
 
-**`play()` swallows two error classes silently:** autoplay-gesture errors (browser blocked playback before a user gesture) and `AbortError` (the element was replaced or unloaded mid-play). Read `player.cells.isPlaying` for actual playback state; a false value after `play()` cannot distinguish a blocked request from an interrupted one. For a plain control bar that reports its own play failures, use [`mountPlayer` with `fromFilePlayer(player)`](./widgets.md#plain-player-controls); its adapter calls the documented `audio.play()` escape hatch and ignores `AbortError`.
+**`play()` rejects with the element's own `DOMException`, exactly as `HTMLMediaElement.play()` does:** `NotAllowedError` when the browser blocks autoplay before a user gesture, `AbortError` when a `src` change or `pause()` interrupts the request, `NotSupportedError` when there is no `src` or the media cannot be decoded. Nothing is swallowed, so catch it where the user can act: `player.play().catch((error) => { if (error.name === "NotAllowedError") showPressPlayNotice(); })`, ignoring `AbortError`. `player.cells.isPlaying` stays the state to render. A plain control bar that reports its own play failures is [`mountPlayer` with `fromFilePlayer(player)`](./widgets.md#plain-player-controls).
 
 ```typescript
 // React example — bind transport cells to UI
@@ -1488,5 +1492,6 @@ export type {
 | `<name> is disposed.`                                                                                        | `connect()` was called on a processor after `dispose()`.                                                                                         | Create a new processor; `dispose()` is final.                                                                       |
 | `defineGraph: <name> is a bare AudioWorkletNode …`                                                           | A worklet node was used directly as an edge endpoint, so its latency is unknowable.                                                              | Wrap it in an `AudioProcessor` that declares `latency`.                                                             |
 | `defineGraph: <name> used as source has no output` / `defineGraph: <name> has no output`                     | A processor with no `output` (an input-only sink) was used as an edge source or endpoint.                                                        | Check the edge direction; give the processor an `output` or route from a node that has one.                         |
+| `defineGraph: <name> used as sink has no input`                                                              | A processor with no `input` was used as an edge sink.                                                                                            | Check the edge direction; give the processor an `input` or route to a node that has one.                            |
 | `loadAudioBuffer: failed to fetch <url> (<status>)`                                                          | The URL answered with a non-2xx HTTP status.                                                                                                     | Check the URL and server response; decode errors surface from `decodeAudioData` instead.                            |
 | `registerWorklet: this AudioContext has no audioWorklet, so "<name>" cannot be loaded. …`                    | The context has no `audioWorklet` (old browser, some test contexts); this is `WorkletUnavailableError`.                                          | Run in a browser with AudioWorklet support, or choose an engine that needs no worklet.                              |

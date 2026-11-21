@@ -9,6 +9,7 @@ import { createSelectionPlugin } from "./selection";
 import type { TimeViewPluginContext, Unsubscribe } from "./types";
 import { createPluginHost } from "./plugin-host";
 import { styles } from "./style";
+import { cell, readonlyCell } from "@audiorective/core";
 import { visibleMidiNotes, type MidiNote } from "@audiorective/midi";
 import type { PianoRollOptions, PianoRollHandle, PianoRollRenderer, PianoRollLayout, PitchRange } from "./piano-roll-types";
 export type * from "./piano-roll-types";
@@ -108,8 +109,10 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
     inspect: (note) => options.onNoteClick?.(note),
     commit: options.onNoteEdit,
   });
+  // The sequence reports its selection through getSelection/subscribe; the selection plugin follows a cell, so mirror it into one.
+  const selection = cell(options.model.getSelection());
   const plugin = createSelectionPlugin({
-    model: options.model,
+    model: { cells: { selection: readonlyCell(selection) }, setSelection: (range) => options.model.setSelection(range) },
     grid: { beats: [...grid.beats], downbeats: [...grid.downbeats] },
     snap: options.snap,
     onCommit: options.onCommit,
@@ -290,6 +293,7 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
     listen(viewport, "scroll", render);
     own(
       options.model.subscribe(() => {
+        selection.value = options.model.getSelection();
         const next = options.model.getState(),
           dataChanged = next.notes !== state.notes || next.duration !== state.duration;
         state = next;

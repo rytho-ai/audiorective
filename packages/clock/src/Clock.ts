@@ -173,6 +173,14 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     return this._timeline.bpm;
   }
 
+  /**
+   * The transport's current beat, read live from the audio clock (a plain getter, not tracked: read it per frame). It advances while playing, holds the paused beat,
+   * is 0 when stopped, and is negative during a count-in started with `start(when, -4)`; a `start(when)` still ahead reads its start beat.
+   */
+  get beat(): number {
+    return this._timeline.timeToBeat(this._timeline.now);
+  }
+
   /** The beat/time mapping this clock plays. */
   get timeline(): Timeline<TRulers> {
     return this._timeline;

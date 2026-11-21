@@ -1,5 +1,5 @@
-import { afterEach, expect, test } from "vitest";
-import { AudioRecorder } from "../src/AudioRecorder";
+import { afterEach, expect, test, vi } from "vitest";
+import { AudioRecorder, toAudioBuffer } from "../src/AudioRecorder";
 
 const disposers: Array<() => void | Promise<void>> = [];
 afterEach(async () => {
@@ -18,10 +18,13 @@ test("captures a scheduled live source at exact audio frames without duplicating
   source.start(0.15);
   source.stop(0.25);
 
-  await recorder.start({ when: 0.1 });
+  const recording = recorder.record({ when: 0.1 });
+  await vi.waitFor(() => expect(recorder.cells.startsAt.value).toBe(0.1)); // an offline context renders only what is armed
   const takePromise = recorder.stop({ when: 0.3 });
   const monitor = await context.startRendering();
   const take = await takePromise;
+  expect(await recording).toBe(take);
+  expect(take.startBeat).toBeNull();
 
   expect(take.startTime).toBe(0.1);
   expect(take.endTime).toBe(0.3);
@@ -116,17 +119,19 @@ test("cancel discards a stopped take, then a second take reuses the borrowed inp
   source.start(0);
   source.stop(0.4);
 
-  await recorder.start({ when: 0.1 });
+  const first = recorder.record({ when: 0.1 });
+  await vi.waitFor(() => expect(recorder.cells.startsAt.value).toBe(0.1));
   const cancelled = recorder.stop({ when: 0.15 });
   recorder.cancel();
   await expect(cancelled).rejects.toMatchObject({ name: "AbortError" });
+  await expect(first).rejects.toMatchObject({ name: "AbortError" });
   expect(recorder.cells.state.value).toBe("idle");
-  await recorder.start({ when: 0.2 });
-  const next = recorder.stop({ when: 0.3 });
+  const next = recorder.record({ when: 0.2, length: 0.1 });
+  await vi.waitFor(() => expect(recorder.cells.startsAt.value).toBe(0.2));
   const output = await context.startRendering();
   const take = await next;
   expect(take.startTime).toBe(0.2);
-  expect(take.endTime).toBe(0.3);
+  expect(take.endFrame - take.startFrame).toBe(sampleRate * 0.1);
   expect(take.channels[0][sampleRate * 0.05]).toBeCloseTo(0.2, 6);
   expect(output.getChannelData(0)[sampleRate * 0.2]).toBeCloseTo(0.2, 6);
 });
@@ -136,16 +141,19 @@ test("invalid commands preserve the current take and dispose is final", async ()
   expect(() => new AudioRecorder(context, { channels: 0 })).toThrow("AudioRecorder channels must be an integer from 1 to 32.");
   const recorder = new AudioRecorder(context, { channels: 1 });
   disposers.push(() => recorder.dispose());
-  await expect(recorder.start({ when: NaN })).rejects.toThrow("AudioRecorder time must be finite, non-negative seconds.");
+  await expect(recorder.record({ when: NaN })).rejects.toThrow("AudioRecorder time must be finite, non-negative seconds.");
   expect(recorder.cells.state.value).toBe("idle");
   expect(() => recorder.stop()).toThrow("AudioRecorder has no started take to stop.");
-  await recorder.start({ when: 0.1 });
-  await expect(recorder.start()).rejects.toThrow("AudioRecorder already has an active take.");
+  const active = recorder.record({ when: 0.1 });
+  const settled = expect(active).rejects.toThrow("AudioRecorder is disposed.");
+  await expect(recorder.record()).rejects.toThrow("AudioRecorder already has an active take.");
+  await vi.waitFor(() => expect(recorder.cells.startsAt.value).toBe(0.1));
   expect(() => recorder.stop({ when: 0.1 })).toThrow("AudioRecorder stop must follow its start time.");
   expect(recorder.cells.state.value).toBe("armed");
   recorder.dispose();
+  await settled;
   expect(recorder.cells.state.value).toBe("disposed");
-  await expect(recorder.start()).rejects.toThrow("AudioRecorder is disposed.");
+  await expect(recorder.record()).rejects.toThrow("AudioRecorder is disposed.");
   await expect(recorder.ready).rejects.toThrow("AudioRecorder is disposed.");
 });
 
@@ -163,8 +171,7 @@ test("real-time scheduled capture shares the playback clock to one frame", async
   const when = context.currentTime + 0.25;
   source.start(when + 0.05);
   source.stop(when + 0.1);
-  await recorder.start({ when });
-  const take = await recorder.stop({ when: when + 0.15 });
+  const take = await recorder.record({ when, length: 0.15 });
   const rate = context.sampleRate;
   expect(Math.abs(take.startFrame - Math.ceil(when * rate))).toBeLessThanOrEqual(1);
   expect(Math.abs(take.endFrame - Math.ceil((when + 0.15) * rate))).toBeLessThanOrEqual(1);
@@ -177,10 +184,132 @@ test("closing the caller's live context fails a pending take visibly", async () 
   const recorder = new AudioRecorder(context, { channels: 1 });
   disposers.push(() => recorder.dispose());
   await context.resume();
-  await recorder.start({ when: context.currentTime + 0.1 });
-  const pending = recorder.stop({ when: context.currentTime + 0.5 });
+  const pending = recorder.record({ when: context.currentTime + 0.1, length: 0.4 });
+  await vi.waitFor(() => expect(recorder.cells.startsAt.value).not.toBeNull());
   await context.close();
   await expect(pending).rejects.toThrow("AudioRecorder AudioContext closed during recording.");
   expect(recorder.cells.error.value).toBe("AudioRecorder AudioContext closed during recording.");
   expect(recorder.cells.state.value).toBe("idle");
+});
+
+test("the cells report the armed start and the capture start of a take", async () => {
+  const sampleRate = 48_000;
+  const context = new OfflineAudioContext(1, sampleRate, sampleRate);
+  const recorder = new AudioRecorder(context, { channels: 1 });
+  disposers.push(() => recorder.dispose());
+  const source = new ConstantSourceNode(context, { offset: 0.1 });
+  source.connect(recorder.input);
+  source.start(0);
+  const taken = recorder.record({ when: 0.25, length: 0.25 });
+  await vi.waitFor(() => expect(recorder.cells.startsAt.value).toBe(0.25));
+  expect(recorder.cells.startedAt.value).toBeNull();
+  await context.startRendering();
+  const take = await taken;
+  expect([take.startTime, take.endTime]).toEqual([0.25, 0.5]);
+  expect(recorder.cells.startsAt.value).toBeNull();
+  expect(recorder.cells.startedAt.value).toBeNull();
+});
+
+test("record rejects invalid or clockless requests with one documented error each", async () => {
+  const context = new OfflineAudioContext(1, 48_000, 48_000);
+  const recorder = new AudioRecorder(context, { channels: 1 });
+  disposers.push(() => recorder.dispose());
+  await expect(recorder.record({ quantize: "1m" })).rejects.toMatchObject({
+    name: "InvalidStateError",
+    message: "AudioRecorder quantize needs clock.attach(recorder).",
+  });
+  await expect(recorder.record({ length: "4m" })).rejects.toMatchObject({
+    name: "InvalidStateError",
+    message: "AudioRecorder length needs clock.attach(recorder).",
+  });
+  await expect(recorder.record({ quantize: "1m", when: 1 })).rejects.toThrow("AudioRecorder record() takes `when` or `quantize`, not both.");
+  await expect(recorder.record({ length: 0 })).rejects.toThrow("AudioRecorder length must be positive seconds or a note value.");
+  await expect(recorder.record({ quantize: "bar" as never })).rejects.toThrow('AudioRecorder requires a note value such as "4n" or "1m", got "bar".');
+  expect(recorder.cells.state.value).toBe("idle");
+});
+
+test("an AbortSignal discards the take with AbortError, and aborting the recorder's signal disposes it", async () => {
+  const context = new OfflineAudioContext(1, 48_000, 48_000);
+  const recorder = new AudioRecorder(context, { channels: 1 });
+  disposers.push(() => recorder.dispose());
+  const controller = new AbortController();
+  const taken = recorder.record({ when: 0.1, signal: controller.signal });
+  await vi.waitFor(() => expect(recorder.cells.startsAt.value).toBe(0.1));
+  controller.abort();
+  await expect(taken).rejects.toMatchObject({ name: "AbortError" });
+  expect(recorder.cells.state.value).toBe("idle");
+
+  const owner = new AbortController();
+  const bound = new AudioRecorder(context, { channels: 1, signal: owner.signal });
+  owner.abort();
+  expect(bound.cells.state.value).toBe("disposed");
+});
+
+test("toAudioBuffer copies a take's PCM into an AudioBuffer", async () => {
+  const context = new OfflineAudioContext(2, 100, 44_100);
+  const left = Float32Array.from({ length: 100 }, (_, index) => index / 100);
+  const right = Float32Array.from({ length: 100 }, (_, index) => -index / 100);
+  const buffer = toAudioBuffer({ channels: [left, right], sampleRate: 44_100 }, context);
+  expect([buffer.numberOfChannels, buffer.length, buffer.sampleRate]).toEqual([2, 100, 44_100]);
+  expect(Array.from(buffer.getChannelData(1).slice(0, 3))).toEqual(Array.from(right.slice(0, 3)));
+  expect(buffer.getChannelData(0)).not.toBe(left);
+});
+
+test("stop asked while the capture graph is still being built ends the take as soon as it starts", async () => {
+  const context = new AudioContext();
+  const recorder = new AudioRecorder(context, { channels: 1 });
+  disposers.push(
+    () => context.close(),
+    () => recorder.dispose(),
+  );
+  await context.resume();
+  const when = context.currentTime + 0.3;
+  const recording = recorder.record({ when });
+  const stopped = recorder.stop({ when: when + 0.1 });
+  expect(recorder.cells.state.value).toBe("stopping");
+  const take = await stopped;
+  expect(await recording).toBe(take);
+  expect(Math.abs(take.endFrame - take.startFrame - Math.ceil(0.1 * context.sampleRate))).toBeLessThanOrEqual(1);
+});
+
+test("an input that reaches only the recorder is processed from the start, so a take holds exactly what played at that audio time", async () => {
+  const sampleRate = 48_000;
+  const context = new OfflineAudioContext(1, sampleRate, sampleRate);
+  const recorder = new AudioRecorder(context, { channels: 1 });
+  disposers.push(() => recorder.dispose());
+  // A ramp from 0 at t=0 to 1 at t=1 that is wired to nothing but the recorder.
+  const ramp = new ConstantSourceNode(context, { offset: 0 });
+  ramp.offset.setValueAtTime(0, 0);
+  ramp.offset.linearRampToValueAtTime(1, 1);
+  ramp.connect(recorder.input);
+  ramp.start(0);
+
+  const recording = recorder.record({ when: 0.5, length: 0.25 });
+  await vi.waitFor(() => expect(recorder.cells.startsAt.value).toBe(0.5));
+  await context.startRendering();
+  const take = await recording;
+  expect(take.startFrame).toBe(sampleRate / 2);
+  expect(take.channels[0][0]).toBeCloseTo(0.5, 3);
+  expect(take.channels[0][take.channels[0].length - 1]).toBeCloseTo(0.75, 3);
+});
+
+test("an oscillator wired only to the recorder keeps its phase when the take is armed mid-render", async () => {
+  const sampleRate = 48_000;
+  const context = new OfflineAudioContext(1, sampleRate, sampleRate);
+  const recorder = new AudioRecorder(context, { channels: 1 });
+  disposers.push(() => recorder.dispose());
+  const osc = new OscillatorNode(context, { frequency: 50 });
+  osc.connect(recorder.input);
+  osc.start(0);
+  await recorder.ready;
+  let recording!: Promise<{ channels: readonly Float32Array[] }>;
+  context.suspend(0.25).then(() => {
+    recording = recorder.record({ when: 0.5, length: 0.01 });
+    return vi.waitFor(() => expect(recorder.cells.startsAt.value).toBe(0.5)).then(() => context.resume());
+  });
+  await context.startRendering();
+  const take = await recording;
+  // 50 Hz from phase 0 at t=0: at t=0.5 it has completed 25 cycles, so the take starts at phase 0 and rises. Started late, it would be half a cycle off.
+  expect(take.channels[0][0]).toBeCloseTo(0, 3);
+  expect(take.channels[0][20]).toBeCloseTo(Math.sin((2 * Math.PI * 50 * 20) / sampleRate), 3);
 });

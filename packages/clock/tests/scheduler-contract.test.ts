@@ -3,6 +3,8 @@ import { Clock } from "../src/Clock";
 import type { ResetReason, Scheduler, SchedulerHandle, TransportChange } from "../src/Clock";
 import { ManualTickSource } from "../src/TickSource";
 import { Timeline } from "../src/Timeline";
+import type { BeatTiming } from "@audiorective/core";
+import type { TimelineLike } from "../src/rulers/Ruler";
 
 function harness() {
   const ctx = { currentTime: 0 };
@@ -403,5 +405,20 @@ describe("SchedulerHandle.cancelFrom", () => {
     await new Promise<void>((r) => queueMicrotask(r));
     expect(s.events.a.length).toBe(n + 3);
     expect(s.events.a.slice(n).every((e) => e.cancelled() === 0)).toBe(true);
+  });
+});
+
+describe("the timing a scheduler receives is the timeline a ruler reads", () => {
+  test("the timing argument of schedule satisfies TimelineLike, and a TimelineLike is BeatTiming", () => {
+    const { timeline, tickSource, clock } = harness();
+    let seen: BeatTiming | undefined;
+    clock.attach({ schedule: (_window, timing) => void (seen = timing) });
+    clock.start(0, 0);
+    tickSource.tick();
+    const like: TimelineLike = timeline;
+    const timing: BeatTiming = like;
+    expect(seen).toBe(timeline);
+    expect(timing.beatToTime(4)).toBe(timeline.beatToTime(4));
+    expect(like.position).toBe(timeline.position);
   });
 });

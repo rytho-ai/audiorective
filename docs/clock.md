@@ -149,6 +149,7 @@ Use `slice.cycle` when identifying scheduled events. Intersect each stem with th
 ```typescript
 timeline.beatToTime(64); // absolute AudioContext time for beat 64
 timeline.timeToBeat(ctx.currentTime); // current beat position
+clock.beat; // the same, as a plain getter on the Clock: advances while playing, holds the paused beat, 0 when stopped, negative in a count-in
 ```
 
 `timeline.bpm` is a standalone, event-list-backed tempo curve (`TempoParam`) — not an `AudioParam`. It mirrors the Web Audio scheduling methods (`setValueAtTime`, `linearRampToValueAtTime`, `exponentialRampToValueAtTime`, `setTargetAtTime`, `setValueCurveAtTime`, `cancelScheduledValues`, `cancelAndHoldAtTime`) plus a `valueAtTime(t)` query the AudioParam-backed `SchedulableParam` in `@audiorective/core` can never support (Web Audio gives no way to ask an `AudioParam` "what will your value be at time T?"). A direct write — `bpm.value = x` or `bpm.$(x)` — is a step at the current audio time. It leaves later scheduled events intact, so a queued step or ramp still overrides it when its time comes; the Clock refreshes the displayed value from the curve every tick.
@@ -346,6 +347,8 @@ The fold uses floored division rather than `%`. JavaScript's remainder keeps the
 
 Write a custom ruler for anything else (e.g. polyrhythm — one scheduling loop, a different musical grid) by implementing `Ruler<TWindow, TPoint>`:
 
+`TimelineLike` is `BeatTiming` (`beatToTime`, `timeToBeat`: the `timing` argument every `Scheduler.schedule` receives) plus `position`, so a `Timeline` is a `TimelineLike` and a `TimelineLike` is accepted wherever a `BeatTiming` is.
+
 ```typescript
 interface Ruler<TWindow, TPoint> {
   read(window: CoreTickWindow, timeline: TimelineLike): TWindow; // window-scoped; grid()/spans close over its bounds
@@ -431,6 +434,8 @@ const wav = await renderTimeline({ seconds: 8, channels: 2, sampleRate: 44100 },
 ```
 
 An action lands on the first tick at or after its time, and ticks are one render quantum apart at best, so record `ctx.currentTime` when it runs and use that, not the requested time, in expectations.
+
+**Actions and asynchronous results.** `options.actions` is a list of `{ at, run }` closures (a user pressing record, launching a clip) that run at audio time `at`, on the render quantum at or before it and before that quantum's tick. When `run` returns a promise the render stays suspended until it settles, so an action that returns `recorder.record(...)`'s take, or awaits one delivered by an AudioWorklet, sees it complete before the next tick instead of arbitrarily late in audio time. A rejection fails the render, and an action beyond the render is ignored.
 
 A type that owns its `Clock` needs to accept `tickSource` to be renderable this way — `apps/web/src/demos/sequencer`'s `DrumMachine` does, and its tests render the whole machine through its limiter graph with `renderTimeline`. Unlike a fake `currentTime`, that is a real seam and not a test-only option: it is how the same class runs live and exports offline.
 

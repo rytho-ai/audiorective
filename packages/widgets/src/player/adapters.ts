@@ -1,19 +1,13 @@
 /** Maps each Audiorective player onto PlayerLike. Adapters hold no state and need no disposal. */
-import { readonlyCell, type BufferPlayer, type FilePlayer } from "@audiorective/core";
+import { effect, readonlyCell, untracked, type BufferPlayer, type FilePlayer } from "@audiorective/core";
 import type { WavePlayer } from "@audiorective/player";
 import type { PlayerLike } from "./types";
 
-/**
- * Everything a plain player needs. `play` goes to the documented `player.audio` element instead of
- * `player.play()`, because `FilePlayer.play()` resolves on a blocked play and the reason is lost.
- */
+/** Everything a plain player needs. A blocked or failed play rejects as `FilePlayer.play()` does. */
 export function fromFilePlayer(player: FilePlayer): PlayerLike {
   return {
     isPlaying: player.cells.isPlaying,
-    async play() {
-      if (player.src === null) throw new Error("No track is loaded.");
-      await player.audio.play();
-    },
+    play: () => player.play(),
     pause: () => player.pause(),
     volume: player.params.volume,
     timeline: {
@@ -24,7 +18,7 @@ export function fromFilePlayer(player: FilePlayer): PlayerLike {
   };
 }
 
-/** Position comes from the audio clock (read per frame while playing); paused seeks arrive through `subscribe`. */
+/** Position comes from the audio clock (read per frame while playing); paused seeks arrive through `cells.playhead`. */
 export function fromWavePlayer(player: WavePlayer): PlayerLike {
   return {
     isPlaying: player.cells.isPlaying,
@@ -42,7 +36,17 @@ export function fromWavePlayer(player: WavePlayer): PlayerLike {
       duration: readonlyCell(() => player.cells.version.value?.buffer.duration ?? NaN),
       seek: (seconds) => player.seek(seconds),
     },
-    subscribe: (listener) => player.subscribe(listener),
+    subscribe: (listener) => {
+      let following = false;
+      return untracked(() =>
+        effect(() => {
+          void player.cells.playhead.value;
+          void player.cells.version.value;
+          if (!following) return void (following = true);
+          untracked(listener);
+        }),
+      );
+    },
   };
 }
 

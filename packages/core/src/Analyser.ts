@@ -82,6 +82,16 @@ export class Analyser extends AudioProcessor {
     this.node.getByteTimeDomainData(out);
   }
 
+  /** Allocate a float buffer sized for {@link readFloatWaveform}. */
+  createFloatWaveformBuffer(): Float32Array<ArrayBuffer> {
+    return new Float32Array(this.node.fftSize);
+  }
+
+  /** Fill `out` with the time-domain waveform as floats (-1..1 for in-range audio, 0 = silence), the form level meters and peak readouts need. Poll once per frame. */
+  readFloatWaveform(out: Float32Array<ArrayBuffer>): void {
+    this.node.getFloatTimeDomainData(out);
+  }
+
   override dispose(): void {
     super.dispose();
     this.node.disconnect();

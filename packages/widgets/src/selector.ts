@@ -1,5 +1,14 @@
 /** Default waveform controls bound to a headless WavePlayer. */
-import type { MountWaveformSelector, SelectorVersion, WaveformSelectorOptions, WaveformSelectorHandle, WaveformHandle, Selection } from "./types";
+import { effect, untracked } from "@audiorective/core";
+import type {
+  MountWaveformSelector,
+  SelectorVersion,
+  WaveformSelectorOptions,
+  WaveformSelectorHandle,
+  WaveformSelectorState,
+  WaveformHandle,
+  Selection,
+} from "./types";
 import { mountWaveform } from "./waveform";
 import { createSelectionPlugin, type SnapMode } from "./selection";
 import { styles } from "./style";
@@ -38,7 +47,7 @@ export const mountWaveformSelector: MountWaveformSelector = (root, options) => {
     playbackError: string | null = null,
     animation = 0;
   let displayed: SelectorVersion | null | undefined;
-  let previous: Selection | null = player.getSelection();
+  let previous: Readonly<Selection> | null = untracked(() => player.cells.selection.value);
   const disposers: Array<() => void> = [];
   const selection = createSelectionPlugin({
     model: player,
@@ -71,9 +80,30 @@ export const mountWaveformSelector: MountWaveformSelector = (root, options) => {
       render();
     });
   }
+  /** One coherent read of the player's cells; the cells are read untracked so a caller's effect around the selector never follows them. */
+  function snapshot(): Omit<WaveformSelectorState, "pixelsPerSecond"> {
+    return untracked(() => {
+      const { cells } = player;
+      const version = cells.version.value;
+      return {
+        duration: player.duration,
+        selection: cells.selection.value ? { ...cells.selection.value } : null,
+        position: player.position,
+        isPlaying: cells.isPlaying.value,
+        isLooping: cells.isLooping.value,
+        loading: cells.loading.value,
+        loadProgress: cells.loadProgress.value,
+        error: cells.error.value,
+        processing: cells.processing.value,
+        stretchRatio: version?.ratio ?? 1,
+        sourceDuration: player.sourceBuffer?.duration ?? 0,
+        revision: version?.revision ?? 0,
+      };
+    });
+  }
   function render(): void {
     if (disposed) return;
-    const state = player.getState(),
+    const state = snapshot(),
       range = state.selection;
     query("selection-readout").textContent = range
       ? `${format(range.start)} – ${format(range.end)} (${(range.end - range.start).toFixed(2)}s)`
@@ -108,8 +138,9 @@ export const mountWaveformSelector: MountWaveformSelector = (root, options) => {
   }
   function sync(): void {
     if (disposed) return;
-    if (player.getState().loading || player.getState().processing) playbackError = null;
-    const version = player.version;
+    const current = snapshot();
+    if (current.loading || current.processing) playbackError = null;
+    const version = untracked(() => player.cells.version.value);
     if (displayed !== version) {
       const before = waveform.getViewport();
       const sameSource = displayed && version && displayed.sourceRevision === version.sourceRevision;
@@ -125,13 +156,34 @@ export const mountWaveformSelector: MountWaveformSelector = (root, options) => {
         waveform.scrollTo(((before.scrollLeft / before.pixelsPerSecond) * version!.buffer.duration) / before.duration);
       }
     }
-    const next = player.getSelection();
+    const next = current.selection;
     const changed = previous?.start !== next?.start || previous?.end !== next?.end;
     previous = next;
     render();
     if (changed) options.onSelectionChange?.(next ? { ...next } : null);
   }
-  disposers.push(player.subscribe(sync));
+  let following = false;
+  disposers.push(
+    untracked(() =>
+      effect(() => {
+        const { cells } = player;
+        for (const source of [
+          cells.selection,
+          cells.isLooping,
+          cells.isPlaying,
+          cells.loading,
+          cells.loadProgress,
+          cells.error,
+          cells.processing,
+          cells.version,
+          cells.playhead,
+        ])
+          void source.value;
+        if (!following) return void (following = true);
+        untracked(sync);
+      }),
+    ),
+  );
   async function loadSource(source: string | File): Promise<void> {
     if (disposed) throw new Error("Waveform selector is disposed.");
     playbackError = null;
@@ -149,12 +201,12 @@ export const mountWaveformSelector: MountWaveformSelector = (root, options) => {
     file.value = "";
   });
   on(query("play-pause"), "click", () => {
-    if (player.isPlaying) player.pause();
+    if (untracked(() => player.cells.isPlaying.value)) player.pause();
     else run(() => player.play());
     render();
   });
   on(query("stop"), "click", () => player.stop());
-  on(query("loop"), "click", () => player.setLooping(!player.isLooping));
+  on(query("loop"), "click", () => player.setLooping(!untracked(() => player.cells.isLooping.value)));
   on(query("clear"), "click", () => {
     player.setSelection(null);
     player.setLooping(false);
@@ -181,11 +233,10 @@ export const mountWaveformSelector: MountWaveformSelector = (root, options) => {
       if (disposed) throw new Error("Waveform selector is disposed.");
       selection.setSelection(range);
     },
-    getState: () => ({
-      ...player.getState(),
-      error: playbackError ?? player.getState().error,
-      pixelsPerSecond: waveform.getViewport().pixelsPerSecond,
-    }),
+    getState: () => {
+      const state = snapshot();
+      return { ...state, error: playbackError ?? state.error, pixelsPerSecond: waveform.getViewport().pixelsPerSecond };
+    },
     attach: (plugin) => waveform.attach(plugin),
     dispose() {
       if (disposed) return;

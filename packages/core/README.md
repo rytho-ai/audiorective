@@ -221,7 +221,7 @@ player.onEnded(() => console.log("track ended"));
 player.dispose();
 ```
 
-`play()` silently swallows autoplay-gesture errors and `AbortError`s — it's safe to call unconditionally. Gate on `player.cells.isPlaying` to react to actual state.
+`play()` rejects with the element's own `DOMException` like `HTMLMediaElement.play()` (`NotAllowedError` for an autoplay block, `AbortError` when interrupted); catch it from a click handler and show a notice. Gate rendering on `player.cells.isPlaying`.
 
 ## AudioEngine & createEngine
 

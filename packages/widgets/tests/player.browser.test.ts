@@ -364,7 +364,7 @@ test("(c) an interrupted play (AbortError) is not reported; other failures and a
   player.src = null;
   ui.toggle.click();
   await until(() => !ui.notice.hidden, "empty notice");
-  expect(ui.notice.textContent).toMatch(/no track/i);
+  expect(ui.notice.textContent).toMatch(/no src/i);
 });
 
 test("(c) a superseded attempt cannot raise a stale notice", async () => {
@@ -397,28 +397,20 @@ test("a late rejection does not restore a notice after another view starts playb
   expect(r.last().notice).toBeNull();
 });
 
-test("(c) limitation: a blocked FilePlayer.play() made elsewhere leaves nothing to observe", async () => {
+test("(c) a blocked FilePlayer.play() made elsewhere rejects to its own caller and the widget stays quiet", async () => {
   const { player } = await track(30);
   const root = host();
   const view = mountPlayer(root, { player: fromFilePlayer(player) });
   disposers.push(() => view.dispose());
-  const r = { events: [] as string[] };
-  for (const type of ["play", "playing", "pause", "error", "abort", "stalled", "suspend", "waiting"]) {
-    player.audio.addEventListener(type, () => r.events.push(type));
-  }
-  blockPlay(player, "NotAllowedError");
 
-  // The app calls the documented method. It resolves; no cell changes; the element fires nothing.
-  await expect(player.play()).resolves.toBeUndefined();
+  blockPlay(player, "NotAllowedError");
+  await expect(player.play()).rejects.toMatchObject({ name: "NotAllowedError" });
   await frames(5);
   expect(player.cells.isPlaying.value).toBe(false);
-  expect(player.audio.error).toBeNull();
-  expect(r.events).toEqual([]);
-  expect(parts(root).notice.hidden).toBe(true); // the widget has no way to know
+  expect(parts(root).notice.hidden).toBe(true); // the caller owns the rejection; the widget reports only its own attempts
 
-  // "Not playing after play() resolved" does not identify a block: an interrupted play looks the same.
   blockPlay(player, "AbortError");
-  await expect(player.play()).resolves.toBeUndefined();
+  await expect(player.play()).rejects.toMatchObject({ name: "AbortError" });
   expect(player.cells.isPlaying.value).toBe(false);
 });
 

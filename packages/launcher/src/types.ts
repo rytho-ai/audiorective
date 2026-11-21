@@ -45,7 +45,7 @@ export type Scheduler = {
   transport?(change: TransportChange): void;
 };
 
-/** "none" starts at once; otherwise the next boundary: "1m" a bar of `clock.meter` (4 beats in 4/4), "2m" two bars, "4n" a beat, "8n" half a beat. */
+/** "none" starts at once; otherwise the next boundary: "1m" a bar of `clock.meter` (4 beats in 4/4), "2m" two bars, "4n" a beat, "8n" half a beat. A call exactly on a boundary starts there, not on the next one. */
 export type Quantize = "none" | `${number}m` | `${number}n`;
 
 /** A length: seconds, or a note value ("1m" is a bar, "4n" a beat) measured at the tempo when the clip starts. */
@@ -114,7 +114,10 @@ export type ClipSettings = Readonly<{
 }>;
 
 /** What `Clip.configure` takes: any subset of `ClipSettings`, writable so a patch can be built field by field; a nullable setting accepts `null`. */
-export type ClipPatch = { -readonly [K in keyof ClipSettings]?: ClipSettings[K] };
+export type ClipPatch = { -readonly [K in keyof ClipSettings]?: ClipSettings[K] } & {
+  /** Buffer clips: replaces the audio. A playing clip swaps to it at once, at the same position and without a gap (so an overdubbed or punched loop takes over seamlessly); `bpm` and the other settings stay. */
+  buffer?: AudioBuffer;
+};
 
 /**
  * One clip, from exactly one of `buffer`, `sound` or `scheduler`. `sound` takes a `Sound`: a buffer plays like `buffer`; a factory is one hit held for the clip's `length` (endless without one, or while it loops),
@@ -189,6 +192,11 @@ export interface LaunchOptions {
   quantize?: Quantize;
   /** Start the new clip where the playing one has reached at the boundary (its position within its loop), not at its `offsetBeats`. Default the clip's `legato`. */
   legato?: boolean;
+  /**
+   * `clip.launch` only: start the clip as if it had started at transport beat `at` (no quantize): a beat still ahead starts there; a beat already past starts now, from its `offsetBeats`
+   * advanced by the beats elapsed since `at` (wrapped by the loop), so a take that resolved late loops in phase. It applies to buffer clips; `legato` takes precedence.
+   */
+  at?: number;
 }
 
 /** "queued" when a launch or stop is accepted, "started" and "ended" when it takes effect, "cancelled" when withdrawn, "skipped" when a draw or `transform` dropped it. */
