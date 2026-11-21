@@ -12,6 +12,7 @@ export type {
   TransportChangeType,
   TickWindow,
   MissedGap,
+  BeatTiming,
   CancellableEvent,
 } from "./Clock";
 export type { CoreTickWindow, TransportState, TimeSignature, TimeSource } from "./types";

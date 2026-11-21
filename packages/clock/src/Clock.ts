@@ -6,7 +6,7 @@ import { WorkerTickSource } from "./TickSource";
 import type { TickSource } from "./TickSource";
 import type { CoreTickWindow, TimeSignature, TimeSource, TransportState } from "./types";
 
-export type { CancellableEvent };
+export type { BeatTiming, CancellableEvent };
 
 export interface MissedGap {
   gapStart: number;
