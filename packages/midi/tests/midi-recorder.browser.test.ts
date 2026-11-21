@@ -11,6 +11,7 @@ function setup(start = 10) {
     currentTime: start,
     getOutputTimestamp: () => ({ contextTime: ctx.currentTime, performanceTime: ctx.currentTime * 1000 }),
   };
+  vi.spyOn(performance, "now").mockImplementation(() => ctx.currentTime * 1000);
   const input = new EventTarget();
   const recorder = new MidiRecorder(ctx as unknown as AudioContext, input as MIDIInput);
   const emit = (data: number[], time: number) => {
@@ -31,6 +32,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 });
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
@@ -230,5 +232,21 @@ describe("MidiRecorder on a clock", () => {
     recorder.dispose();
     stop();
     expect(states).toEqual(["idle", "recording", "idle", "disposed"]);
+  });
+});
+
+describe("MidiRecorder output latency", () => {
+  test("a note played right after record() counts even though the output position trails the context time", async () => {
+    const { ctx, recorder, emit } = setup();
+    ctx.getOutputTimestamp = () => ({ contextTime: ctx.currentTime - 0.05, performanceTime: ctx.currentTime * 1000 });
+    vi.spyOn(performance, "now").mockImplementation(() => ctx.currentTime * 1000);
+    const take = recorder.record();
+    emit([0x90, 60, 100], 10); // heard at 9.95, the output position when it was played
+    emit([0x80, 60, 0], 10.5);
+    ctx.currentTime = 11;
+    await recorder.stop();
+    const result = await take;
+    expect(result.notes).toHaveLength(1);
+    expect(result.startTime).toBeCloseTo(9.95, 6);
   });
 });

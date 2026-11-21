@@ -22,7 +22,7 @@ export type RecorderTransport = Readonly<{
 export type RecorderResetReason = "start" | "stop" | "pause" | "seek" | "detach";
 
 export interface MidiRecordOptions {
-  /** Absolute AudioContext seconds the take starts at (`clock.timeline.beatToTime(beat)` for a beat); a past time starts now. Default: now. Not with `quantize`. */
+  /** Absolute AudioContext seconds the take starts at (`clock.timeline.beatToTime(beat)` for a beat); a past time starts now, as audible (a notes played just after `record()` count). Default: now. Not with `quantize`. */
   when?: number;
   /**
    * Start at the next boundary of the attached, playing clock (`"1m"` the next bar line); a call exactly on a boundary starts there, not on the next one, otherwise the first boundary at least 50 ms ahead.
@@ -197,7 +197,9 @@ export class MidiRecorder {
     if (options.signal?.aborted) throw options.signal.reason instanceof DOMException ? options.signal.reason : abortError();
 
     const now = this.context.currentTime;
-    let startTime = Math.max(options.when ?? now, now);
+    // "Now" for an immediate or past start is what is audible now: notes played right after `record()` carry timestamps that late.
+    const heard = Math.min(now, this.audioTime(performance.now()));
+    let startTime = Math.max(options.when ?? heard, heard);
     let startBeat: number | null = null;
     if (quantize !== "none" && clock) {
       const size = noteBeats(quantize, this.barBeats(clock));
@@ -232,7 +234,7 @@ export class MidiRecorder {
     });
     this.active = session;
     this.input.addEventListener("midimessage", this.onMessage);
-    const immediate = startTime <= now + EPS;
+    const immediate = startTime <= heard + EPS;
     batch(() => {
       this.startsAtStore.value = immediate ? null : startTime;
       this.startedAtStore.value = immediate ? startTime : null;

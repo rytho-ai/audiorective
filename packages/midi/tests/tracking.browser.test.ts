@@ -87,6 +87,7 @@ describe("MidiRecorder readers are tracked", () => {
   test("cells follow record, stop, cancel and dispose", async () => {
     const input = new EventTarget();
     const ctx = { state: "running", currentTime: 10, getOutputTimestamp: () => ({ contextTime: 10, performanceTime: 10_000 }) };
+    vi.spyOn(performance, "now").mockReturnValue(10_000);
     const recorder = watch(new MidiRecorder(ctx as unknown as AudioContext, input as MIDIInput), touchedRecorder);
     const states: string[] = [];
     const stop = effect(() => void states.push(recorder.cells.state.value));
@@ -112,6 +113,7 @@ describe("MidiRecorder readers are tracked", () => {
     stopStarted();
     expect(states).toEqual(["idle", "recording", "idle", "recording", "idle", "disposed"]);
     expect(started).toEqual([null, 10, null, 10, null]);
+    vi.restoreAllMocks();
   });
 });
 
