@@ -1,5 +1,6 @@
 // Compile-time only: `pnpm typecheck` fails if the built `StepSequencer` (or one of its lanes) stops satisfying the widget's contract.
 import "./selector.contracts.typecheck";
+import "./step-grid.contracts.typecheck";
 import type { Lane, StepSequencer } from "@audiorective/sequencer";
 import type { StepGridLane, StepGridPlugin, StepGridSequencer } from "../src";
 

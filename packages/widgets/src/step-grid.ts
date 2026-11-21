@@ -2,6 +2,7 @@ import { cell, effect, readonlyCell, untracked, type ValueRange } from "@audiore
 import { createPluginHost } from "./plugin-host";
 import { stepGridStyles } from "./step-grid-style";
 import type {
+  StepGridCellContext,
   StepGridDirection,
   StepGridHandle,
   StepGridLabels,
@@ -386,9 +387,8 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
   const formatStep = options.formatStep ?? ((label: string, step: number) => `${label} step ${step + 1}`);
   const laneLabel = options.laneLabel ?? ((name: string) => name);
   const doc = root.ownerDocument;
-  const laneIds = Object.keys(sequencer.lanes);
   const customSpecs = new Map<string, StepGridParamSpec>();
-  for (const id of laneIds)
+  for (const id of Object.keys(sequencer.lanes))
     for (const [param, range] of Object.entries(untracked(() => sequencer.lanes[id].params)))
       if (!customSpecs.has(param)) customSpecs.set(param, { id: param, ...range });
   const defs = [...builtIns(labels), ...[...customSpecs.values()].map(customDef)];
@@ -453,6 +453,13 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
   let suppressClick = false;
   let disposed = false;
   const patternListeners = new Set<(lanes: StepGridSequencer["lanes"]) => void>();
+  type CellObserver = {
+    active: boolean;
+    attach: (cell: StepGridCellContext) => void | Unsubscribe;
+    cells: Map<HTMLElement, { step: StepGridStep; dispose(): void }>;
+    detach(): void;
+  };
+  const cellObservers = new Set<CellObserver>();
   const disposers: Unsubscribe[] = [];
   const timers = new Set<ReturnType<typeof setTimeout>>();
 
@@ -669,7 +676,7 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
     for (const laneView of views.values()) setHead(laneView, heads[laneView.id] ?? null);
   }
 
-  const readHeads = () => Object.fromEntries(laneIds.map((id) => [id, sequencer.lanes[id].playhead ?? null]));
+  const readHeads = () => Object.fromEntries(Object.entries(sequencer.lanes).map(([id, lane]) => [id, lane.playhead ?? null]));
 
   function focusable(element: HTMLElement | undefined): element is HTMLElement {
     return !!element && lanesEl.contains(element) && element.dataset.inert !== "true" && !element.closest("[hidden]");
@@ -696,11 +703,93 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
     ensureTabCell();
   }
 
+  function isLiveCell(element: HTMLElement, laneId: string, stepIndex: number, step: StepGridStep): boolean {
+    const lane = sequencer.lanes[laneId];
+    return !!lane && stepIndex < lane.length && lane.steps[stepIndex] === step && views.get(laneId)?.cells[stepIndex] === element;
+  }
+
+  function syncCellObserver(observer: CellObserver): void {
+    const live = new Map<HTMLElement, { laneId: string; stepIndex: number; step: StepGridStep }>();
+    for (const laneView of views.values()) {
+      const lane = sequencer.lanes[laneView.id];
+      if (!lane) continue;
+      const steps = lane.steps;
+      for (let stepIndex = 0; stepIndex < (laneView.snap?.length ?? 0); stepIndex++) {
+        const step = steps[stepIndex];
+        if (step) live.set(laneView.cells[stepIndex], { laneId: laneView.id, stepIndex, step });
+      }
+    }
+    for (const [element, cell] of [...observer.cells]) {
+      if (observer.cells.get(element) !== cell) continue;
+      if (live.get(element)?.step === cell.step) continue;
+      observer.cells.delete(element);
+      cell.dispose();
+    }
+    for (const [element, { laneId, stepIndex, step }] of live) {
+      if (!observer.active || disposed) return;
+      if (observer.cells.has(element)) continue;
+      // A prior callback/cleanup may have synchronously replaced the owner or its view.
+      if (!isLiveCell(element, laneId, stepIndex, step)) continue;
+      const slot = doc.createElement("div");
+      slot.className = "ar-sg-cell-overlay";
+      Object.assign(slot.style, { position: "absolute", inset: "0", pointerEvents: "none", zIndex: "2" });
+      // Keep the fill first and the value last: the existing painter owns those nodes.
+      element.insertBefore(slot, element.lastElementChild);
+      const scope = createPluginHost<StepGridCellContext>("step grid cell", ({ own }) => {
+        own(() => slot.remove());
+        return {
+          laneId,
+          stepIndex,
+          step,
+          root: slot,
+          listen(target, type, listener) {
+            target.addEventListener(type, listener);
+            return own(() => target.removeEventListener(type, listener));
+          },
+          onCleanup: own,
+        };
+      });
+      // Publish before user code: removal/disposal can reenter while attach is running.
+      const cell = { step, dispose: () => scope.dispose() };
+      observer.cells.set(element, cell);
+      scope.attach({ attach: (context) => untracked(() => observer.attach(context)) });
+      if (!isLiveCell(element, laneId, stepIndex, step)) {
+        if (observer.cells.get(element) === cell) observer.cells.delete(element);
+        scope.dispose();
+      }
+    }
+  }
+
+  function syncCellObservers(): void {
+    for (const observer of [...cellObservers]) {
+      if (!observer.active) continue;
+      try {
+        syncCellObserver(observer);
+      } catch (error) {
+        observer.detach();
+        console.error("Step grid cell attachment failed:", error);
+      }
+    }
+  }
+
   function applyLanes(snaps: ReadonlyMap<string, Snap>): void {
     columns = Math.max(columns, ...[...snaps.values()].map((snap) => snap.length));
     syncRuler(columns);
+    for (const [id, laneView] of views) {
+      if (snaps.has(id)) continue;
+      if (drag?.view === laneView) releaseDrag();
+      views.delete(id);
+      laneView.el.remove();
+    }
+    let next = lanesEl.firstElementChild;
     for (const [id, snap] of snaps) {
-      const laneView = views.get(id)!;
+      let laneView = views.get(id);
+      if (!laneView) {
+        laneView = createLane(id);
+        views.set(id, laneView);
+      }
+      if (laneView.el !== next) lanesEl.insertBefore(laneView.el, next);
+      next = laneView.el.nextElementSibling;
       const before = laneView.snap;
       if (laneView.cells.length !== columns) syncCells(laneView, columns);
       if (!before || HEADER_FIELDS.some((field) => before[field] !== snap[field])) refreshHeader(laneView, snap);
@@ -710,6 +799,7 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
     }
     applyHeads(untracked(readHeads));
     ensureTabCell();
+    syncCellObservers();
     for (const listener of [...patternListeners]) {
       try {
         listener(sequencer.lanes);
@@ -727,12 +817,6 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
     active.value = id;
   }
 
-  for (const id of laneIds) {
-    const laneView = createLane(id);
-    views.set(id, laneView);
-    lanesEl.append(laneView.el);
-  }
-
   const stopActive = effect(() => {
     const id = active.value;
     const def = defById.get(id)!;
@@ -747,7 +831,7 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
     });
   });
   const stopLanes = effect(() => {
-    const snaps = new Map(laneIds.map((id) => [id, readLane(sequencer.lanes[id])]));
+    const snaps = new Map(Object.entries(sequencer.lanes).map(([id, lane]) => [id, readLane(lane)]));
     untracked(() => applyLanes(snaps));
   });
   const stopHeads = effect(() => {
@@ -756,8 +840,8 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
   });
   const stopProgress = effect(() => {
     let progress: number | null = null;
-    for (const id of laneIds) {
-      progress = sequencer.lanes[id].progress ?? null;
+    for (const lane of Object.values(sequencer.lanes)) {
+      progress = lane.progress ?? null;
       if (progress !== null) break;
     }
     progressFill.style.width = progress === null ? "0" : `${clamp(progress, 0, 1) * 100}%`;
@@ -908,6 +992,26 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
   root.append(view);
 
   const plugins = createPluginHost<StepGridPluginContext>("step grid", ({ isActive, own }) => ({
+    onCell(attach) {
+      if (!isActive() || disposed) return () => {};
+      const observer: CellObserver = { active: true, attach, cells: new Map(), detach: () => {} };
+      observer.detach = own(() => {
+        observer.active = false;
+        cellObservers.delete(observer);
+        for (const [element, cell] of [...observer.cells]) {
+          observer.cells.delete(element);
+          cell.dispose();
+        }
+      });
+      cellObservers.add(observer);
+      try {
+        untracked(() => syncCellObserver(observer));
+      } catch (error) {
+        observer.detach();
+        throw error;
+      }
+      return observer.detach;
+    },
     surface,
     sequencer,
     cellElement: (laneId, step) => views.get(laneId)?.cells[step] ?? null,

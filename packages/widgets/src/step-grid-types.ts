@@ -77,7 +77,7 @@ export type StepGridOptions = {
   sequencer: StepGridSequencer;
   /** Display name of a lane. Defaults to the lane's name. */
   laneLabel?(name: string): string;
-  /** Accessible name of one step, for example `Kick step 3`. */
+  /** Zero-based step index; add one for visible numbering. */
   formatStep?(label: string, step: number): string;
   labels?: Partial<StepGridLabels>;
 };
@@ -85,8 +85,21 @@ export type StepGridOptions = {
 /** The built-in cell values the tabs edit. Custom params use their declared `id`. */
 export type StepGridBuiltInParameter = "velocity" | "offset" | "length" | "repeat" | "pitch" | "chance";
 
+/** Resources live until this step is removed or its cell attachment is detached. */
+export interface StepGridCellContext extends WidgetPluginContext {
+  readonly laneId: string;
+  /** Zero-based step index. */
+  readonly stepIndex: number;
+  /** Tracked caller-owned step; read it in a core effect. */
+  readonly step: StepGridStep;
+  /** Dedicated cell overlay slot; geometry follows the cell automatically. */
+  readonly root: HTMLElement;
+}
+
 /** Resources registered by a step grid plugin are released when its attachment is disposed. */
 export interface StepGridPluginContext extends WidgetPluginContext {
+  /** Attach once per live step; returned cleanup and registered resources end on cell removal or detach. */
+  onCell(attach: (cell: StepGridCellContext) => void | Unsubscribe): Unsubscribe;
   /** The positioned element holding the lanes. Overlays are mounted inside it. */
   readonly surface: HTMLElement;
   /** The sequencer the grid reads and drives; plugins write cells through it. */
