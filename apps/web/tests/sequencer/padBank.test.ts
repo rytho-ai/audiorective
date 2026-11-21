@@ -4,10 +4,15 @@ import type { CancellableEvent, Voice } from "@audiorective/core";
 import { Clock, LinearBarRuler, ManualTickSource, Timeline } from "@audiorective/clock";
 
 /** A voice as a clock-owned event: the clock stops it when the transport retracts it. */
-const owned = (voice: Voice): CancellableEvent => ({
-  cancel: () => voice.stop(),
-  onEnded: (listener) => void voice.playing.subscribe((playing) => playing || listener()),
-});
+const queued: Voice[] = [];
+const pending = () => queued.filter((voice) => voice.playing.value).length;
+const owned = (voice: Voice): CancellableEvent => (
+  queued.push(voice),
+  {
+    cancel: () => voice.stop(),
+    onEnded: (listener) => void voice.playing.subscribe((playing) => playing || listener()),
+  }
+);
 
 test("a Clock-owned future choke is cancellable while a manual pad hit keeps sounding", async () => {
   const context = new AudioContext();
@@ -49,9 +54,12 @@ test("a Clock-owned future choke is cancellable while a manual pad hit keeps sou
     const manual = bank.trigger("open")!;
     clock.start();
     source.tick();
-    expect(bank.cells.activeVoices.value).toBe(2);
+    // The queued hit is scheduled ahead, so only the manual hit is sounding.
+    expect(bank.cells.activeVoices.value).toBe(1);
+    expect(pending()).toBe(1);
     closedEnabled = false;
     clock.refresh(); // pattern edit retracts the queued hit and its choke
+    expect(pending()).toBe(0);
     expect(bank.cells.activeVoices.value).toBe(1);
     await new Promise((resolve) => setTimeout(resolve, 220));
     expect(level()).toBeCloseTo(0.3, 2);
@@ -59,7 +67,7 @@ test("a Clock-owned future choke is cancellable while a manual pad hit keeps sou
     closedEnabled = true;
     clock.start();
     source.tick();
-    expect(bank.cells.activeVoices.value).toBe(2);
+    expect(pending()).toBe(1);
     await expect.poll(level, { timeout: 1000 }).toBeLessThan(0.001);
     expect(bank.cells.activeVoices.value).toBe(0);
     manual.stop();
