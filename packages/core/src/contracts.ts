@@ -2,7 +2,8 @@ import { hash01 } from "./hash";
 
 /** A consumer-owned audio event that a scheduler may revoke after a transport or edit change. */
 export interface CancellableEvent {
-  cancel(): void;
+  /** `time` is the audio-context time the retraction takes effect (a scheduler's `cancelFrom(time)`, or now for a transport change or refresh); an event that is already sounding may stop at it. Omitted: now. */
+  cancel(time?: number): void;
   onEnded(listener: () => void): void;
 }
 

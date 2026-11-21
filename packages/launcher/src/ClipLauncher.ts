@@ -185,6 +185,9 @@ type Inst = {
   stopHandle: ScheduleHandle | null;
   s: number; // scheduler clips: sub-beat = beat - s
   swap: Inst | null; // pending loop-wrap swap
+  /** scheduler clips: the events the clip registered with `own` and the audio time `feed` last cut them from (stop, replacement or the end of the material). */
+  owned: Map<{ cancel(time?: number): void }, { when: number; cut: number | null }>;
+  cutFrom: number | null;
 };
 type Pending = { clip: Clip | null; source: LaunchSource; quantize: Quantize; beat: number | null; legato: boolean };
 type Commit = { kind: "start"; inst: Inst; when: number } | { kind: "stop"; target: Inst; when: number; beat: number };
@@ -894,6 +897,8 @@ export class ClipLauncher extends EventTarget implements Scheduler {
       stopHandle: null,
       s: startBeat - mat0,
       swap: null,
+      owned: new Map(),
+      cutFrom: null,
     };
     track.insts.add(inst);
     this.buildSource(inst, when);
@@ -1302,7 +1307,15 @@ export class ClipLauncher extends EventTarget implements Scheduler {
   private subWindow(inst: Inst, from: number, to: number, window: TransportWindow, timing: BeatTiming): [TransportWindow, BeatTiming] {
     const s = inst.s;
     return [
-      { beat: { start: from - s, end: to - s }, time: window.time, own: window.own },
+      {
+        beat: { start: from - s, end: to - s },
+        time: window.time,
+        own: (event, when) => {
+          for (const [done, entry] of inst.owned) if (entry.when < window.time.current) inst.owned.delete(done);
+          inst.owned.set(event, { when, cut: null });
+          window.own(event, when);
+        },
+      },
       { beatToTime: (b) => timing.beatToTime(b + s), timeToBeat: (t) => timing.timeToBeat(t) - s },
     ];
   }
@@ -1313,12 +1326,32 @@ export class ClipLauncher extends EventTarget implements Scheduler {
     for (const t of Object.values(this.tracks))
       for (const inst of t.insts) {
         if (inst.kind !== "scheduler" || inst.state === "ended" || inst.frozen != null) continue;
+        const end = this.endBeatOf(inst);
+        if (end < Infinity && end <= to + EPS) this.cutOwned(inst, timing.beatToTime(end));
         const a = Math.max(from, inst.startBeat);
-        const b = Math.min(to, this.endBeatOf(inst));
+        const b = Math.min(to, end);
         if (b - a <= EPS) continue;
         const [w, tm] = this.subWindow(inst, a, b, window, timing);
         (inst.clip._src as { sched: Scheduler }).sched.schedule(w, tm);
       }
+  }
+  /**
+   * A scheduler clip ends at `time` (stop, replacement or the end of its material): the events it registered that reach `time` or later are retracted with that time,
+   * so a note it started is cut there instead of ringing on. Other clips' events are untouched. An event may be cut again at an earlier time.
+   */
+  private cutOwned(inst: Inst, time: number): void {
+    if (inst.cutFrom !== null && Math.abs(inst.cutFrom - time) < 1e-9) return;
+    inst.cutFrom = time;
+    for (const [event, entry] of [...inst.owned]) {
+      // a later cut that moves the end earlier (a stop inside the look-ahead of a natural end) reaches a note again; an event is never cut twice at the same or a later time
+      if (entry.when < time || (entry.cut !== null && entry.cut <= time)) continue;
+      entry.cut = time;
+      try {
+        event.cancel(time);
+      } catch (error) {
+        console.error("Launcher event cancellation failed:", error);
+      }
+    }
   }
   /** After a command changed what plays inside the look-ahead: retract our events from `beat` on and feed the live clips again. */
   private reseed(beat: number): void {

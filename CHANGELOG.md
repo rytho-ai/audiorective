@@ -32,6 +32,7 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Changed
 
+- **core / clock / launcher / midi:** `CancellableEvent.cancel(time?)` takes the audio time the retraction takes effect (`cancelFrom(time)`, or now for a transport change or `refresh()`); an event written as `cancel()` keeps working. A `ClipLauncher` cancels a scheduler clip's own events from its stop, replacement or end, so a launched `MidiClip` releases its sounding notes at that boundary where before they rang to their own note-off.
 - **core / all packages:** **Breaking.** `destroy()` is renamed `dispose()` everywhere, and the engine lifecycle follows `AudioContext`. No aliases remain; migrate every call site in one pass.
 
   | Old                                                                                                                  | New                                                                                                                                  |

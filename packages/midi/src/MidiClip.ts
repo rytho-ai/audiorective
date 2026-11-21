@@ -37,6 +37,12 @@ export interface MidiClipOptions {
 
 type Sent = {
   instrument: Instrument;
+  noteId: string;
+  onBeat: number;
+  offBeat: number;
+  /** A sounding note whose cancel arrived: it is cut at this time unless the next window re-emits it (a refresh), decided after the current task. */
+  cutAt: number | null;
+  timer?: ReturnType<typeof setTimeout>;
   pitch: number;
   on: number;
   off: number;
@@ -54,7 +60,7 @@ const cancelOf = (result: unknown): (() => void) | undefined => {
 /**
  * MIDI notes in beats that play into an instrument in time with a clock: `clock.attach(clip)` (the clip's beat 0 is the transport's beat 0),
  * or `{ scheduler: clip }` as a ClipLauncher clip (beat 0 is the launch). The clip pairs every note-on with its note-off and cuts notes at a loop's wrap.
- * On stop, reset or detach it sends every note-on it already sent a note-off at `max(now, that note's start time)`, so no note hangs. A tempo change re-times the notes not yet played.
+ * When the transport stops, pauses, seeks or the clip detaches, and when a ClipLauncher stops or replaces the clip, every note-on already sent gets a note-off at `max(that time, the note's start time)` and its pending natural note-off is cancelled, so no note hangs or rings on. A refresh never cuts a sounding note. A tempo change re-times the notes not yet played.
  */
 export class MidiClip {
   /** Where the notes play. Writable; a change applies to notes scheduled afterwards. */
@@ -146,15 +152,16 @@ export class MidiClip {
       const notes = this.store.value;
       const from = window.beat.start - EPS;
       const to = window.beat.end - EPS;
+      this.adopt(window, notes, timing);
       const play = (note: MidiNote, onBeat: number, offBeat: number) => {
         if (!(offBeat > onBeat) || onBeat < from || onBeat >= to) return;
         const on = Math.max(timing.beatToTime(onBeat), now);
         const off = Math.max(timing.beatToTime(offBeat), on);
-        const sent: Sent = { instrument, pitch: note.pitch, on, off, done: false, ended: [] };
+        const sent: Sent = { instrument, noteId: note.id, onBeat, offBeat, cutAt: null, pitch: note.pitch, on, off, done: false, ended: [] };
         sent.cancelOn = cancelOf(instrument.noteOn(note.pitch, { velocity: note.velocity, when: on, channel: note.channel }));
         sent.cancelOff = cancelOf(instrument.noteOff(note.pitch, off));
         this.sent.add(sent);
-        window.own({ cancel: () => this.release(sent), onEnded: (listener) => void sent.ended.push(listener) }, on);
+        this.own(window, sent);
       };
       if (this.loop) {
         const length = this.loopBeats(notes);
@@ -169,30 +176,72 @@ export class MidiClip {
     });
   }
 
+  /** Registers the note with the clock at its end time, so a cancel from any time up to it reaches the note whether or not it has started. */
+  private own(window: ClipWindow, sent: Sent): void {
+    sent.ended = [];
+    window.own({ cancel: (time) => this.cancel(sent, time), onEnded: (listener) => void sent.ended.push(listener) }, sent.off);
+  }
+
+  /** A window that starts inside a note a refresh just retracted continues it: nothing is cut or doubled. */
+  private adopt(window: ClipWindow, notes: readonly MidiNote[], timing: BeatTiming): void {
+    const reaches = timing.beatToTime(window.beat.end);
+    for (const sent of this.sent) {
+      // only a window that reaches past the cut continues the note: the last window of a stopped clip ends at its stop
+      if (sent.cutAt === null || sent.done || !(sent.offBeat > window.beat.start - EPS) || !(reaches > sent.cutAt + EPS)) continue;
+      const note = notes.find((n) => n.id === sent.noteId);
+      if (!note || note.pitch !== sent.pitch) continue;
+      clearTimeout(sent.timer);
+      sent.cutAt = null;
+      this.own(window, sent);
+    }
+  }
+
   private finish(sent: Sent): void {
     if (sent.done) return;
     sent.done = true;
+    clearTimeout(sent.timer);
     this.sent.delete(sent);
     for (const listener of sent.ended.splice(0)) listener();
   }
 
-  /** Releases a sent note-on at `max(now, its start)`; a note that already ended is left alone. */
-  private release(sent: Sent): void {
+  /**
+   * The clock retracts a note: `time` is when. A note that has not started is revoked (its note-on is cancelled if the instrument can);
+   * one that is sounding is cut at `time` unless the next window continues it, which a refresh does.
+   */
+  private cancel(sent: Sent, time?: number): void {
     if (sent.done) return;
-    if (sent.off <= this.lastNow) return this.finish(sent);
+    const at = Math.max(time ?? this.lastNow, sent.on);
+    if (sent.on > this.lastNow) return this.release(sent, at, true);
+    if (sent.cutAt !== null && sent.cutAt <= at) return; // an earlier cut is already pending
+    sent.cutAt = at;
+    clearTimeout(sent.timer);
+    sent.timer = setTimeout(() => untracked(() => this.release(sent, at)), 0);
+  }
+
+  /**
+   * Sends the note-off of a sent note-on at `at` (default `max(now, its start)`) in place of the pending natural one. A cut that lies ahead leaves the note
+   * tracked until it passes, so a still earlier cut (a stop inside the same look-ahead) can move it again. `final` ends the record now.
+   */
+  private release(sent: Sent, at = Math.max(this.lastNow, sent.on), final = false): void {
+    if (sent.done) return;
+    if (sent.off <= at) return final ? this.finish(sent) : undefined;
     sent.cancelOff?.();
     if (sent.on > this.lastNow) sent.cancelOn?.();
+    sent.cancelOn = undefined;
+    const when = Math.max(at, sent.on);
+    sent.off = when;
+    sent.cutAt = null;
     try {
-      sent.instrument.noteOff(sent.pitch, Math.max(this.lastNow, sent.on));
+      sent.cancelOff = cancelOf(sent.instrument.noteOff(sent.pitch, when));
     } finally {
-      this.finish(sent);
+      if (final || when <= this.lastNow) this.finish(sent);
     }
   }
 
   /** Clock scheduler contract: sends the note-off of every note-on already sent, at `max(now, its start)`. */
   reset(_reason?: ClipResetReason): void {
     untracked(() => {
-      for (const sent of [...this.sent]) this.release(sent);
+      for (const sent of [...this.sent]) this.release(sent, sent.cutAt ?? undefined, true);
     });
   }
 
