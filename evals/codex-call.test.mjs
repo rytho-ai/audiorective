@@ -44,6 +44,7 @@ else {
   if (scenario !== 'no-message') {
     let code = 'export const answer: number = 42;' + (scenario === 'dom-iterable' ? '\\ndeclare const parameters: AudioParamMap; const gain = parameters.get("gain"); for (const [name, param] of parameters) { void name; void param.value; }' : '');
     if (scenario === 'host-binding') code += '\\nconst borrowed: AudioNode = synthOut;';
+    if (scenario === 'jsx-const' || scenario === 'jsx-wrong-prop') code = 'import { View } from "@trial/view"; export const view = <View value={' + (scenario === 'jsx-const' ? '42' : '"wrong"') + '} />;';
     const text = prompt.includes('You are grading code') ? JSON.stringify({expectations:[{met:false,evidence:'deliberately false; deterministic check must win'}],errors:[]}) : '\x60\x60\x60ts\\n' + code + '\\n\x60\x60\x60';
     item({type:'agent_message',text:scenario==='reader-denied'?'MCP tool call requires approval, but approval policy is never.':text});
   }
@@ -410,5 +411,43 @@ test("guess compiler supplies only explicitly typed task host bindings", async (
     const json = JSON.parse(readFileSync(output, "utf8"));
     assert.equal(json.results[0].compilePassed, expected, JSON.stringify(json.results[0].samples[0].tsc));
     assert.equal(json.results[0].samples[0].tsc.hostDeclarations, declaration);
+  }
+});
+
+test("guess compiler checks self-closing JSX assignments with real React types and rejects wrong props", async () => {
+  const suite = join(scratch, "jsx-suite.json");
+  const variant = join(scratch, "jsx-variant.d.ts");
+  writeFileSync(suite, JSON.stringify({ area: "jsx", tasks: [{ id: "J1", prompt: "Render View with value 42.", expectations: ["Uses View."] }] }));
+  writeFileSync(variant, 'declare module "@trial/view" { export function View(props: { value: number }): import("react").ReactElement; }\n');
+  for (const [scenario, expected] of [
+    ["jsx-const", 1],
+    ["jsx-wrong-prop", 0],
+  ]) {
+    const output = join(scratch, `${scenario}.json`);
+    const result = await runGuess(
+      [
+        suite,
+        "--mode",
+        "guess",
+        "--variant",
+        variant,
+        "--backend",
+        "codex",
+        "--model",
+        "pinned-model",
+        "--reasoning-effort",
+        "high",
+        "--runs",
+        "1",
+        "--json",
+        output,
+      ],
+      { SCENARIO: scenario },
+    );
+    assert.equal(result.code, 0, result.stderr + result.stdout);
+    const json = JSON.parse(readFileSync(output, "utf8"));
+    const sample = json.results[0].samples[0];
+    assert.equal(json.results[0].compilePassed, expected, JSON.stringify(sample.tsc));
+    if (!expected) assert.match(sample.tsc.first.join("\n"), /TS2322.*not assignable to type 'number'/);
   }
 });
