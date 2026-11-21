@@ -60,7 +60,7 @@ test("open, move a clip to bar 9, save and reopen keeps media, envelope and rack
 });
 
 test("project and dawproject entries import no browser-runtime packages", () => {
-  const forbidden = /from "@audiorective\/(blocks|host|clock|widgets|effects)(?!\/rack-preset")[^"]*"/;
+  const forbidden = /from "@audiorective\/(blocks|host|clock|widgets|effects)(?!\/equalizer-bands")[^"]*"/;
   const seen = new Set<string>();
   const visit = (file: string) => {
     if (seen.has(file)) return;

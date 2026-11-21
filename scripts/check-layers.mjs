@@ -34,7 +34,7 @@ const CAPABILITIES = {
 /** Packages that may import `@audiorective/core*` and nothing else of ours. */
 const CORE_ONLY = ["clock", "midi", "host", "effects", "devtools", "react", "threejs", "playcanvas", ...Object.keys(CAPABILITIES)];
 
-const DAW_PROJECT = ["project.ts", "model.ts", "media.ts", "clip-time-map.ts", "tempo-map.ts", "clip-envelope.ts"];
+const DAW_PROJECT = ["project.ts", "model.ts", "rack-preset.ts", "media.ts", "clip-time-map.ts", "tempo-map.ts", "clip-envelope.ts"];
 const DAW_CODEC = ["dawproject.ts"];
 const DAW_INTERNAL = ["internal/*"];
 const DAW_RUNTIME = [
@@ -52,11 +52,13 @@ const DAW_RUNTIME = [
   "clip-stretch.ts",
   "take-placement.ts",
   "track-reconcile.ts",
+  "track-rack.ts",
+  "rack-macro.ts",
   "project-lookup.ts",
 ];
 const DAW_ROOT = ["index.ts", "compose.ts"];
 
-const PROJECT_EXTERNAL = ["@audiorective/core", "@audiorective/midi", "@audiorective/effects/rack-preset"];
+const PROJECT_EXTERNAL = ["@audiorective/core", "@audiorective/midi", "@audiorective/effects/equalizer-bands"];
 const CODEC_EXTERNAL = [...PROJECT_EXTERNAL, "fflate", "@xmldom/xmldom"];
 
 // ---------------------------------------------------------------- parsing
@@ -260,7 +262,7 @@ function checkDaw(rel, imp, target, v) {
       if (isRelative(spec)) {
         if (targetGroup !== "project") v(imp, "daw project files may import only other project files");
       } else if (!matchesAny(spec, PROJECT_EXTERNAL)) {
-        v(imp, "daw project files may import only core*, midi, effects/rack-preset and each other");
+        v(imp, "daw project files may import only core*, midi, effects/equalizer-bands and each other");
       }
       break;
     case "codec":
@@ -269,7 +271,7 @@ function checkDaw(rel, imp, target, v) {
         const ok = targetGroup === "project" || targetGroup === "internal";
         if (!ok) v(imp, `daw ${group} files may import only project files and internal/*`);
       } else if (!matchesAny(spec, CODEC_EXTERNAL)) {
-        v(imp, `daw ${group} files may import only core*, midi, effects/rack-preset, fflate and @xmldom/xmldom`);
+        v(imp, `daw ${group} files may import only core*, midi, effects/equalizer-bands, fflate and @xmldom/xmldom`);
       }
       break;
     case "runtime":

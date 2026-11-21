@@ -20,13 +20,22 @@ function deferred<T>() {
   });
   return { promise, resolve, reject };
 }
+const toPcm = (buffer: AudioBuffer): PCMData => ({
+  sampleRate: buffer.sampleRate,
+  channels: Array.from({ length: buffer.numberOfChannels }, (_, c) => buffer.getChannelData(c)),
+});
+const toBuffer = (pcm: PCMData): AudioBuffer => {
+  const buffer = new AudioBuffer({ length: pcm.channels[0]!.length, numberOfChannels: pcm.channels.length, sampleRate: pcm.sampleRate });
+  pcm.channels.forEach((channel, c) => buffer.copyToChannel(channel as Float32Array<ArrayBuffer>, c));
+  return buffer;
+};
 type Job = { input: PCMData; ratio: number; resolve(pcm: PCMData): void; reject(reason: Error): void };
 function fixture(extra: { loadSource?: WaveSourceLoader } = {}) {
   const jobs: Job[] = [];
   const stretch: WaveStretchProcessor = {
     process: (input, options) =>
-      new Promise<PCMData>((resolve, reject) => {
-        jobs.push({ input, ratio: options.ratio, resolve, reject });
+      new Promise<AudioBuffer>((resolve, reject) => {
+        jobs.push({ input: toPcm(input), ratio: options.ratio, resolve: (pcm) => resolve(toBuffer(pcm)), reject });
       }),
   };
   const context = new AudioContext();

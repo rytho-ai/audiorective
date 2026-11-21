@@ -1,11 +1,12 @@
 import { Clock, Timeline } from "@audiorective/clock";
 import type { LoopRange, TickWindow } from "@audiorective/clock";
 import { batch, cell, effect, readonlyCell, untracked, type Cell, type Readable, type ReadonlyCell } from "@audiorective/core";
-import { AutomationBinding, AutomationCurve, audioParamTarget } from "@audiorective/core/automation";
+import { AutomationBinding, AutomationCurve, audioParamTarget, type AutomationTarget } from "@audiorective/core/automation";
 import { WebClapHost } from "@audiorective/host/webclap";
 import { ClipLauncher, type Clip as SessionClip, type ClipSpec } from "@audiorective/launcher";
 import type { WaveStretchAnchor, WaveStretchProcessor } from "@audiorective/player";
-import { EffectRack, type RackEffect } from "@audiorective/effects/rack";
+import { TrackRack } from "./track-rack";
+import type { RackEffect } from "./rack-preset";
 import { AudioTrackSession } from "./audio-track-session";
 import { Audition, type RangeAuditionState } from "./audition";
 import { ClipStretch, type PreparedClipStretch } from "./clip-stretch";
@@ -360,10 +361,10 @@ export class Workspace {
   private async createTrack(track: ProjectTrack): Promise<TrackRuntime> {
     const automationGain = this.context.createGain();
     let strip: MixerStrip | undefined;
-    let rack: EffectRack;
+    let rack: TrackRack;
     try {
-      strip = this.mixer.createStrip(track.id, automationGain);
-      rack = new EffectRack(this.context, track.effects, track.effectMacros);
+      strip = this.mixer.createStrip(track.id, automationGain, track);
+      rack = new TrackRack(this.context, track.effects, track.effectMacros);
     } catch (error) {
       // Nothing is registered yet, so release whatever was built before the failure.
       automationGain.disconnect();
@@ -745,6 +746,11 @@ export class Workspace {
 
   trackMacroValue(trackId: string, macroId: string): Readable<number> | undefined {
     return this.tracks.get(trackId)?.rack.macro(macroId)?.param;
+  }
+
+  /** The macro's native automation target for an `AutomationBinding`: the normalized curve fans out to every mapped parameter on the audio thread. */
+  trackMacroAutomation(trackId: string, macroId: string): AutomationTarget | undefined {
+    return this.tracks.get(trackId)?.rack.macro(macroId)?.automation;
   }
 
   /** Apply one macro directly to the audio graph and retain its position in Project. */

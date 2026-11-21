@@ -43,10 +43,8 @@ describe("WavePlayer public getters are tracked", () => {
     const context = new AudioContext();
     const player = new WavePlayer(context, {
       stretch: {
-        process: async (input, { ratio }) => ({
-          sampleRate: input.sampleRate,
-          channels: input.channels.map((c) => new Float32Array(Math.round(c.length * ratio))),
-        }),
+        process: async (input, { ratio }) =>
+          new AudioBuffer({ length: Math.round(input.length * ratio), numberOfChannels: input.numberOfChannels, sampleRate: input.sampleRate }),
       },
     });
     const watched = watch(player, touched.wavePlayer);

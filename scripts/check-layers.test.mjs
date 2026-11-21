@@ -25,7 +25,7 @@ const clean = {
   "packages/sequencer/src/notation.ts": `export const n = 1;`,
   "packages/widgets/src/a.ts": `import type { P } from "@audiorective/player";\nimport "@audiorective/core"; import "@audiorective/midi";`,
   "packages/daw/src/project.ts": `import "./model"; import "@audiorective/core"; import "@audiorective/midi";`,
-  "packages/daw/src/model.ts": `import "@audiorective/effects/rack-preset";`,
+  "packages/daw/src/model.ts": `import "@audiorective/effects/equalizer-bands";`,
   "packages/daw/src/dawproject.ts": `import "./project"; import "fflate";`,
   "packages/daw/src/runtime.ts": `import "./project"; import "@audiorective/player";`,
   "packages/daw/src/compose.ts": `import "./runtime"; import "./dawproject";`,

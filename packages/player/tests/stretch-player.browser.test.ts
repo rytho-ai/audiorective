@@ -5,6 +5,15 @@ import { WavePlayer } from "../src/WavePlayer";
 import type { WaveStretchProcessor } from "../src/WavePlayer";
 
 // These fakes test version ownership and transactions, not pitch preservation.
+const toPcm = (buffer: AudioBuffer): PCMData => ({
+  sampleRate: buffer.sampleRate,
+  channels: Array.from({ length: buffer.numberOfChannels }, (_, c) => buffer.getChannelData(c)),
+});
+const toBuffer = (pcm: PCMData): AudioBuffer => {
+  const buffer = new AudioBuffer({ length: pcm.channels[0]!.length, numberOfChannels: pcm.channels.length, sampleRate: pcm.sampleRate });
+  pcm.channels.forEach((channel, c) => buffer.copyToChannel(channel as Float32Array<ArrayBuffer>, c));
+  return buffer;
+};
 interface Job {
   input: PCMData;
   ratio: number;
@@ -15,10 +24,10 @@ interface Job {
 function deferredProcessor() {
   const jobs: Job[] = [];
   const process = vi.fn(
-    (input: PCMData, options: { ratio: number; signal?: AbortSignal }) =>
-      new Promise<PCMData>((resolve, reject) => {
+    (input: AudioBuffer, options: { ratio: number; signal?: AbortSignal }) =>
+      new Promise<AudioBuffer>((resolve, reject) => {
         // Deliberately ignore abort: the owner must reject stale publication itself.
-        jobs.push({ input, ...options, resolve, reject });
+        jobs.push({ input: toPcm(input), ...options, resolve: (pcm) => resolve(toBuffer(pcm)), reject });
       }),
   );
   return { jobs, process, dispose: vi.fn() };
@@ -263,11 +272,9 @@ test("invalid ratios and incompatible processor PCM retain the complete current 
   const expected = 48000;
   const invalid: PCMData[] = [
     { sampleRate: 8000, channels: [new Float32Array(expected)] },
-    { sampleRate: 16000, channels: [] },
     { sampleRate: 16000, channels: [new Float32Array(expected), new Float32Array(expected)] },
     { sampleRate: 16000, channels: [new Float32Array(expected - 1)] },
     { sampleRate: 16000, channels: [new Float32Array(expected).fill(NaN)] },
-    { sampleRate: 16000, channels: [new Float64Array(expected)] as unknown as Float32Array[] },
   ];
   for (const pcm of invalid) {
     const pending = player.setStretch(1.5);
@@ -335,7 +342,7 @@ test("every setStretch failure is one rejected promise, never cells.error, and a
   await expect(bare.setStretch(2)).rejects.toThrow("WavePlayer needs a stretch processor.");
   const bad = player.setStretch(2);
   stretch.jobs[0].resolve({ channels: [new Float32Array(3)], sampleRate: 16000 });
-  await expect(bad).rejects.toThrow("Stretch processor returned incompatible PCM.");
+  await expect(bad).rejects.toThrow("Stretch processor returned an incompatible AudioBuffer.");
   const failing = player.setStretch(2);
   stretch.jobs[1].reject(new Error("render failed"));
   await expect(failing).rejects.toThrow("render failed");

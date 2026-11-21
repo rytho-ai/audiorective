@@ -59,13 +59,16 @@ export class ClipStretch {
     signal.addEventListener("abort", release, { once: true });
     try {
       check();
-      let rendered: Awaited<ReturnType<WaveStretchProcessor["process"]>> | undefined;
+      let rendered: { sampleRate: number; channels: Float32Array[] } | undefined;
       if (usesRender) {
         const channels = source.media
           ? await source.media.readFrames(source.startFrame, source.frameCount)
           : source.channels.map((channel) => channel.slice());
         check();
-        rendered = await processor!.process({ sampleRate: source.sampleRate, channels }, { ratio, signal, ...(anchors.length ? { anchors } : {}) });
+        const input = new AudioBuffer({ length: frames, numberOfChannels: channels.length, sampleRate: source.sampleRate });
+        channels.forEach((channel, c) => input.copyToChannel(channel as Float32Array<ArrayBuffer>, c));
+        const output = await processor!.process(input, { ratio, signal, ...(anchors.length ? { anchors } : {}) });
+        rendered = { sampleRate: output.sampleRate, channels: Array.from({ length: output.numberOfChannels }, (_, c) => output.getChannelData(c)) };
         check();
       }
       return Object.freeze({

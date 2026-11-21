@@ -108,8 +108,8 @@ test("a source onset and a gain automation started from one shared `when` line u
 test("source automation maps a stretched output selection and follows a queued selection edit", async () => {
   const context = new AudioContext();
   const stretch = {
-    async process(input: { sampleRate: number; channels: Float32Array[] }, { ratio }: { ratio: number }) {
-      return { sampleRate: input.sampleRate, channels: input.channels.map((channel) => new Float32Array(Math.round(channel.length * ratio))) };
+    async process(input: AudioBuffer, { ratio }: { ratio: number }) {
+      return new AudioBuffer({ length: Math.round(input.length * ratio), numberOfChannels: input.numberOfChannels, sampleRate: input.sampleRate });
     },
   };
   const player = new WavePlayer(context, { stretch });
@@ -178,7 +178,7 @@ test("a selection edit invalidates a play still awaiting resume when source auto
 
 test("starting an unfinished stretch invalidates pending and queued source automation", async () => {
   const context = new AudioContext();
-  let resolveRender!: (value: { sampleRate: number; channels: Float32Array[] }) => void;
+  let resolveRender!: (value: AudioBuffer) => void;
   const player = new WavePlayer(context, {
     stretch: {
       process() {
@@ -206,7 +206,7 @@ test("starting an unfinished stretch invalidates pending and queued source autom
   release();
   expect(await pendingStretch).toBeNull();
   expect(program).not.toHaveBeenCalled();
-  resolveRender({ sampleRate: context.sampleRate, channels: [new Float32Array(Math.round(context.sampleRate * 1.5))] });
+  resolveRender(new AudioBuffer({ length: Math.round(context.sampleRate * 1.5), numberOfChannels: 1, sampleRate: context.sampleRate }));
   await stretching;
 
   vi.restoreAllMocks();
@@ -216,7 +216,7 @@ test("starting an unfinished stretch invalidates pending and queued source autom
   const secondStretch = player.setStretch(1.5);
   expect(player.cells.isPlaying.value).toBe(false); // queued start is withdrawn before the render commits
   expect(hold).toHaveBeenCalled();
-  resolveRender({ sampleRate: context.sampleRate, channels: [new Float32Array(Math.round(context.sampleRate * 1.5))] });
+  resolveRender(new AudioBuffer({ length: Math.round(context.sampleRate * 1.5), numberOfChannels: 1, sampleRate: context.sampleRate }));
   await secondStretch;
 });
 

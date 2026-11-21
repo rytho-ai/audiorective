@@ -17,9 +17,9 @@ const fakes = vi.hoisted(() => {
   return state;
 });
 
-vi.mock("@audiorective/effects/rack", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@audiorective/effects/rack")>()),
-  EffectRack: class {
+vi.mock("../src/track-rack", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/track-rack")>()),
+  TrackRack: class {
     effects: readonly unknown[];
     input = { connect: vi.fn() };
     output = { connect: vi.fn() };
@@ -41,7 +41,7 @@ vi.mock("@audiorective/effects", async (importOriginal) => ({
     output = { connect: vi.fn(), disconnect: vi.fn() };
     tap = {};
     params = { gain: { value: 1 }, pan: { value: 0 }, mute: { value: false }, outputEnabled: { value: true } };
-    send = vi.fn(() => ({ gain: { value: 1 }, enabled: { value: true }, dispose: vi.fn() }));
+    send = vi.fn(() => ({ params: { gain: { value: 1 }, enabled: { value: true } }, dispose: vi.fn() }));
     dispose = vi.fn();
     constructor() {
       fakes.channels.push(this);
@@ -613,7 +613,7 @@ describe("layer placement of exports", () => {
 });
 
 describe("track creation failure", () => {
-  test("a throwing EffectRack constructor releases the channel and send-bus entry", async () => {
+  test("a throwing TrackRack constructor releases the channel and send-bus entry", async () => {
     const project = new Project({ bpm: 120 });
     project.addTrack("Keys", "midi");
     fakes.rackError = new Error("rack failed");

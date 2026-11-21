@@ -6,12 +6,19 @@ import { bandsFile, cleanup, drag, element, host, own } from "./helpers";
 // A deterministic shape adapter checks publication/interaction; pitch DSP has its own real-WASM suite.
 const stretch: WaveStretchProcessor = {
   async process(input, { ratio }) {
-    return {
+    const output = new AudioBuffer({
+      length: Math.round(input.length * ratio),
+      numberOfChannels: input.numberOfChannels,
       sampleRate: input.sampleRate,
-      channels: input.channels.map((channel) =>
-        Float32Array.from({ length: Math.round(channel.length * ratio) }, (_, i) => channel[Math.min(channel.length - 1, Math.floor(i / ratio))]),
-      ),
-    };
+    });
+    for (let c = 0; c < input.numberOfChannels; c++) {
+      const channel = input.getChannelData(c);
+      output.copyToChannel(
+        Float32Array.from({ length: output.length }, (_, i) => channel[Math.min(channel.length - 1, Math.floor(i / ratio))]!),
+        c,
+      );
+    }
+    return output;
   },
 };
 async function fixture() {

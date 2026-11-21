@@ -1,7 +1,8 @@
 import type { AutomationBinding, AutomationCurve, AutomationPoint } from "@audiorective/core/automation";
 import type { WebClapHost } from "@audiorective/host/webclap";
 import type { Channel, Send } from "@audiorective/effects";
-import type { EffectRack, RackEffect, RackMacroSettings } from "@audiorective/effects/rack";
+import type { RackEffect, RackMacroSettings } from "./rack-preset";
+import type { TrackRack } from "./track-rack";
 import type { AudioTrackSession } from "./audio-track-session";
 import type { AudioClipGainAutomation, ProjectTrack } from "./model";
 
@@ -31,7 +32,7 @@ export type TrackRuntime = {
   deviceStates: Map<string, Uint8Array>;
   channel: Channel;
   automationGain: GainNode;
-  rack: EffectRack;
+  rack: TrackRack;
   effectSettings: readonly RackEffect[];
   macroSettings: readonly RackMacroSettings[];
   automationPoints?: readonly AutomationPoint[];

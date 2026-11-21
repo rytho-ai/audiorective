@@ -5,7 +5,7 @@ import {
   type RackEffect,
   type RackMacroSettings,
   type RackPreset,
-} from "@audiorective/effects/rack-preset";
+} from "./rack-preset";
 import type { PCMData } from "@audiorective/core";
 import { batch, Cell, readonlyCell, ReadonlyCell, untracked } from "@audiorective/core";
 import { AutomationCurve, type AutomationPoint } from "@audiorective/core/automation";
@@ -575,7 +575,7 @@ export class Project {
     const track = this.s.tracks.find((item) => item.id === trackId);
     const macro = track?.effectMacros.find((item) => item.id === macroId);
     if (!track || !macro) throw new Error("Project macro needs an existing track and macro.");
-    if (!Number.isFinite(value) || value < 0 || value > 1) throw new RangeError("EffectRack macro value needs a number from 0 to 1.");
+    if (!Number.isFinite(value) || value < 0 || value > 1) throw new RangeError("TrackRack macro value needs a number from 0 to 1.");
     if (macro.value === value) return;
     this.replace(track, {
       effectMacros: Object.freeze(track.effectMacros.map((item) => (item === macro ? Object.freeze({ ...item, value }) : item))),

@@ -26,10 +26,11 @@ export class Mixer {
   }
 
   /** Build a strip whose Channel input is fed by `automationGain`. Releases what it built if it throws. */
-  createStrip(trackId: string, automationGain: GainNode): MixerStrip {
+  createStrip(trackId: string, automationGain: GainNode, track: Pick<ProjectTrack, "volume" | "pan">): MixerStrip {
     // "max" keeps a mono source mono into the panner, so it gets the mono equal-power law.
     // Project owns gain, pan, mute and solo; applyMixer writes them into the Channel params and nothing reads them back.
-    const channel = new Channel(this.context, { channelCountMode: "max" });
+    // The strip starts at the track's own gain and pan, so a new strip never ramps in from the defaults.
+    const channel = new Channel(this.context, { channelCountMode: "max", gain: track.volume, pan: track.pan });
     try {
       automationGain.connect(channel.input);
       const sendName = `${trackId}#${this.sendSerial++}`;
@@ -87,10 +88,10 @@ export class Mixer {
         runtime.outputDestination = inputFor(track.routing.outputBusId);
         runtime.channel.output.connect(runtime.outputDestination);
       }
-      for (const { busId } of track.routing.sends) {
+      for (const { busId, gain } of track.routing.sends) {
         if (runtime.sends.has(busId)) continue;
         const target = this.tracks.get(busId)!;
-        runtime.sends.set(busId, { target, send: runtime.channel.send(this.sendBus, target.sendName) });
+        runtime.sends.set(busId, { target, send: runtime.channel.send(this.sendBus, target.sendName, gain) });
       }
     }
   }
@@ -116,8 +117,8 @@ export class Mixer {
         for (const { busId, gain } of track.routing.sends) {
           const send = runtime.sends.get(busId)?.send;
           if (!send) continue;
-          send.gain.value = gain;
-          send.enabled.value = solo.edge(track, busId);
+          send.params.gain.value = gain;
+          send.params.enabled.value = solo.edge(track, busId);
         }
       });
     }

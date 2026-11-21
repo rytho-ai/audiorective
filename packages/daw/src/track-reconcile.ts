@@ -1,4 +1,4 @@
-import { retainRackMacroTargets } from "@audiorective/effects/rack";
+import { retainRackMacroTargets } from "./rack-preset";
 import type { AudioClipGainAutomation, ProjectTrack } from "./model";
 import type { TrackRuntime } from "./track-runtime";
 

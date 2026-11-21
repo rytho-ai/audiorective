@@ -264,7 +264,7 @@ describe("DAWproject native slice", () => {
       { id: "delay", type: "delay", enabled: true, wet: 0.25, delayTime: 0.45, feedback: 0.4 },
     ] as const;
     project.setTrackEffects(track.id, effects);
-    expect(() => project.setTrackEffects(track.id, [effects[0], effects[0]])).toThrow("EffectRack needs unique slot IDs");
+    expect(() => project.setTrackEffects(track.id, [effects[0], effects[0]])).toThrow("TrackRack needs unique slot IDs");
     expect(project.tracks[0].effects).toEqual(effects);
     const files = unzipSync(saveDawProject(project));
     const xml = text.decode(files["project.xml"]);

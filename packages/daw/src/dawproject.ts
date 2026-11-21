@@ -3,7 +3,7 @@ import type { Document, Element } from "@xmldom/xmldom";
 import { unzipSync, zipSync, Unzip, UnzipInflate } from "fflate";
 import { untracked } from "@audiorective/core";
 import type { NoteInit } from "@audiorective/midi";
-import type { RackEffect, RackMacroSettings } from "@audiorective/effects/rack-preset";
+import type { RackEffect, RackMacroSettings } from "./rack-preset";
 import { MidiClip, Project, audioChannelCount, normalizeClipGainAutomation } from "./model";
 import type { ClipStretchAnchor } from "./clip-time-map";
 import type { AudioClip, AudioClipGainAutomation, AudioClipSource, AudioClipStretch, ProjectMidiEvent, ProjectTrack } from "./model";

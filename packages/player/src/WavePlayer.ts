@@ -15,9 +15,9 @@ import { loadSource, type WaveLoadProgress, type WaveSourceLoader } from "./sour
 export type { WaveLoadProgress, WaveSourceLoader } from "./source";
 
 export type WaveStretchAnchor = Readonly<{ sourceFrame: number; outputFrame: number }>;
-/** A processor is borrowed; its lifetime belongs to the caller. */
+/** A processor is borrowed; its lifetime belongs to the caller. `TimeStretch` from `@audiorective/effects/time-stretch` satisfies it. */
 export interface WaveStretchProcessor {
-  process(input: PCMData, options: { ratio: number; anchors?: readonly WaveStretchAnchor[]; signal?: AbortSignal }): Promise<PCMData>;
+  process(input: AudioBuffer, options: { ratio: number; anchors?: readonly WaveStretchAnchor[]; signal?: AbortSignal }): Promise<AudioBuffer>;
 }
 export interface WavePlayerOptions {
   stretch?: WaveStretchProcessor;
@@ -560,19 +560,13 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
     });
     if (this.disposed || id !== this.editRequest || sourceRevision !== this.sourceRevision) return;
     try {
-      const pcm = ratio === 1 ? this.pcm(original) : await this.options.stretch!.process(this.pcm(original), { ratio, signal: controller.signal });
+      const buffer = ratio === 1 ? original : await this.options.stretch!.process(original, { ratio, signal: controller.signal });
       if (this.disposed || id !== this.editRequest || sourceRevision !== this.sourceRevision) return;
       const expected = Math.round(original.length * ratio);
-      if (
-        pcm.sampleRate !== original.sampleRate ||
-        pcm.channels.length !== original.numberOfChannels ||
-        pcm.channels.some((channel) => channel.length !== expected)
-      ) {
-        throw new Error("Stretch processor returned incompatible PCM.");
+      if (buffer.sampleRate !== original.sampleRate || buffer.numberOfChannels !== original.numberOfChannels || buffer.length !== expected) {
+        throw new Error("Stretch processor returned an incompatible AudioBuffer.");
       }
-      const peaks = summarizePeaks(pcm);
-      const buffer = ratio === 1 ? original : this.audioContext.createBuffer(pcm.channels.length, expected, pcm.sampleRate);
-      if (buffer !== original) for (let c = 0; c < pcm.channels.length; c++) buffer.getChannelData(c).set(pcm.channels[c]);
+      const peaks = summarizePeaks(this.pcm(buffer));
       this.change(() => {
         const scale = buffer.duration / this.length,
           position = this.position;
