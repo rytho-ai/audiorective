@@ -77,6 +77,8 @@ export class MidiClip {
   private readonly sent = new Set<Sent>();
   private readonly handles = new Set<ClipTransport>();
   private readonly signal: AbortSignal | undefined;
+  /** The notes a loop pass plays, taken when the pass is first scheduled: an edit is heard from the next pass. */
+  private pass: { index: number; notes: readonly MidiNote[] } | null = null;
   private lastNow = 0;
   private disposed = false;
   private readonly onAbort = () => this.dispose();
@@ -113,8 +115,8 @@ export class MidiClip {
   }
 
   /**
-   * Changes notes in one commit: `recipe` mutates a draft array (change fields, push, splice). It is heard from the next window the clock schedules
-   * (a window already scheduled keeps the notes it started with); a note already sounding plays to its end.
+   * Changes notes in one commit: `recipe` mutates a draft array (change fields, push, splice). A looping clip keeps the notes of the pass playing and plays the edit from the next pass;
+   * a clip that does not loop, or is not playing, uses it from the next window (one already scheduled keeps its notes); a note already sounding plays to its end.
    */
   edit(recipe: (draft: DraftNote[]) => void): void {
     if (this.disposed) throw new Error("MidiClip is disposed.");
@@ -167,7 +169,8 @@ export class MidiClip {
         const length = this.loopBeats(notes);
         for (let pass = Math.max(0, Math.floor(from / length)); pass * length < to; pass++) {
           const base = pass * length;
-          for (const note of notes) {
+          if (this.pass?.index !== pass) this.pass = { index: pass, notes };
+          for (const note of this.pass.notes) {
             if (note.start >= length) break;
             play(note, base + note.start, base + Math.min(note.start + note.duration, length));
           }
@@ -241,6 +244,7 @@ export class MidiClip {
   /** Clock scheduler contract: sends the note-off of every note-on already sent, at `max(now, its start)`. */
   reset(_reason?: ClipResetReason): void {
     untracked(() => {
+      this.pass = null;
       for (const sent of [...this.sent]) this.release(sent, sent.cutAt ?? undefined, true);
     });
   }

@@ -69,7 +69,7 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
   private readonly noteChannels = new Map<number, Set<number>>();
   private disposed = false;
 
-  /** Tracked frozen parameter metadata in the plug-in's order (id, name, min, max, default, text, step); `host.params[String(info.id)]` is its live Param. The same value as `cells.parameterInfo`. Last reported by the plug-in; the same value as `cells.parameterInfo`. Live values are in `params`. */
+  /** Tracked frozen parameter metadata in the plug-in's order (id, name, min, max, default, text, step); `host.params[String(info.id)]` is its live Param. Last reported by the plug-in; the same value as `cells.parameterInfo`. Live values are in `params`. */
   get parameterInfo(): readonly WebClapParameter[] {
     return this.cells.parameterInfo.value;
   }

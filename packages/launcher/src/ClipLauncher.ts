@@ -324,7 +324,7 @@ export class Clip {
   get position(): number | null {
     return untracked(() => this.track.launcher._positionOf(this));
   }
-  /** Replaces the track's playing clip at the next boundary of `quantize`, and the track's waiting launch if any; the playing clip is untouched until then. */
+  /** Replaces the track's playing clip at the next boundary of `quantize`, and the track's waiting launch if any; the playing clip is untouched until then. Launching the clip that is playing restarts it at the boundary; it never plays twice. */
   launch(options?: LaunchOptions): void {
     untracked(() => this.track.launcher._launchClip(this, options));
   }

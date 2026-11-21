@@ -107,9 +107,9 @@ export class MidiRecorder {
 
   /** Clock scheduler contract, called by `clock.attach(recorder)`; a recorder schedules nothing. */
   schedule(): void {}
-  /** Clock scheduler contract: leaving the transport (stop, pause, seek, detach) before a quantized start arrives cancels that take; a take already recording continues. */
+  /** Clock scheduler contract: leaving the transport (stop, pause, seek, detach) while a take is armed, quantized or scheduled with `when`, cancels it (`record()` rejects with `AbortError`); a take already recording continues. */
   reset(reason: RecorderResetReason): void {
-    if (reason !== "start" && this.active?.quantized && untracked(() => this.stateStore.value) === "armed") this.cancel();
+    if (reason !== "start" && untracked(() => this.stateStore.value) === "armed") this.cancel();
   }
   /** Clock scheduler contract, called by `clock.attach(recorder)`. */
   attached(handle: RecorderTransport): () => void {
@@ -163,7 +163,7 @@ export class MidiRecorder {
 
   /**
    * Records one take and resolves with it after it ends, at `length` or at `stop()`. A quantized start waits for the clock's next boundary, and the take
-   * reports it as `startBeat`. With `quantize` (or a note-value `length`) it rejects with `InvalidStateError` when the recorder is not attached to a Clock or, for `quantize`, the clock is not playing.
+   * reports it as `startBeat`. While the recorder is attached to a clock, a take that is armed but has not started (a `quantize` boundary or a future `when` ahead) is cancelled when the clock stops, pauses, seeks or the recorder detaches, rejecting with `AbortError`; a running take is not affected. With `quantize` (or a note-value `length`) it rejects with `InvalidStateError` when the recorder is not attached to a Clock or, for `quantize`, the clock is not playing.
    */
   record(options: MidiRecordOptions = {}): Promise<MidiTake> {
     try {

@@ -140,6 +140,43 @@ describe("MidiClip on a Clock", () => {
     ]);
   });
 
+  test("a loop hears an edit from the next pass: the pass playing keeps its notes, the whole next pass is the new notes", async () => {
+    const { clock, run } = rig(5);
+    const { inst, calls } = instrument();
+    const clip = new MidiClip([note(60, 0, 1, { id: "a" }), note(62, 2, 1, { id: "b" })], { instrument: inst, loop: true, length: "1m" });
+    disposers.push(() => clip.dispose());
+    clock.attach(clip);
+    const revisions: number[] = [];
+    await run([
+      {
+        at: 0.3,
+        run: () => {
+          clip.edit((draft) => {
+            draft[1].pitch = 65;
+            draft.push({ id: "c", pitch: 70, velocity: 1, start: 3, duration: 0.5, channel: 0 });
+          });
+          revisions.push(clip.revision.value);
+        },
+      },
+    ]);
+    expect(revisions).toEqual([1]);
+    expect(ons(calls.filter((c) => c.when < 4))).toEqual([
+      [60, 0],
+      [62, 1],
+      [60, 2],
+      [65, 3],
+      [70, 3.5],
+    ]);
+    // every note-on has exactly one note-off at its own end, and none is cut at the seam
+    expect(offs(calls.filter((c) => c.when <= 4))).toEqual([
+      [60, 0.5],
+      [62, 1.5],
+      [60, 2.5],
+      [65, 3.5],
+      [70, 3.75],
+    ]);
+  });
+
   test("setNotes replaces every note in one revision and a failed edit changes nothing", () => {
     const clip = new MidiClip([note(60, 0, 1)]);
     clip.setNotes([note(62, 0, 1), note(64, 1, 1)]);

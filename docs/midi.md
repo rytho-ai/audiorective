@@ -49,15 +49,15 @@ Options: `instrument` (assignable later as `clip.instrument`; a change applies t
 
 The clip pairs every note-on with its note-off and trims a note at the loop seam. On `stop`, `pause`, `seek`, `detach` and `dispose` it sends a note-off for every note-on it already sent, at `max(now, that note's start time)`, so no note hangs. A tempo change re-times the notes not yet played. Notes are `ReadonlyCell` values, so a view re-renders on a change without a second store.
 
-| Member                       | Contract                                                                                                                                                                                     |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `new MidiClip(notes?, opts)` | Validates, copies and sorts `NoteInit[]` (`id` and `channel` optional; ids are generated).                                                                                                   |
-| `clip.notes`                 | Tracked `ReadonlyCell<readonly MidiNote[]>`, sorted by start then pitch, frozen. Read it in an `effect`, a `computed` or `useValue`.                                                         |
-| `clip.revision`              | Tracked `ReadonlyCell<number>`; increments once per commit.                                                                                                                                  |
-| `clip.setNotes(notes)`       | Replaces every note in one commit.                                                                                                                                                           |
-| `clip.edit(draft => ...)`    | Mutates a draft array (change fields, `push`, `splice`) and commits once: one `revision`, one notification. It is heard from the next window the clock schedules; a sounding note plays out. |
-| `clip.instrument`            | Writable. `null` plays nothing.                                                                                                                                                              |
-| `clip.dispose()`             | Releases sent notes, detaches from every transport; safe to call twice; also `[Symbol.dispose]`. Writes after dispose throw.                                                                 |
+| Member                       | Contract                                                                                                                                                                                                                                                                                  |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `new MidiClip(notes?, opts)` | Validates, copies and sorts `NoteInit[]` (`id` and `channel` optional; ids are generated).                                                                                                                                                                                                |
+| `clip.notes`                 | Tracked `ReadonlyCell<readonly MidiNote[]>`, sorted by start then pitch, frozen. Read it in an `effect`, a `computed` or `useValue`.                                                                                                                                                      |
+| `clip.revision`              | Tracked `ReadonlyCell<number>`; increments once per commit.                                                                                                                                                                                                                               |
+| `clip.setNotes(notes)`       | Replaces every note in one commit.                                                                                                                                                                                                                                                        |
+| `clip.edit(draft => ...)`    | Mutates a draft array (change fields, `push`, `splice`) and commits once: one `revision`, one notification. A looping clip plays the edit from the next loop pass (the pass playing keeps its notes); a clip that does not loop is heard from the next window. A sounding note plays out. |
+| `clip.instrument`            | Writable. `null` plays nothing.                                                                                                                                                                                                                                                           |
+| `clip.dispose()`             | Releases sent notes, detaches from every transport; safe to call twice; also `[Symbol.dispose]`. Writes after dispose throw.                                                                                                                                                              |
 
 Assigning `.value` on `clip.notes` is a type error; change notes only through `setNotes` and `edit`. A custom scheduler imports its `BeatTiming` and `CancellableEvent` types from `@audiorective/clock`.
 
@@ -244,7 +244,7 @@ Layouts can set public viewport styles and inherited CSS variables. Preserve fin
 const editable = mountPianoRoll(root, {
   model,
   onNoteEdit({ note }) {
-    // One commit; the clip plays the edit from its next scheduled window.
+    // One commit; a looping clip plays the edit from its next pass.
     clip.edit((draft) => {
       const target = draft.find((n) => n.id === note.id);
       if (target) Object.assign(target, { start: note.start, duration: note.duration, pitch: note.pitch });

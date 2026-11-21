@@ -205,6 +205,42 @@ describe("MidiRecorder on a clock", () => {
     clock.dispose();
   });
 
+  test.each(["stop", "pause", "seek", "detach"] as const)("a take armed with `when` is cancelled when the clock %s", async (reason) => {
+    const { ctx, recorder, clock } = setup();
+    const detach = clock.attach(recorder);
+    clock.start(10);
+    ctx.currentTime = 10.3;
+    const take = settled(recorder.record({ when: 11 }));
+    expect(recorder.cells.state.value).toBe("armed");
+    if (reason === "stop") clock.stop();
+    else if (reason === "pause") clock.pause();
+    else if (reason === "seek") clock.seek(8);
+    else detach();
+    expect(((await take) as { error: DOMException }).error).toMatchObject({ name: "AbortError" });
+    expect(recorder.cells.state.value).toBe("idle");
+    expect(recorder.cells.startsAt.value).toBeNull();
+    clock.dispose();
+  });
+
+  test.each(["stop", "pause", "seek", "detach"] as const)("a running take survives the clock %s and is closed by stop()", async (reason) => {
+    const { ctx, recorder, emit, clock } = setup();
+    const detach = clock.attach(recorder);
+    clock.start(10);
+    ctx.currentTime = 10.3;
+    const take = recorder.record();
+    emit([0x90, 60, 100], 10.35);
+    if (reason === "stop") clock.stop();
+    else if (reason === "pause") clock.pause();
+    else if (reason === "seek") clock.seek(8);
+    else detach();
+    expect(recorder.cells.state.value).toBe("recording");
+    emit([0x80, 60, 0], 10.4);
+    ctx.currentTime = 10.5;
+    await recorder.stop();
+    expect((await take).notes).toHaveLength(1);
+    clock.dispose();
+  });
+
   test("a take that is already recording survives a transport stop; the clock's bpm sets beats when it is not playing", async () => {
     const { ctx, recorder, emit, clock } = setup();
     clock.attach(recorder);
