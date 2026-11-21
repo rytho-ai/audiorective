@@ -25,6 +25,8 @@ export const ALLOWLIST = {
   "packages/core/src/graph.ts::defineGraph: node not present in the last solve":
     "module-internal sentinel, always caught and translated to LatencyUnknownError",
   "packages/host/src/webclap-worklet.js::*": "worklet failures are relayed to the page as `WebCLAP plug-in error: …`",
+  "packages/midi/src/MidiRecorder.ts::dynamic:message":
+    "helper `invalidState(message)`; every call passes a literal, documented under MidiRecorder in docs/midi.md",
   "packages/host/src/webclap.ts::dynamic:String(message.message)": "relays the plug-in's own message; documented as `WebCLAP plug-in error: …`",
   "packages/effects/src/TimeStretch.ts::dynamic:event.data.error": "relays the worker's own message; documented under TimeStretch worker failures",
 };

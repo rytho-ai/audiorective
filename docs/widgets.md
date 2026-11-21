@@ -15,7 +15,7 @@ const gesture = attachClipGesture(clipElement, {
   clipId: clip.id,
   trackId: track.id,
   time: clip.time,
-  timeUnit: clip.kind === "midi" ? clip.timeUnit : "seconds",
+  timeUnit: clip.kind === "midi" ? "beats" : "seconds",
   timeMap: project.tempoMap,
   pixelsPerSecond: () => zoom,
   trackAt: (x, y) => findCompatibleTrackAt(x, y),
@@ -507,9 +507,35 @@ The drawing container is decorative and ignores pointer events. Use plugins for 
 
 The widget calls the returned `dispose()` once, including after an initial `render` failure, and removes the drawing container. Release additional listeners, observers, or timers there. A factory that throws before returning must release its own extra resources; the widget still removes its mounted DOM. Renderer exceptions propagate to the caller on synchronous operations. Cleanup exceptions are logged and do not interrupt the widget's remaining cleanup.
 
+## Piano roll
+
+`mountPianoRoll(root, { model, onNoteEdit })` draws a `PianoRollModel` (`getState(): { notes, duration, selection }`, `getSelection`, `setSelection`, `subscribe`). Note times, `duration`, `grid`, the playhead and plugin coordinates are in beats (quarter notes); velocity is 0..1. `pianoRollModel(clip)` binds a `MidiClip` from `@audiorective/midi` so no adapter is needed:
+
+```typescript
+import { MidiClip } from "@audiorective/midi";
+import { mountPianoRoll, pianoRollModel } from "@audiorective/widgets";
+
+const clip = new MidiClip([{ pitch: 60, velocity: 0.8, start: 0, duration: 1 }]);
+const model = pianoRollModel(clip); // or pianoRollModel(clip, { duration: 16 })
+const view = mountPianoRoll(root, {
+  model,
+  snap: "beat",
+  grid: { beats: [0, 1, 2, 3, 4], downbeats: [0, 4] },
+  onNoteEdit: ({ note }) =>
+    clip.edit((draft) => Object.assign(draft.find((n) => n.id === note.id)!, { start: note.start, duration: note.duration, pitch: note.pitch })),
+});
+// later
+view.dispose();
+model.dispose();
+```
+
+`pianoRollModel(clip, options?)` returns `PianoRollModel & { readonly selection: Cell<MidiRange | null>; dispose(): void }`. `getState()` returns a frozen snapshot that stays the same object until the notes, duration or selection change. `duration` defaults to the end of the last note rounded up to a whole 4-beat bar (at least 4 beats); `options.duration` is a number or a getter, in beats. The selection belongs to the model (assign `model.selection.value` or call `setSelection`) and nothing clears it implicitly. `subscribe(listener)` runs once per commit and not on subscribe; `dispose()` stops every listener and leaves the clip alone.
+
+A move or resize gesture previews inside the widget and calls `onNoteEdit({ kind, previous, note })` once on release, where `note` carries the new `start`, `duration` and `pitch`. A resize never makes a note shorter than 1/64 beat (or its own length when already shorter). A custom model is any object with the four `PianoRollModel` methods.
+
 ## Write a visual plugin
 
-Use `view.attach(plugin)` for waveform, piano roll, and waveform selector extensions. All three implement `PluginTarget<TimeViewPluginContext>`. The plugin reads `context.timeUnit` to interpret coordinates. Waveform and selector use seconds, with the selector using the current playback version's output seconds. Piano roll uses its configured seconds or beats. The app supplies the appropriate time in each unit.
+Use `view.attach(plugin)` for waveform, piano roll, and waveform selector extensions. All three implement `PluginTarget<TimeViewPluginContext>`. The plugin reads `context.timeUnit` to interpret coordinates. Waveform and selector use seconds, with the selector using the current playback version's output seconds. Piano roll uses beats. The app supplies the appropriate time in each unit.
 
 ```typescript
 import { mountWaveform, type TimeViewPlugin } from "@audiorective/widgets/waveform";

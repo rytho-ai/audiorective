@@ -158,46 +158,46 @@
     },
     {
       "id": 11,
-      "prompt": "Use current Audiorective repository packages to inspect an SMF File in two piano rolls with shared time selection and source-tempo snapping. Use different note drawings, a pitch/velocity inspector, external playhead, and an existing caller-owned synth. Include invalid file recovery, one-view removal and final cleanup. Do not create a MIDI device connection or a new synth/transport in the widget.",
-      "expected_output": "MidiSequence and MIDI utilities from @audiorective/midi own note data and selection. mountPianoRoll from widgets/piano-roll borrows the same model; custom renderer changes note drawing while caller instruments and audio scheduling remain independent.",
+      "prompt": "Use current Audiorective repository packages to inspect an SMF File in two piano rolls with shared time selection and file-tempo grid snapping. Use different note drawings, a pitch/velocity inspector, external playhead, and an existing caller-owned synth. Include invalid file recovery, one-view removal and final cleanup. Do not create a MIDI device connection or a new synth/transport in the widget.",
+      "expected_output": "MidiClip and the MIDI utilities from @audiorective/midi own note data. pianoRollModel(clip) from widgets/piano-roll adapts the clip for mountPianoRoll, which both views borrow; a custom renderer changes note drawing while caller instruments and audio scheduling remain independent.",
       "files": [],
       "expectations": [
-        "Imports MidiSequence/midiGrid from @audiorective/midi and mountPianoRoll from @audiorective/widgets/piano-roll, using a repository build for Unreleased APIs.",
-        "Awaits File.arrayBuffer before synchronous sequence.load, guards stale reads, and catches parse failures without replacing the previous snapshot.",
-        "Uses source tempo/signature metadata via midiGrid rather than assuming a constant120 BPM.",
-        "Both views borrow one sequence; note edits go through updateNote and selection through the shared model without mirrored audio/UI state.",
+        "Imports MidiClip, parseMidi and midiGrid from @audiorective/midi and mountPianoRoll and pianoRollModel from @audiorective/widgets/piano-roll, using a repository build for Unreleased APIs.",
+        "Awaits File.arrayBuffer before synchronous parseMidi, guards stale reads, and catches parse failures without replacing the previous clip.",
+        "Uses the parsed tempo/signature metadata via midiGrid(parsed) rather than assuming a constant 120 BPM.",
+        "Both views borrow one pianoRollModel(clip); note edits go through clip.edit and selection through the model's selection cell without mirrored audio/UI state.",
         "Renderer uses frame timeToX/pitchToY and visible spanning notes; view has no AudioContext, synth or device permissions.",
         "Note inspection calls caller controls; read-only inspection omits onNoteEdit and does not promise lossless SMF export, pedal/controller rendering or Web MIDI I/O.",
-        "Caller clips sustained notes to audition bounds, schedules its instrument and cancels active/future voices on pause/seek/source replacement/edit/dispose.",
-        "Removing one view preserves peer/model/audio; final cleanup disposes views, caller audio and sequence independently."
+        "Caller plays the clip into its instrument (clock.attach(clip) or an equivalent audition window clipped to the bounds) and cancels or releases active and future voices on pause/seek/source replacement/edit/dispose.",
+        "Removing one view preserves peer/model/audio; final cleanup disposes views, the model, caller audio and the clip independently."
       ]
     },
     {
       "id": 12,
-      "prompt": "Use current Audiorective repository packages to add a custom cue marker and pointer interaction to two piano rolls that borrow one existing MIDI model. The same time-based plugin factory must work on a waveform too. Keep the default note renderer and caller audio. Follow zoom, horizontal scroll, resizing and source replacement. Support detaching one marker independently and final view cleanup. Use only public APIs; no internal DOM selectors or assumed keyboard offsets.",
-      "expected_output": "A WaveformPlugin mounted through PianoRollHandle.attach and WaveformHandle.attach, using the supplied shared context for source-second coordinates, overlays, subscriptions and cleanup.",
+      "prompt": "Use current Audiorective repository packages to add a custom cue marker and pointer interaction to two piano rolls that borrow one existing MidiClip. The same time-based plugin factory must work on a waveform too. Keep the default note renderer and caller audio. Follow zoom, horizontal scroll, resizing and source replacement. Support detaching one marker independently and final view cleanup. Use only public APIs; no internal DOM selectors or assumed keyboard offsets.",
+      "expected_output": "A WaveformPlugin mounted through PianoRollHandle.attach and WaveformHandle.attach, using the supplied shared context for coordinates in the view's own unit (beats for the piano roll, seconds for the waveform), overlays, subscriptions and cleanup.",
       "files": [],
       "expectations": [
-        "Imports mountPianoRoll and WaveformPlugin/WaveformPluginContext from the public piano-roll entry, with repository/packed artifacts for Unreleased APIs.",
+        "Imports mountPianoRoll and pianoRollModel from the public piano-roll entry and the shared TimeViewPlugin/TimeViewPluginContext types, with repository/packed artifacts for Unreleased APIs.",
         "Uses view.attach(plugin) and its returned PluginAttachment; keeps note drawing in the default renderer rather than replacing it to obtain coordinates.",
         "Uses ctx.timeToX and ctx.clientXToTime, public surface/getViewport/getViewportRect, with no private DOM selectors or hard-coded keyboard offsets.",
-        "Mounts overlay through ctx.mountOverlay, draws initially, and updates through ctx.onViewportChange and ctx.onDataChange; observes borrowed model separately for selection-only changes.",
+        "Mounts overlay through ctx.mountOverlay, draws initially, and updates through ctx.onViewportChange and ctx.onDataChange; observes the borrowed model (pianoRollModel(clip)) separately for selection-only changes.",
         "An interactive overlay child opts into pointer-events and stops pointerdown propagation when appropriate to preserve native selection ownership.",
         "Uses ctx.listen/onCleanup for owned resources; detaching one plugin removes its overlay/listeners/subscriptions while peer/model/audio remain alive.",
-        "Reuses a plugin factory for waveform and piano-roll without pretending the time context exposes pitch editing or a second selection owner.",
-        "Final cleanup disposes view attachments without disposing a borrowed model or caller audio; no extra AudioContext, player or mirrored note store."
+        "Reuses a plugin factory for waveform and piano-roll, reading ctx.timeUnit for the cue's unit (beats for the piano roll, seconds for the waveform), without pretending the time context exposes pitch editing or a second selection owner.",
+        "Final cleanup disposes view attachments without disposing the borrowed MidiClip, its pianoRollModel (unless the example created it and disposes it itself) or caller audio; no extra AudioContext, player or mirrored note store."
       ]
     },
     {
       "id": 13,
-      "prompt": "Use current Audiorective repository packages to build two piano rolls sharing our existing MidiSequence. Give the second one a custom right-side keyboard, bottom toolbar and SVG note shapes. Its snap control must reflect the initial option and later handle.setSnap calls from outside the layout. Both must support widget-owned note move and edge-resize with beat snap/Alt bypass, local drag previews and one model commit on release. Preserve range selection, inspection, external audio ownership and cancel edits on Escape/source replacement/unmount. Provide cleanup; do not implement another drag engine in the renderer.",
-      "expected_output": "mountPianoRoll layout and renderer change appearance while forwarding pointerdown to widget editing; onNoteEdit invokes the existing model command.",
+      "prompt": "Use current Audiorective repository packages to build two piano rolls sharing our existing MidiClip. Give the second one a custom right-side keyboard, bottom toolbar and SVG note shapes. Its snap control must reflect the initial option and later handle.setSnap calls from outside the layout. Both must support widget-owned note move and edge-resize with beat snap/Alt bypass, local drag previews and one model commit on release. Preserve range selection, inspection, external audio ownership and cancel edits on Escape/source replacement/unmount. Provide cleanup; do not implement another drag engine in the renderer.",
+      "expected_output": "mountPianoRoll layout and renderer change appearance while forwarding pointerdown to widget editing; onNoteEdit invokes the existing clip.edit command.",
       "files": [],
       "expectations": [
         "Uses layout(root, viewport, controls) and mounts the supplied viewport unchanged inside root, with public frame geometry and control methods.",
         "Reads layout frame.snap to initialize and refresh the custom snap control, writes changes through controls.setSnap, and relies on synchronous layout updates for external handle.setSnap calls without another snap store.",
         "Layouts/renderers return render and optional dispose, manage owned listeners/resources and responsive controls, without private DOM selectors.",
-        "Enables onNoteEdit and updates the borrowed sequence with edited note start/end/pitch; leaves audio scheduling/routing with the caller.",
+        "Enables onNoteEdit and updates the borrowed clip through clip.edit with the edited note start/duration/pitch; leaves audio scheduling/routing with the caller.",
         "Custom note renderer forwards onNotePointerDown(note,event,optionalKind), retains onNoteClick/keyboard inspection, and does not implement capture/delta/snap itself.",
         "Uses widget snap/grid controls and Alt bypass, retains local-only preview plus single synchronous pointer-release command, and does not mirror durable notes.",
         "Documents cancellation on Escape, pointercancel, source/geometry replacement and destruction, preserving peer/model/audio lifetime.",
@@ -226,12 +226,12 @@
     },
     {
       "id": 15,
-      "prompt": "In a React app that already has a shared WavePlayer and a MidiSequence, build a small status bar that shows 'Loading...' with the byte progress while the player loads, the current selection in seconds, the stretch 'Rendering...' flag and any error, plus the number of MIDI notes. It must update live with no polling and no copying of player state into a store. Also add a button that clears the selection. Do not run anything.",
-      "expected_output": "React components that read player.cells.* and sequence.cells.* with useValue, and call owner methods for writes",
+      "prompt": "In a React app that already has a shared WavePlayer and a MidiClip, build a small status bar that shows 'Loading...' with the byte progress while the player loads, the current selection in seconds, the stretch 'Rendering...' flag and any error, plus the number of MIDI notes. It must update live with no polling and no copying of player state into a store. Also add a button that clears the selection. Do not run anything.",
+      "expected_output": "React components that read player.cells.* and clip.notes with useValue, and call owner methods for writes",
       "files": [],
       "expectations": [
         "Reads WavePlayer state through player.cells (selection, loading, loadProgress, processing, error) with useValue, not by copying getState() into useState or a store, and not by polling",
-        "Reads the MIDI note count through sequence.cells.notes (or cells.state) with useValue",
+        "Reads the MIDI note count through clip.notes (a ReadonlyCell) with useValue",
         "Clears the selection by calling player.setSelection(null); does not assign to player.cells.selection.value or call its $ with a value",
         "Reads position per animation frame from the player.position getter rather than trying to observe it as a reactive value",
         "Does not call subscribe in the components for state that player.cells exposes"
@@ -310,15 +310,15 @@
     {
       "id": 21,
       "prompt": "Hook up live Web MIDI input in our audiorective app: a keyboard plays our polyphonic synth with note on/off and velocity, the sustain pedal holds notes, and the UI lights up the keys that are currently held. don't run anything.",
-      "expected_output": "Web MIDI messages are handled directly and call methods on the synth's audio-layer object; held notes are reactive state. MidiSequence and the SMF parser are not used for live input.",
+      "expected_output": "MidiKeyboard.open(context, { instrument }) from @audiorective/midi/web plays every input live into the synth (an adapter with noteOn/noteOff over the audio-layer object), handles the sustain pedal, and exposes held notes as keyboard.cells.held. MidiClip and the SMF parser are not used for live input.",
       "files": [],
       "expectations": [
-        "Does not route live note-on/note-off through MidiSequence or parseMidi: they hold and edit note data from MIDI files in source seconds, not a live input stream",
+        "Does not route live note-on/note-off through MidiClip or parseMidi: they hold and play note data from clips and files in beats, not a live input stream",
         "Does not mount the piano-roll widget as the live keyboard display unless it is fed by state the app owns for that purpose and the answer says why",
-        "Handles navigator.requestMIDIAccess and message parsing in app code, calling noteOn/noteOff-style methods on an AudioProcessor synth",
-        "Sustain pedal logic (deferring releases while the pedal is down) lives in the audio-layer object, not in UI handlers",
-        "Held notes are a Cell (or equivalent reactive state on the audio-layer object) that the UI observes; no duplicate copy in a UI store",
-        "Says plainly that MidiRecorder writes takes but does not route live keyboard events to a synth; core primitives remain the right level for playing"
+        "Uses MidiKeyboard.open(context, { instrument }) from @audiorective/midi/web, opened from a click, instead of hand-written navigator.requestMIDIAccess and status-byte decoding; the instrument is the synth or a two-method { noteOn, noteOff } adapter over it",
+        "Sustain pedal logic (deferring releases while the pedal is down) lives in MidiKeyboard (its sustain option, default true) or the audio-layer object, not in UI handlers",
+        "Held notes are read from keyboard.cells.held (a ReadonlyCell) with an effect or useValue; no duplicate copy in a UI store",
+        "Disposes the keyboard on teardown (releasing held notes) and says plainly that MidiRecorder writes takes but does not route live keyboard events to a synth"
       ]
     },
     {
@@ -380,42 +380,42 @@
     {
       "id": 26,
       "prompt": "Build a browser MIDI take recorder with the current audiorective packages from the repository. We already have a playing metronome, AudioContext, and polyphonic synth. The user picks one Web MIDI keyboard, presses record before the next bar, plays overlapping notes and the sustain pedal, then stops. Hand the resulting notes and their raw position to our future clip owner and show them in a piano roll. Keep live keyboard playback and permission in our app; show cancel and cleanup. Do not run anything.",
-      "expected_output": "MidiRecorder borrows the selected MIDIInput and AudioContext, captures raw timestamped messages and take-relative note data, while MidiSequence displays the take and the caller owns live synth routing and clip placement.",
+      "expected_output": "MidiRecorder borrows the selected MIDIInput and AudioContext and, attached to the clock, resolves a take from record({ quantize }) with take-relative beat notes and non-note events, while a MidiClip with pianoRollModel displays the take and the caller owns live synth routing and clip placement.",
       "files": [],
       "expectations": [
         "Obtains Web MIDI permission and selects MIDIInput in app code; constructs MidiRecorder from @audiorective/midi/web with the existing AudioContext and selected input",
-        "Resumes the context, starts with recorder.start({ when }) in absolute AudioContext seconds, then calls synchronous recorder.stop() when the take ends",
-        "Uses take.notes and take.duration with MidiSequence or a compatible piano-roll model, and passes absolute take.startTime/endTime to the future clip owner",
+        "Resumes the context, attaches the recorder to the playing clock, awaits recorder.record({ quantize: \"1m\" }) to start on the next bar and ends it with recorder.stop(), which resolves the pending record() with the take",
+        "Uses take.notes and take.duration with new MidiClip(take.notes) and pianoRollModel(clip) for the piano roll, and passes absolute take.startTime/endTime (and take.startBeat) to the future clip owner",
         "Understands take.events preserves controllers including sustain while note projection ends at key release; does not claim sustain automatically extends notes",
         "Keeps keyboard-to-synth noteOn/noteOff and sustain playback in the app's audio owner, separate from the recorder and piano-roll view",
-        "Uses recorder.cancel() to discard, recorder.dispose() for listener cleanup, and leaves the borrowed MIDI input and AudioContext owned by the app",
+        "Uses recorder.cancel() to discard (record() rejects with AbortError, which the app catches), recorder.dispose() for listener cleanup, and leaves the borrowed MIDI input and AudioContext owned by the app",
         "Does not invent a Track/Clip owner, apply unmeasured latency correction, or treat mapped MIDI event times as sample accurate"
       ]
     },
     {
       "id": 27,
       "prompt": "We recorded a MIDI keyboard take with the audiorective MidiRecorder, including overlapping same-pitch notes and sustain pedal messages. The user changes one note's pitch in the piano roll and wants to hear the edited take. Show how to prepare the events for our existing synth scheduler. At the same timestamp, a note release and pedal-down arrived in a particular order; preserve it. Do not run anything.",
-      "expected_output": "Compiles the current MidiSequence notes with the recorded take's non-note messages using compileMidiPlaybackEvents, preserving recorded ties and note identity while leaving playback scheduling to the app.",
+      "expected_output": "Edits the notes of a MidiClip with clip.edit, then compiles clip.notes.value with the recorded take's non-note events using compileMidiPlaybackEvents, preserving note identity while leaving playback scheduling to the app.",
       "files": [],
       "expectations": [
-        "Imports compileMidiPlaybackEvents and MidiSequence from @audiorective/midi, and constructs or updates a sequence from the recorded take",
-        "Calls compileMidiPlaybackEvents(take, sequence.getState()) after the note edit, rather than sending raw take.events alongside edited notes",
-        "Explains that matched raw note messages carry noteId, so edited pitch/timing regenerates note bytes while overlapping notes retain distinct identities",
-        "Explains that non-note messages including sustain remain and same-time original delivery order is retained; new note endpoints use the documented deterministic order",
-        "Treats returned event.time as take-relative seconds and leaves clip placement, synth scheduling, transport cancellation and live keyboard routing with the application",
-        "Does not invent a public MidiPlayer, claim MidiSequence itself stores controllers, or claim the compiler implements pedal sound behavior"
+        "Imports compileMidiPlaybackEvents and MidiClip from @audiorective/midi, and builds a clip from the recorded take with new MidiClip(take.notes)",
+        "Calls compileMidiPlaybackEvents({ events: take.events }, { notes: clip.notes.value, duration: take.duration }) after the clip.edit, rather than sending raw take.events alongside edited notes",
+        "Explains that an edited pitch/timing regenerates the note bytes from the clip's notes, with note ids keeping overlapping same-pitch notes distinct",
+        "Explains that non-note messages including sustain come from take.events and keep their delivery order, and that new note endpoints follow them at equal beats (the recorded note messages themselves are not in take.events)",
+        "Treats returned event.beat as beats from the take's start and leaves clip placement, synth scheduling, transport cancellation and live keyboard routing with the application",
+        "Does not invent a public MidiPlayer, claim MidiClip itself stores controllers, or claim the compiler implements pedal sound behavior"
       ]
     },
     {
       "id": 28,
-      "prompt": "Our browser studio already has an AudioRecorder take and a MidiRecorder take. Put each on a track at chosen song-second positions, edit one MIDI note, save a DAWproject file, then reopen it and prepare the MIDI events for our synth. Explain what happens if another DAW removes Audiorective-only event details. Do not run anything.",
+      "prompt": "Our browser studio already has an AudioRecorder take and a MidiRecorder take. Put each on a track at chosen positions (the audio take in song seconds, the MIDI take in song beats), edit one MIDI note, save a DAWproject file, then reopen it and prepare the MIDI events for our synth. Explain what happens if another DAW removes Audiorective-only event details. Do not run anything.",
       "expected_output": "Uses @audiorective/daw/project Project as the project owner, saves and opens a .dawproject archive, and distinguishes portable XML content from private MIDI-order fidelity.",
       "files": [],
       "expectations": [
         "Imports Project from @audiorective/daw/project and saveDawProject and openDawProject from @audiorective/daw/dawproject (no runtime, no AudioContext) and adds matching audio/MIDI tracks",
-        "Calls addAudioClip with the recorded PCM and addMidiTake with the recorded MIDI at explicit project-second positions instead of treating AudioContext absolute times as arrangement positions",
-        "Edits the MIDI clip through clip.sequence and saves the Project to .dawproject bytes",
-        "Reopens with openDawProject, checks warnings, and uses the loaded MidiClip.playbackEvents() as clip-relative events for the caller-owned synth scheduler",
+        "Calls addAudioClip with the recorded PCM at an explicit project-second position and addMidiTake(trackId, take, beats) with the MidiTake at an explicit project-beat position instead of treating AudioContext absolute times as arrangement positions",
+        "Edits the MIDI clip through clip.midi.edit(...) (the @audiorective/midi MidiClip note model) and saves the Project to .dawproject bytes",
+        "Reopens with openDawProject, checks warnings, and uses the loaded clip's playbackEvents() as clip-relative events (each with a `beat`) for the caller-owned synth scheduler",
         "Explains that standard XML carries notes/controllers/audio while Audiorective private data preserves note IDs and same-time raw event order; missing or changed private data produces a warning and standard fallback",
         "Does not claim this narrow codec imports arbitrary DAWproject devices, routing or beat timelines"
       ]
@@ -428,7 +428,7 @@
       "expectations": [
         "Imports Project from @audiorective/daw/project and Workspace from @audiorective/daw/runtime (or the @audiorective/daw root) and uses addWebClapDevice on a MIDI track with the Oxo Synth2 CLAP ID and a bundle URL",
         "Creates Workspace with the caller-owned AudioContext, destination and a served WebCLAP worklet URL, then uses its play/stop or seek methods",
-        "Passes the MidiClip.sequence to a piano-roll widget and keeps the view separate from the audio runtime",
+        "Passes the project MidiClip's clip.midi (a @audiorective/midi MidiClip) to pianoRollModel and a piano-roll widget, and keeps the view separate from the audio runtime",
         "Mounts the loaded host's editor in an iframe or reads and writes host.params[String(id)].value, while preserving state through saveWorkspace and openWorkspace from @audiorective/daw",
         "Inspects reopen warnings and explains that DAWProject stores CLAP identity/state while Audiorective's private host manifest locates the WebCLAP bundle",
         "Disposes the view, Workspace and Project while leaving the borrowed AudioContext to the app",
@@ -452,13 +452,13 @@
     },
     {
       "id": 31,
-      "prompt": "Using the current Audiorective daw package, split a MIDI clip at 2 seconds into a song, trim the right side to its final second, then split an audio clip at a sample boundary. Explain how an open piano-roll view and Workspace playback should respond, and save the result as DAWproject. Do not run anything.",
-      "expected_output": "Project owns content edits in clip-local seconds; the UI remounts borrowed MIDI views and refreshes Workspace scheduling without recreating device hosts.",
+      "prompt": "Using the current Audiorective daw package, split a MIDI clip 2 beats into the clip, trim the right side to its final second, then split an audio clip at a sample boundary. Explain how an open piano-roll view and Workspace playback should respond, and save the result as DAWproject. Do not run anything.",
+      "expected_output": "Project owns content edits in clip-local units (beats for MIDI, seconds for audio); the UI remounts borrowed MIDI views and refreshes Workspace scheduling without recreating device hosts.",
       "files": [],
       "expectations": [
-        "Calls Project.splitClip with a clip-local offset rather than an absolute song position",
-        "Calls Project.trimClip with clip-local start/end and recognizes that the left split clip keeps its ID",
-        "Re-reads Project.tracks and remounts a borrowed piano-roll after a split or trim because MIDI sequence objects are replaced",
+        "Calls Project.splitClip with a clip-local offset (beats for the MIDI clip, seconds for the audio clip) rather than an absolute song position",
+        "Calls Project.trimClip with clip-local start/end in the clip's unit and recognizes that the left split clip keeps its ID",
+        "Re-reads Project.tracks and remounts a borrowed piano-roll (new pianoRollModel over the new clip.midi) after a split or trim because the split-off or trimmed MIDI clip's note model (clip.midi) is replaced",
         "Edits clips on Project and relies on automatic application so the live arrangement refreshes without reloading plug-in hosts; uses await workspace.flush() only when it must wait for the runtime",
         "Explains that audio cuts round to samples and crossing MIDI notes are clipped into each retained segment",
         "Saves through saveWorkspace or saveDawProject and does not invent time-stretch behavior"
@@ -484,8 +484,8 @@
       "expected_output": "Uses one Workspace project-time anchor, relies on the running Workspace to apply project edits, and chooses AudioRecorder streaming for caller-owned long-take storage.",
       "files": [],
       "expectations": [
-        "Uses MidiRecorder.start()'s returned output-clock time with Workspace.takeAnchor and passes the take plus explicit non-negative input latency to Workspace.takePosition",
-        "Uses Project.addMidiTake at the returned project-second placement, not at the raw absolute AudioContext time",
+        "Records the MIDI take with MidiRecorder.record() (resolving a MidiTake) and uses the take's startTime (the output-clock start) with Workspace.takeAnchor, passing the take plus explicit non-negative input latency to Workspace.takePosition",
+        "Converts the returned project-second placement to beats with project.tempoMap.secondsToBeat and passes it to Project.addMidiTake(trackId, take, beats), not the raw absolute AudioContext time (or relies on take.startBeat when the recorder is attached to the playing clock)",
         "Calls Project.setVolumeAutomation with linear or hold points in project seconds and and relies on automatic application (optionally await workspace.flush()) to apply the curve during playback",
         "Uses AudioRecorder.startStream with AudioMediaWriter.writeChunk, then stopStream and writer.finish to add a file-backed clip with Project.addAudioMediaClip",
         "Explains that a correction crossing project zero requires preroll rather than silently clamping the clip"
@@ -536,15 +536,15 @@
     },
     {
       "id": 37,
-      "prompt": "Record an Audiorective MIDI take at project second 1.5 with tempo 120 BPM until beat 4, then 60 BPM. Place the take so MIDI notes and CC64 stretch when the tempo map changes, show it in a piano roll, move it with the arrangement gesture, and save/reopen a DAWproject. Use current APIs; do not run anything.",
-      "expected_output": "Explicit beat MIDI unit from placement through playback, widget gestures and DAWproject round trip.",
+      "prompt": "Record an Audiorective MIDI take at project beat 2 with tempo 120 BPM until beat 4, then 60 BPM. Place the take so MIDI notes and CC64 stretch in seconds when the tempo map changes, show it in a piano roll, move it with the arrangement gesture, and save/reopen a DAWproject. Use current APIs; do not run anything.",
+      "expected_output": "Beats from placement through playback, widget gestures and DAWproject round trip.",
       "files": [],
       "expectations": [
-        "Uses Project.addMidiTake(trackId, take, 1.5, { timeUnit: \"beats\" }) so all notes and captured controls convert through the tempo map",
-        "Passes clip.timeUnit to mountPianoRoll and supplies grid and playhead in clip-local beats",
-        "Passes clip.time and clip.timeUnit to attachClipGesture; its onMove time already uses that unit and can go directly to Project.moveClip",
-        "Relies on automatic application after tempo or clip edits and treats Workspace.position as project seconds",
-        "Saves and reopens DAWproject with beat Clips lanes and explains that legacy seconds clips stay fixed when BPM changes"
+        "Uses Project.addMidiTake(trackId, take, 2) with the position in project beats and no unit option; notes and captured controls follow the tempo map because MIDI is always beats",
+        "Passes clip.midi through pianoRollModel(clip.midi) to mountPianoRoll (always beats, no timeUnit option) and supplies grid and playhead in clip-local beats",
+        "Passes clip.time (project beats) and timeUnit: \"beats\" to attachClipGesture; its onMove time is beats and can go directly to Project.moveClip",
+        "Relies on automatic application after tempo or clip edits and treats Workspace.position as project seconds, converting with project.tempoMap.secondsToBeat(workspace.position) - clip.time for the piano-roll playhead",
+        "Saves and reopens DAWproject with beat Clips lanes (vel 0..1) and explains that a MIDI clip follows the tempo map in seconds when BPM changes while audio clips stay fixed in seconds"
       ]
     },
     {
@@ -554,7 +554,7 @@
       "files": [],
       "expectations": [
         "Types the extension as TimeViewPlugin and calls each view's attach method, including the WaveformSelectorHandle",
-        "Checks context.timeUnit to choose 2 seconds or beat 5 and uses timeToX to place the cue",
+        "Checks context.timeUnit to choose 2 seconds (audio views) or beat 5 (piano roll) and uses timeToX to place the cue",
         "Creates an overlay per attachment, subscribes to viewport and data changes, and draws once on attach",
         "Uses the attachment handle to remove one overlay, with no manual global listeners or destruction of the borrowed model or player"
       ]

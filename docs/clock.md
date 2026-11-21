@@ -222,6 +222,8 @@ const detach = clock.attach({
 });
 ```
 
+`@audiorective/clock` re-exports the types `BeatTiming` and `CancellableEvent` from core, so a custom scheduler imports its `schedule(window, timing)` and `window.own(event, when)` types from the clock package. `MidiClip` and `MidiRecorder` from [MIDI](./midi.md) are schedulers.
+
 `onTick` runs first, then each attached scheduler in attach order. Owned events registered by any scheduler are cancelled by `start`, `pause`, `stop`, `seek` and `dispose`, and `refresh()` re-queues every scheduler's pending events. Attaching while playing refreshes the look-ahead. An error thrown by one scheduler hook is logged and the others still run. `Scheduler`, `SchedulerHandle`, `SchedulerWindow`, `ResetReason`, `TransportChange` and `TransportChangeType` are exported types; `Workspace.clock` (also `workspace.transport`) is a Clock, so the same `attach` serves a Workspace.
 
 **`reset(reason)`** runs before the transport state changes, after owned events are cancelled. `start()` passes `"start"` (the first window begins at its `offsetBeats`), `stop()` `"stop"`, `pause()` `"pause"` and `seek()` `"seek"`; `detach()` and `dispose()` pass `"detach"`. `resume()` calls none. A scheduler that ignores the reason clears its state on every one, so it behaves as if `reset()` took no argument. A scheduler that keeps work queued while the transport is stopped keeps it on `"start"` and clears it on the others: the first window after `start(when, offsetBeats)` begins at beat `offsetBeats`, which `timeline.beatToTime` maps to exactly `when`.
