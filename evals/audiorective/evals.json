@@ -588,7 +588,7 @@
       "files": [],
       "expectations": [
         "Mounts mountAutomationLane over the track volumeAutomation points and commits a final drag with Project.setVolumeAutomation and uses workspace.flush when a follow-up depends on runtime application",
-        "Calls the lane's setPoints with accepted or externally changed points and disposes the view on teardown",
+        "Synchronizes the lane with accepted or externally changed owner points through a reactive source or explicit refresh, and disposes the view on teardown",
         "Uses Workspace.setMasterVolume instead of setting output.gain directly and explains that the mixed WAV includes master gain while per-track stems are tapped earlier"
       ]
     },
