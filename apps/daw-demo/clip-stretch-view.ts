@@ -13,11 +13,17 @@ export function createClipStretchEngine() {
     active: readonlyCell(source),
     async load(file: File) {
       const generation = ++next;
-      const [bytes, { TimeStretch }] = await Promise.all([file.arrayBuffer(), import("@audiorective/effects/time-stretch")]);
-      const module = await WebAssembly.compile(bytes);
-      if (generation !== next) return;
+      const { TimeStretch } = await import("@audiorective/effects/time-stretch");
+      const url = URL.createObjectURL(file);
+      let processor: TimeStretch;
+      try {
+        processor = await TimeStretch.load({ wasmUrl: url });
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+      if (generation !== next) return processor.dispose();
       const previous = source.value;
-      source.value = { name: file.name, processor: new TimeStretch(module) };
+      source.value = { name: file.name, processor };
       previous?.processor.dispose();
     },
     dispose() {

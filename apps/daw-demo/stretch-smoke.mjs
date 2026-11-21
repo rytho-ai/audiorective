@@ -113,7 +113,7 @@ try {
       const track = project.addTrack("Warped transient", "audio", { pan: -1 });
       const clip = project.addAudioClip(track.id, { sampleRate: rate, channels: [source] }, 0);
       const workspace = await Workspace.create(window.__daw.workspace.context, project);
-      const engine = new TimeStretch(await WebAssembly.compile(Uint8Array.from(wasm)));
+      const engine = await TimeStretch.load({ wasmUrl: URL.createObjectURL(new Blob([Uint8Array.from(wasm)])) });
       const point = { sourceFrame: rate, outputFrame: 1.3 * rate };
       const prepared = await workspace.prepareAudioClipStretch(clip.id, 1, engine, { anchors: [point] });
       const committed = prepared.apply();
@@ -187,7 +187,7 @@ try {
       const track = project.addTrack("Original tone", "audio");
       const clip = project.addAudioClip(track.id, { sampleRate: rate, channels: [original] }, 0.5);
       const workspace = await Workspace.create(host, project);
-      const stretch = new TimeStretch(await WebAssembly.compile(new Uint8Array(wasm)));
+      const stretch = await TimeStretch.load({ wasmUrl: URL.createObjectURL(new Blob([new Uint8Array(wasm)])) });
       const prepared = await workspace.prepareAudioClipStretch(clip.id, 2, stretch);
       if (project.tracks[0].clips[0] !== clip) throw new Error("Preparation modified project.");
       const first = prepared.apply();

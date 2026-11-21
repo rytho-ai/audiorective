@@ -70,12 +70,13 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
     const generation = ++stretchGeneration, ctx = context;
     disposeStretch(); status.textContent = "Loading engine…";
     void (async () => {
-      const module = await WebAssembly.compile(await file.arrayBuffer());
+      const wasmUrl = URL.createObjectURL(file);
+      const loaded = await TimeStretch.load({ wasmUrl }).finally(() => URL.revokeObjectURL(wasmUrl));
       await widget?.ready;
-      if (generation !== stretchGeneration || context !== ctx) return;
+      if (generation !== stretchGeneration || context !== ctx) return void loaded.dispose();
       const source = player?.sourceBuffer;
       if (!source) throw new Error("Load audio before enabling stretch.");
-      stretch = new TimeStretch(module);
+      stretch = loaded;
       stretchPlayer = new WavePlayer(ctx, { stretch });
       stretchPlayer.output.connect(ctx.destination);
       stretchView = mountWaveformSelector(document.getElementById("waveform-stretch")!, {

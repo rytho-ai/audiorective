@@ -1,6 +1,12 @@
 import { mountEqEditor, mountLevelMeter, mountParameter, mountSpectrum, type EqBand, type ParameterOptions } from "@audiorective/widgets";
-import { rackMacroRange } from "@audiorective/effects/rack-preset";
-import type { RackEffect, RackMacroMapping, RackMacroParameter, RackMacroSettings, Workspace } from "@audiorective/daw";
+import {
+  rackMacroRange,
+  type RackEffect,
+  type RackMacroMapping,
+  type RackMacroParameter,
+  type RackMacroSettings,
+  type Workspace,
+} from "@audiorective/daw";
 
 const effectName = { filter: "Filter", delay: "Delay", eq: "EQ" } as const;
 const macroParameterNames: Record<RackMacroParameter, string> = {

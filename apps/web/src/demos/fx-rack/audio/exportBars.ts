@@ -29,7 +29,7 @@ export function readSettings(rack: FxRack): RackSettings {
     engine: rack.inserts.pitchShift.engine,
     pitch: rack.inserts.pitchShift.params.pitch.value,
     inserts,
-    sends: { delay: rack.sends.delay.send.gain.value, reverb: rack.sends.reverb.send.gain.value },
+    sends: { delay: rack.sends.delay.send.params.gain.value, reverb: rack.sends.reverb.send.params.gain.value },
     compressor: { threshold: rack.compressor.params.threshold.value, ratio: rack.compressor.params.ratio.value },
     limiter: { threshold: rack.limiter.params.threshold.value },
   };
@@ -40,8 +40,8 @@ export function applySettings(rack: FxRack, s: RackSettings): void {
     rack.inserts[k].params.wet.value = s.inserts[k].wet;
     insertValue[k](rack).value = s.inserts[k].value;
   }
-  rack.sends.delay.send.gain.value = s.sends.delay;
-  rack.sends.reverb.send.gain.value = s.sends.reverb;
+  rack.sends.delay.send.params.gain.value = s.sends.delay;
+  rack.sends.reverb.send.params.gain.value = s.sends.reverb;
   rack.compressor.params.threshold.value = s.compressor.threshold;
   rack.compressor.params.ratio.value = s.compressor.ratio;
   rack.limiter.params.threshold.value = s.limiter.threshold;
