@@ -193,4 +193,28 @@ describe("FilePlayer", () => {
     stop();
     p.dispose();
   });
+
+  test("position reads the element's playhead live, between timeupdate events", async () => {
+    const p = makePlayer(ctx, { src: wavDataUri(2) });
+    await once(p.audio, "loadedmetadata");
+    expect(p.position).toBe(0);
+    await p.play();
+    const first = p.position;
+    await delay(80);
+    expect(p.position).toBeGreaterThan(first);
+    expect(p.position).toBe(p.audio.currentTime);
+    p.dispose();
+  });
+
+  test("cells.error holds the element's MediaError and clears when a new src is set", async () => {
+    const p = makePlayer(ctx);
+    expect(p.cells.error.value).toBeNull();
+    p.src = "data:audio/wav;base64,AAAA";
+    await once(p.audio, "error");
+    expect(p.cells.error.value).toBe(p.audio.error);
+    expect(p.cells.error.value).not.toBeNull();
+    p.src = wavDataUri(0.3);
+    expect(p.cells.error.value).toBeNull();
+    p.dispose();
+  });
 });

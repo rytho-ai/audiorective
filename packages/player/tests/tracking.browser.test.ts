@@ -107,6 +107,9 @@ describe("WavePlayer public getters are tracked", () => {
     let runs = 0;
     const stop = effect(() => {
       runs++;
+      player.schedule();
+      player.reset("pause");
+      player.attached({ timeline: context as never, state: { value: "stopped" }, meter: { value: [4, 4] }, detach() {} })();
       player.attachSourceAutomation(binding)();
       void player.play();
       player.seek(0.1);

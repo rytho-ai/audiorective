@@ -49,6 +49,7 @@ export interface RecordOptions {
   /**
    * Start at the next boundary of the attached, playing clock (`"1m"` the next bar line); a call exactly on a boundary starts there, not on the next one.
    * Default `"none"`. `record()` rejects with `InvalidStateError` when the recorder is not attached to a Clock (`clock.attach(recorder)`) or the clock is not playing.
+   * During a count-in (negative beats) a quantized start can land inside the count-in; to start at bar 1 pass `when: clock.timeline.beatToTime(0)` instead.
    */
   quantize?: Quantize;
   /** Take length: seconds, or a note value from the start (`"4m"` four bars at the clock's tempo, which needs the clock). Default: until `stop()`. */
@@ -369,7 +370,8 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
   }
 
   /**
-   * Ends the current take at `when` (default now) and resolves it, the same take `record()` resolves. On a take with `length` it can only shorten it.
+   * Ends the current take early at `when` (default now) and resolves it, the same partial take `record()` resolves with what was captured; `cancel()` instead discards the take and rejects `record()` with `AbortError`.
+   * On a take with `length` it can only shorten it.
    * Called while the capture graph is still being built, it ends the take as soon as it starts.
    */
   stop(options: { when?: number } = {}): Promise<RecordedAudio> {
@@ -430,7 +432,7 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
     });
   }
 
-  /** Discard the active take. Borrowed input nodes and the AudioContext keep running. */
+  /** Discards the active take and rejects its `record()` with `AbortError` (use `stop()` to end it early and keep what was captured). Borrowed input nodes and the AudioContext keep running. */
   cancel(): void {
     if (!this.active) return;
     this.fail(this.active, abortError());

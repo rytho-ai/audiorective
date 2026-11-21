@@ -179,6 +179,7 @@ export class SampleLibrary {
     };
   }
 
+  /** Removes the row, drops a queued import and stops a running preview of that sample (`state.previewId` goes null); a lease already acquired stays valid until released. Unknown ids do nothing. */
   remove(id: string): void {
     const job = this.jobs.get(id);
     if (!job) return;
@@ -193,6 +194,10 @@ export class SampleLibrary {
     });
   }
 
+  /**
+   * Starts auditioning a ready sample through `output` and resolves once it has started, not when it ends: follow `state.previewPlaying` for the end.
+   * A preview replaces the one running (which stops silently; nothing rejects with `AbortError`). Rejects when the sample is not ready or unknown (`Sample Library needs a ready sample.`).
+   */
   async preview(id: string): Promise<void> {
     const lease = this.acquire(id);
     this.stopPreview();
@@ -227,6 +232,7 @@ export class SampleLibrary {
     }
   }
 
+  /** Stops the running preview and releases its lease; does nothing when none is running. */
   stopPreview(): void {
     const voice = this.previewVoice;
     if (!voice) return;

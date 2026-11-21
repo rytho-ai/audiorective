@@ -88,6 +88,7 @@ When no capability package or widget matches, build on core with your own `Audio
 | One-shot hits, pads, SFX; overlapping voices | core `Sampler` / `Voice` | `WavePlayer` (one playhead) |
 | Step patterns, drum machine, humanize, ratchets, editable sequenced hits (with choke groups) | `clock` + `@audiorective/sequencer` `StepSequencer`; for choke groups `onHit` calls `bank.trigger(hit.lane, hit.velocity, hit.when, ...)` and returns `() => pad?.cancel()`, over a `@audiorective/pads` `PadBank` (choke `group`); runnable code in `references/sequencer.md#standalone-drum-machine` (no `daw`) | a hand-rolled `window.own` loop for a lane/step grid; a private scheduling loop, forking the sequencer; irreversible `Voice.stop(when)` |
 | Record the microphone, a take starting on a bar for N bars | `@audiorective/recorder` `MicrophoneInput.open` → `mic.connect(recorder)` → `recorder.record({ quantize, length })`, `clock.attach(recorder)` for bars | hand-wired `getUserMedia` + `MediaStreamSource`, bar math, `MediaRecorder` chunk intervals |
+| Play a loaded clip starting on the next bar | `WavePlayer`: `clock.attach(player)`, `player.play({ quantize: "1m" })` | hand-computed `Math.ceil(beat / bar) * bar` |
 | Record MIDI notes from a keyboard | `midi/web` `MidiRecorder`, caller-owned input/context | `MidiSequence` as a live listener |
 | A tempo-locked loop or stem | core `BufferPlayer` + `clock` | `FilePlayer` (media clock) |
 | A long track, podcast or stream | core `FilePlayer`; `widgets/player` for a control bar | `WavePlayer` / waveform selector |

@@ -86,3 +86,31 @@ test("detaching from the clock removes the transport, and disposing the recorder
   recorder.dispose();
   expect(() => reattach()).not.toThrow();
 });
+
+test("during a count-in `when: beatToTime(0)` starts the take exactly at beat 0", async () => {
+  const { context, clock, recorder } = await rig(240); // a 4/4 bar is one second
+  clock.start(context.currentTime + 0.1, -4); // a one-second count-in before beat 0
+  const zero = clock.timeline.beatToTime(0);
+  expect(zero).toBeGreaterThan(context.currentTime + 1);
+  const take = await recorder.record({ when: zero, length: 0.2 });
+  expect(take.startFrame).toBe(Math.ceil(zero * context.sampleRate));
+  expect(take.startBeat).toBeCloseTo(0, 3);
+});
+
+test("stop() ends a take early and resolves record() with the partial take; cancel() discards it with AbortError", async () => {
+  const { context, recorder } = await rig(120);
+  const early = recorder.record();
+  await vi.waitFor(() => expect(recorder.cells.state.value).toBe("recording"));
+  await new Promise((done) => setTimeout(done, 150));
+  const stopped = await recorder.stop();
+  expect(await early).toBe(stopped);
+  expect(stopped.endFrame - stopped.startFrame).toBeGreaterThan(0);
+  expect(stopped.endTime).toBeLessThan(context.currentTime + 0.1);
+  expect(recorder.cells.state.value).toBe("idle");
+
+  const discarded = recorder.record();
+  await vi.waitFor(() => expect(recorder.cells.state.value).toBe("recording"));
+  recorder.cancel();
+  await expect(discarded).rejects.toMatchObject({ name: "AbortError" });
+  expect(recorder.cells.state.value).toBe("idle");
+});

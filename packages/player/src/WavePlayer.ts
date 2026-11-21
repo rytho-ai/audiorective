@@ -26,9 +26,34 @@ export interface WavePlayerOptions {
   /** Aborting the signal calls `dispose()`. */
   signal?: AbortSignal;
 }
+/** "none" starts at once; otherwise the next boundary of an attached playing clock: "1m" a bar of its meter (4 beats in 4/4), "2m" two bars, "4n" a beat, "8n" half a beat. A call exactly on a boundary starts there, not on the next one; otherwise the first boundary at least 50 ms ahead. During a count-in (negative beats) a boundary can fall inside the count-in; to start at bar 1 pass `when: clock.timeline.beatToTime(0)`. */
+export type Quantize = "none" | `${number}m` | `${number}n`;
+/** The part of a clock's `SchedulerHandle` a player reads; `clock.attach(player)` supplies it. */
+export type PlayerTransport = Readonly<{
+  timeline: { timeToBeat(time: number): number; beatToTime(beat: number): number };
+  state: Readonly<{ value: "stopped" | "playing" | "paused" }>;
+  meter: Readonly<{ value: readonly [number, number] }>;
+  detach(): void;
+}>;
+/** Why a clock resets its schedulers: it started, stopped, paused or jumped, or the scheduler is leaving. */
+export type PlayerResetReason = "start" | "stop" | "pause" | "seek" | "detach";
+/** Seconds of lead a quantized start keeps, so the start is scheduled before the boundary. */
+const QUANTIZE_LEAD = 0.05;
+const EPS = 1e-7;
+function noteBeats(value: string, barBeats: number): number {
+  const m = /^(\d+(?:\.\d+)?)([mn])$/.exec(value);
+  if (!m || !(Number(m[1]) > 0)) throw new RangeError(`WavePlayer requires a note value such as "4n" or "1m", got "${value}".`);
+  return m[2] === "m" ? Number(m[1]) * barBeats : 4 / Number(m[1]);
+}
 export interface WavePlayOptions {
-  /** Absolute audio-context seconds at which sound starts. A past time clamps to now. Default: now. */
+  /** Absolute audio-context seconds at which sound starts. A past time clamps to now. Default: now. Not with `quantize`. */
   when?: number;
+  /**
+   * Start at the next boundary of the attached, playing clock (`"1m"` the next bar line); a call exactly on a boundary starts there, not on the next one.
+   * Default `"none"`. `play()` rejects with `InvalidStateError` when the player is not attached to a Clock (`clock.attach(player)`) or the clock is not playing.
+   * During a count-in (negative beats) a boundary can fall inside the count-in; to start at bar 1 pass `when: clock.timeline.beatToTime(0)`.
+   */
+  quantize?: Quantize;
 }
 export interface PlaybackVersion {
   readonly revision: number;
@@ -60,6 +85,8 @@ export type WavePlayerCells = {
    * and `startedAt` the audio-context time it began advancing, null while it holds still. While advancing, read `player.position` per frame.
    */
   playhead: ReadonlyCell<Readonly<{ position: number; startedAt: number | null }>>;
+  /** Audio-context time a queued start (a future `when` or a quantize boundary) begins sounding; null once it has begun or when none is queued. */
+  startsAt: ReadonlyCell<number | null>;
 };
 type Store = {
   selection: Cell<Readonly<AudioRange> | null>;
@@ -73,10 +100,14 @@ type Store = {
   held: Cell<number>;
   /** The running play anchor, replaced on every start, seek or loop change. */
   anchor: Cell<Anchor | null>;
+  startsAt: Cell<number | null>;
 };
 type Anchor = { time: number; offset: number; start: number; end: number };
 
-/** Headless audio loading, range playback and non-destructive stretch. The caller owns context and routing. */
+/**
+ * Headless audio loading, range playback and non-destructive stretch. The caller owns context and routing.
+ * It is also a clock scheduler: `clock.attach(player)` lets `play({ quantize })` start on a bar line.
+ */
 export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, WavePlayerCells> {
   private readonly player: BufferPlayer;
   private readonly gain: GainNode;
@@ -87,6 +118,10 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
   private command = 0;
   private abort: AbortController | null = null;
   private disposed = false;
+  private follow: PlayerTransport | null = null;
+  /** A start queued for a clock boundary: leaving the transport before it arrives cancels it. */
+  private quantized = false;
+  private startTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly abortSignal?: AbortSignal;
   private readonly onAbort = () => this.dispose();
   private readonly sourceAutomations = new Set<AutomationBinding>();
@@ -111,6 +146,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
       version: cell<PlaybackVersion | null>(null),
       held: cell(0),
       anchor: cell<Anchor | null>(null),
+      startsAt: cell<number | null>(null),
     };
     super(context, ({ param }) => ({
       params: { volume: param({ default: 1, bind: gain.gain, min: 0, max: 1 }) },
@@ -127,6 +163,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
           const anchor = store.anchor.value;
           return Object.freeze({ position: anchor ? anchor.offset : store.held.value, startedAt: anchor ? anchor.time : null });
         }),
+        startsAt: readonlyCell(store.startsAt),
       },
     }));
     this.gain = gain;
@@ -137,6 +174,20 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
     this.abortSignal = options.signal;
     if (this.abortSignal?.aborted) this.dispose();
     else this.abortSignal?.addEventListener("abort", this.onAbort, { once: true });
+  }
+
+  /** Clock scheduler contract: a player schedules nothing per window; `clock.attach(player)` only gives it the transport `play({ quantize })` reads. */
+  schedule(): void {}
+  /** Clock scheduler contract: leaving the transport (stop, pause, seek, detach) before a quantized start arrives cancels that start; playback already sounding continues. */
+  reset(reason: PlayerResetReason): void {
+    if (reason !== "start" && this.quantized && !this.disposed && untracked(() => this.store.startsAt.value) !== null) this.change(() => this.halt());
+  }
+  /** Clock scheduler contract: called by `clock.attach`. */
+  attached(handle: PlayerTransport): () => void {
+    this.follow = handle;
+    return () => {
+      if (this.follow === handle) this.follow = null;
+    };
   }
 
   private get held(): number {
@@ -300,6 +351,44 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
     this.held = this.position;
     this.anchor = null;
     this.player.stop();
+    this.clearQueued();
+  }
+  private clearQueued(): void {
+    clearTimeout(this.startTimer);
+    this.startTimer = undefined;
+    this.quantized = false;
+    if (untracked(() => this.store.startsAt.value) !== null) this.store.startsAt.value = null;
+  }
+  /** Publishes a start still ahead of the audio clock and clears it once it has begun. */
+  private queue(time: number): void {
+    clearTimeout(this.startTimer);
+    this.startTimer = undefined;
+    if (time <= this.context.currentTime) return void (this.store.startsAt.value = null);
+    this.store.startsAt.value = time;
+    const check = () => {
+      if (this.disposed || untracked(() => this.store.startsAt.value) !== time) return;
+      if (this.context.currentTime >= time) {
+        this.quantized = false;
+        this.store.startsAt.value = null;
+      } else this.startTimer = setTimeout(check, Math.max(5, (time - this.context.currentTime) * 1000));
+    };
+    this.startTimer = setTimeout(check, Math.max(5, (time - this.context.currentTime) * 1000));
+  }
+  /** The audio time of the boundary `play({ quantize })` starts at. */
+  private boundary(clock: PlayerTransport, quantize: Exclude<Quantize, "none">): number {
+    const [n, d] = untracked(() => clock.meter.value);
+    const size = noteBeats(quantize, (n * 4) / d);
+    const nowBeat = clock.timeline.timeToBeat(this.context.currentTime);
+    // Exactly on a boundary starts there; otherwise the first boundary at least QUANTIZE_LEAD ahead.
+    if (Math.abs(nowBeat / size - Math.round(nowBeat / size)) < EPS) return clock.timeline.beatToTime(Math.round(nowBeat / size) * size);
+    const base = clock.timeline.timeToBeat(this.context.currentTime + QUANTIZE_LEAD);
+    return clock.timeline.beatToTime(Math.ceil(base / size - EPS) * size);
+  }
+  private requireClock(): PlayerTransport {
+    if (!this.follow) throw new DOMException("WavePlayer quantize needs clock.attach(player).", "InvalidStateError");
+    if (untracked(() => this.follow!.state.value) !== "playing")
+      throw new DOMException("WavePlayer quantize needs a playing clock.", "InvalidStateError");
+    return this.follow;
   }
   /** Starts at `when`, clamped to now; null means a reentrant command superseded this start. */
   private begin(offset: number, when = 0): number | null {
@@ -323,6 +412,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
       if (this.command !== command || this.disposed) return null;
       if (!this.looping) this.player.stop(time + end - offset);
       this.anchor = { time, offset, start, end };
+      this.queue(time);
     } catch (error) {
       if (this.command === command) {
         for (const binding of this.sourceAutomations) this.stopSourceAutomation(binding);
@@ -332,28 +422,43 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
     }
     return time;
   }
-  /** Resolves with the audio time at which sound starts, or null when this call started nothing. */
+  /**
+   * Starts playback and resolves with the audio time at which sound starts, or null when this call started nothing (nothing loaded, already playing, or superseded by a newer command).
+   * It starts at the playhead (`position`) clamped into the selection: a playhead before the selection or at/past its end starts at the selection start, otherwise it continues from where it is; `stop()` rewinds the playhead to the selection start.
+   * `quantize` waits for the clock's next boundary (see `WavePlayOptions`); `stop()` or the clock leaving the transport cancels a start still queued.
+   * With `quantize` it rejects with `InvalidStateError` when the player is not attached to a Clock or the clock is not playing, and with `RangeError` when `when` is also given.
+   */
   async play(options: WavePlayOptions = {}): Promise<number | null> {
     this.assertAlive();
-    const when = options.when ?? 0;
+    const quantize = options.quantize ?? "none";
+    let when = options.when ?? 0;
+    if (quantize !== "none") {
+      if (options.when !== undefined) throw new RangeError("WavePlayer play() takes `when` or `quantize`, not both.");
+      noteBeats(quantize, 4);
+      this.requireClock();
+    }
     if (!Number.isFinite(when) || when < 0) throw new RangeError("Start time must be finite, non-negative seconds.");
     if (!this.loadedBuffer || this.running) return null;
     const command = ++this.command;
     await this.audioContext.resume();
     if (this.disposed || command !== this.command || !this.loadedBuffer) return null;
+    if (quantize !== "none") when = this.boundary(this.requireClock(), quantize);
     // Fix this start's identity inside the change: observers notified by it may pause, seek or play again.
     let started = 0,
       time: number | null = null;
     this.change(() => {
       time = this.begin(this.position, when);
       started = time === null ? 0 : this.command;
+      if (time !== null) this.quantized = quantize !== "none" && untracked(() => this.store.startsAt.value) !== null;
     });
     return started === this.command ? time : null;
   }
+  /** Pauses at the playhead, keeping it; also cancels a start still queued. */
   pause(): void {
     this.assertAlive();
     this.change(() => this.halt());
   }
+  /** Stops and rewinds the playhead to the selection start (or 0); also cancels a start still queued. */
   stop(): void {
     this.assertAlive();
     this.change(() => {
@@ -361,6 +466,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
       this.held = this.range?.start ?? 0;
     });
   }
+  /** Moves the playhead (seconds, clamped to the duration). While playing, playback continues from there (clamped into the selection, so a position outside it starts at the selection start); while stopped or paused it only moves the playhead. Throws `RangeError` for a non-finite position. */
   seek(position: number): void {
     this.assertAlive();
     if (!Number.isFinite(position)) throw new RangeError("Position must be finite seconds.");
@@ -372,6 +478,10 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
       if (playing) this.begin(this.held, when);
     });
   }
+  /**
+   * Commits the playback range in output seconds (`0 <= start < end <= duration`), or `null` for the whole buffer (which also turns looping off). It can change while playing:
+   * a looping run whose playhead is inside the new range keeps going without a gap, anything else restarts from the playhead clamped into the new range. Throws `RangeError` for an invalid range.
+   */
   setSelection(selection: AudioRange | null): void {
     this.assertAlive();
     if (
@@ -401,6 +511,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
       }
     });
   }
+  /** Loops the selection (or the whole buffer). While playing it restarts from the current position, so expect a re-trigger rather than a seamless switch. Throws while source automation is attached. */
   setLooping(looping: boolean): void {
     this.assertAlive();
     if (looping && this.sourceAutomations.size) throw new Error("Source automation requires non-looping playback.");
@@ -425,8 +536,11 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
     this.editAbort = null;
     this.processing = false;
   }
-  /** Render from the immutable original, then commit audio + peaks while stopped.
-   * Superseded jobs settle without publishing; failures keep the playable version. */
+  /**
+   * Re-renders the output from the immutable original at `ratio` (output duration / original duration; 1 restores it) and commits audio and peaks, stopping playback at the committed playhead.
+   * It rejects with the cause on failure (and the previous playable version stays); a request superseded by a newer `setStretch()`, `load()` or `dispose()` resolves without publishing.
+   * Rejects with `RangeError` for a non-positive ratio and `Error` when nothing is loaded or no stretch processor was given.
+   */
   async setStretch(ratio: number): Promise<void> {
     this.assertAlive();
     if (!Number.isFinite(ratio) || ratio <= 0) throw new RangeError("Stretch ratio must be finite and positive.");
@@ -581,6 +695,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
   override dispose(): void {
     if (this.disposed) return;
     this.abortSignal?.removeEventListener("abort", this.onAbort);
+    this.follow?.detach();
     this.change(() => {
       this.disposed = true;
       ++this.request;

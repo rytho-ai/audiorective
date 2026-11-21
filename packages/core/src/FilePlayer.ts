@@ -27,7 +27,14 @@ export interface FilePlayerOptions {
  */
 export class FilePlayer extends AudioProcessor<
   { volume: SchedulableParam; loop: Param<boolean>; playbackRate: Param<number> },
-  { isPlaying: ReadonlyCell<boolean>; currentTime: ReadonlyCell<number>; duration: ReadonlyCell<number> }
+  {
+    isPlaying: ReadonlyCell<boolean>;
+    /** The playhead in seconds, updated on the element's `timeupdate` (about 4 Hz) and on seeks: right for a time label, too coarse to animate a playhead; read `position` per frame for that. */
+    currentTime: ReadonlyCell<number>;
+    duration: ReadonlyCell<number>;
+    /** The element's `MediaError` after a load or decode failure, `null` otherwise and again once `src` is set. */
+    error: ReadonlyCell<MediaError | null>;
+  }
 > {
   /**
    * The underlying media element — a deliberate escape hatch for advanced needs
@@ -44,6 +51,7 @@ export class FilePlayer extends AudioProcessor<
   private readonly _playing: Cell<boolean>;
   private readonly _time: Cell<number>;
   private readonly _duration: Cell<number>;
+  private readonly _error: Cell<MediaError | null>;
   private readonly _srcCell: Cell<string | null> = cell<string | null>(null);
 
   constructor(ctx: AudioContext, opts: FilePlayerOptions = {}) {
@@ -60,6 +68,7 @@ export class FilePlayer extends AudioProcessor<
     const playing = cell(false);
     const time = cell(0);
     const duration = cell(NaN);
+    const error = cell<MediaError | null>(null);
 
     super(ctx, ({ param }) => ({
       params: {
@@ -81,11 +90,12 @@ export class FilePlayer extends AudioProcessor<
           },
         }),
       },
-      cells: { isPlaying: readonlyCell(playing), currentTime: readonlyCell(time), duration: readonlyCell(duration) },
+      cells: { isPlaying: readonlyCell(playing), currentTime: readonlyCell(time), duration: readonlyCell(duration), error: readonlyCell(error) },
     }));
     this._playing = playing;
     this._time = time;
     this._duration = duration;
+    this._error = error;
 
     this.audio = audio;
     this._source = source;
@@ -113,12 +123,20 @@ export class FilePlayer extends AudioProcessor<
     on("loadedmetadata", () => {
       this._duration.value = audio.duration;
     });
+    on("error", () => {
+      this._error.value = audio.error;
+    });
     on("ended", () => {
       this._playing.value = false;
       for (const cb of [...this._endedCbs]) cb();
     });
 
     if (opts.src != null) this.src = opts.src;
+  }
+
+  /** The playhead in seconds, read live from the element (a plain getter, not tracked): read it per frame to animate; `cells.currentTime` only changes at `timeupdate`. */
+  get position(): number {
+    return this.audio.currentTime;
   }
 
   get output(): AudioNode {
@@ -138,6 +156,7 @@ export class FilePlayer extends AudioProcessor<
     this._playing.value = false;
     this._time.value = 0;
     this._duration.value = NaN;
+    this._error.value = null;
   }
 
   /** Loop the stream. Reads and writes `params.loop`. */

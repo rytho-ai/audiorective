@@ -884,8 +884,10 @@ player.params.volume: SchedulableParam
 player.params.loop: Param<boolean>
 player.params.playbackRate: Param<number>
 player.cells.isPlaying: ReadonlyCell<boolean>    // cells are written only by the player,
-player.cells.currentTime: ReadonlyCell<number>   // from the element's events and its own methods
+player.cells.currentTime: ReadonlyCell<number>   // from the element's events and its own methods; updates at timeupdate (~4 Hz)
 player.cells.duration: ReadonlyCell<number>      // NaN until loadedmetadata fires
+player.cells.error: ReadonlyCell<MediaError | null> // the element's error after a load/decode failure; null again once src is set
+player.position: number                // the playhead read live from the element; plain getter, read it per frame
 
 // property forms of the params
 player.loop = true;
