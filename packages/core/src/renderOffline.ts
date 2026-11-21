@@ -12,7 +12,7 @@ export interface RenderOfflineOptions {
  */
 export async function renderOffline(options: RenderOfflineOptions, setup: (ctx: OfflineAudioContext) => void | Promise<void>): Promise<AudioBuffer> {
   const sampleRate = options.sampleRate ?? 44100;
-  const ctx = new OfflineAudioContext(options.channels ?? 2, Math.ceil(options.seconds * sampleRate), sampleRate);
+  const ctx = new OfflineAudioContext(options.channels ?? 2, Math.ceil(options.seconds * sampleRate - 1e-6), sampleRate);
   await setup(ctx);
   return ctx.startRendering();
 }

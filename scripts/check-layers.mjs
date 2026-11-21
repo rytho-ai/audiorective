@@ -18,8 +18,8 @@ const CAPABILITIES = {
   player: { entry: "WavePlayer.ts", helpers: { "WavePlayer.ts": ["source.ts"] }, private: ["source.ts"] },
   recorder: {
     entry: "AudioRecorder.ts",
-    helpers: { "AudioRecorder.ts": ["recording/*", "MicrophoneInput.ts"] },
-    private: ["recording/*", "MicrophoneInput.ts"],
+    helpers: { "AudioRecorder.ts": ["recording/*", "MicrophoneInput.ts", "placement.ts"] },
+    private: ["recording/*", "MicrophoneInput.ts", "placement.ts"],
   },
   samples: { entry: "SampleLibrary.ts", helpers: {}, private: [] },
   pads: { entry: "PadBank.ts", helpers: {}, private: [] },

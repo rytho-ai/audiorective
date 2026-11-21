@@ -22,4 +22,9 @@ describe("renderOffline", () => {
     expect(buf.numberOfChannels).toBe(2);
     expect(buf.sampleRate).toBe(44100);
   });
+  it("renders exactly seconds x sampleRate frames despite float error", async () => {
+    // 18.6 * 48000 === 892800.0000000001, which a bare Math.ceil rounds up to 892801
+    const buf = await renderOffline({ seconds: 18.6, channels: 1, sampleRate: 48000 }, () => {});
+    expect(buf.length).toBe(892800);
+  });
 });
