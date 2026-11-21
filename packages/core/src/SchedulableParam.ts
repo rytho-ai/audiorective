@@ -2,10 +2,15 @@ import type { ParamOptions, SignalAccessor } from "./types";
 import { Param } from "./Param";
 import { ParamSync } from "./ParamSync";
 
+/** Seconds a smoothed write waits before it starts: `currentTime` lags the audio thread by a render buffer, and an event in the past would start part-way along its curve. */
+const SMOOTHING_LEAD = 0.01;
+
 export interface SchedulableParamOptions extends ParamOptions<number> {
   syncInterval?: number;
   audioParam: AudioParam;
   audioContext: BaseAudioContext;
+  /** Seconds a `.value` write takes to settle, like `setTargetAtTime`; 0 (default) jumps like a native AudioParam. */
+  smoothing?: number;
 }
 
 /**
@@ -19,9 +24,14 @@ export class SchedulableParam extends Param<number> {
   private readonly _audioContext: BaseAudioContext;
   // The plain signal, for ParamSync read-back: it must update the value without writing the AudioParam.
   private readonly _signal: SignalAccessor<number>;
+  // The constructor's default write must jump, whatever `smoothing` is.
+  private _ready = false;
 
   /** Fires on every change, including while a scheduled ramp moves the value. */
   declare readonly subscribe: Param<number>["subscribe"];
+
+  /** Seconds a `.value` write takes to settle; 0 jumps. Scheduled ramps, the initial value and writes before the context clock first runs are never smoothed. */
+  smoothing = 0;
 
   /** Backing AudioParam, for graph param sinks. */
   get audioParam(): AudioParam {
@@ -36,7 +46,10 @@ export class SchedulableParam extends Param<number> {
     const accessor = ((...args: [] | [number]) => {
       if (args.length === 0) return raw();
       raw(args[0]);
-      this._audioParam.value = args[0];
+      // Nothing has been heard before the clock first runs, so a write at time 0 jumps (an offline render starts at the value you set).
+      if (this.smoothing > 0 && this._ready && this._audioContext.currentTime > 0)
+        this._audioParam.setTargetAtTime(args[0], this._audioContext.currentTime + SMOOTHING_LEAD, this.smoothing / 5);
+      else this._audioParam.value = args[0];
     }) as SignalAccessor<number>;
     (this as { $: SignalAccessor<number> }).$ = accessor;
     this._audioContext = options.audioContext;
@@ -46,6 +59,8 @@ export class SchedulableParam extends Param<number> {
 
     // actively sync default value to audioParam
     this.value = options.default;
+    this.smoothing = options.smoothing ?? 0;
+    this._ready = true;
   }
 
   /**

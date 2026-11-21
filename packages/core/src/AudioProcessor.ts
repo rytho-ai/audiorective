@@ -16,10 +16,10 @@ export type ParamRegistry = Record<string, Param<any>>;
 export type CellRegistry = Record<string, Cell<any> | ReadonlyCell<any>>;
 
 export interface BuildHelpers {
-  param<T extends number>(options: Omit<ParamOptions<T>, "bind"> & { bind: AudioParam }): SchedulableParam;
+  param<T extends number>(options: Omit<ParamOptions<T>, "bind"> & { bind: AudioParam; smoothing?: number }): SchedulableParam;
   param<T>(options: ParamOptions<T> & { bind: ParamBind<T> }): Param<T>;
   param<T>(options: ParamOptions<T>): Param<T>;
-  schedulableParam(options: Omit<ParamOptions<number>, "bind"> & { bind?: AudioParam }): SchedulableParam;
+  schedulableParam(options: Omit<ParamOptions<number>, "bind"> & { bind?: AudioParam; smoothing?: number }): SchedulableParam;
   cell<T>(initial: T): Cell<T>;
 }
 
@@ -56,7 +56,7 @@ export abstract class AudioProcessor<P extends ParamRegistry = ParamRegistry, C 
     this._silencer.connect(context.destination);
 
     const helpers: BuildHelpers = {
-      param: (<T>(options: ParamOptions<T> & { bind?: ParamBind<T> | AudioParam }): Param<T> | SchedulableParam => {
+      param: (<T>(options: ParamOptions<T> & { bind?: ParamBind<T> | AudioParam; smoothing?: number }): Param<T> | SchedulableParam => {
         const { bind } = options;
         if (bind instanceof AudioParam) {
           return new SchedulableParam({
@@ -68,6 +68,7 @@ export abstract class AudioProcessor<P extends ParamRegistry = ParamRegistry, C 
             max: options.max,
             step: options.step,
             display: options.display as ((value: number) => string) | undefined,
+            smoothing: options.smoothing,
           });
         }
         return new Param<T>(options as ParamOptions<T>);
