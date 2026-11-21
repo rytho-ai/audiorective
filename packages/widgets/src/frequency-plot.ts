@@ -164,6 +164,7 @@ type NumericControl = { value: number };
 export type EqBand = Readonly<{ id: string; label: string; frequency: NumericControl; gain?: NumericControl; q?: NumericControl }>;
 export type EqEditorOptions = FrequencyRange & {
   label?: string;
+  /** Borrowed live controls; external parameter or preset writes update the mounted controls and response in place. */
   bands: readonly EqBand[];
   minQ?: number;
   maxQ?: number;

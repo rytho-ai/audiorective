@@ -4,16 +4,19 @@ export type { WaveStretchAnchor } from "@audiorective/player";
 import type { TimeViewPlugin } from "./types";
 
 export interface WarpMarkerOptions {
+  /** Borrowed snapshots; replacement cancels stale drags and updates retained handles/focus in place. */
   anchors: Readable<readonly WaveStretchAnchor[]>;
   sampleRate: number;
   sourceFrames: number;
   sourceFrameAt(outputSeconds: number): number;
+  /** Default false; true cancels input while keeping markers visible. */
   disabled?: Readable<boolean>;
+  /** One owner edit after release or a key edit; Escape, pointercancel, capture loss and detach cancel previews. */
   onCommit(points: readonly WaveStretchAnchor[]): void;
   label?: string;
 }
 
-/** A borrowed seconds-view editor. Rendering and changing PCM are caller responsibilities. */
+/** Borrowed seconds-view editor: arrows move, Delete removes. Drags preview locally; PCM processing remains caller-owned. */
 export function createWarpMarkers(options: WarpMarkerOptions): TimeViewPlugin {
   const { sampleRate, sourceFrames } = options;
   if (!Number.isInteger(sampleRate) || sampleRate <= 0 || !Number.isInteger(sourceFrames) || sourceFrames < 1)

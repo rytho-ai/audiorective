@@ -3,8 +3,9 @@ import { AutomationCurve, type AutomationPoint } from "@audiorective/core/automa
 import type { TimeViewPlugin } from "./types";
 
 export interface AutomationOverlayOptions {
-  /** Borrowed tracked snapshots; direct AutomationCurve and readonlyCell projections fit. */
+  /** Borrowed tracked snapshots; replacement cancels stale drags and updates retained handles/focus in place. */
   points: { readonly value: readonly AutomationPoint[] };
+  /** One owner edit after release or a key edit; Escape, pointercancel, capture loss and detach cancel previews. */
   onCommit(points: readonly AutomationPoint[]): void;
   fromView(time: number): number;
   toView(time: number): number;
@@ -18,7 +19,7 @@ export interface AutomationOverlayOptions {
   disabled?: Readable<boolean>;
 }
 
-/** Edit a borrowed curve over a time view, with a single commit at the end of each gesture. */
+/** Borrowed curve editor: arrow keys move, Enter toggles shape, Delete removes. Drags preview locally until release. */
 export function createAutomationOverlay(options: AutomationOverlayOptions): TimeViewPlugin {
   const { maxValue, defaultValue, fromView, toView } = options;
   if (!Number.isFinite(maxValue) || maxValue <= 0 || !Number.isFinite(defaultValue) || defaultValue < 0 || defaultValue > maxValue) {

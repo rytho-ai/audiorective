@@ -17,7 +17,7 @@ predates that API. See the "Version mismatches" note in the skill.
 
 - **widgets:** selector `controls` and `audition` flags work independently (both default `true`), with `getViewport`, zoom/amplitude-zoom and scroll methods for shared-player views. `StepGridPluginContext.onCell` supplies each live step's tracked owner, geometry slot and scoped cleanup; step indices are zero-based.
 - **widgets:** direct dBFS peak callbacks or PCM `LevelMeterSource`, explicit `LevelMeterHandle`/`LevelSnapshot` types, public `MixerStripSettings`/`MixerMeter`, and player-owned `WaveStretchAnchor` plus `ClipEnvelope` exports. Scalar peak sources report unknown RMS as `null`; PCM sources retain measured peak/RMS.
-- **docs / skill:** basic Widgets and Widgets: advanced pages route common mounts separately from renderers, plugins, time mappings and arrangement gestures, while retaining historical anchors and widget-area error rows.
+- **docs / skill:** basic Widgets and Widgets: advanced pages route common mounts separately from renderers, plugins, time mappings and arrangement gestures, while retaining historical anchors and widget-area error rows. Public widget declarations state local-preview, cancellation, keyboard and live-preset guarantees.
 
 - **core/automation:** `AutomationClip(curve, { target, loop?, length?, signal? })` follows `clock.attach(clip)`: curve times are beats, with tempo ramps, seeks, live edits and loop seams handled by the owner. `cells.attached` is read-only; detach and dispose cancel queued changes while holding current audio. `AutomationBinding` remains the finite owner for fixed caller-chosen units.
 
