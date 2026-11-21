@@ -1232,8 +1232,19 @@ try {
   const flat = await eqCurve.getAttribute("d");
   const mid = eq.getByRole("button", { name: "中頻", exact: true });
   await mid.press("ArrowUp");
+  // Project/rack application precedes native smoothing and ParamSync's display readback.
+  await page.evaluate(() => window.__daw.workspace.flush());
+  await page.waitForFunction((previous) => {
+    const curve = document.querySelector('[aria-label="EQ 頻率響應"] .ar-frequency-curve')?.getAttribute("d");
+    return typeof curve === "string" && curve !== previous;
+  }, flat);
   assert.notEqual(await eqCurve.getAttribute("d"), flat);
   await rack.getByRole("button", { name: "EQ 旁通" }).click();
+  await page.evaluate(() => window.__daw.workspace.flush());
+  await page.waitForFunction(
+    (previous) => document.querySelector('[aria-label="EQ 頻率響應"] .ar-frequency-curve')?.getAttribute("d") === previous,
+    flat,
+  );
   assert.equal(await eqCurve.getAttribute("d"), flat);
   await rack.getByRole("button", { name: "EQ 往前" }).click();
   assert.deepEqual(await slotTypes(), ["eq", "filter"]);
