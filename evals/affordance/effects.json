@@ -1,0 +1,133 @@
+{
+  "area": "effects",
+  "description": "API-shape experiment for audio effects in a browser app: an insert chain with bypass and wet/dry, a mixer with channel strips, a send/return reverb, mute/solo and meters, sidechain-style ducking, a live parameter UI with automation and takeover, a user-editable effect chain, and offline time-stretching with cancellation and errors. The same six tasks are given with no API (desire mode) or with one variant's type declarations only (guess mode). Expectations are variant-agnostic: they describe behaviour, not names. Sources are app-owned AudioNodes named in each prompt, so no task needs playback code of its own.",
+  "tasks": [
+    {
+      "id": "E1-insert-chain",
+      "prompt": "A browser podcast editor has an AudioContext and a vocal track already playing into an AudioNode `vocal` (a MediaElementAudioSourceNode). Put this insert chain on it, in this order, and send the result to the speakers: a high-pass filter at 100 Hz with a 24 dB/octave slope, a compressor (threshold -20 dB, ratio 3:1, attack 5 ms, release 150 ms), a ping-pong delay of an eighth note at 120 BPM with 30% feedback, and a reverb using the impulse response at `/ir/plate.wav`. Each insert gets a 'bypass' checkbox that takes it out of the sound while the track plays, without a click, without dropping audio and without losing its settings; the delay and the reverb each get a wet/dry slider (0-100%, delay starts at 25%, reverb at 20%). Show 'Loading reverb...' until the impulse response is ready and an error message if it fails to load. A 'Close' button tears the whole chain down and releases its resources. Browser autoplay rules apply.",
+      "expectations": [
+        "The four inserts run in the stated order (high-pass, compressor, delay, reverb) between `vocal` and the speakers, with high-pass 100 Hz at a 24 dB/octave slope, compressor -20 dB / 3:1 / 5 ms / 150 ms and 0.3 delay feedback.",
+        "The delay time is an eighth note at 120 BPM, 0.25 s.",
+        "Bypass removes one insert from the sound while keeping its settings and without a click or a gap: the signal still flows through the rest of the chain (a dry path or the toolkit's mix/bypass control, faded rather than hard-switched), and toggling back restores the same effect.",
+        "Wet/dry for the delay and the reverb is a mix between the dry and processed signal (one control per effect mapped from 0-100% to 0-1), starting at 25% and 20%, rather than only scaling the effect's output.",
+        "The reverb's impulse response is loaded from the URL with a loading state shown until it is ready and a visible error message when loading or decoding fails.",
+        "Close disconnects and releases every node or processor the chain created (no leaked nodes, workers or listeners), without closing an AudioContext the app owns.",
+        "The audio context is resumed from a user gesture before audio is expected."
+      ],
+      "checks": [
+        {
+          "expectation": 1,
+          "label": "delay of an eighth note at 120 BPM is 0.25 s",
+          "any": [
+            "0\\.25\\b",
+            "60\\s*/\\s*120\\s*/\\s*2",
+            "30\\s*/\\s*120",
+            "\\(\\s*60\\s*/\\s*120\\s*\\)\\s*\\*\\s*0\\.5",
+            "\\(\\s*60\\s*/\\s*120\\s*\\)\\s*/\\s*2"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "E2-mixer-sends",
+      "prompt": "Build the mixer for a browser multitrack player. Four stems are already playing into AudioNodes: `tracks.drums`, `tracks.bass`, `tracks.keys`, `tracks.vox`. Each track gets a channel strip: a volume fader in dB (-60 to +6, default 0), a pan knob (-1..1), Mute and Solo buttons, a 'Reverb' send knob in dB (-60 to 0, default -60), and a post-fader level meter in dBFS. Mute and the send are post-fader, so a muted track sends nothing new to the reverb but the reverb tail already sounding keeps ringing. Solo works like a hardware desk: when any track is soloed only soloed tracks are heard, and the reverb return stays audible. The reverb is one shared return using the impulse response at `/ir/hall.wav`, with its own return fader in dB. The vocal strip also has a lookahead limiter insert (threshold -3 dB, 5 ms lookahead) before its fader, and all four tracks must stay sample-aligned with each other at the master output. Everything ends up on the speakers. Write the audio code plus enough DOM to drive it.",
+      "expectations": [
+        "Fader and send values are converted from dB to linear gain as 10^(dB/20) (or a toolkit dB helper), with -60 dB treated as near silence or off.",
+        "Pan uses a stereo panner or an equivalent -1..1 control per strip.",
+        "Each track's send feeds one shared reverb return after the fader and after mute, so muting a track stops new input to the reverb without cutting the tail already in the reverb; the return has its own fader and reaches the master.",
+        "Solo logic: with any track soloed, every non-soloed track is silenced (without changing its stored fader value) and the reverb return stays audible; clearing all solos restores the previous mutes and levels.",
+        "The 5 ms lookahead limiter on the vocal does not put the vocal out of time with the other tracks: the other tracks (and the vocal's dry/send paths) are delayed to match its latency, either by the toolkit's latency compensation or by explicit matching delays.",
+        "Each strip shows a post-fader level in dBFS updated at display rate (from an analyser or meter read in an animation-frame loop or a toolkit meter), not a value computed once.",
+        "The impulse response is loaded asynchronously before or while the mixer starts, with a failure surfaced rather than ignored."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "converts dB to linear gain (10^(dB/20) or a toolkit dB helper)",
+          "any": ["10\\s*\\*\\*", "Math\\.pow\\(\\s*10", "dbToGain", "dBToGain", "dbToLinear", "fromDb", "decibelsToGain"]
+        }
+      ]
+    },
+    {
+      "id": "E3-ducking",
+      "prompt": "A browser radio-show app plays a music bed into an AudioNode `music` and the host's microphone into an AudioNode `mic` (both already running). When the host talks, the music must duck automatically: about 8 dB of gain reduction on the music, reacting within about 10 ms when speech starts and recovering over about 300 ms after it stops. The microphone itself goes to the speakers unchanged and is never mixed into the music path, and the music's own loudness must not trigger the ducking. Show the current amount of ducking in dB as a small number that updates smoothly while it happens, and add an 'Auto-duck' checkbox that turns ducking off (music back to full level, without a click) and on again.",
+      "expectations": [
+        "The ducking is keyed by the microphone signal level (sidechain), not by the music's own level; the microphone reaches the speakers unchanged and is not added to the music signal.",
+        "The music is reduced by about 8 dB while the host speaks, with an attack around 10 ms and a release around 300 ms, applied as a smooth gain change (an audio-rate detector/compressor or scheduled ramps), not by stepping the gain value.",
+        "The displayed ducking amount in dB is read from the actual gain reduction and updates at display rate, and stops updating when the view is torn down.",
+        "Turning Auto-duck off brings the music back to full level smoothly and stops further ducking; turning it on resumes ducking.",
+        "Uses the toolkit's dynamics processing where it can do the job; any detector or envelope logic written by hand runs without blocking the main thread at audio rate (no setInterval loop doing per-sample work)."
+      ]
+    },
+    {
+      "id": "E4-param-ui-automation",
+      "prompt": "A browser synth's output already runs into an AudioNode `synthOut`. Put a low-pass filter on it and build its control panel: a cutoff slider (20 Hz to 20 kHz on a logarithmic scale, default 1 kHz) with a readout in Hz, and a resonance slider (0.1 to 20). Add a 'Sweep' button that automates the cutoff from 200 Hz to 8 kHz exponentially over 4 bars of a 120 BPM 4/4 song, starting now; while the sweep runs, the cutoff slider and readout must move with it. If the user grabs the cutoff slider during the sweep, the sweep stops where it is and the cutoff follows the slider from there, with no jump or zipper noise. Moving the sliders by hand must also be click-free. The panel must stop observing the filter when it is removed from the page.",
+      "expectations": [
+        "The cutoff slider maps logarithmically between 20 Hz and 20 kHz (e.g. f = 20 * 1000^x) with a default of 1 kHz, and the readout shows the current value in Hz.",
+        "The sweep is scheduled on the audio clock (an AudioParam-style ramp or automation curve), not driven by setInterval/requestAnimationFrame writes to the cutoff.",
+        "The sweep is exponential from 200 Hz to 8000 Hz and lasts 8 seconds (4 bars at 120 BPM).",
+        "While the sweep runs, the slider and readout follow the actual moving cutoff (a change notification that fires during scheduled ramps, or a display-rate read of the current value).",
+        "Grabbing the slider during the sweep cancels the remaining automation while holding the current value (no jump back to the start or end value), then the cutoff follows the slider.",
+        "Manual slider changes reach the filter smoothly (a short ramp/time constant or a parameter that smooths by itself), not as hard steps that click.",
+        "Observation is cleaned up when the panel is removed (unsubscribe / dispose of the effect / cancel the animation frame)."
+      ],
+      "checks": [
+        {
+          "expectation": 2,
+          "label": "exponential to 8 kHz over 8 s",
+          "all": ["[Ee]xponential", "8000|8e3|8_000"],
+          "any": [
+            "\\+\\s*8\\b",
+            "\\b8\\b",
+            "4\\s*\\*\\s*4\\s*\\*\\s*\\(?\\s*60\\s*/\\s*120",
+            "16\\s*\\*\\s*\\(?\\s*60\\s*/\\s*120",
+            "16\\s*\\*\\s*0\\.5",
+            "\\b8\\.0\\b",
+            "\\*\\s*\\(?\\s*60\\s*/\\s*\\w+",
+            "\\*\\s*60\\s*\\)?\\s*/\\s*\\w+"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "E5-editable-chain",
+      "prompt": "A browser guitar app runs the instrument input into an AudioNode `guitar` and wants a pedalboard the player edits while playing. The board starts with a low-pass filter (2 kHz) followed by a delay (0.35 s, 40% feedback, 30% wet). The player can add a pedal from a menu (filter, delay, 3-band EQ, distortion), remove any pedal, move a pedal up or down in the chain, toggle each pedal's bypass, and change each pedal's main settings with sliders. None of these edits may click, drop out or reset the other pedals: a delay's echoes keep ringing when another pedal is moved or removed, and a pedal keeps its settings when it is moved. A 'Save' button stores the board (order, types, settings, bypass) in localStorage and 'Load' restores it later, rejecting malformed saved data with a message instead of breaking the running chain. The board's output goes to the speakers.",
+      "expectations": [
+        "The audio graph always matches the current pedal order: after add, remove or move, `guitar` flows through exactly the listed pedals in order to the speakers, with no stale connection left from the previous order.",
+        "Moving or bypassing a pedal keeps the same pedal instance and its settings (it is not torn down and rebuilt), so an existing delay keeps its echoes when another pedal moves.",
+        "Removing a pedal releases its resources (disconnect/dispose) and does not interrupt the other pedals.",
+        "Edits are click-free: reconnection or bypass uses a short crossfade/ramp or a toolkit operation documented as glitch-free, not an abrupt disconnect while audio flows.",
+        "All four pedal types (filter, delay, 3-band EQ, distortion) can be added, each with sliders for its main settings.",
+        "Save writes a JSON description of order, type, settings and bypass; Load validates it, shows a message for malformed data and leaves the running board unchanged in that case."
+      ]
+    },
+    {
+      "id": "E6-time-stretch",
+      "prompt": "In a browser loop tool the user drops an audio file of a 4-bar drum loop and types its tempo (for example 92 BPM); the project runs at a tempo shown in a number input (120 BPM by default). Time-stretch the loop to the project tempo without changing its pitch, using the Rubber Band WebAssembly build served at `/wasm/rubberband.wasm`, then preview the stretched loop looping seamlessly. Show 'Stretching...' while it works and a Cancel button that abandons the job. If the user changes the project tempo while a stretch is running, abandon that job and start a new one; a stale result must never replace a newer one. Show a clear message when the WebAssembly cannot be loaded or the file cannot be decoded; a cancelled job is not an error and must not show one. Free the stretcher's resources when the tool closes.",
+      "expectations": [
+        "Uses a pitch-preserving time-stretch (the toolkit's stretcher), not playbackRate or detune, which would change the pitch.",
+        "The stretch factor is computed from the loop's tempo and the project tempo (a ratio of the two), not hard-coded.",
+        "The factor is applied in the direction the stretcher's declared convention requires, so the result lasts exactly 4 bars at the project tempo (from 92 to 120 BPM the loop gets shorter, about 10.43 s to 8 s).",
+        "The WebAssembly module is fetched and compiled once and reused across jobs, with a load failure shown as an error message.",
+        "Cancel and tempo changes abort the running job (an abort signal or equivalent); a job's result is applied only if it is still the latest job, and an abort is distinguished from a real error so no error message appears.",
+        "The stretched result is turned into something playable (an AudioBuffer from the per-channel samples at the right sample rate) and previewed as a seamless loop.",
+        "Decode failures are reported, and the stretcher is released when the tool closes."
+      ],
+      "checks": [
+        {
+          "expectation": 1,
+          "label": "ratio derived from both tempos",
+          "any": [
+            "92\\s*/\\s*120",
+            "120\\s*/\\s*92",
+            "source[A-Za-z]*\\s*/\\s*(project|target|song)[A-Za-z]*",
+            "(project|target|song)[A-Za-z]*\\s*/\\s*(source|loop|file)[A-Za-z]*",
+            "(loop|file|orig)[A-Za-z]*[Bb]pm\\s*/\\s*[A-Za-z]*[Bb]pm",
+            "[A-Za-z]*[Bb]pm\\s*/\\s*(loop|file|orig|source)[A-Za-z]*",
+            "[Ff]rames\\w*\\s*\\)?\\s*/\\s*\\(?\\s*\\w*[Ff]rames"
+          ]
+        }
+      ]
+    }
+  ]
+}
