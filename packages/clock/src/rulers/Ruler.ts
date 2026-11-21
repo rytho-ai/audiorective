@@ -116,6 +116,7 @@ export function* gridPoints(startBeat: number, endBeat: number, stepBeats: numbe
  * `gridPoints` with the running index folded into the cycle it belongs to.
  * `division` is the caller's steps-per-cycle, so `step` lands in
  * [0, division) and indexes a pattern of that length directly.
+ * Takes the same minimal BeatTiming as gridPoints, including a scheduler's timing argument.
  *
  * Options that would make `division` unusable (0, negative, non-finite) also
  * make `stepBeats` unusable, so `gridPoints` has already returned without
@@ -127,7 +128,7 @@ export function* cycleGridPoints(
   stepBeats: number,
   originBeat: number,
   division: number,
-  timeline: TimelineLike,
+  timeline: BeatTiming,
 ): Generator<CycleGridPoint> {
   for (const { beat, when, index } of gridPoints(startBeat, endBeat, stepBeats, originBeat, timeline)) {
     // Floored division, not `%`: JS's remainder keeps the sign of the

@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
 import type { BeatTiming } from "@audiorective/core";
-import { gridPoints } from "../src/rulers/Ruler";
+import { gridPoints, cycleGridPoints } from "../src/rulers/Ruler";
 import type { TimelineLike } from "../src/rulers/Ruler";
 import { LinearBarRuler } from "../src/rulers/LinearBarRuler";
 import { CycleBarRuler } from "../src/rulers/CycleBarRuler";
@@ -334,5 +334,11 @@ describe("gridPoints — scheduler timing", () => {
   test("takes the BeatTiming a scheduler's schedule(window, timing) receives", () => {
     const timing: BeatTiming = { beatToTime: (beat) => 10 + beat / 2, timeToBeat: (time) => (time - 10) * 2 };
     expect(collect(gridPoints(0, 1, 0.25, 0, timing)).map((p) => p.when)).toEqual([10, 10.125, 10.25, 10.375]);
+    expect(collect(cycleGridPoints(0, 1, 0.25, 0, 4, timing)).map((p) => [p.when, p.step])).toEqual([
+      [10, 0],
+      [10.125, 1],
+      [10.25, 2],
+      [10.375, 3],
+    ]);
   });
 });

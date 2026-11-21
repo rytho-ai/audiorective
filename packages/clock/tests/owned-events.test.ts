@@ -447,6 +447,67 @@ test("refresh on an inactive clock is already completed without emitting windows
   }
 });
 
+test("detach retracts its scheduler's sounding and future events while other owners keep playing", () => {
+  let now = 0;
+  const ticks = new ManualTickSource();
+  const ownHits = [event(), event()];
+  const other = event();
+  const direct = event();
+  const clock = new Clock({
+    context: {
+      get currentTime() {
+        return now;
+      },
+    },
+    tickSource: ticks,
+    onTick(window) {
+      window.own(direct.value, 0.05);
+    },
+  });
+  const detach = clock.attach({
+    schedule(window) {
+      window.own(ownHits[0]!.value, 0);
+      window.own(ownHits[1]!.value, 0.05);
+    },
+  });
+  clock.attach({ schedule: (window) => window.own(other.value, 0.05) });
+  try {
+    clock.start();
+    ticks.tick();
+    now = 0.025;
+    detach();
+    detach();
+    for (const hit of ownHits) {
+      expect(hit.cancel).toHaveBeenCalledTimes(1);
+      expect(hit.cancel).toHaveBeenCalledWith(0.025);
+    }
+    expect(other.cancel).not.toHaveBeenCalled();
+    expect(direct.cancel).not.toHaveBeenCalled();
+    expect(clock.state.value).toBe("playing");
+  } finally {
+    clock.dispose();
+  }
+});
+
+test("a retained window cannot register new events after its scheduler detaches", () => {
+  const ticks = new ManualTickSource();
+  const clock = new Clock({ context: { currentTime: 0 }, tickSource: ticks });
+  let own!: (hit: CancellableEvent, when: number) => void;
+  const detach = clock.attach({ schedule: (window) => void (own = window.own) });
+  const late = event();
+  try {
+    clock.start();
+    ticks.tick();
+    detach();
+    own(late.value, 0.05);
+    expect(late.cancel).toHaveBeenCalledTimes(1);
+    clock.stop();
+    expect(late.cancel).toHaveBeenCalledTimes(1);
+  } finally {
+    clock.dispose();
+  }
+});
+
 test("a detached handle's refresh completes without retracting another scheduler's events", async () => {
   const ticks = new ManualTickSource();
   const clock = new Clock({ context: { currentTime: 0 }, tickSource: ticks });

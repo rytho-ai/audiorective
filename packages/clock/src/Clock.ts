@@ -188,7 +188,8 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
 
   /**
    * Follow this clock with a scheduler: it receives every window after `onTick`, with this clock's timeline as its timing. Several schedulers
-   * share one transport and stay beat-aligned. Returns a detach function (idempotent) that calls `scheduler.reset("detach")` and stops the windows. A scheduler with an
+   * share one transport and stay beat-aligned. Returns an idempotent detach function: it cancels this scheduler's owned events at now, calls
+   * `scheduler.reset("detach")`, and stops its windows while other registrations keep playing. A scheduler with an
    * `attached(handle)` hook is called synchronously with its transport's `timeline`, `state` and `meter` (and `refresh()` after its own edits) and may return a cleanup
    * that runs on detach. A scheduler with a `transport(change)` hook hears every start, stop, pause, resume, seek and tempo change.
    * Attaching while playing refreshes the look-ahead so the scheduler's first hits are not missed. An error thrown by a scheduler is logged
@@ -202,6 +203,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     const detach = () => {
       if (!this._schedulers.delete(scheduler)) return;
       detached = true;
+      this._cancelOwned(false, this._timeline.now, scheduler);
       this._resetScheduler(scheduler, "detach");
       this._cleanupScheduler(scheduler);
     };
@@ -410,10 +412,11 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     this._schedulers.clear();
   }
 
-  private _cancelOwned(fromNow = false, now = this._timeline.now): void {
+  private _cancelOwned(fromNow = false, now = this._timeline.now, owner?: Scheduler): void {
     this._cancelling++;
     try {
       for (const [event, when] of [...this._owned]) {
+        if (owner && this._owners.get(event) !== owner) continue;
         if (fromNow && when < now) continue;
         this._owned.delete(event);
         this._owners.delete(event);
@@ -452,7 +455,13 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
       event.cancel();
       throw new RangeError("Clock owned event time must be finite, non-negative seconds.");
     }
-    if (this._disposed || this._cancelling || this._timeline._transportState !== "playing" || this._timeline.generation !== generation) {
+    if (
+      this._disposed ||
+      this._cancelling ||
+      (owner && !this._schedulers.has(owner)) ||
+      this._timeline._transportState !== "playing" ||
+      this._timeline.generation !== generation
+    ) {
       event.cancel();
       return;
     }

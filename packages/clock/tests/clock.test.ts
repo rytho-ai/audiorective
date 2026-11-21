@@ -4,6 +4,7 @@ import type { TickWindow, MissedGap } from "../src/Clock";
 import { Timeline } from "../src/Timeline";
 import { ManualTickSource } from "../src/TickSource";
 import { LinearBarRuler } from "../src/rulers/LinearBarRuler";
+import { CycleBarRuler } from "../src/rulers/CycleBarRuler";
 
 function makeContext(startAt = 0) {
   return { currentTime: startAt };
@@ -317,4 +318,52 @@ describe("Clock — over a tempo ramp", () => {
     });
     clock.dispose();
   });
+});
+
+test("taking over a tempo ramp preserves the current beat and the ramp history", () => {
+  const { clock, ctx } = makeHarness();
+  try {
+    clock.start();
+    clock.bpm.setValueAtTime(120, 0);
+    clock.bpm.linearRampToValueAtTime(240, 2);
+    ctx.currentTime = 1;
+    expect(clock.beat).toBeCloseTo(2.5, 12);
+    clock.bpm.cancelAndHoldAtTime(ctx.currentTime);
+    clock.bpm.value = 90;
+    expect(clock.beat).toBeCloseTo(2.5, 12);
+    expect(clock.timeline.timeToBeat(0.5)).toBeCloseTo(1.125, 12);
+    expect(clock.timeline.position).toBe(1);
+    // More slider writes at the same audio instant keep the incoming ramp.
+    clock.bpm.cancelAndHoldAtTime(ctx.currentTime);
+    clock.bpm.value = 60;
+    expect(clock.beat).toBeCloseTo(2.5, 12);
+    clock.bpm.cancelAndHoldAtTime(ctx.currentTime);
+    clock.bpm.value = 90;
+    expect(clock.timeline.timeToBeat(0.5)).toBeCloseTo(1.125, 12);
+    ctx.currentTime = 2;
+    expect(clock.beat).toBeCloseTo(4, 12);
+    expect(clock.timeline.beatToTime(4)).toBeCloseTo(2, 12);
+    expect(clock.bpm.valueAtTime(3)).toBe(90);
+  } finally {
+    clock.dispose();
+  }
+});
+
+test("repeated look-ahead refreshes keep a negative count-in on its exact bar boundary", async () => {
+  const { clock, ctx } = makeHarness();
+  const bar = new LinearBarRuler({ numerator: 6, denominator: 8 });
+  const loop = new CycleBarRuler({ numerator: 6, denominator: 8, bars: 2 });
+  try {
+    clock.start(0.5, -1);
+    for (const time of [0, 0.248, 0.752, 1]) {
+      ctx.currentTime = time;
+      await clock.refresh();
+    }
+    expect(clock.beat).toBeCloseTo(0, 12);
+    expect(bar.at(clock.beat).bar).toBe(0);
+    expect(bar.at(clock.beat).beatInBar).toBe(0);
+    expect(loop.at(clock.beat).phase).toBe(0);
+  } finally {
+    clock.dispose();
+  }
 });

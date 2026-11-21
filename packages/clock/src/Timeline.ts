@@ -189,17 +189,9 @@ export class Timeline<TRulers extends Record<string, Ruler<unknown, unknown>> = 
 
   /** @internal Reissue from Clock's captured audio boundary without moving the heard position. */
   _invalidate(now: number): number {
-    // a start still in the future keeps its anchor: nothing has sounded yet, so only the generation moves
-    if (this._transport === "playing" && now < this._timeAtAnchor) {
-      this._generation++;
-      return this._beatAtAnchor;
-    }
-    const beat = this.timeToBeat(now);
-    const position = this._transport === "playing" ? this._positionAtAnchor + Math.max(0, now - this._timeAtAnchor) : this._positionAtAnchor;
-    this._beatAtAnchor = beat;
-    this._timeAtAnchor = now;
-    this._positionAtAnchor = position;
+    // Refresh changes event ownership, not the transport anchor. Re-anchoring
+    // every small refill accumulates rounding at musical boundaries.
     this._generation++;
-    return beat;
+    return this.timeToBeat(now);
   }
 }

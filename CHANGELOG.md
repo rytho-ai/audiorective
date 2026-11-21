@@ -62,6 +62,11 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Fixed
 
+- **clock:** detach retracts the registration's sounding and future owned events at the current audio time, preserving other schedulers; a retained detached window cannot register new events.
+- **clock:** a slider write after `cancelAndHoldAtTime(now)` preserves an incoming tempo ramp's historical integral, including repeated writes at the same instant, so transport beat does not jump.
+- **clock:** refresh invalidates event ownership without re-anchoring the transport, preventing accumulated rounding from showing the previous bar at a count-in boundary.
+- **clock types:** `cycleGridPoints` accepts the minimal core `BeatTiming`, just as `gridPoints` does; custom schedulers can pass their supplied timing without a Timeline adapter.
+
 - **clock docs:** seconds-based rulers report transport position: start/seek seeds from the chosen beat and BPM, playback advances real seconds, and pauses hold it. Type hints distinguish this from cumulative listening duration across seeks; runtime position behavior is unchanged.
 
 - **clock:** a `refresh()` called from an owned event’s cancellation coalesces with the outer edit, preserving its first captured audio boundary even if the audio clock advances inside the callback.

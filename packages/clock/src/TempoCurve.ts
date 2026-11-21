@@ -5,6 +5,8 @@ interface TempoEvent {
   value: number;
   /** When set, the curve ramps from the previous event to this one (Web Audio semantics). */
   ramp?: RampKind;
+  /** Incoming ramp endpoint before a step at this same instant changes the outgoing value. */
+  rampValue?: number;
 }
 
 /** The curve between two consecutive events: a hold at `v0`, or a ramp from `v0` to `v1` over `[t0, t1]`. */
@@ -112,14 +114,19 @@ export class TempoCurve {
     const cur = events[idx]!;
     const next = events[idx + 1];
     if (!next) return { t0: cur.time, t1: Infinity, v0: cur.value, v1: cur.value, ramp: undefined };
-    return { t0: cur.time, t1: next.time, v0: cur.value, v1: next.value, ramp: next.ramp };
+    return { t0: cur.time, t1: next.time, v0: cur.value, v1: next.rampValue ?? next.value, ramp: next.ramp };
   }
 
-  private _insert(value: number, time: number, ramp: RampKind | undefined): void {
+  private _insert(value: number, time: number, ramp: RampKind | undefined, rampValue?: number): void {
     const events = this._events;
     const idx = this._indexAtOrBefore(time);
-    const event: TempoEvent = ramp ? { time, value, ramp } : { time, value };
+    const event: TempoEvent = ramp ? { time, value, ramp, rampValue } : { time, value };
     if (events[idx]!.time === time) {
+      const previous = events[idx]!;
+      if (!ramp && previous.ramp) {
+        event.ramp = previous.ramp;
+        event.rampValue = previous.rampValue ?? previous.value;
+      }
       events[idx] = event;
       return;
     }
@@ -162,8 +169,9 @@ export class TempoCurve {
     const held = this.valueAt(time);
     const next = this._events.find((e) => e.time >= time);
     const ramp = next?.ramp;
+    const rampValue = next?.time === time ? (next.rampValue ?? next.value) : held;
     this.cancelScheduledValues(time);
-    if (ramp && time > this._events[0]!.time) this._insert(held, time, ramp);
+    if (ramp && time > this._events[0]!.time) this._insert(held, time, ramp, rampValue);
     else this.setValueAtTime(held, time);
   }
 
