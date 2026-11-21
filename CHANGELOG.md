@@ -17,7 +17,7 @@ predates that API. See the "Version mismatches" note in the skill.
 
 - **effects:** `Ducker`, a sidechain ducker: `new Ducker(context, { depth, attack, release, threshold })` lowers its audio by `depth` dB (default 8) while the signal connected to `ducker.sidechain` is above `threshold`; `cells.reduction` is the live reduction in dB. `attack` and `release` are the seconds a full-depth change takes.
 - **effects:** `EffectChain`, an ordered chain of any effect instances: `new EffectChain(context, effects?, { signal })`, `add(effect, index?)`, `remove(effect)`, `move(effect, index)`, `cells.effects`. Every edit is a short crossfade that never clicks, drops out or opens a feedback loop, and the other effects keep their state. `toJSON()` and `EffectChain.restore(context, json, { types })` return `{ chain, issues }`; bad data becomes issues, not throws.
-- **effects:** every effect has `params.bypass: Param<boolean>` (option `bypass`), a click-free fade that keeps the effect's settings, and `cells.status` (`"loading" | "ready" | "error"`), `cells.error` and `ready`. An effect that is not ready (an impulse response, worklet or wasm engine still loading) passes the dry signal.
+- **effects:** every effect has `params.bypass: Param<boolean>` (option `bypass`), a click-free fade that keeps the effect's settings, and `cells.status` (`"loading" | "ready" | "error"`), `cells.error` and `ready`. While loading or after failure, the wet arm is muted and the dry share stays at `1 − wet`; a fully wet return stays silent instead of leaking dry audio. Bypass still passes full dry.
 - **core:** `SchedulableParam.smoothing` (and the `smoothing` option on `SchedulableParam`, `param` and `schedulableParam`): seconds a `.value` write takes to settle with `setTargetAtTime`; the default `0` keeps the native jump. Scheduled ramps and the initial value are never smoothed.
 - **effects:** audible effect params (`wet`, filter `frequency`/`Q`/`gain`, delay `delayTime`/`feedback`, phaser and shifter frequency, compressor `makeup`, `Channel` `gain`/`pan`, send `gain`) ramp over 10 ms on `.value` writes, and a `Distortion` drive change crossfades two shapers.
 - **effects:** `Channel` `cells.level`, the post-fader peak in dBFS (`-Infinity` when silent), refreshed every animation frame.
@@ -56,6 +56,13 @@ predates that API. See the "Version mismatches" note in the skill.
 - **blocks:** `StepSequencer` randomness is a pure function of a step's position. Before, `chance` and `context.random` drew from one stateful source, so any re-queue (an edit through `refreshOnEdit`, `clock.refresh()`, a seek) redrew every pending step: a chance step could flip between sounding and silent and humanize jitter jumped, and offline renders with different tick sizes differed. Now the chance draw is keyed by `seed`, lane, loop and step counter, and `context.randomFor` by the hit's lane, loop, step counter and repeat index, so the same step gets the same numbers in every window. Pass `options.random` to keep the old sequential source (the old instability comes with it).
 
 ### Changed
+
+- **effects docs:** mixer routes using `Channel.send()` use processor `connect()` throughout, so upstream inserts, sends and returns share one latency solve; separate `defineGraph` solves do not share arrival times.
+
+- **effects:** built-in effects allow subclasses to choose their own `static type` for `EffectChain` serialization.
+
+- **effects:** `EffectChain.restore()` reports parameter-bind validation failures as issues instead of throwing; non-loop `TimeStretch.process()` keeps the first sample and exact requested frame count instead of trimming a one-frame loop margin.
+- **effects:** parameter JSDoc states the automatic 10 ms smoothing on wet, channel gain/pan, send gain, filter frequency/Q/gain, delay time/feedback, phaser frequency/Q, frequency shift, EQ bands and compressor makeup. Slider handlers can write `.value` directly.
 
 - **effects / player / daw:** **Breaking.** The effects API is one form per job. Migrate in one pass.
 

@@ -96,7 +96,7 @@ export class TimeStretch {
 
     // A loop is rendered from [tail | loop | head] with its endpoints anchored, then cut back to exactly one cycle.
     const margin = loop ? Math.min(frames, Math.max(1, Math.round(LOOP_MARGIN * sampleRate))) : 0;
-    const lead = Math.max(1, Math.round(margin * ratio));
+    const lead = loop ? Math.max(1, Math.round(margin * ratio)) : 0;
     const trail = loop ? Math.max(1, Math.round(margin * ratio)) : 0;
     // Transfer private copies: never detach the caller's original buffer data.
     const channels = source.map((channel): Float32Array<ArrayBuffer> => {

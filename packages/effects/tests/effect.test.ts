@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AudioProcessor } from "@audiorective/core";
-import { Effect } from "../src/Effect";
+import { Effect, type EffectOptions } from "../src/Effect";
 
 /** Wet arm that inverts polarity — makes wet and dry trivially distinguishable. */
 class Inverter extends Effect {
@@ -84,7 +84,7 @@ describe("Effect wet/dry", () => {
 /** An effect whose wet arm inverts polarity and which reports `loading` until `release()` is called. */
 class Slow extends Effect {
   release!: () => void;
-  constructor(ctx: BaseAudioContext, opts: { bypass?: boolean } = {}) {
+  constructor(ctx: BaseAudioContext, opts: EffectOptions = {}) {
     const inv = new GainNode(ctx, { gain: -1 });
     super(ctx, { input: inv, output: inv, loading: true }, () => ({ params: {}, cells: {} }), opts);
     this.track(new Promise<void>((resolve) => (this.release = resolve)));
@@ -145,29 +145,76 @@ describe("Effect bypass and status", () => {
     expect(bypassed[100]).toBeCloseTo(0.5, 6);
   });
 
-  it("passes the dry signal while loading, then the effect once ready", async () => {
-    const loading = await renderSteps((ctx) => new Slow(ctx));
-    expect(loading[2000]).toBeCloseTo(0.5, 6);
+  it.each([0, 0.25, 1])("loading keeps only the declared dry share at wet=%s", async (wet) => {
+    const loading = await renderSteps((ctx) => new Slow(ctx, { wet }));
+    expect(loading[0]).toBeCloseTo(0.5 * (1 - wet), 6);
+    expect(loading[2000]).toBeCloseTo(0.5 * (1 - wet), 6);
     expect(maxStep(loading)).toBeLessThan(1e-6);
-    const ctx = new OfflineAudioContext(1, 4096, 44100);
-    const fx = new Slow(ctx);
-    expect(fx.cells.status.value).toBe("loading");
-    fx.release();
-    await fx.ready;
-    expect(fx.cells.status.value).toBe("ready");
   });
 
-  it("a rejected load reports status error with the cause, rejects ready, and keeps passing dry", async () => {
-    const ctx = new OfflineAudioContext(1, 128, 44100);
+  it("loading wet automation stays sample-accurate without leaking the wet arm", async () => {
+    const out = await renderSteps((ctx) => {
+      const fx = new Slow(ctx, { wet: 0 });
+      fx.params.wet.setValueAtTime(0, 0).linearRampToValueAtTime(1, 256 / ctx.sampleRate);
+      return fx;
+    });
+    expect(out[128]).toBeCloseTo(0.25, 4);
+    expect(out[400]).toBeCloseTo(0, 6);
+  });
+
+  it.each([0.25, 1])("readiness fades in only the wet arm at wet=%s", async (wet) => {
+    const out = await renderSteps(
+      (ctx) => new Slow(ctx, { wet }),
+      8192,
+      (fx, ctx) => {
+        expect(fx.cells.status.value).toBe("loading");
+        ctx.suspend(2048 / 44100).then(async () => {
+          (fx as Slow).release();
+          await fx.ready;
+          expect(fx.cells.status.value).toBe("ready");
+          await ctx.resume();
+        });
+      },
+    );
+    expect(out[1500]).toBeCloseTo(0.5 * (1 - wet), 6);
+    expect(out[8000]).toBeCloseTo(0.5 * (1 - 2 * wet), 4);
+    expect(maxStep(out, 2)).toBeLessThan(0.01);
+  });
+
+  it("bypass passes full dry while loading, and clearing bypass restores the wet mix", async () => {
+    const out = await renderSteps(
+      (ctx) => new Slow(ctx, { wet: 1, bypass: true }),
+      8192,
+      (fx, ctx) => {
+        ctx.suspend(2048 / 44100).then(() => {
+          fx.params.bypass.value = false;
+          ctx.resume();
+        });
+      },
+    );
+    expect(out[1500]).toBeCloseTo(0.5, 6);
+    expect(out[8000]).toBeCloseTo(0, 4);
+    expect(maxStep(out, 2)).toBeLessThan(0.01);
+  });
+
+  it.each([0.25, 1])("a failed load rejects ready and preserves the dry share at wet=%s", async (wet) => {
+    const ctx = new OfflineAudioContext(1, 512, 44100);
     const failing = new (class extends Effect {
       constructor() {
-        super(ctx, { input: new GainNode(ctx), output: new GainNode(ctx), loading: true }, () => ({ params: {}, cells: {} }));
+        const inv = new GainNode(ctx, { gain: -1 });
+        super(ctx, { input: inv, output: inv, loading: true }, () => ({ params: {}, cells: {} }), { wet });
         this.track(Promise.reject(new Error("no impulse")));
       }
     })();
     await expect(failing.ready).rejects.toThrow("no impulse");
     expect(failing.cells.status.value).toBe("error");
     expect(failing.cells.error.value?.message).toBe("no impulse");
+    const src = new ConstantSourceNode(ctx, { offset: 0.5 });
+    src.connect(failing.input);
+    failing.connect(ctx.destination);
+    src.start();
+    const out = (await ctx.startRendering()).getChannelData(0);
+    expect(out[400]).toBeCloseTo(0.5 * (1 - wet), 6);
   });
 
   it("wet writes ramp instead of stepping", async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AudioProcessor, effect } from "@audiorective/core";
+import { AudioProcessor, effect, type Param } from "@audiorective/core";
 import { Distortion, Effect, EffectChain, Filter, PingPongDelay } from "../src";
 
 const SR = 44100;
@@ -211,6 +211,22 @@ describe("EffectChain.toJSON and restore", () => {
     expect(d.params.bypass.value).toBe(true);
   });
 
+  it("a built-in effect subclass keeps its own serialization type", () => {
+    class CustomDelay extends PingPongDelay {
+      static override readonly type = "CustomDelay";
+    }
+    const ctx = new OfflineAudioContext(1, 128, SR);
+    const original = new EffectChain(ctx, [new CustomDelay(ctx, { delayTime: 0.4 })]);
+    const json = JSON.parse(JSON.stringify(original));
+    expect(json.effects[0].type).toBe("CustomDelay");
+    const { chain, issues } = EffectChain.restore(ctx, json, { types: { CustomDelay } });
+    expect(issues).toEqual([]);
+    expect(chain.cells.effects.value[0]).toBeInstanceOf(CustomDelay);
+    expect((chain.cells.effects.value[0] as CustomDelay).params.delayTime.value).toBe(0.4);
+    chain.dispose();
+    original.dispose();
+  });
+
   it("unknown types and invalid parameters become issues, not throws", () => {
     const ctx = new OfflineAudioContext(1, 128, SR);
     const { chain, issues } = EffectChain.restore(
@@ -245,6 +261,54 @@ describe("EffectChain.toJSON and restore", () => {
       expect(chain.cells.effects.value).toHaveLength(0);
       expect(issues).toHaveLength(1);
     }
+  });
+
+  it("a custom bind's validation becomes an issue and restores its previous value", () => {
+    const ctx = new OfflineAudioContext(1, 128, SR);
+    class Guarded extends Effect<{ choice: Param<string> }> {
+      constructor(context: BaseAudioContext) {
+        const node = new GainNode(context);
+        super(context, { input: node, output: node }, ({ param }) => ({
+          params: {
+            choice: param({
+              default: "safe",
+              bind: {
+                set: (value) => {
+                  if (value !== "safe") throw new RangeError("unsupported choice");
+                },
+              },
+            }),
+          },
+          cells: {},
+        }));
+      }
+    }
+    const { chain, issues } = EffectChain.restore(
+      ctx,
+      { version: 1, effects: [{ type: "Guarded", params: { choice: "unsafe", wet: 0.5 } }] },
+      { types: { ...types, Guarded } },
+    );
+    expect(issues).toHaveLength(1);
+    expect(issues[0]!.path).toBe("effects[0].params.choice");
+    const guarded = chain.cells.effects.value[0] as Guarded;
+    expect(guarded.params.choice.value).toBe("safe");
+    expect(guarded.params.wet.value).toBe(0.5);
+    chain.dispose();
+  });
+
+  it("reports an invalid saved filter type without desynchronizing its parameter", () => {
+    const ctx = new OfflineAudioContext(1, 128, SR);
+    const { chain, issues } = EffectChain.restore(
+      ctx,
+      { version: 1, effects: [{ type: "Filter", params: { type: "not-a-filter", frequency: 800 } }] },
+      { types },
+    );
+    expect(issues).toHaveLength(1);
+    expect(issues[0]!.path).toBe("effects[0].params.type");
+    const filter = chain.cells.effects.value[0] as Filter;
+    expect(filter.params.type.value).toBe("lowpass");
+    expect(filter.params.frequency.value).toBe(800);
+    chain.dispose();
   });
 
   it("a constructor that throws becomes an issue", () => {

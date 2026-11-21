@@ -23,18 +23,23 @@ export type EffectStatus = "loading" | "ready" | "error";
 export interface WetArm {
   input: AudioNode | AudioProcessor;
   output: AudioNode | AudioProcessor;
-  /** Start in `"loading"` and pass dry until `track()` resolves. Default false. */
+  /** Start in `"loading"` with the wet arm muted until `track()` resolves. Default false. */
   loading?: boolean;
 }
 
 export interface EffectOptions {
-  /** Initial wet mix 0..1. Default 1. */
+  /** Initial wet mix 0..1. Default 1; wet writes smooth over 10 ms automatically. */
   wet?: number;
   /** Start bypassed. Default false. */
   bypass?: boolean;
 }
 
-type EffectParams<P> = P & { wet: SchedulableParam; bypass: Param<boolean> };
+type EffectParams<P> = P & {
+  /** Linear wet/dry mix 0..1, default 1; writes smooth over 10 ms automatically, scheduled ramps stay exact. */
+  wet: SchedulableParam;
+  /** Fades to the full dry signal without changing settings. Default false. */
+  bypass: Param<boolean>;
+};
 type EffectCells<C> = C & { status: ReadonlyCell<EffectStatus>; error: ReadonlyCell<Error | null> };
 
 /** Time constant of the bypass/ready gate, seconds: about 15 ms to settle. */
@@ -45,7 +50,9 @@ const GATE = 0.003;
  * crossfade. `wet` is one automation signal that drives the wet gain directly
  * and the dry gain as `1 − wet`, so ramps land sample-accurately on both arms.
  * `params.bypass` fades the effect out of the sound without a click and keeps its settings;
- * while `cells.status` is not `"ready"` the effect also passes the dry signal.
+ * while `cells.status` is not `"ready"` only the wet arm is muted: dry stays at `1 − wet`,
+ * so a fully wet return stays silent. Bypass always passes the full dry signal.
+ * Wet writes smooth over 10 ms automatically (`smoothing = 0.01`); scheduled ramps stay exact.
  * The graph is compensated, so a latent wet arm delays the dry arm to match and
  * the effect's own latency (when not declared) derives to the wet arm's.
  */
@@ -72,16 +79,19 @@ export abstract class Effect<P extends ParamRegistry = {}, C extends CellRegistr
   ) {
     const input = new GainNode(ctx);
     const output = new GainNode(ctx);
-    const dry = new GainNode(ctx, { gain: 0 }); // driven by 1 − wet·active
-    const wetGain = new GainNode(ctx, { gain: 0 }); // driven by wet·active
+    const dry = new GainNode(ctx, { gain: 0 }); // driven by 1 − wet·enabled
+    const wetGain = new GainNode(ctx, { gain: 0 }); // driven by wet·enabled·ready
     const one = new ConstantSourceNode(ctx, { offset: 1 });
     const negate = new GainNode(ctx, { gain: -1 });
     const wetSignal = new ConstantSourceNode(ctx, { offset: opts.wet ?? 1 });
-    const active = new ConstantSourceNode(ctx, { offset: opts.bypass || arm.loading ? 0 : 1 });
+    const enabled = new ConstantSourceNode(ctx, { offset: opts.bypass ? 0 : 1 });
+    const ready = new ConstantSourceNode(ctx, { offset: arm.loading ? 0 : 1 });
     const wetScaled = new GainNode(ctx, { gain: 0 });
+    const wetReady = new GainNode(ctx, { gain: 0 });
     one.start();
     wetSignal.start();
-    active.start();
+    enabled.start();
+    ready.start();
     const status = cell<EffectStatus>(arm.loading ? "loading" : "ready");
     const error = cell<Error | null>(null);
 
@@ -117,8 +127,10 @@ export abstract class Effect<P extends ParamRegistry = {}, C extends CellRegistr
         [arm.output, wetGain],
         [wetGain, output],
         [wetSignal, wetScaled],
-        [active, wetScaled.gain],
-        [wetScaled, wetGain.gain],
+        [enabled, wetScaled.gain],
+        [wetScaled, wetReady],
+        [ready, wetReady.gain],
+        [wetReady, wetGain.gain],
         [wetScaled, negate],
         [negate, dry.gain],
         [one, dry.gain],
@@ -127,11 +139,11 @@ export abstract class Effect<P extends ParamRegistry = {}, C extends CellRegistr
     );
 
     this.effect(() => {
-      const on = !this.params.bypass.value && status.value === "ready";
-      fadeTo(ctx, active.offset, on ? 1 : 0, GATE);
+      fadeTo(ctx, enabled.offset, this.params.bypass.value ? 0 : 1, GATE);
     });
+    this.effect(() => fadeTo(ctx, ready.offset, status.value === "ready" ? 1 : 0, GATE));
 
-    this._sources = [one, wetSignal, active];
+    this._sources = [one, wetSignal, enabled, ready];
   }
 
   override get input(): GainNode {

@@ -210,7 +210,18 @@ export class EffectChain extends AudioProcessor<Record<never, never>, { effects:
     if (typeof value !== typeof current || (typeof value === "number" && !Number.isFinite(value))) return `expected a ${typeof current}`;
     if (typeof value === "number" && ((param.min !== undefined && value < param.min) || (param.max !== undefined && value > param.max)))
       return `outside ${param.min ?? "-Infinity"}..${param.max ?? "Infinity"}`;
-    param.value = value;
+    try {
+      param.value = value;
+    } catch (cause) {
+      // A reactive bind may reject after the signal has already changed.
+      // Restore the prior value as well as reporting the rejected setting.
+      try {
+        param.value = current;
+      } catch {
+        // A custom bind can also reject rollback; bad input still becomes an issue.
+      }
+      return `invalid value: ${cause instanceof Error ? cause.message : String(cause)}`;
+    }
     return undefined;
   }
 

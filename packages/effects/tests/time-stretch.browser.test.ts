@@ -95,6 +95,31 @@ describe("TimeStretch.load", () => {
 });
 
 describe("TimeStretch validation and worker failures", () => {
+  test("a non-loop job requests exactly its output frames and keeps the first sample", async () => {
+    // Isolate the buffer/worker boundary from the external DSP: an identity worker
+    // preserves markers, so extra padding or trimming cannot hide behind a tone.
+    let requestedFrames = 0;
+    class IdentityWorker {
+      onmessage: ((event: { data: { channels: Float32Array[] } }) => void) | null = null;
+      onerror = null;
+      terminate() {}
+      postMessage(data: { channels: Float32Array[]; outputFrames: number }) {
+        requestedFrames = data.outputFrames;
+        const channels = data.channels.map((input) => {
+          const output = new Float32Array(data.outputFrames);
+          output.set(input);
+          return output;
+        });
+        queueMicrotask(() => this.onmessage?.({ data: { channels } }));
+      }
+    }
+    vi.stubGlobal("Worker", IdentityWorker);
+    const input = new Float32Array([0.75, -0.5, 0.25, -0.125]);
+    const result = await (await processor(unsupportedUrl)).process(buffer([input]), { ratio: 1 });
+    expect(requestedFrames).toBe(input.length);
+    expect(result.getChannelData(0)).toEqual(input);
+  });
+
   test("rejects invalid ratios and non-finite samples before dispatch", async () => {
     const stretch = await processor(unsupportedUrl);
     const valid = buffer([tone()]);

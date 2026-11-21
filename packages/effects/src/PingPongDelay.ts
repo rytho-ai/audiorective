@@ -11,12 +11,13 @@ export interface PingPongDelayOptions extends EffectOptions {
 }
 
 /**
+ * `params.delayTime` and `params.feedback` writes smooth over 10 ms automatically; scheduled ramps stay exact.
  * Stereo cross-fed delay with alternating left/right echoes. Input is summed to mono and enters on
  * the left delay, then bounces through feedback. Echoes that have crossed the feedback path arrive
  * one render quantum (128 samples) later than `delayTime`.
  */
 export class PingPongDelay extends Effect<{ delayTime: SchedulableParam; feedback: SchedulableParam }> {
-  static override readonly type = "PingPongDelay";
+  static override readonly type: string = "PingPongDelay";
   private readonly sources: ConstantSourceNode[];
 
   constructor(ctx: BaseAudioContext, opts: PingPongDelayOptions = {}) {

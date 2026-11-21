@@ -22,9 +22,9 @@ export interface PitchShiftOptions extends EffectOptions {
   stretch?: StretchOptions;
 }
 
-/** Pitch shifter. The `"stretch"` engine loads asynchronously; until `cells.status` is `"ready"` the effect passes dry. */
+/** Pitch shifter. The `"stretch"` engine loads asynchronously; until ready only the `1 − wet` dry share passes (`wet: 1` is silent). */
 export class PitchShift extends Effect<{ pitch: Param<number> }> {
-  static override readonly type = "PitchShift";
+  static override readonly type: string = "PitchShift";
   readonly engine: PitchShiftEngine;
   private readonly core: GranularShifter | StretchShifter;
 

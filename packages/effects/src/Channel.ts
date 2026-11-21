@@ -16,8 +16,15 @@ export interface ChannelOptions {
   channelCountMode?: "explicit" | "max";
 }
 
-/** One send from a Channel into a SendBus receive point; created by `Channel.send`. */
-export class Send extends AudioProcessor<{ gain: SchedulableParam; enabled: Param<boolean> }, {}> {
+/** One send from a Channel into a SendBus receive point; created by `Channel.send`. `params.gain` writes smooth over 10 ms automatically. */
+export class Send extends AudioProcessor<
+  {
+    /** Linear send level; writes smooth over 10 ms automatically, scheduled ramps stay exact. */
+    gain: SchedulableParam;
+    enabled: Param<boolean>;
+  },
+  {}
+> {
   private readonly node: GainNode;
   private readonly gate: GainNode;
 
@@ -88,10 +95,18 @@ class ChannelTap extends AudioProcessor<{}, {}> {
 /**
  * Channel strip: gain → pan → mute → output gate, with post-mute sends into a SendBus.
  * Sends tap the post-mute node (`tap`), so `outputEnabled` gates only the main `output`.
+ * `params.gain` and `params.pan` writes smooth over 10 ms automatically; scheduled ramps stay exact.
  * `cells.level` is the post-fader peak in dBFS (-Infinity when silent), refreshed every animation frame.
  */
 export class Channel extends AudioProcessor<
-  { gain: SchedulableParam; pan: SchedulableParam; mute: Param<boolean>; outputEnabled: Param<boolean> },
+  {
+    /** Linear gain, default 1; writes smooth over 10 ms automatically. */
+    gain: SchedulableParam;
+    /** Stereo pan -1..1, default 0; writes smooth over 10 ms automatically. */
+    pan: SchedulableParam;
+    mute: Param<boolean>;
+    outputEnabled: Param<boolean>;
+  },
   { level: ReadonlyCell<number> }
 > {
   private readonly _input: GainNode;
@@ -160,7 +175,7 @@ export class Channel extends AudioProcessor<
     return this._tap;
   }
 
-  /** Sends the post-mute signal into the bus's receive point at `gain` (linear). The send joins the latency graph, so delay compensation covers it. */
+  /** Sends the post-mute signal into the bus at `gain` (linear). Use processor `connect()` for the upstream and return routes too: the send joins that context-wide latency graph, not a separate `defineGraph` solve. */
   send(bus: SendBus, name: string, gain = 1): Send {
     const send = new Send(this.context, gain, (gone) => this.sends.delete(gone));
     this.tapProcessor.connect(send);

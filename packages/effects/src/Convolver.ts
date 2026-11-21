@@ -19,9 +19,9 @@ function cacheFor(ctx: BaseAudioContext): AudioBufferCache {
   return c;
 }
 
-/** Convolution reverb. Until an impulse response is in place (`cells.status` is `"loading"`, or `"error"` when `url` failed to load) the effect passes the dry signal. */
+/** Convolution reverb. Until an impulse response is in place (`cells.status` is `"loading"`, or `"error"` when `url` failed to load) only the `1 − wet` dry share passes; `wet: 1` stays silent. Bypass passes full dry. */
 export class Convolver extends Effect<{}, { buffer: ReadonlyCell<AudioBuffer | null> }> {
-  static override readonly type = "Convolver";
+  static override readonly type: string = "Convolver";
   private readonly node: ConvolverNode;
   private loadToken = 0;
   private disposed = false;

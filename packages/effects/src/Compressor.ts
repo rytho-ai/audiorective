@@ -25,12 +25,13 @@ type P = {
   knee: SchedulableParam;
   attack: SchedulableParam;
   release: SchedulableParam;
+  /** Output gain in dB; writes smooth over 10 ms automatically. */
   makeup: SchedulableParam;
 };
 
-/** Feedforward compressor. The worklet loads asynchronously; the effect passes dry until `cells.status` is `"ready"`. `cells.reduction` is the live gain reduction in dB (<= 0). */
+/** Feedforward compressor. The worklet loads asynchronously; only the `1 − wet` dry share passes until ready (`wet: 1` is silent). `cells.reduction` is the live gain reduction in dB (<= 0). */
 export class Compressor extends Effect<P, { reduction: ReadonlyCell<number> }> {
-  static override readonly type = "Compressor";
+  static override readonly type: string = "Compressor";
   private readonly core: DynamicsCore;
 
   constructor(ctx: BaseAudioContext, opts: CompressorOptions = {}) {

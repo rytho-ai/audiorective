@@ -21,13 +21,14 @@ function allpassChain(ctx: BaseAudioContext, coefficients: number[]): { input: A
 }
 
 /**
+ * `params.frequency` writes smooth over 10 ms automatically; scheduled ramps stay exact.
  * Single-sideband shifter: a Hilbert transform splits the input into two
  * quadrature branches, each modulated by a cosine/sine at the shift frequency
  * and summed, cancelling one sideband. A negative `frequency` flips the sine's
  * sign and so selects the lower sideband instead of the upper.
  */
 export class FrequencyShifter extends Effect<{ frequency: SchedulableParam }> {
-  static override readonly type = "FrequencyShifter";
+  static override readonly type: string = "FrequencyShifter";
   private readonly oscillators: OscillatorNode[];
   private readonly freqSource: ConstantSourceNode;
 

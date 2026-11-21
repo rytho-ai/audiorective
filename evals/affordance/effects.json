@@ -34,7 +34,7 @@
       "expectations": [
         "Fader and send values are converted from dB to linear gain as 10^(dB/20) (or a toolkit dB helper), with -60 dB treated as near silence or off.",
         "Pan uses a stereo panner or an equivalent -1..1 control per strip.",
-        "Each track's send feeds one shared reverb return after the fader and after mute, so muting a track stops new input to the reverb without cutting the tail already in the reverb; the return has its own fader and reaches the master.",
+        "Each track's send feeds one shared reverb return after the fader and after mute, so muting a track stops new input to the reverb without cutting the tail already in the reverb; the return has its own fader and reaches the master. The return is fully wet, including while its impulse response loads or fails, so it never duplicates the dry stems.",
         "Solo logic: with any track soloed, every non-soloed track is silenced (without changing its stored fader value) and the reverb return stays audible; clearing all solos restores the previous mutes and levels.",
         "The 5 ms lookahead limiter on the vocal does not put the vocal out of time with the other tracks: the other tracks (and the vocal's dry/send paths) are delayed to match its latency, either by the toolkit's latency compensation or by explicit matching delays.",
         "Each strip shows a post-fader level in dBFS updated at display rate (from an analyser or meter read in an animation-frame loop or a toolkit meter), not a value computed once.",

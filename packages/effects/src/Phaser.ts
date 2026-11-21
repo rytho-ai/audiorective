@@ -18,11 +18,12 @@ export interface PhaserOptions extends EffectOptions {
 }
 
 /**
+ * `params.frequency` and `params.Q` writes smooth over 10 ms automatically; scheduled ramps stay exact.
  * The wet arm sums the input with the phased signal at equal gain, which is what produces the
  * notches; `wet` blends between the dry input and that phased mix.
  */
 export class Phaser extends Effect<{ frequency: SchedulableParam; Q: SchedulableParam; octaves: Param<number>; baseFrequency: Param<number> }> {
-  static override readonly type = "Phaser";
+  static override readonly type: string = "Phaser";
   private readonly lfo: Lfo;
   private readonly qSource: ConstantSourceNode;
 

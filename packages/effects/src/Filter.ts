@@ -4,6 +4,8 @@ import { fanout } from "./internal/fanout";
 import { SMOOTHING } from "./internal/smoothing";
 import { mixFrequencyResponse } from "./internal/frequency-response";
 
+const FILTER_TYPES: readonly BiquadFilterType[] = ["lowpass", "highpass", "bandpass", "lowshelf", "highshelf", "peaking", "notch", "allpass"];
+
 export interface FilterOptions extends EffectOptions {
   frequency?: number;
   type?: BiquadFilterType;
@@ -13,8 +15,9 @@ export interface FilterOptions extends EffectOptions {
   rolloff?: -12 | -24 | -48;
 }
 
+/** `params.frequency`, `params.Q` and `params.gain` writes smooth over 10 ms automatically; scheduled ramps stay exact. */
 export class Filter extends Effect<{ frequency: SchedulableParam; Q: SchedulableParam; gain: SchedulableParam; type: Param<BiquadFilterType> }> {
-  static override readonly type = "Filter";
+  static override readonly type: string = "Filter";
   private readonly sources: ConstantSourceNode[];
   private readonly stageCount: number;
   private responseBiquad?: BiquadFilterNode;
@@ -52,10 +55,12 @@ export class Filter extends Effect<{ frequency: SchedulableParam; Q: Schedulable
           type: param<BiquadFilterType>({
             default: type,
             bind: {
-              set: (t) =>
+              set: (t) => {
+                if (!FILTER_TYPES.includes(t)) throw new RangeError(`Effect: invalid filter type "${t}".`);
                 stages.forEach((s) => {
                   s.type = t;
-                }),
+                });
+              },
             },
           }),
         },

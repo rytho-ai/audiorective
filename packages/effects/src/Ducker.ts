@@ -16,13 +16,13 @@ export interface DuckerOptions extends EffectOptions {
 /**
  * Sidechain ducker: lowers the audio by `depth` dB while the signal connected to `sidechain` is above `threshold`.
  * The sidechain only triggers; it never reaches the output. `cells.reduction` is the live gain reduction in dB (<= 0).
- * The worklet loads asynchronously; the effect passes dry until `cells.status` is `"ready"`.
+ * The worklet loads asynchronously; only the `1 − wet` dry share passes until ready (`wet: 1` is silent).
  */
 export class Ducker extends Effect<
   { depth: SchedulableParam; attack: SchedulableParam; release: SchedulableParam; threshold: SchedulableParam },
   { reduction: ReadonlyCell<number> }
 > {
-  static override readonly type = "Ducker";
+  static override readonly type: string = "Ducker";
   /** Connect the trigger signal here: `kick.connect(ducker.sidechain)`. */
   readonly sidechain: GainNode;
   private readonly core: DuckerCore;

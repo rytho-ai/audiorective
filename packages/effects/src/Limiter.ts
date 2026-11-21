@@ -11,9 +11,9 @@ export interface LimiterOptions extends EffectOptions {
   lookahead?: number;
 }
 
-/** Brickwall: infinite ratio, hard knee, windowed-peak detection over `lookahead`. The worklet loads asynchronously; the effect passes dry until `cells.status` is `"ready"`. */
+/** Brickwall: infinite ratio, hard knee, windowed-peak detection over `lookahead`. The worklet loads asynchronously; only the `1 − wet` dry share passes until ready (`wet: 1` is silent). */
 export class Limiter extends Effect<{ threshold: SchedulableParam; release: SchedulableParam }, { reduction: ReadonlyCell<number> }> {
-  static override readonly type = "Limiter";
+  static override readonly type: string = "Limiter";
   private readonly core: DynamicsCore;
 
   constructor(ctx: BaseAudioContext, opts: LimiterOptions = {}) {

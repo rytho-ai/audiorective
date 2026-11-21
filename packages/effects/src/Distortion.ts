@@ -27,7 +27,7 @@ export function distortionCurve(amount: number): Float32Array<ArrayBuffer> {
 
 /** WaveShaper distortion. Changing `distortion` crossfades two shapers over 10 ms, so a drag never clicks. */
 export class Distortion extends Effect<{ distortion: Param<number> }> {
-  static override readonly type = "Distortion";
+  static override readonly type: string = "Distortion";
   constructor(ctx: BaseAudioContext, opts: DistortionOptions = {}) {
     const oversample = opts.oversample ?? "none";
     const entry = new GainNode(ctx);

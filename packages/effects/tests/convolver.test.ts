@@ -18,6 +18,25 @@ describe("Convolver", () => {
     const out = (await ctx.startRendering()).getChannelData(0);
     expect(out[400]).toBeCloseTo(0.5, 4);
   });
+  it("a fully wet send return stays silent until its impulse response arrives", async () => {
+    const ctx = new OfflineAudioContext(1, 8192, 44100);
+    const fx = new Convolver(ctx, { wet: 1, normalize: false });
+    const src = new ConstantSourceNode(ctx, { offset: 0.5 });
+    src.connect(ctx.destination); // original track
+    src.connect(fx.input); // parallel send
+    fx.connect(ctx.destination);
+    src.start();
+    ctx.suspend(2048 / ctx.sampleRate).then(async () => {
+      const ir = ctx.createBuffer(1, 1, ctx.sampleRate);
+      ir.getChannelData(0)[0] = 1;
+      fx.buffer = ir;
+      await ctx.resume();
+    });
+    const out = (await ctx.startRendering()).getChannelData(0);
+    expect(out[1500]).toBeCloseTo(0.5, 6); // no duplicate dry signal
+    expect(out[8000]).toBeCloseTo(1, 4); // original plus processed return
+    fx.dispose();
+  });
   it("load(url) decodes through the shared cache", async () => {
     const ctx = new OfflineAudioContext(1, 128, 44100);
     const ir = ctx.createBuffer(1, 4, 44100);

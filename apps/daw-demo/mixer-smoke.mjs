@@ -57,18 +57,29 @@ try {
   const macroControl = page.getByRole("slider", { name: "巨集 1", exact: true });
   await macroControl.press("Home");
   await page.getByRole("button", { name: "Filter 往後", exact: true }).click();
-  const measure = () =>
-    page.evaluate((id) => {
-      const { workspace, project } = window.__daw;
-      const track = project.tracks.find((item) => item.id === id);
-      const magnitudes = new Float32Array(1);
-      const filter = track.effects.find((effect) => effect.type === "filter");
-      workspace.trackFilterResponse(id, filter.id, new Float32Array([1500]), magnitudes, new Float32Array(1));
-      return magnitudes[0];
-    }, busId);
-  const closed = await measure();
+  const measure = async (opened) => {
+    // Project edits reconcile asynchronously, and smoothed parameter snapshots
+    // follow the audio thread on ParamSync's next display poll.
+    await page.evaluate(() => window.__daw.workspace.flush());
+    const response = await page.waitForFunction(
+      ({ id, opened }) => {
+        const { workspace, project } = window.__daw;
+        const track = project.tracks.find((item) => item.id === id);
+        const magnitudes = new Float32Array(1);
+        const filter = track.effects.find((effect) => effect.type === "filter");
+        workspace.trackFilterResponse(id, filter.id, new Float32Array([1500]), magnitudes, new Float32Array(1));
+        const magnitude = magnitudes[0];
+        return (opened ? magnitude > 0.98 : magnitude < 0.01) ? { magnitude } : false;
+      },
+      { id: busId, opened },
+    );
+    const { magnitude } = await response.jsonValue();
+    await response.dispose();
+    return magnitude;
+  };
+  const closed = await measure(false);
   await macroControl.press("End");
-  const opened = await measure();
+  const opened = await measure(true);
   assert.ok(closed < 0.01 && opened > 0.98, JSON.stringify({ closed, opened }));
   const macroRoundTrip = await page.evaluate(async (id) => {
     const { workspace, project } = window.__daw;
