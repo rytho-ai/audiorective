@@ -132,7 +132,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
   private readonly _stopTempoWatch: () => void;
 
   private _previousWindowEndBeat = 0;
-  // The generation `_previousWindowEndBeat` belongs to. A fresh segment
+  // The last generation handed a window, marked before invoking its callbacks. A fresh segment
   // (start/seek) has no prior emitted window to have fallen behind -- some
   // real time inevitably passes between anchoring the target beat and the
   // tick source's next callback, which would otherwise register as a
@@ -298,7 +298,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     // deliberately NOT updating _previousWindowEndGeneration here: it must
     // stay stale (mismatching the just-bumped generation) so the first tick
     // recognizes this as a fresh segment and skips the miss check; _tick()
-    // catches it up to the current generation once that tick has run.
+    // catches it up when that generation actually dispatches its first window.
     this._startedAt = Math.max(this._timeline.now, when ?? 0);
     this._notify({ type: "start", when: this._startedAt, beat: atBeat });
   }
@@ -386,7 +386,12 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     refill.queued = true;
     this._cancelOwned(true, now);
     if (this._refill !== refill) return refill.promise;
-    this._previousWindowEndBeat = this._timeline._invalidate(now);
+    // Before the first dispatch, start/seek still owns the exact fill boundary.
+    // Invalidate event ownership without replacing that boundary with a later now.
+    const firstWindowPending = this._timeline.generation !== this._previousWindowEndGeneration;
+    const boundary = this._previousWindowEndBeat;
+    const nowBeat = this._timeline._invalidate(now);
+    this._previousWindowEndBeat = firstWindowPending ? boundary : nowBeat;
     queueMicrotask(() => {
       if (this._refill === refill && refill.queued) this._tick();
     });
@@ -526,6 +531,9 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
           rulers: this._timeline._readWindowRulers(coreWindow),
           own: (event: CancellableEvent, when: number) => this._own(event, when, generation),
         } as TickWindow<TRulers>;
+        // The window is now being handed to user callbacks. Mark it before any
+        // callback can refresh, but a callback's seek/start still mints a fresh generation.
+        this._previousWindowEndGeneration = generation;
         this._onTick?.(window);
         for (const scheduler of [...this._schedulers]) {
           if (this._timeline.generation !== generation) break; // a callback moved the transport: this window is stale
@@ -540,7 +548,6 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
 
       if (this._timeline.generation === generation) {
         this._previousWindowEndBeat = endBeat;
-        this._previousWindowEndGeneration = generation;
       }
     } finally {
       this._ticking = false;
