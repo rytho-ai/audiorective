@@ -44,6 +44,18 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Changed
 
+- **clock:** a refresh before the first dispatched start/seek window retains the requested beat, including when real audio time advances before the refill. In-progress callbacks and later edits keep current-boundary refills without replaying earlier cues.
+
+- **recorder / daw:** long captures use `record({ onChunk, ...timing })`, resolving a PCM-free span at natural completion or early Stop. Writers run serially with the bounded queue; failure/cancel stops capture, skips queued callbacks and drains the active callback before rejection. Buffered capture and valid timed Stop during graph preparation retain their behavior. DAW consumers observe writer failure without waiting for Stop; audio fallback waits for the recorder’s actual native capture-begin signal before playback, without the startup sleep.
+
+  | Before                                             | After                                                              |
+  | -------------------------------------------------- | ------------------------------------------------------------------ |
+  | `await recorder.startStream(writeChunk, { when })` | `const recording = recorder.record({ onChunk: writeChunk, when })` |
+  | `recorder.stopStream({ when })`                    | `recorder.stop({ result: "span", when })`                          |
+  | Stream completion available only from Stop         | Observe `recording` immediately; `length` can finish without Stop  |
+
+  The superseded methods have no aliases. `record()`/`stop()` without streaming options retain PCM results; dynamic writer/selector options return a truthful PCM-or-span union. The Stop selector must match the active mode (`InvalidStateError`).
+
 - **effects / sequencer / widgets:** Boolean silence controls use `muted`, matching mixer and Project state. The Channel Param registry and lane setters retain their existing shapes; the former spelling has no alias. DAW runtime, grid plugins and demos use the same name. The sequencer lane-validation message names `muted` accordingly.
 
   | Before                                 | After                                   |

@@ -140,3 +140,29 @@ test.each([
   await expect(waiting).rejects.toMatchObject({ name: "AbortError" });
   expect(r.recorder.cells.state.value).toBe("idle");
 });
+
+test("a musical streaming take completes without Stop and returns only its PCM-free span", async () => {
+  const { clock, recorder } = await rig(240);
+  clock.start();
+  const chunks: Array<{ startFrame: number; frames: number; first: number }> = [];
+  const span = await recorder.record({
+    quantize: "4n",
+    length: "4n",
+    onChunk(chunk) {
+      chunks.push({ startFrame: chunk.startFrame, frames: chunk.channels[0].length, first: chunk.channels[0][0] });
+    },
+  });
+  expect(span).not.toHaveProperty("channels");
+  expect(span.channelCount).toBe(1);
+  expect(span.endFrame - span.startFrame).toBe(span.sampleRate / 4);
+  expect(chunks.length).toBeGreaterThan(1);
+  let cursor = span.startFrame;
+  for (const chunk of chunks) {
+    expect(chunk.startFrame).toBe(cursor);
+    expect(chunk.frames).toBeLessThanOrEqual(4096);
+    expect(chunk.first).toBeCloseTo(0.25, 6);
+    cursor += chunk.frames;
+  }
+  expect(cursor).toBe(span.endFrame);
+  expect(recorder.cells.state.value).toBe("idle");
+});

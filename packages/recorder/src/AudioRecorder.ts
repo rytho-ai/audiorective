@@ -45,6 +45,8 @@ export interface AudioRecorderOptions {
   signal?: AbortSignal;
 }
 export interface RecordOptions {
+  /** Buffered captures have no chunk writer. */
+  onChunk?: never;
   /** Absolute AudioContext seconds the take starts at; a past time starts at the first available frame. Default: now. Not with `quantize`. */
   when?: number;
   /**
@@ -58,6 +60,12 @@ export interface RecordOptions {
   /** Aborting discards the take and rejects `record()` with `AbortError`, like `cancel()`. */
   signal?: AbortSignal;
 }
+export interface StreamRecordOptions extends Omit<RecordOptions, "onChunk"> {
+  /** Serial writer; up to 4096 frames/chunk and 64 pending chunks. Buffers are borrowed until settled; failure ends capture. */
+  onChunk(chunk: RecordedAudioChunk): void | Promise<void>;
+}
+type CaptureOptions = Omit<RecordOptions, "onChunk"> & { onChunk?: StreamRecordOptions["onChunk"] };
+
 export interface RecordedAudio extends PCMData {
   /** Inclusive first captured sample frame on the AudioContext clock. */
   readonly startFrame: number;
@@ -94,8 +102,8 @@ type RecorderMessage =
 
 type Session = {
   startFrame: number;
-  /** In-memory `record()` takes settle one promise created up front; streams settle at `stopStream()`. */
-  promise?: Promise<RecordedAudio>;
+  /** Buffered and streamed takes settle one completion created up front. */
+  promise: Promise<RecordedAudio | RecordedAudioSpan>;
   /** A `stop()` that arrived while the capture graph was still being built. */
   pendingStop?: { when?: number };
   /** A length, as seconds or beats, applied once the start is fixed. */
@@ -110,9 +118,13 @@ type Session = {
   chunks: Array<{ startFrame: number; channels: Float32Array[] }>;
   writeChunk?: (chunk: RecordedAudioChunk) => void | Promise<void>;
   nextFrame?: number;
-  pendingWrites: Set<Promise<void>>;
-  resolve?: (take: RecordedAudio | RecordedAudioSpan) => void;
-  reject?: (error: unknown) => void;
+  writeTail: Promise<void>;
+  pendingCount: number;
+  failed?: { error: unknown };
+  captureEnded?: boolean;
+  graphReleased?: boolean;
+  resolve: (take: RecordedAudio | RecordedAudioSpan) => void;
+  reject: (error: unknown) => void;
 };
 
 function registerRecorder(context: BaseAudioContext): Promise<void> {
@@ -150,6 +162,7 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
   private active: Session | null = null;
   private disposed = false;
   private registration: Promise<void> | null = null;
+  private registered = false;
 
   constructor(context: BaseAudioContext, options: AudioRecorderOptions = {}) {
     const channels = options.channels ?? 2;
@@ -202,44 +215,65 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
   get output(): undefined {
     return undefined;
   }
-  /** Preload the worklet when a gesture or a transport countdown gives time to do so. */
+  /** Preload worklet registration; actual live capture begins when `cells.startedAt` becomes non-null after `record()`. */
   get ready(): Promise<void> {
     if (this.disposed) return Promise.reject(new Error("AudioRecorder is disposed."));
-    return (this.registration ??= registerRecorder(this.context).catch((error: unknown) => {
-      this.registration = null;
-      throw error;
-    }));
+    return (this.registration ??= registerRecorder(this.context)
+      .then(() => {
+        this.registered = true;
+      })
+      .catch((error: unknown) => {
+        this.registration = null;
+        throw error;
+      }));
   }
 
   /**
    * While attached to a Clock, the clock stopping, pausing, seeking or detaching cancels a take that is armed but has not started (a `when` or `quantize` start still ahead), rejecting with `AbortError`; a take already recording continues until `stop()` or its `length`.
    * Records one take and resolves with it after it ends, at `length` or at `stop()`. A quantized start waits for the clock's next boundary, and the take
-   * reports it as `startBeat`. With `quantize` (or a note-value `length`) it rejects with `InvalidStateError` when the recorder is not attached to a Clock or, for `quantize`, the clock is not playing. Late worklet registration starts at the first available frame. Call it from a gesture on a running context.
+   * reports it as `startBeat` for buffered PCM. With `quantize` (or a note-value `length`) it rejects with `InvalidStateError` when the recorder is not attached to a Clock or, for `quantize`, the clock is not playing. Late worklet registration starts at the first available frame. Call it from a gesture on a running context.
+   * Streaming returns a PCM-free span after capture and writes settle; failure/AbortError waits for an in-flight writer before rejecting.
    */
-  record(options: RecordOptions = {}): Promise<RecordedAudio> {
-    return new Promise<RecordedAudio>((resolve, reject) => {
-      const quantize = options.quantize ?? "none";
-      try {
-        if (quantize !== "none") {
-          if (options.when !== undefined) throw new RangeError("AudioRecorder record() takes `when` or `quantize`, not both.");
-          noteBeats(quantize, 4);
-          this.requirePlayingClock("quantize");
-        }
-        if (typeof options.length === "string") {
-          noteBeats(options.length, 4);
-          this.requireClock("length");
-        } else if (options.length !== undefined && !(Number.isFinite(options.length) && options.length > 0)) {
-          throw new RangeError("AudioRecorder length must be positive seconds or a note value.");
-        }
-      } catch (error) {
-        reject(error);
-        return;
-      }
-      const promise = new Promise<RecordedAudio>((settle, fail) => {
-        this.startCapture({ when: options.when }, undefined, { settle, fail, quantize, length: options.length, signal: options.signal }).catch(fail);
-      });
-      promise.then(resolve, reject);
+  record(options: StreamRecordOptions): Promise<RecordedAudioSpan>;
+  /** Buffered take: resolves with PCM at length or early stop; Clock, signal and startBeat semantics apply. */
+  record(options?: RecordOptions): Promise<RecordedAudio>;
+  /** A dynamic writer option returns PCM or a span according to the selected mode. */
+  record(options: CaptureOptions): Promise<RecordedAudio | RecordedAudioSpan>;
+  record(options: CaptureOptions = {}): Promise<RecordedAudio | RecordedAudioSpan> {
+    let settle!: Session["resolve"];
+    let fail!: Session["reject"];
+    const promise = new Promise<RecordedAudio | RecordedAudioSpan>((resolve, reject) => {
+      settle = resolve;
+      fail = reject;
     });
+    // Observe autonomous writer failures even before the caller awaits its take.
+    void promise.catch(() => {});
+    const quantize = options.quantize ?? "none";
+    try {
+      if (options.onChunk !== undefined && typeof options.onChunk !== "function") throw new TypeError("AudioRecorder stream needs a chunk writer.");
+      if (quantize !== "none") {
+        if (options.when !== undefined) throw new RangeError("AudioRecorder record() takes `when` or `quantize`, not both.");
+        noteBeats(quantize, 4);
+        this.requirePlayingClock("quantize");
+      }
+      if (typeof options.length === "string") {
+        noteBeats(options.length, 4);
+        this.requireClock("length");
+      } else if (options.length !== undefined && !(Number.isFinite(options.length) && options.length > 0)) {
+        throw new RangeError("AudioRecorder length must be positive seconds or a note value.");
+      }
+      void this.startCapture({ when: options.when }, options.onChunk, {
+        promise,
+        settle,
+        fail,
+        quantize,
+        length: options.length,
+        signal: options.signal,
+      }).catch(fail);
+    } catch (error) {
+      fail(error);
+    }
+    return promise;
   }
 
   private requireClock(what: string): RecorderTransport {
@@ -256,17 +290,12 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
     return (n * 4) / d;
   }
 
-  /** Sends bounded chunks to an external writer without retaining the take's PCM in memory. */
-  async startStream(writeChunk: (chunk: RecordedAudioChunk) => void | Promise<void>, options: { when?: number } = {}): Promise<void> {
-    if (typeof writeChunk !== "function") throw new TypeError("AudioRecorder stream needs a chunk writer.");
-    return this.startCapture(options, writeChunk);
-  }
-
   private async startCapture(
     options: { when?: number },
-    writeChunk?: (chunk: RecordedAudioChunk) => void | Promise<void>,
-    take?: {
-      settle: (take: RecordedAudio) => void;
+    writeChunk: StreamRecordOptions["onChunk"] | undefined,
+    take: {
+      promise: Promise<RecordedAudio | RecordedAudioSpan>;
+      settle: (take: RecordedAudio | RecordedAudioSpan) => void;
       fail: (error: unknown) => void;
       quantize: Quantize;
       length?: number | NoteLength;
@@ -281,40 +310,38 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
       startFrame: Math.ceil(Math.max(when, this.context.currentTime) * this.context.sampleRate),
       chunks: [],
       writeChunk,
-      pendingWrites: new Set(),
+      writeTail: Promise.resolve(),
+      pendingCount: 0,
+      promise: take.promise,
+      resolve: take.settle,
+      reject: take.fail,
     };
     this.active = session;
     batch(() => {
       this.errorStore.value = null;
       this.stateStore.value = "armed";
     });
-    if (take) {
-      session.promise = new Promise<RecordedAudio>((resolve, reject) => {
-        session.resolve = resolve as Session["resolve"];
-        session.reject = reject;
-      });
-      session.promise.then(take.settle, take.fail);
-      session.length = take.length;
-      session.quantized = take.quantize !== "none";
-      const { signal } = take;
-      if (signal) {
-        const cancel = () => this.active === session && this.fail(session, signal.reason instanceof DOMException ? signal.reason : abortError());
-        if (signal.aborted) cancel();
-        else {
-          signal.addEventListener("abort", cancel, { once: true });
-          session.promise.then(
-            () => signal.removeEventListener("abort", cancel),
-            () => signal.removeEventListener("abort", cancel),
-          );
-        }
+    session.length = take.length;
+    session.quantized = take.quantize !== "none";
+    const { signal } = take;
+    if (signal) {
+      const cancel = () => this.active === session && this.fail(session, signal.reason instanceof DOMException ? signal.reason : abortError());
+      if (signal.aborted) cancel();
+      else {
+        signal.addEventListener("abort", cancel, { once: true });
+        session.promise.then(
+          () => signal.removeEventListener("abort", cancel),
+          () => signal.removeEventListener("abort", cancel),
+        );
       }
     }
     try {
-      await this.ready;
-      if (this.active !== session) throw abortError();
+      // A preloaded recorder wires its native graph before the caller resumes an offline render.
+      if (!this.registered) await this.ready;
+      if (this.active !== session || session.failed) return;
       let when = options.when ?? this.context.currentTime;
       let boundaryBeat: number | null = null;
-      if (take && take.quantize !== "none") {
+      if (take.quantize !== "none") {
         const clock = this.requirePlayingClock("quantize");
         const size = noteBeats(take.quantize, this.barBeats(clock));
         const nowBeat = clock.timeline.timeToBeat(this.context.currentTime);
@@ -376,25 +403,25 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
       if (session.pendingStop) this.scheduleEnd(session, session.pendingStop.when ?? this.context.currentTime);
     } catch (error) {
       if (this.active === session) this.fail(session, error);
-      throw error;
     }
   }
 
   /**
    * Ends the current take early at `when` (default now) and resolves it, the same partial take `record()` resolves with what was captured; `cancel()` instead discards the take and rejects `record()` with `AbortError`.
    * On a take with `length` it can only shorten it.
-   * Called while the capture graph is still being built, it ends the take as soon as it starts.
+   * A valid future `when` is retained while the capture graph is being built. Streaming completion drains accepted writes.
+   * The result selector must match the active take, otherwise this throws InvalidStateError.
    */
-  stop(options: { when?: number } = {}): Promise<RecordedAudio> {
-    if (this.active?.writeChunk) throw new Error("AudioRecorder streaming take needs stopStream().");
-    return this.stopCapture(options) as Promise<RecordedAudio>;
-  }
-
-  /** Finish streaming after every accepted chunk has reached the caller's writer. */
-  stopStream(options: { when?: number } = {}): Promise<RecordedAudioSpan> {
+  stop(options: { result: "span"; when?: number }): Promise<RecordedAudioSpan>;
+  /** Buffered take: preserves its partial PCM, including a valid timed stop during preparation. */
+  stop(options?: { when?: number; result?: never }): Promise<RecordedAudio>;
+  /** A dynamic selector returns the matching mode or throws InvalidStateError for a mismatched take. */
+  stop(options: { when?: number; result?: "span" }): Promise<RecordedAudio | RecordedAudioSpan>;
+  stop(options: { when?: number; result?: "span" } = {}): Promise<RecordedAudio | RecordedAudioSpan> {
     if (this.disposed) throw new Error("AudioRecorder is disposed.");
-    if (!this.active?.writeChunk) throw new Error("AudioRecorder has no started stream to stop.");
-    return this.stopCapture(options) as Promise<RecordedAudioSpan>;
+    if (this.active && Boolean(this.active.writeChunk) !== (options.result === "span"))
+      throw new DOMException("AudioRecorder stop result does not match active take.", "InvalidStateError");
+    return this.stopCapture(options);
   }
 
   private endFrame(options: { when?: number }): number {
@@ -413,9 +440,12 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
   private stopCapture(options: { when?: number }): Promise<RecordedAudio | RecordedAudioSpan> {
     if (this.disposed) throw new Error("AudioRecorder is disposed.");
     const session = this.active;
-    if (!session || untracked(() => this.stateStore.value) === "stopping") throw new Error("AudioRecorder has no started take to stop.");
+    if (!session) throw new Error("AudioRecorder has no started take to stop.");
+    if (untracked(() => this.stateStore.value) === "stopping") {
+      if (session.writeChunk) return session.promise;
+      throw new Error("AudioRecorder has no started take to stop.");
+    }
     if (!session.node) {
-      if (!session.promise) throw new Error("AudioRecorder has no started take to stop.");
       this.endFrame(options);
       session.pendingStop = options;
       this.stateStore.value = "stopping";
@@ -424,23 +454,12 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
     const frame = this.endFrame(options);
     if (frame <= session.startFrame) throw new RangeError("AudioRecorder stop must follow its start time.");
     this.stateStore.value = "stopping";
-    if (session.promise) {
-      try {
-        session.capture!.setValueAtTime(0, (frame - 0.5) / this.context.sampleRate);
-      } catch (error) {
-        this.fail(session, error);
-      }
-      return session.promise;
+    try {
+      session.capture!.setValueAtTime(0, (frame - 0.5) / this.context.sampleRate);
+    } catch (error) {
+      this.fail(session, error);
     }
-    return new Promise((resolve, reject) => {
-      session.resolve = resolve;
-      session.reject = reject;
-      try {
-        session.capture!.setValueAtTime(0, (frame - 0.5) / this.context.sampleRate);
-      } catch (error) {
-        this.fail(session, error);
-      }
-    });
+    return session.promise;
   }
 
   /** Discards the active take and rejects its `record()` with `AbortError` (use `stop()` to end it early and keep what was captured). Borrowed input nodes and the AudioContext keep running. */
@@ -450,7 +469,7 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
   }
 
   private receive(session: Session, message: RecorderMessage): void {
-    if (this.active !== session) return;
+    if (this.active !== session || session.failed || session.captureEnded) return;
     if (message.type === "begin") {
       if (untracked(() => this.stateStore.value) === "armed") {
         batch(() => {
@@ -478,17 +497,22 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
             throw new Error(
               `AudioRecorder lost captured frames: expected ${session.nextFrame ?? message.startFrame}, received ${message.startFrame} (${size} frames).`,
             );
-          if (session.pendingWrites.size >= 64) throw new Error("AudioRecorder stream writer fell behind.");
+          if (session.pendingCount >= 64) throw new Error("AudioRecorder stream writer fell behind.");
           session.nextFrame = message.startFrame + size;
-          const pending = Promise.resolve().then(() => session.writeChunk!({ startFrame: message.startFrame, channels: message.channels }));
-          session.pendingWrites.add(pending);
-          pending.then(
-            () => session.pendingWrites.delete(pending),
-            (error) => {
-              session.pendingWrites.delete(pending);
-              if (this.active === session) this.fail(session, error);
-            },
-          );
+          session.pendingCount++;
+          session.writeTail = session.writeTail
+            .then(() => {
+              if (!session.failed) return session.writeChunk!({ startFrame: message.startFrame, channels: message.channels });
+            })
+            .then(
+              () => {
+                session.pendingCount--;
+              },
+              (error) => {
+                session.pendingCount--;
+                if (this.active === session) this.fail(session, error);
+              },
+            );
         } catch (error) {
           this.fail(session, error);
         }
@@ -496,6 +520,9 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
     } else if (message.type === "gap") {
       this.fail(session, new Error("AudioRecorder render clock skipped more than two seconds."));
     } else if (message.type === "done") {
+      session.captureEnded = true;
+      if (session.writeChunk) this.stateStore.value = "stopping";
+      this.disconnectCapture(session);
       try {
         const frameCount = message.endFrame - message.startFrame;
         if (frameCount < 1) throw new Error("AudioRecorder captured no frames.");
@@ -510,11 +537,11 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
             endTime: message.endFrame / this.context.sampleRate,
             ...(message.dropouts?.length ? { dropouts: Object.freeze(message.dropouts.map((gap) => Object.freeze(gap))) } : {}),
           });
-          Promise.all(session.pendingWrites).then(
+          session.writeTail.then(
             () => {
-              if (this.active !== session) return;
-              session.resolve?.(span);
+              if (this.active !== session || session.failed) return;
               this.release(session);
+              session.resolve(span);
             },
             (error) => this.fail(session, error),
           );
@@ -542,7 +569,7 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
           startBeat: session.startBeat ?? null,
           ...(message.dropouts?.length ? { dropouts: Object.freeze(message.dropouts.map((gap) => Object.freeze(gap))) } : {}),
         });
-        session.resolve?.(take);
+        session.resolve(take);
         this.release(session);
       } catch (error) {
         this.fail(session, error);
@@ -550,7 +577,9 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
     }
   }
 
-  private release(session: Session): void {
+  private disconnectCapture(session: Session): void {
+    if (session.graphReleased) return;
+    session.graphReleased = true;
     if (session.onContextState) this.context.removeEventListener("statechange", session.onContextState);
     if (session.node) {
       try {
@@ -563,10 +592,17 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
       } catch {
         // The context may already have closed; the graph is disconnected below.
       }
+      session.node.port.onmessage = null;
+      session.node.onprocessorerror = null;
       session.node.port.close();
       session.node.disconnect();
     }
     session.sink?.disconnect();
+  }
+
+  private release(session: Session): void {
+    this.disconnectCapture(session);
+    session.chunks.length = 0;
     if (this.active === session) this.active = null;
     if (!this.disposed) {
       batch(() => {
@@ -578,11 +614,25 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
   }
 
   private fail(session: Session, error: unknown): void {
-    if (!this.disposed && !(error instanceof DOMException && error.name === "AbortError")) {
-      this.errorStore.value = error instanceof Error ? error.message : String(error);
-    }
-    session.reject?.(error);
-    this.release(session);
+    if (this.active !== session || session.failed) return;
+    // First failure wins, including its original identity. Stop audio now, but do not
+    // release the owner or settle completion while the caller still holds borrowed PCM.
+    session.failed = { error };
+    this.disconnectCapture(session);
+    if (!this.disposed)
+      batch(() => {
+        if (session.pendingCount > 0) this.stateStore.value = "stopping";
+        if (!(error instanceof DOMException && error.name === "AbortError"))
+          this.errorStore.value = error instanceof Error ? error.message : String(error);
+      });
+    const reject = () => {
+      this.release(session);
+      session.reject(error);
+    };
+    // Preserve immediate buffered cancellation/reuse. Only borrowed writer chunks
+    // require asynchronous draining before the owner can be released.
+    if (session.pendingCount === 0) reject();
+    else void session.writeTail.then(reject);
   }
 
   override dispose(): void {

@@ -67,10 +67,10 @@ describe("AudioRecorder commands drive tracked state", () => {
     });
     await recorder.ready;
     if (stream) {
-      await recorder.startStream(() => {}, { when: 0.1 });
-      const pending = recorder.stopStream({ when: 0.3 });
+      const recording = recorder.record({ when: 0.1, onChunk() {} });
+      const pending = recorder.stop({ result: "span", when: 0.3 });
       await context.startRendering();
-      await pending;
+      await Promise.all([recording, pending]);
     } else {
       const pending = recorder.record({ when: 0.1 });
       await vi.waitFor(() => expect(recorder.cells.startsAt.value).toBe(0.1));
@@ -83,7 +83,7 @@ describe("AudioRecorder commands drive tracked state", () => {
   };
   test.each([
     ["record", false],
-    ["startStream and stopStream", true],
+    ["streaming record and span stop", true],
   ])("cells.state follows %s", async (_name, stream) => {
     const { states, runs } = await take(stream);
     expect(states[0]).toBe("idle");

@@ -22,7 +22,7 @@ import type { MidiTake } from "@audiorective/midi";
 import { effect } from "@audiorective/core";
 import type { Quantize } from "@audiorective/launcher";
 import { WebClapHost } from "@audiorective/host/webclap";
-import { AudioRecorder } from "@audiorective/recorder";
+import { AudioRecorder, type RecordedAudioSpan } from "@audiorective/recorder";
 import { SampleLibrary } from "@audiorective/samples";
 import { mountSampleBrowser } from "@audiorective/widgets";
 import { checkpointTake, listTakeCheckpoints, removeTakeCheckpoint } from "./take-recovery";
@@ -64,17 +64,24 @@ let midiRecording:
       latency: number;
     }
   | undefined;
-let audioRecording:
-  | {
-      recorder: AudioRecorder;
-      writer: AudioMediaWriter;
-      source: MediaStreamAudioSourceNode;
-      stream: MediaStream;
-      trackId: string;
-      anchor: TakeAnchor;
-      latency: number;
-    }
-  | undefined;
+type AudioRecording = {
+  recorder: AudioRecorder;
+  completion: Promise<RecordedAudioSpan>;
+  writer: AudioMediaWriter;
+  source: MediaStreamAudioSourceNode;
+  stream: MediaStream;
+  trackId: string;
+  anchor: TakeAnchor;
+  latency: number;
+};
+let audioRecording: AudioRecording | undefined;
+
+function releaseAudioInput(take: Pick<AudioRecording, "source" | "recorder" | "stream">): void {
+  take.source.disconnect();
+  take.recorder.dispose();
+  take.stream.getTracks().forEach((track) => track.stop());
+  $("record-audio").textContent = "錄麥克風";
+}
 
 function log(message: string): void {
   $("log").textContent = `${new Date().toLocaleTimeString()}  ${message}\n${$("log").textContent?.slice(0, 2500) ?? ""}`;
@@ -562,12 +569,12 @@ async function recordAudio(): Promise<void> {
     const { recorder, writer, source, stream, trackId, anchor, latency } = audioRecording;
     audioRecording = undefined;
     try {
-      const take = await recorder.stopStream().finally(() => {
-        source.disconnect();
-        recorder.dispose();
-        stream.getTracks().forEach((track) => track.stop());
-        $("record-audio").textContent = "錄麥克風";
-      });
+      let take: RecordedAudioSpan;
+      try {
+        take = await recorder.stop({ result: "span" });
+      } finally {
+        releaseAudioInput({ source, recorder, stream });
+      }
       const media = await writer.finish(take);
       try {
         studio.recordClipEdit("錄製音訊", () => workspace.project.addAudioMediaClip(trackId, media, workspace.takePosition(anchor, take, latency)));
@@ -603,24 +610,42 @@ async function recordAudio(): Promise<void> {
   let source: MediaStreamAudioSourceNode | undefined;
   let recorder: AudioRecorder | undefined;
   let writer: AudioMediaWriter | undefined;
+  let completion: Promise<RecordedAudioSpan> | undefined;
   try {
+    await workspace.flush();
     await context.resume();
     source = context.createMediaStreamSource(stream);
     recorder = new AudioRecorder(context, { channels: 1 });
     writer = await createOpfsAudioMediaWriter(context.sampleRate, 1);
     source.connect(recorder.input);
-    const anchor = workspace.takeAnchor();
-    const activeWriter = writer;
-    await recorder.startStream((chunk) => activeWriter.writeChunk(chunk));
     const track =
       workspace.project.tracks.find((item) => item.id === studio.selectedTrackId && item.kind === "audio") ??
       workspace.project.tracks.find((item) => item.kind === "audio") ??
       workspace.project.addTrack("Recorded audio", "audio");
-    audioRecording = { recorder, writer, source, stream, trackId: track.id, anchor, latency };
+    await recorder.ready;
+    const anchor = workspace.takeAnchor();
+    const activeWriter = writer;
+    completion = recorder.record({ onChunk: (chunk) => activeWriter.writeChunk(chunk) });
+    const active: AudioRecording = { recorder, completion, writer, source, stream, trackId: track.id, anchor, latency };
+    audioRecording = active;
+    // A storage failure is observable without waiting for the musician to press Stop.
+    void completion
+      .catch(async (error: unknown) => {
+        if (audioRecording !== active) return;
+        audioRecording = undefined;
+        releaseAudioInput(active);
+        try {
+          await active.writer.abort();
+        } finally {
+          handleError(error);
+        }
+      })
+      .catch(handleError);
     $("record-audio").textContent = "停止音訊錄製";
     status("正在錄製麥克風…");
   } catch (error) {
     recorder?.cancel();
+    await completion?.catch(() => undefined);
     await writer?.abort().catch(() => undefined);
     source?.disconnect();
     recorder?.dispose();
@@ -901,11 +926,14 @@ window.addEventListener("pagehide", () => {
     midiRecording.recorder.dispose();
   }
   if (audioRecording) {
-    audioRecording.recorder.cancel();
-    audioRecording.recorder.dispose();
-    void audioRecording.writer.abort();
-    audioRecording.source.disconnect();
-    audioRecording.stream.getTracks().forEach((track) => track.stop());
+    const active = audioRecording;
+    audioRecording = undefined;
+    active.recorder.cancel();
+    releaseAudioInput(active);
+    void active.completion
+      .catch(() => undefined)
+      .then(() => active.writer.abort())
+      .catch(() => undefined);
   }
   sessionView?.dispose();
   rhythmView?.dispose();

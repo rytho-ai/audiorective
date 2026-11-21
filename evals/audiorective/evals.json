@@ -486,7 +486,7 @@
         "Records the MIDI take with MidiRecorder.record() (resolving a MidiTake) and uses the take's startTime (the output-clock start) with Workspace.takeAnchor, passing the take plus explicit non-negative input latency to Workspace.takePosition",
         "Converts the returned project-second placement to beats with project.tempoMap.secondsToBeat and passes it to Project.addMidiTake(trackId, take, beats), not the raw absolute AudioContext time (or relies on take.startBeat when the recorder is attached to the playing clock)",
         "Calls Project.setVolumeAutomation with linear or hold points in project seconds and and relies on automatic application (optionally await workspace.flush()) to apply the curve during playback",
-        "Uses AudioRecorder.startStream with AudioMediaWriter.writeChunk, then stopStream and writer.finish to add a file-backed clip with Project.addAudioMediaClip",
+        "Uses AudioRecorder.record({ onChunk }) with AudioMediaWriter.writeChunk, then its completed span (or stop({ result: \"span\" }) for early completion), writer.finish and Project.addAudioMediaClip to add a file-backed clip",
         "Explains that a correction crossing project zero requires preroll rather than silently clamping the clip"
       ]
     },
@@ -496,8 +496,8 @@
       "expected_output": "Uses AudioRecorder streaming, caller-owned disk storage, media clips and streaming DAWproject save/open while preserving explicit media lifetime.",
       "files": [],
       "expectations": [
-        "Creates AudioMediaWriter or createOpfsAudioMediaWriter (imported from daw/runtime) and passes writeChunk to AudioRecorder.startStream",
-        "Finishes with stopStream and writer.finish, then calls Project.addAudioMediaClip at a Workspace.takePosition-derived project second",
+        "Creates AudioMediaWriter or createOpfsAudioMediaWriter (imported from daw/runtime) and passes writeChunk as AudioRecorder.record({ onChunk })",
+        "Finishes with the recording span (or stop({ result: \"span\" }) for early completion) and writer.finish, then calls Project.addAudioMediaClip at a Workspace.takePosition-derived project second",
         "Splits or trims the media clip with Project methods without converting all media into Float32Array channels",
         "Saves to a WritableStream with saveWorkspaceTo and reopens a Blob/File with openWorkspaceBlob",
         "Uses AudioMedia.peaks for the waveform and disposes caller-owned temporary media only after clips and undo state release it",
@@ -1156,6 +1156,19 @@
         "An existing Clock is reused with attach; cleanup disposes only resources owned by this UI and leaves the borrowed Clock alive."
       ],
       "files": []
+    },
+    {
+      "id": 89,
+      "prompt": "Using current Audiorective APIs, build a vanilla recording controller borrowing a live input and a playing Clock. A long take starts on the next bar for four bars, writes chunks asynchronously to an existing writer, and exposes early Stop plus Cancel. A writer can reject before Stop or remain in flight during Cancel. Clean storage only after capture and its active write have settled; preserve borrowed input, context and Clock. A short preview returns buffered PCM from the same recorder. Show the code; do not run anything.",
+      "expected_output": "Uses one AudioRecorder, its upfront streaming completion and native timing/draining rather than a second recorder, scheduler or application chunk queue.",
+      "files": [],
+      "expectations": [
+        "Attaches one AudioRecorder to the borrowed Clock, connects the borrowed input and records with quantize: \"1m\", length: \"4m\", and onChunk forwarding to writer.writeChunk (or the existing writer.write)",
+        "Observes the record completion/rejection immediately, so a storage failure before Stop reaches catch/error UI; fixed-length completion needs no Stop",
+        "Early Stop uses stop({ result: \"span\" }); Cancel uses cancel or AbortSignal and handles AbortError instead of saving the cancelled take",
+        "Awaits streaming completion/draining before writer.finish on success or abort/close on failure; relies on serial bounded toolkit callbacks instead of retaining all PCM or writing its own chunk queue",
+        "Uses the same recorder.record({ length: seconds }) for buffered preview and disposes only owned recorder/attachment/input edge, preserving borrowed input/context/Clock"
+      ]
     }
   ]
 }

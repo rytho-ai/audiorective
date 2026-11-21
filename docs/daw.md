@@ -69,9 +69,10 @@ import { createOpfsAudioMediaWriter } from "@audiorective/daw/runtime";
 const writer = await createOpfsAudioMediaWriter(context.sampleRate, 1);
 const anchor = workspace.takeAnchor();
 try {
-  await recorder.startStream((chunk) => writer.writeChunk(chunk));
+  const recording = recorder.record({ onChunk: (chunk) => writer.writeChunk(chunk) });
+  void recording.catch(showError); // failures can arrive before the Stop click
   // Later, after the user stops recording:
-  const span = await recorder.stopStream();
+  const span = await recorder.stop({ result: "span" }); // same span as recording
   const media = await writer.finish(span);
   project.addAudioMediaClip(track.id, media, workspace.takePosition(anchor, span, measuredInputLatencySeconds));
   await workspace.flush();
@@ -489,7 +490,7 @@ A small [Cubase 14 export shared on the Steinberg forum](https://forums.steinber
 | `Project file-backed audio needs saveDawProjectTo().`                                                                                                                                                                     | Use the streaming writer for media-backed clips; `saveWorkspace()` is an in-memory convenience.                                                               |
 | `Project media clip needs a valid frame window and time.` / `AudioMedia needs a valid PCM frame window.` / `AudioMedia read needs a valid frame window.`                                                                  | Use integer frames inside the borrowed media and a finite project position.                                                                                   |
 | `Project media clip needs an AudioMedia asset.`                                                                                                                                                                           | Pass an `AudioMedia` returned by a writer or constructed over a valid interleaved float32 Blob.                                                               |
-| `AudioMediaWriter needs browser OPFS storage.` / `AudioMediaWriter lost captured frames.` / `AudioMediaWriter take does not match captured frames.`                                                                       | Use OPFS on a compatible secure origin, keep ordered recorder chunks and pass its matching `stopStream()` span.                                               |
+| `AudioMediaWriter needs browser OPFS storage.` / `AudioMediaWriter lost captured frames.` / `AudioMediaWriter take does not match captured frames.`                                                                       | Use OPFS on a compatible secure origin, keep ordered recorder chunks and pass its matching `record({ onChunk })` span.                                        |
 | `AudioMediaWriter is closed.` / `AudioMedia is disposed.` / `AudioMedia asset ended before its declared frame count.` / `Project media asset ended before its declared frame count.`                                      | Keep the writer/media alive until saving and playback finish; verify the backing file was not truncated.                                                      |
 | `AudioMediaWriter needs finite PCM samples.` / `AudioMedia asset has non-finite PCM samples.`                                                                                                                             | Repair invalid sample values in the source take or imported media.                                                                                            |
 | `AudioMedia peaks need a valid frame window.` / `Workspace media chunk is outside the clip.`                                                                                                                              | Request positive integer frames inside the current clip; refresh the runtime after clip edits.                                                                |

@@ -51,8 +51,9 @@ test("streams ordered PCM chunks without returning a full in-memory take", async
   source.start(0);
   source.stop(0.4);
   const chunks: Array<{ startFrame: number; size: number; peak: number }> = [];
-  await recorder.startStream(
-    async (chunk) => {
+  const recording = recorder.record({
+    when: 0.1,
+    onChunk: async (chunk) => {
       await Promise.resolve();
       chunks.push({
         startFrame: chunk.startFrame,
@@ -60,12 +61,13 @@ test("streams ordered PCM chunks without returning a full in-memory take", async
         peak: Math.max(...chunk.channels[0]),
       });
     },
-    { when: 0.1 },
-  );
-  expect(() => recorder.stop()).toThrow("AudioRecorder streaming take needs stopStream().");
-  const pending = recorder.stopStream({ when: 0.3 });
+  });
+  await vi.waitFor(() => expect(recorder.cells.startsAt.value).toBe(0.1));
+  expect(() => recorder.stop()).toThrow("AudioRecorder stop result does not match active take.");
+  const pending = recorder.stop({ result: "span", when: 0.3 });
   await context.startRendering();
   const span = await pending;
+  expect(await recording).toBe(span);
   expect(span).toEqual({ channelCount: 1, sampleRate, startFrame: 4800, endFrame: 14400, startTime: 0.1, endTime: 0.3 });
   expect(chunks.length).toBeGreaterThan(1);
   expect(
@@ -78,18 +80,45 @@ test("streams ordered PCM chunks without returning a full in-memory take", async
   expect(recorder.cells.state.value).toBe("idle");
 });
 
-test("a stalled chunk writer fails instead of retaining an unbounded take", async () => {
+test("a stalled chunk writer hits the 64-chunk bound but drains the active writer before failing", async () => {
   const context = new OfflineAudioContext(1, 48_000 * 8, 48_000);
   const recorder = new AudioRecorder(context, { channels: 1 });
   disposers.push(() => recorder.dispose());
   const source = new ConstantSourceNode(context, { offset: 0.2 });
   source.connect(recorder.input);
   source.start(0);
-  await recorder.startStream(() => new Promise<void>(() => {}), { when: 0.1 });
-  const pending = recorder.stopStream({ when: 7 });
-  const rejected = expect(pending).rejects.toThrow("AudioRecorder stream writer fell behind.");
+  let release!: () => void,
+    calls = 0,
+    settled = false;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  disposers.push(() => release());
+  const pending = recorder.record({
+    when: 0.1,
+    length: (65 * 4096) / 48_000,
+    onChunk() {
+      calls++;
+      return held;
+    },
+  });
+  void pending.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
+  await vi.waitFor(() => expect(recorder.cells.startsAt.value).toBe(0.1));
   await context.startRendering();
-  await rejected;
+  await vi.waitFor(() => expect(recorder.cells.error.value).toBe("AudioRecorder stream writer fell behind."));
+  expect(calls).toBe(1);
+  expect(settled).toBe(false);
+  expect(recorder.cells.state.value).toBe("stopping");
+  release();
+  await expect(pending).rejects.toThrow("AudioRecorder stream writer fell behind.");
+  expect(calls).toBe(1);
   expect(recorder.cells.state.value).toBe("idle");
 });
 
@@ -100,8 +129,9 @@ test("a failed chunk writer rejects the streamed take and releases capture", asy
   const source = new ConstantSourceNode(context, { offset: 0.2 });
   source.connect(recorder.input);
   source.start(0);
-  await recorder.startStream(() => Promise.reject(new Error("Storage full")), { when: 0.1 });
-  const rejected = expect(recorder.stopStream({ when: 0.5 })).rejects.toThrow("Storage full");
+  const pending = recorder.record({ when: 0.1, length: 0.4, onChunk: () => Promise.reject(new Error("Storage full")) });
+  const rejected = expect(pending).rejects.toThrow("Storage full");
+  await vi.waitFor(() => expect(recorder.cells.startsAt.value).toBe(0.1));
   await context.startRendering();
   await rejected;
   expect(recorder.cells.error.value).toBe("Storage full");
@@ -256,12 +286,15 @@ test("toAudioBuffer copies a take's PCM into an AudioBuffer", async () => {
 });
 
 test("stop asked while the capture graph is still being built ends the take as soon as it starts", async () => {
-  const context = new AudioContext();
+  const context = new AudioContext({ sampleRate: 48_000 });
   const recorder = new AudioRecorder(context, { channels: 1 });
   disposers.push(
     () => context.close(),
     () => recorder.dispose(),
   );
+  const source = new ConstantSourceNode(context, { offset: 0.25 });
+  source.connect(recorder.input);
+  source.start();
   await context.resume();
   const when = context.currentTime + 0.3;
   const recording = recorder.record({ when });
@@ -269,7 +302,10 @@ test("stop asked while the capture graph is still being built ends the take as s
   expect(recorder.cells.state.value).toBe("stopping");
   const take = await stopped;
   expect(await recording).toBe(take);
-  expect(Math.abs(take.endFrame - take.startFrame - Math.ceil(0.1 * context.sampleRate))).toBeLessThanOrEqual(1);
+  expect(Math.abs(take.endFrame - take.startFrame - 4800)).toBeLessThanOrEqual(1);
+  expect(Math.abs(take.startFrame - Math.ceil(when * context.sampleRate))).toBeLessThanOrEqual(1);
+  expect(take.channels[0][0]).toBeCloseTo(0.25, 6);
+  expect(take.channels[0][take.channels[0].length - 1]).toBeCloseTo(0.25, 6);
 });
 
 test("an input that reaches only the recorder is processed from the start, so a take holds exactly what played at that audio time", async () => {
@@ -305,7 +341,8 @@ test("an oscillator wired only to the recorder keeps its phase when the take is 
   let recording!: Promise<{ channels: readonly Float32Array[] }>;
   context.suspend(0.25).then(() => {
     recording = recorder.record({ when: 0.5, length: 0.01 });
-    return vi.waitFor(() => expect(recorder.cells.startsAt.value).toBe(0.5)).then(() => context.resume());
+    expect(recorder.cells.startsAt.value).toBe(0.5);
+    return context.resume();
   });
   await context.startRendering();
   const take = await recording;

@@ -19,87 +19,111 @@ try {
   assert.match(await page.locator("#portability-details").innerText(), /matching CLAP/);
   await page.locator("#portability-dialog button").click();
 
-  const result = await page.evaluate(async () => {
-    const Project = window.__daw.project.constructor;
-    const Workspace = window.__daw.workspace.constructor;
-    const project = new Project({ title: "Export probe" });
-    const track = project.addTrack("Sine", "audio");
-    const samples = new Float32Array(4800);
-    for (let i = 0; i < samples.length; i++) samples[i] = Math.sin((i * Math.PI * 2 * 440) / 48000) * 0.25;
-    const clip = project.addAudioClip(track.id, { sampleRate: 48000, channels: [samples] }, 0);
-    const context = new AudioContext({ sampleRate: 48000 });
-    const workspace = await Workspace.create(context, project);
-    workspace.setMasterVolume(0.3);
-    project.setAudioClipGainAutomation(clip.id, [
-      { time: 0, value: 0.25, shape: "hold" },
-      { time: 0.05, value: 1, shape: "hold" },
-    ]);
-    const report = window.__daw.api.portabilityReport(workspace.project, workspace.warnings);
-    const parts = [];
-    await window.__daw.api.exportAudioFallbackTo(workspace, new WritableStream({ write: (chunk) => parts.push(chunk) }), { tailSeconds: 0.1 });
-    const bytes = new Uint8Array(await new Blob(parts).arrayBuffer());
-    const view = new DataView(bytes.buffer);
-    const entries = [];
-    let at = 0;
-    while (view.getUint32(at, true) === 0x04034b50) {
-      const flags = view.getUint16(at + 6, true);
-      const size = view.getUint32(at + 18, true);
-      const nameSize = view.getUint16(at + 26, true);
-      const name = new TextDecoder().decode(bytes.subarray(at + 30, at + 30 + nameSize));
-      const dataAt = at + 30 + nameSize;
-      let peak = 0;
-      let earlyPeak = 0;
-      if (name.endsWith(".wav"))
-        for (let offset = dataAt + 44; offset < dataAt + size; offset += 4) {
-          const sample = Math.abs(view.getFloat32(offset, true));
-          peak = Math.max(peak, sample);
-          if (offset < dataAt + 44 + 0.04 * 48000 * 8) earlyPeak = Math.max(earlyPeak, sample);
-        }
-      entries.push({ name, flags, crc: view.getUint32(at + 14, true), peak, earlyPeak, size });
-      at = dataAt + size;
-    }
-    const aborted = new AbortController();
-    aborted.abort();
-    let cancellation;
-    try {
-      await window.__daw.api.exportAudioFallbackTo(workspace, new WritableStream(), { signal: aborted.signal });
-    } catch (error) {
-      cancellation = error.name;
-    }
-    const effects = [
-      { id: "filter", type: "filter", enabled: true, wet: 1, mode: "lowpass", frequency: 100, q: 0.7 },
-      { id: "delay", type: "delay", enabled: true, wet: 1, delayTime: 0.25, feedback: 0 },
-    ];
-    workspace.setTrackEffects(track.id, effects);
-    const restored = await window.__daw.api.openWorkspace(context, await window.__daw.api.saveWorkspace(workspace));
-    const reopenedMaster = restored.project.masterVolume;
-    let effectOutput;
-    try {
+  const result = await page.evaluate(
+    async ({ recorderModule }) => {
+      const Project = window.__daw.project.constructor;
+      const Workspace = window.__daw.workspace.constructor;
+      const project = new Project({ title: "Export probe" });
+      const track = project.addTrack("Sine", "audio");
+      const samples = new Float32Array(4800);
+      for (let i = 0; i < samples.length; i++) samples[i] = Math.sin((i * Math.PI * 2 * 440) / 48000) * 0.25;
+      const clip = project.addAudioClip(track.id, { sampleRate: 48000, channels: [samples] }, 0);
+      const context = new AudioContext({ sampleRate: 48000 });
+      const workspace = await Workspace.create(context, project);
+      workspace.setMasterVolume(0.3);
+      project.setAudioClipGainAutomation(clip.id, [
+        { time: 0, value: 0.25, shape: "hold" },
+        { time: 0.05, value: 1, shape: "hold" },
+      ]);
+      const report = window.__daw.api.portabilityReport(workspace.project, workspace.warnings);
       const parts = [];
-      await window.__daw.api.exportAudioFallbackTo(restored, new WritableStream({ write: (chunk) => parts.push(chunk) }), { tailSeconds: 0.45 });
+      const { AudioRecorder } = await import(recorderModule);
+      const originalRecord = AudioRecorder.prototype.record;
+      const originalPlay = Workspace.prototype.play;
+      let capture;
+      AudioRecorder.prototype.record = function (...args) {
+        capture = this;
+        return originalRecord.apply(this, args);
+      };
+      Workspace.prototype.play = function (...args) {
+        assertCaptureBegan();
+        return originalPlay.apply(this, args);
+      };
+      function assertCaptureBegan() {
+        if (!capture) throw new Error("Export did not use the observed recorder.");
+        if (capture.cells.startedAt.value === null) throw new Error("Export playback began before native capture started.");
+      }
+      try {
+        await window.__daw.api.exportAudioFallbackTo(workspace, new WritableStream({ write: (chunk) => parts.push(chunk) }), { tailSeconds: 0.1 });
+      } finally {
+        AudioRecorder.prototype.record = originalRecord;
+        Workspace.prototype.play = originalPlay;
+      }
       const bytes = new Uint8Array(await new Blob(parts).arrayBuffer());
       const view = new DataView(bytes.buffer);
-      const pcm = 30 + view.getUint16(26, true) + view.getUint16(28, true) + 44;
-      const peakBetween = (start, end) => {
+      const entries = [];
+      let at = 0;
+      while (view.getUint32(at, true) === 0x04034b50) {
+        const flags = view.getUint16(at + 6, true);
+        const size = view.getUint32(at + 18, true);
+        const nameSize = view.getUint16(at + 26, true);
+        const name = new TextDecoder().decode(bytes.subarray(at + 30, at + 30 + nameSize));
+        const dataAt = at + 30 + nameSize;
         let peak = 0;
-        for (let frame = start * 48000; frame < end * 48000; frame++)
-          peak = Math.max(peak, Math.abs(view.getFloat32(pcm + frame * 8, true)), Math.abs(view.getFloat32(pcm + frame * 8 + 4, true)));
-        return peak;
-      };
-      effectOutput = {
-        effects: restored.project.tracks[0].effects,
-        early: peakBetween(0.01, 0.18),
-        echo: peakBetween(0.23, 0.4),
-      };
-    } finally {
-      restored.dispose();
-      restored.project.dispose();
-    }
-    workspace.dispose();
-    project.dispose();
-    await context.close();
-    return { entries, report, cancellation, effectOutput, reopenedMaster };
-  });
+        let earlyPeak = 0;
+        if (name.endsWith(".wav"))
+          for (let offset = dataAt + 44; offset < dataAt + size; offset += 4) {
+            const sample = Math.abs(view.getFloat32(offset, true));
+            peak = Math.max(peak, sample);
+            if (offset < dataAt + 44 + 0.04 * 48000 * 8) earlyPeak = Math.max(earlyPeak, sample);
+          }
+        entries.push({ name, flags, crc: view.getUint32(at + 14, true), peak, earlyPeak, size });
+        at = dataAt + size;
+      }
+      const aborted = new AbortController();
+      aborted.abort();
+      let cancellation;
+      try {
+        await window.__daw.api.exportAudioFallbackTo(workspace, new WritableStream(), { signal: aborted.signal });
+      } catch (error) {
+        cancellation = error.name;
+      }
+      const effects = [
+        { id: "filter", type: "filter", enabled: true, wet: 1, mode: "lowpass", frequency: 100, q: 0.7 },
+        { id: "delay", type: "delay", enabled: true, wet: 1, delayTime: 0.25, feedback: 0 },
+      ];
+      workspace.setTrackEffects(track.id, effects);
+      const restored = await window.__daw.api.openWorkspace(context, await window.__daw.api.saveWorkspace(workspace));
+      const reopenedMaster = restored.project.masterVolume;
+      let effectOutput;
+      try {
+        const parts = [];
+        await window.__daw.api.exportAudioFallbackTo(restored, new WritableStream({ write: (chunk) => parts.push(chunk) }), { tailSeconds: 0.45 });
+        const bytes = new Uint8Array(await new Blob(parts).arrayBuffer());
+        const view = new DataView(bytes.buffer);
+        const pcm = 30 + view.getUint16(26, true) + view.getUint16(28, true) + 44;
+        const peakBetween = (start, end) => {
+          let peak = 0;
+          for (let frame = start * 48000; frame < end * 48000; frame++)
+            peak = Math.max(peak, Math.abs(view.getFloat32(pcm + frame * 8, true)), Math.abs(view.getFloat32(pcm + frame * 8 + 4, true)));
+          return peak;
+        };
+        effectOutput = {
+          effects: restored.project.tracks[0].effects,
+          early: peakBetween(0.01, 0.18),
+          echo: peakBetween(0.23, 0.4),
+        };
+      } finally {
+        restored.dispose();
+        restored.project.dispose();
+      }
+      workspace.dispose();
+      project.dispose();
+      await context.close();
+      return { entries, report, cancellation, effectOutput, reopenedMaster };
+    },
+    { recorderModule: "/@fs" + fileURLToPath(new URL("../../packages/recorder/dist/index.js", import.meta.url)) },
+  );
   assert.deepEqual(
     result.entries.map((entry) => entry.name),
     ["mix.wav", "tracks/track1.wav", "manifest.json"],

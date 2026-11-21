@@ -1,4 +1,4 @@
-import { AudioRecorder } from "@audiorective/recorder";
+import { AudioRecorder, type RecordedAudioSpan } from "@audiorective/recorder";
 import type { AudioMedia } from "./media";
 import type { Project } from "./model";
 import { createOpfsAudioMediaWriter } from "./opfs-media";
@@ -29,6 +29,7 @@ export async function exportAudioFallbackTo(
   let project: Project | undefined;
   let context: AudioContext | undefined;
   let recorder: AudioRecorder | undefined;
+  let recording: Promise<RecordedAudioSpan> | undefined;
   let mediaWriter: Awaited<ReturnType<typeof createOpfsAudioMediaWriter>> | undefined;
   let media: AudioMedia | undefined;
   let render: Workspace | undefined;
@@ -67,19 +68,31 @@ export async function exportAudioFallbackTo(
     mediaWriter = await createOpfsAudioMediaWriter(context.sampleRate, channels);
     await recorder.ready;
     checkAbort();
-    await recorder.startStream((chunk) => mediaWriter!.writeChunk(chunk));
-    checkAbort();
-    // Let recorder worklet startup settle before project time zero.
-    await new Promise((resolve) => setTimeout(resolve, 250));
-    checkAbort();
-    await render.play();
+    recording = recorder.record({ onChunk: (chunk) => mediaWriter!.writeChunk(chunk), signal });
+    // A connected graph has not necessarily processed its first audio frame yet.
+    let stopWaiting: (() => void) | undefined;
+    const captureBegan = new Promise<void>((resolve) => {
+      stopWaiting = recorder!.cells.startedAt.subscribe(
+        (time) => {
+          if (time !== null) resolve();
+        },
+        { immediate: true },
+      );
+    });
+    try {
+      await Promise.race([captureBegan, recording]);
+    } finally {
+      stopWaiting?.();
+    }
+    // Observe a failed writer even while playback is preparing its media.
+    await Promise.race([recording, render.play()]);
     checkAbort();
     const origin = render.timeline.beatToTime(0);
     const duration = Math.max(workspace.duration, 0.1) + tail;
     const originFrame = Math.ceil(origin * context.sampleRate);
     const endFrame = Math.ceil((origin + duration) * context.sampleRate);
     progressTimer = setInterval(() => options.onProgress?.(Math.min(1, Math.max(0, (renderContext.currentTime - origin) / duration))), 250);
-    const span = await recorder.stopStream({ when: origin + duration });
+    const span = await recorder.stop({ result: "span", when: origin + duration });
     clearInterval(progressTimer);
     progressTimer = undefined;
     checkAbort();
@@ -124,6 +137,7 @@ export async function exportAudioFallbackTo(
     if (progressTimer) clearInterval(progressTimer);
     signal?.removeEventListener("abort", cancel);
     cancel();
+    await recording?.catch(() => undefined);
     recorder?.dispose();
     await mediaWriter?.abort();
     await media?.dispose();

@@ -56,7 +56,7 @@ The context belongs to its creator. `new Clock({ context, bpm })` creates its ow
 
 ## Pattern edits and completion
 
-A sequencer attached with `clock.attach` automatically rebuilds queued events after committed edits. A custom scheduler edits its own cell and calls `clock.refresh()`. It synchronously retracts owned hits at or after the first captured audio boundary, preserves earlier hits and position, then refills in a coalesced microtask. Editing inside a scheduling callback never re-enters scheduling synchronously. Multiple refresh calls in a task share the refill.
+A sequencer attached with `clock.attach` automatically rebuilds queued events after committed edits. A custom scheduler edits its own cell and calls `clock.refresh()`. It synchronously retracts owned hits at or after the first captured audio boundary, preserves earlier hits and position, then refills in a coalesced microtask. Editing inside a scheduling callback never re-enters scheduling synchronously. Multiple refresh calls in a task share the refill. Before a start or seek has dispatched its first window, refresh retains that requested beat even if audio time has advanced; after dispatch it refills from the captured current boundary.
 
 ```typescript
 pattern.value = nextPattern; // the existing custom scheduler's cell

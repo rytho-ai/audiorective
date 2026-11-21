@@ -29,11 +29,7 @@
         {
           "expectation": 4,
           "label": "microphone tracks stopped",
-          "any": [
-            "getTracks\\(\\)[^;]{0,60}stop\\(\\)",
-            "\\.stop\\(\\)[^;]{0,40}track",
-            "stopMic|releaseMic|stopStream|close\\(\\)|dispose\\(\\)|dispose"
-          ]
+          "any": ["getTracks\\(\\)[^;]{0,60}stop\\(\\)", "\\.stop\\(\\)[^;]{0,40}track", "stopMic|releaseMic|close\\(\\)|dispose\\(\\)|dispose"]
         }
       ]
     },
@@ -129,6 +125,18 @@
         "Clicking a row auditions it and clicking again stops it; auditioning does not go through the pad.",
         "A decoded sample is obtained for the pad as an AudioBuffer (or equivalent) while the library keeps its own copy.",
         "Removing a row does not invalidate a sample a pad already holds (the pad keeps its own reference)."
+      ]
+    },
+    {
+      "id": "R7",
+      "prompt": "A vanilla browser app already has an AudioRecorder connected to its input and attached to its playing Clock. Use the shown API to record a long take from the next bar boundary for 64 bars, writing every PCM chunk asynchronously to app-owned persistent storage without accumulating full-take PCM. Show callable examples for normal completion, a Stop button that keeps the partial take, caller AbortSignal cancellation that discards it, and a storage write rejection before anyone presses Stop. Show where the app gets the final frame/time span and when it can safely commit, discard and close its storage. Remove listeners that each example owns and leave the shared recorder, input and Clock usable afterward. Also include one short buffered take that returns its PCM, preserving that existing use. The storage abstraction may be declared in the example; it persists each chunk rather than accumulating the take in JavaScript memory. Use only the supplied toolkit API; do not run anything.",
+      "expectations": [
+        "Starts on the next musical bar and requests the stated musical duration using the supplied owner's existing transport conventions, without a second recorder, transport, timer-based musical scheduler or manual beat-boundary arithmetic.",
+        "Passes an asynchronous chunk writer through the supplied stream entry. Does not accumulate full-take PCM, invent a buffering option, or hand-write a serialization or audio capture engine the toolkit already owns.",
+        "Observes the initial streaming completion promise and its PCM-free frame/time span. Commits normal completion after accepted writes settle and handles early stop as partial success, with the documented mode-correct stop entry.",
+        "Cancellation discards the take, handles AbortError through completion, and closes caller-owned storage after the streaming operation settles. It does not dispose borrowed recorder, input or Clock to end one take.",
+        "A rejected write is observable and causes storage failure cleanup even without a stop request. Cleanup removes owned listeners, closes the storage on every path and does not race in-flight writes.",
+        "The short buffered recording retains the existing PCM result and owner lifecycle. Uses declared API members and actual result types, without a removed graph-preparation stream entry or an invented take handle."
       ]
     }
   ]
