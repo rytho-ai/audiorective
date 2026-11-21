@@ -264,9 +264,11 @@ dispose the binding separately. Looping requires a different, repeating
 automation owner; this attachment rejects it. For custom players or multiple
 clip timelines, the app still owns their transport and coordinate conversion.
 
-For a Rack, keep the adapter in the app: resolve macro targets and program
-each native timeline in `program`, and hold all of them in `hold`. Rack lifetime,
-presets and mappings stay there. The private Rack probe is not a published package.
+For a DAW track macro, use `workspace.trackMacroAutomation(trackId, macroId)`
+when the macro is live. It returns the native `AutomationTarget` that fans the
+normalized curve out to every mapped parameter; check for an absent macro before
+binding it. For a custom processor, implement `program` and `hold` over all of
+its native targets. Macro lifetime, presets and mappings stay with that owner.
 
 ## Common errors
 
