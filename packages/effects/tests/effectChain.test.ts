@@ -211,6 +211,52 @@ describe("EffectChain.toJSON and restore", () => {
     expect(d.params.bypass.value).toBe(true);
   });
 
+  it("restores initial smoothed settings immediately after the context clock has run", async () => {
+    const start = 2048;
+    const ctx = new OfflineAudioContext(2, 8192, SR);
+    const reference = new Filter(ctx, { frequency: 1800, wet: 0.3 });
+    const merger = new ChannelMergerNode(ctx, { numberOfInputs: 2 });
+    reference.output.connect(merger, 0, 0);
+    merger.connect(ctx.destination);
+    const source = new ConstantSourceNode(ctx, { offset: 0.5 });
+    source.connect(reference.input);
+    source.start(start / SR);
+    let restored!: EffectChain;
+    let initial!: { frequency: number; wet: number; smoothing: number[] };
+    let issues: unknown;
+    const edit = ctx.suspend(start / SR).then(async () => {
+      const result = EffectChain.restore(ctx, { version: 1, effects: [{ type: "Filter", params: { frequency: 1800, wet: 0.3 } }] }, { types });
+      restored = result.chain;
+      issues = result.issues;
+      const filter = restored.cells.effects.value[0] as Filter;
+      // A display poll must observe the restored setting, not constructor defaults.
+      filter.params.frequency.syncFromAudio();
+      filter.params.wet.syncFromAudio();
+      initial = {
+        frequency: filter.params.frequency.value,
+        wet: filter.params.wet.value,
+        smoothing: [filter.params.frequency.smoothing, filter.params.wet.smoothing],
+      };
+      source.connect(restored.input);
+      restored.output.connect(merger, 0, 1);
+      await ctx.resume();
+    });
+    const output = await ctx.startRendering();
+    await edit;
+    expect(issues).toEqual([]);
+    expect(initial.frequency).toBe(1800);
+    expect(initial.wet).toBeCloseTo(0.3, 6);
+    expect(initial.smoothing).toEqual([0.01, 0.01]);
+    const expected = output.getChannelData(0);
+    const actual = output.getChannelData(1);
+    // Compare the first wet/dry/filter samples, before a 10 ms ramp could settle.
+    let difference = 0;
+    for (let frame = start; frame < start + 256; frame++) difference = Math.max(difference, Math.abs(actual[frame]! - expected[frame]!));
+    expect(difference).toBeLessThan(1e-6);
+    restored.dispose();
+    reference.dispose();
+  });
+
   it("a built-in effect subclass keeps its own serialization type", () => {
     class CustomDelay extends PingPongDelay {
       static override readonly type = "CustomDelay";

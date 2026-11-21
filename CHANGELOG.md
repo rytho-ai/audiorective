@@ -57,6 +57,8 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Changed
 
+- **effects:** `EffectChain.restore()` initializes newly created effects at their saved values immediately even on a running context, while retaining normal smoothing for subsequent writes.
+
 - **effects docs:** mixer routes using `Channel.send()` use processor `connect()` throughout, so upstream inserts, sends and returns share one latency solve; separate `defineGraph` solves do not share arrival times.
 
 - **effects:** built-in effects allow subclasses to choose their own `static type` for `EffectChain` serialization.

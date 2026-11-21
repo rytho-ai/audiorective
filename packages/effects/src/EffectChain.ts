@@ -1,4 +1,4 @@
-import { AudioProcessor, Param, cell, readonlyCell, type Cell, type ReadonlyCell } from "@audiorective/core";
+import { AudioProcessor, Param, SchedulableParam, cell, readonlyCell, type Cell, type ReadonlyCell } from "@audiorective/core";
 import { Effect } from "./Effect";
 import { LEAD } from "./internal/smoothing";
 
@@ -162,6 +162,7 @@ export class EffectChain extends AudioProcessor<Record<never, never>, { effects:
   /**
    * Builds a chain from `toJSON()` data. Never throws for bad data: an unknown type, an unknown or out-of-range
    * parameter, or a constructor that fails becomes an issue and that part is skipped.
+   * Saved values initialize the new effects immediately, even on a running context; later writes keep normal smoothing.
    */
   static restore(context: BaseAudioContext, json: unknown, options: EffectChainRestoreOptions): { chain: EffectChain; issues: EffectChainIssue[] } {
     const issues: EffectChainIssue[] = [];
@@ -210,6 +211,11 @@ export class EffectChain extends AudioProcessor<Record<never, never>, { effects:
     if (typeof value !== typeof current || (typeof value === "number" && !Number.isFinite(value))) return `expected a ${typeof current}`;
     if (typeof value === "number" && ((param.min !== undefined && value < param.min) || (param.max !== undefined && value > param.max)))
       return `outside ${param.min ?? "-Infinity"}..${param.max ?? "Infinity"}`;
+    const schedulable = param instanceof SchedulableParam ? param : undefined;
+    const smoothing = schedulable?.smoothing ?? 0;
+    // These effects are still detached: saved settings are their initial state,
+    // not a live edit that should ramp from the constructor's defaults.
+    if (schedulable) schedulable.smoothing = 0;
     try {
       param.value = value;
     } catch (cause) {
@@ -221,6 +227,8 @@ export class EffectChain extends AudioProcessor<Record<never, never>, { effects:
         // A custom bind can also reject rollback; bad input still becomes an issue.
       }
       return `invalid value: ${cause instanceof Error ? cause.message : String(cause)}`;
+    } finally {
+      if (schedulable) schedulable.smoothing = smoothing;
     }
     return undefined;
   }
