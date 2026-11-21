@@ -525,7 +525,7 @@
       "expectations": [
         "Calls project.setTempoChanges([{ beat: 4, bpm: 60 }]) and relies on the running Workspace to rebase playback automatically (optionally await workspace.flush())",
         "Uses project.tempoMap beatToSeconds, secondsToBeat or snapSeconds for ruler and snapping; beat 8 maps to project second 6",
-        "Imports attachClipGesture from @audiorective/widgets/arrangement and passes project.tempoMap as timeMap",
+        "Imports attachClipGesture from @audiorective/widgets/arrangement and supplies timeMap either as project.tempoMap directly or as a structural wrapper delegating every conversion and snapping method to the current project.tempoMap, without a second tempo model or handwritten conversion math",
         "Uses attachTimelineZoom from the arrangement entry for continuous anchored slider and Ctrl/Meta+wheel zoom, with the app providing redraw in onScale",
         "Lets the widget own pointer preview, cancellation and keyboard nudge but applies Project.moveClip and undo history in onMove",
         "Applies the Project clip move without a commit call (the Workspace applies it) and disposes the gesture before removing its clip element",
