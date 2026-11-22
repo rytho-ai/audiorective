@@ -370,7 +370,7 @@
         "Imports AudioRecorder from @audiorective/recorder and constructs it with the existing AudioContext",
         "Obtains microphone permission in the app and actually connects that input to the recorder (MicrophoneInput.open(context) with mic.connect(recorder) or mic.connect(recorder.input), or its own MediaStreamAudioSourceNode connected to recorder.input); capture adds no audible recorder output.",
         "Awaits recorder.ready before a precise scheduled start, then calls recorder.record({ when }) with absolute AudioContext seconds (there is no recorder.start)",
-        "Ends the take with recorder.stop() or a length and obtains channels, sampleRate, startFrame/endFrame or startTime/endTime from the resolved take; the stop button handles rejection and treats an untimed armed Stop (AbortError) as cancellation rather than a recording error",
+        "Ends the take with recorder.stop() or a length and obtains channels, sampleRate, startFrame/endFrame or startTime/endTime from the resolved take; the stop button handles rejection and handles AbortError as normal cancellation when stopping before the first capture frame; does not infer that armed means no captured audio when the audio clock has advanced",
         "Treats returned frame positions as actual raw capture times and leaves latency calibration and take placement to the future clip/track owner",
         "Uses recorder.cancel() (or an AbortSignal) for discard and disposes the recorder, and releases the microphone (mic.dispose() or stopping the stream tracks) separately from the AudioContext",
         "Does not use MediaRecorder timeslice count as a sample-accurate timeline or invent a project-wide recording/track model"

@@ -2,9 +2,13 @@ import { expect, test } from "vitest";
 import { Clock } from "@audiorective/clock";
 import { AudioRecorder } from "../src/AudioRecorder";
 
-test.each([false, true].flatMap((preloaded) => [false, true].map((streaming) => ({ preloaded, streaming }))))(
-  "Untimed Stop before capture starts cancels without publishing an error (preloaded=$preloaded, streaming=$streaming)",
-  async ({ preloaded, streaming }) => {
+test.each(
+  [false, true].flatMap((preloaded) =>
+    [false, true].flatMap((streaming) => [false, true].map((explicitNow) => ({ preloaded, streaming, explicitNow }))),
+  ),
+)(
+  "Stop now before the first frame cancels with no later capture (preloaded=$preloaded, streaming=$streaming, explicitNow=$explicitNow)",
+  async ({ preloaded, streaming, explicitNow }) => {
     const context = new OfflineAudioContext(1, 24000, 48000);
     const recorder = new AudioRecorder(context, { channels: 1 });
     try {
@@ -21,7 +25,8 @@ test.each([false, true].flatMap((preloaded) => [false, true].map((streaming) => 
       void take.catch(() => {});
       let stopped: ReturnType<AudioRecorder["stop"]> | undefined;
       expect(() => {
-        stopped = streaming ? recorder.stop({ result: "span" }) : recorder.stop();
+        const timing = explicitNow ? { when: context.currentTime } : {};
+        stopped = streaming ? recorder.stop({ result: "span", ...timing }) : recorder.stop(timing);
       }).not.toThrow();
       await expect(stopped).rejects.toMatchObject({ name: "AbortError" });
       await expect(take).rejects.toMatchObject({ name: "AbortError" });
@@ -118,12 +123,13 @@ test.each([false, true])("a Stop invalidated by the prepared quantized start rej
   }
 });
 
-test.each([false, true])("immediate untimed Stop after record() on a live context is normal cancellation (streaming=%s)", async (streaming) => {
+test.each([false, true])("Stop at the first frame of a suspended live context cancels normally (streaming=%s)", async (streaming) => {
   const context = new AudioContext();
   const recorder = new AudioRecorder(context, { channels: 1 });
   try {
     await context.resume();
     await recorder.ready;
+    await context.suspend(); // Freeze audio time at the first frame; armed alone is not a cancellation condition.
     const recording = streaming ? recorder.record({ onChunk() {} }) : recorder.record();
     const stopped = streaming ? recorder.stop({ result: "span" }) : recorder.stop();
     await expect(stopped).rejects.toMatchObject({ name: "AbortError" });
