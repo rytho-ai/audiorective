@@ -103,9 +103,19 @@ async function openHatEndedAfterStep4(deleteClosed: boolean) {
     expect(when).toBeGreaterThan(context.currentTime);
   }
 
-  await until(() => context.currentTime > when + 0.5);
+  // Step 8 is another valid closed hat at when + 0.5. Observe between the two
+  // deadlines, rather than racing its cleanup timer while asserting step 4's retraction.
+  await until(() => context.currentTime > when + 0.25);
   if (!deleteClosed) await until(() => ended);
-  return { ended, closedAfter: spy.mock.calls.filter(([id, options]) => id === "closed" && Math.abs(options!.when! - when) < 1e-6).length };
+  const endedAfterStep4 = ended;
+  if (deleteClosed) {
+    await until(() => context.currentTime > when + 0.6);
+    expect(ended).toBe(true); // the later, legitimate step 8 still chokes it
+  }
+  return {
+    ended: endedAfterStep4,
+    closedAfter: spy.mock.calls.filter(([id, options]) => id === "closed" && Math.abs(options!.when! - when) < 1e-6).length,
+  };
 }
 
 /** Margin (s) the audio clock must leave before the step so the edit cannot lose the race. */
