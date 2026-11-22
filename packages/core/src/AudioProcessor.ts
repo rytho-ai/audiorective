@@ -2,7 +2,7 @@ import { computed as alienComputed, effect as alienEffect } from "alien-signals"
 import type { ParamBind, ParamOptions, ComputedAccessor } from "./types";
 import { Param } from "./Param";
 import { SchedulableParam } from "./SchedulableParam";
-import { Cell, type ReadonlyCell } from "./Cell";
+import { Cell, untracked, type ReadonlyCell } from "./Cell";
 import { defineGraph as defineGraphFn } from "./graph";
 import type { EdgeList, GraphHandle, ValidateEdges } from "./graph";
 import { addConnection, removeConnections } from "./connections";
@@ -119,7 +119,7 @@ export abstract class AudioProcessor<P extends ParamRegistry = ParamRegistry, C 
   }
 
   protected effect(fn: () => void): () => void {
-    const stop = alienEffect(fn);
+    const stop = untracked(() => alienEffect(fn));
     this._effects.push(stop);
     return stop;
   }

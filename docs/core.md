@@ -1010,6 +1010,8 @@ class Sequencer extends AudioProcessor<{ intensity: SchedulableParam }> {
 
 ### Computed Values & Effects
 
+Processor-owned effects and graphs, and an `AutomationBinding` watcher, live until their owner or graph handle is disposed. Creating an owner inside a consumer `effect()` does not make its internal watchers children of that consumer effect; retaining the owner across a rerun or stopping the consumer keeps the owner functional.
+
 `computed()` and `effect()` remain instance methods. They run after `super()` returns, so they can read `this.params` directly:
 
 ```typescript
@@ -1131,7 +1133,7 @@ After `dispose()`, `resume()` and `suspend()` reject with `new DOMException("Aud
 
 The engine mirrors every `statechange` its context reports, not just the transition its own methods cause: a raw `context.resume()`/`context.suspend()` called on the underlying `AudioContext`, Safari's non-standard `interrupted` state (a phone call, Siri, another app taking the audio session), and `closed`. `interrupted` reads as `"suspended"`. `resume()` checks the real `context.state` rather than the mirror, so it reliably means "make sure the context is running now" even if the mirror was stale. A context that the browser lets run without a gesture starts `"running"` after its first `statechange`.
 
-**Cancelling with a signal.** The constructor and `createEngine` take `{ signal }`; aborting it calls `dispose()`, and an already aborted signal disposes the engine at construction. `engine[Symbol.dispose]()` calls `dispose()` too.
+**Cancelling with a signal.** The constructor and `createEngine` take `{ signal }`; aborting it calls `dispose()`, and an already aborted signal disposes the engine at construction. Processors registered and helper graphs built after teardown are immediately disposed as well, including setup results returned after an abort. `engine[Symbol.dispose]()` calls `dispose()` too.
 
 ### AudioEngine
 

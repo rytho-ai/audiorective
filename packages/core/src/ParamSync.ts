@@ -62,13 +62,23 @@ export class ParamSync {
   }
 
   private _loop = (): void => {
-    const now = performance.now();
-    for (const [param, entry] of this._params) {
-      if (now - entry.lastSyncTime >= entry.intervalMs) {
-        entry.lastSyncTime = now;
-        param.syncFromAudio();
+    try {
+      const now = performance.now();
+      for (const [param, entry] of this._params) {
+        if (now - entry.lastSyncTime >= entry.intervalMs) {
+          entry.lastSyncTime = now;
+          try {
+            param.syncFromAudio();
+          } catch (error) {
+            // Preserve the platform error without stopping other owners' readback.
+            queueMicrotask(() => {
+              throw error;
+            });
+          }
+        }
       }
+    } finally {
+      this._rafId = this._params.size > 0 ? requestAnimationFrame(this._loop) : null;
     }
-    this._rafId = requestAnimationFrame(this._loop);
   };
 }

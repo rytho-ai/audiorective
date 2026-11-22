@@ -211,6 +211,7 @@ export class AudioEngine {
       reaches: (from, to) => inner.reaches(from, to),
     };
     this._graphs.push(handle);
+    if (this._disposed) handle.dispose();
     return handle;
   }
 
@@ -258,7 +259,8 @@ export class AudioEngine {
   }
 
   register<T extends AudioProcessor>(processor: T): T {
-    this._processors.push(processor);
+    if (this._disposed) processor.dispose();
+    else this._processors.push(processor);
     return processor;
   }
 

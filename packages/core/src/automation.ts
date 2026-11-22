@@ -141,10 +141,12 @@ export class AutomationBinding {
     readonly curve: AutomationCurve,
     private readonly _target: AutomationTarget,
   ) {
-    this._dispose = effect(() => {
-      const points = curve.value;
-      if (this._anchor) withoutTracking(() => this._program(points));
-    });
+    this._dispose = withoutTracking(() =>
+      effect(() => {
+        const points = curve.value;
+        if (this._anchor) withoutTracking(() => this._program(points));
+      }),
+    );
   }
 
   /** Audio-clock position, clamped to the range; stop retains the stopped position. */

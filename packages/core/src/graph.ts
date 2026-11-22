@@ -1,4 +1,5 @@
 import { effect } from "alien-signals";
+import { untracked } from "./Cell";
 import { AudioProcessor } from "./AudioProcessor";
 import { SchedulableParam } from "./SchedulableParam";
 
@@ -673,7 +674,7 @@ export function defineGraph(fn: () => EdgeList, options: GraphOptions): GraphHan
     options.onSolve?.(handle);
   };
 
-  const stop = effect(() => apply(fn()));
+  const stop = untracked(() => effect(() => apply(fn())));
 
   return handle;
 }

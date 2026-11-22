@@ -62,6 +62,50 @@ describe("FilePlayer", () => {
     void ctx.close();
   });
 
+  test.each(["source", "stop"])("%s publishes one coherent playback transition", async (action) => {
+    const player = makePlayer(ctx, { src: wavDataUri(3) });
+    await once(player.audio, "loadedmetadata");
+    await player.play();
+    player.seek(1);
+    const oldSource = player.src;
+    const duration = player.cells.duration.value;
+    const replacement = wavDataUri(0.5);
+    const seen: unknown[][] = [];
+    const stop = effect(
+      () => void seen.push([player.src, player.cells.isPlaying.value, player.cells.currentTime.value, player.cells.duration.value]),
+    );
+    seen.length = 0;
+    try {
+      if (action === "source") player.src = replacement;
+      else player.stop();
+      expect(seen).toEqual([[action === "source" ? replacement : oldSource, false, 0, action === "source" ? NaN : duration]]);
+    } finally {
+      stop();
+      player.dispose();
+    }
+  });
+
+  test("disposing during playback publishes an inactive empty source immediately", async () => {
+    const player = makePlayer(ctx, { src: wavDataUri(3) });
+    await once(player.audio, "loadedmetadata");
+    await player.play();
+    player.seek(1);
+    const seen: unknown[][] = [];
+    const stop = effect(
+      () => void seen.push([player.src, player.cells.isPlaying.value, player.cells.currentTime.value, player.cells.duration.value]),
+    );
+    seen.length = 0;
+    try {
+      player.dispose();
+      expect(seen).toEqual([[null, false, 0, NaN]]);
+      expect(player.audio.paused).toBe(true);
+      expect(() => player.dispose()).not.toThrow();
+    } finally {
+      stop();
+      player.dispose();
+    }
+  });
+
   test("output is an AudioNode and volume param drives it", () => {
     const p = makePlayer(ctx, { volume: 0.5 });
     expect(p.output).toBeInstanceOf(AudioNode);

@@ -1,6 +1,6 @@
 import { AudioProcessor } from "./AudioProcessor";
 import type { SchedulableParam } from "./SchedulableParam";
-import { cell, readonlyCell, type Cell, type ReadonlyCell } from "./Cell";
+import { batch, cell, readonlyCell, type Cell, type ReadonlyCell } from "./Cell";
 import type { Param } from "./Param";
 
 export interface FilePlayerOptions {
@@ -148,15 +148,17 @@ export class FilePlayer extends AudioProcessor<
   }
 
   set src(url: string | null) {
-    this._srcCell.value = url;
-    this.audio.pause();
-    if (url == null) this.audio.removeAttribute("src");
-    else this.audio.src = url;
-    this.audio.load();
-    this._playing.value = false;
-    this._time.value = 0;
-    this._duration.value = NaN;
-    this._error.value = null;
+    batch(() => {
+      this._srcCell.value = url;
+      this.audio.pause();
+      if (url == null) this.audio.removeAttribute("src");
+      else this.audio.src = url;
+      this.audio.load();
+      this._playing.value = false;
+      this._time.value = 0;
+      this._duration.value = NaN;
+      this._error.value = null;
+    });
   }
 
   /** Loop the stream. Reads and writes `params.loop`. */
@@ -199,10 +201,12 @@ export class FilePlayer extends AudioProcessor<
   }
 
   stop(): void {
-    this.audio.pause();
-    this.audio.currentTime = 0;
-    this._playing.value = false;
-    this._time.value = 0;
+    batch(() => {
+      this.audio.pause();
+      this.audio.currentTime = 0;
+      this._playing.value = false;
+      this._time.value = 0;
+    });
   }
 
   /** Run `cb` each time playback reaches the end. Returns a function that removes it. */
@@ -220,9 +224,7 @@ export class FilePlayer extends AudioProcessor<
     this._endedCbs.length = 0;
     this._source.disconnect();
     this._output.disconnect();
-    this.audio.removeAttribute("src");
-    this.audio.load();
-    this._srcCell.value = null;
+    this.src = null;
     super.dispose();
   }
 }
