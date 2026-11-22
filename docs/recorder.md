@@ -60,8 +60,12 @@ import { overdub, punch } from "@audiorective/recorder";
 
 const layered = overdub(clip.buffer.value!, take, { loopStartBeat, bpm }); // sums the take at take.startBeat, wrapping across the loop end
 clip.configure({ buffer: layered });
-const punched = punch(layered, take, { loopStartBeat, fromBeat: 8, toBeat: 16, bpm, fadeSeconds: 0.005 }); // replaces [8, 16) with the take, crossfaded at both edges
+// Keep the planned transport range used to schedule this punch take.
+const punched = punch(layered, take, { loopStartBeat, fromBeat: punchStartBeat, toBeat: punchEndBeat, bpm, fadeSeconds: 0.005 });
+clip.configure({ buffer: punched });
 ```
+
+`fromBeat` and `toBeat` are **absolute transport beats for this capture occurrence**, not offsets inside the loop. For a four-bar loop launched at beat 12, bars 3–4 of its second cycle are beats 36–44: use `punchStartBeat = 36` and `punchEndBeat = 44`, not 8 and 16. Advancing to a later cycle advances the planned range as well as the recording start. Keep that planned range if capture begins late; the helper leaves frames not covered by the take unchanged.
 
 `loopStartBeat` is the transport beat the loop's first frame sounds at. Pass `bpm` for a constant tempo or `timeline` (`clock.timeline`) to follow a tempo curve; `atBeat` overrides `take.startBeat` and is required for a take that has none. `overdub` takes an optional `gain`. A mono take is added to every channel; sample rates must match.
 
@@ -100,7 +104,7 @@ const media = await writer.finish(span);
 
 `stop({ result: "span", when? })` ends a streaming take early and resolves after accepted writes finish. Buffered `stop({ when? })` returns PCM. The selector must match the active mode (`InvalidStateError` otherwise); neither stop call is necessary for a take with a fixed `length`. Both modes accept valid future timed stops during graph preparation. `cancel()` discards either mode. With a dynamically optional writer or result selector, the return type is `RecordedAudio | RecordedAudioSpan`; use a literal writer/selector when the mode is known.
 
-When the browser skips a short render interval, `span.dropouts` holds absolute frame ranges and skipped samples become silence; a gap longer than two seconds rejects. Check `dropouts` before treating a take as lossless. The span reports `{ channelCount, sampleRate, startFrame, endFrame, startTime, endTime }`. The callback owns external file/database storage. `@audiorective/daw/project` provides `AudioMediaWriter` and `Project.addAudioMediaClip` for file-backed editable clips; see [DAW project and runtime](./daw.md#long-audio-takes-and-media-ownership). AudioWorklet registration uses a Blob URL and needs compatible Content Security Policy settings.
+When the browser skips a short render interval, optional `span.dropouts` holds absolute frame ranges and skipped samples become silence; a gap longer than two seconds rejects. A healthy take omits this field. Check `span.dropouts?.length` or iterate `span.dropouts ?? []` before treating a take as lossless; an unguarded `span.dropouts.length` throws on a healthy take. The span reports `{ channelCount, sampleRate, startFrame, endFrame, startTime, endTime }`. The callback owns external file/database storage. `@audiorective/daw/project` provides `AudioMediaWriter` and `Project.addAudioMediaClip` for file-backed editable clips; see [DAW project and runtime](./daw.md#long-audio-takes-and-media-ownership). AudioWorklet registration uses a Blob URL and needs compatible Content Security Policy settings.
 
 The result preserves the audio clock's raw sample positions. A Track/Clip owner places takes against transport time and applies any measured input/monitor latency adjustment; the recorder does not guess a round-trip offset. `MediaRecorder` can still be suitable for a simple voice memo, but its chunk intervals are not the alignment contract used here.
 

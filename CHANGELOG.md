@@ -44,6 +44,8 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Changed
 
+- **docs / skill:** recorder punch examples use the planned absolute transport range for the take’s current loop occurrence. Long-take examples guard optional dropout metadata and pass the complete `{ min, max, duration }` media peak summary to waveform views. Runtime contracts and persisted data are unchanged.
+
 - **pads / recorder:** repeated pending `Voice.stop(when)` calls on a PadBank replace the earlier Stop like core Voice; an already committed release or choke stays committed. Buffered recorder `startBeat` follows the actual first captured frame, including late quantized capture and sample rounding, so track placement does not snap late audio to its requested bar line.
 
 - **clock:** a refresh before the first dispatched start/seek window retains the requested beat, including when real audio time advances before the refill. In-progress callbacks and later edits keep current-boundary refills without replaying earlier cues.

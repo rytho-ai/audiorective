@@ -84,6 +84,18 @@ try {
 }
 ```
 
+The completed span's `dropouts` field is optional: a healthy take omits it, so inspect `span.dropouts?.length` or `span.dropouts ?? []`.
+
+`AudioMedia.peaks(startFrame, frameCount)` resolves to `{ min: Float32Array, max: Float32Array, duration: number }`. Pass that complete summary directly to the waveform; its `peaks` alternative takes a `Float32Array`, not another summary object. The frame range comes from the current clip's retained media window.
+
+```typescript
+import { mountWaveform } from "@audiorective/widgets/waveform";
+
+const data = await media.peaks(startFrame, frameCount);
+const waveform = mountWaveform(waveformRoot, { data });
+// On view removal: waveform.dispose(); retain the borrowed media.
+```
+
 `AudioMediaWriter` accepts a caller-owned `AudioMediaStorage` as an alternative to OPFS. The storage must write in order and return a readable `Blob` or `File` on finish. `AudioMedia` reads interleaved little-endian float32 frames; `dispose()` releases only storage made by its writer. The application retains `AudioMedia` while any clip or undo entry borrows it. The demo removes its temporary OPFS takes when a project closes; an interrupted browser session can leave temporary files in site storage.
 
 Use `await saveWorkspaceTo(workspace, writableStream)` or `saveDawProjectTo(project, writableStream)` to write a DAWproject ZIP without assembling the whole take or archive in a `Uint8Array`. This stream writes stored ZIP entries with CRC and size in every local header; it reads media twice and stops before classic ZIP's 4 GiB archive boundary. The demo uses a native save-file picker when the browser offers one; its download fallback and `saveWorkspace(workspace)` materialize the full ZIP in memory. Reopen from a `Blob` or `File` with `openWorkspaceBlob(context, blob, options)` for a running workspace, or `openDawProjectBlob(blob)` for a project alone, which retains WAV media as Blobs. The synchronous `saveDawProject(project)` accepts in-memory clips only. Each float WAV is limited by RIFF's 4 GiB length field. The streaming import collects Blob parts under the browser's Blob storage policy, so actual disk versus memory use depends on the browser.
