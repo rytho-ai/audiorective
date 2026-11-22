@@ -65,7 +65,22 @@ const punched = punch(layered, take, { loopStartBeat, fromBeat: punchStartBeat, 
 clip.configure({ buffer: punched });
 ```
 
-`fromBeat` and `toBeat` are **absolute transport beats for this capture occurrence**, not offsets inside the loop. For a four-bar loop launched at beat 12, bars 3–4 of its second cycle are beats 36–44: use `punchStartBeat = 36` and `punchEndBeat = 44`, not 8 and 16. Advancing to a later cycle advances the planned range as well as the recording start. Keep that planned range if capture begins late; the helper leaves frames not covered by the take unchanged.
+`fromBeat` and `toBeat` are **absolute transport beats for this capture occurrence**, not offsets inside the loop. For a four-bar loop launched at beat 12, bars 3–4 of its second cycle are beats 36–44: use `punchStartBeat = 36` and `punchEndBeat = 44`, not 8 and 16. Advancing to a later cycle advances the planned range as well as the recording start. Keep that planned range if capture begins late; the helper leaves frames not covered by the take unchanged. For an existing four-bar loop at fixed 120 BPM in 4/4, choose a future bars-3–4 occurrence directly from the shared timeline, without attaching a temporary scheduler:
+
+```typescript
+const firstPunchBeat = loopStartBeat + 8;
+const earliestBeat = clock.timeline.timeToBeat(context.currentTime + 0.05);
+const cycle = Math.max(0, Math.ceil((earliestBeat - firstPunchBeat) / 16));
+const fromBeat = firstPunchBeat + cycle * 16;
+const toBeat = fromBeat + 8;
+const take = await recorder.record({
+  when: clock.timeline.beatToTime(fromBeat),
+  length: "2m",
+});
+clip.configure({ buffer: punch(clip.buffer.value!, take, { loopStartBeat, fromBeat, toBeat, bpm: 120 }) });
+```
+
+This example assumes the tempo stays fixed until capture ends. `Ruler.read` takes a full Clock tick window; an attached scheduler's minimal `SchedulerWindow` is not that public type. This fixed-tempo occurrence needs only the timeline conversion above. Custom tick code reads configured rulers through `onTick`'s `window.rulers`.
 
 `loopStartBeat` is the transport beat the loop's first frame sounds at. Pass `bpm` for a constant tempo or `timeline` (`clock.timeline`) to follow a tempo curve; `atBeat` overrides `take.startBeat` and is required for a take that has none. `overdub` takes an optional `gain`. A mono take is added to every channel; sample rates must match.
 

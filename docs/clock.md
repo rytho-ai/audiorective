@@ -52,6 +52,15 @@ An existing shared clock is enough: `clock.attach(seq)` returns an idempotent de
 | Linear BPM ramp                              | `clock.bpm.linearRampToValueAtTime(targetBpm, endAudioTime)`           |
 | Slider takes over a ramp                     | `clock.bpm.cancelAndHoldAtTime(context.currentTime)` then set `.value` |
 
+`clock.state.value` is `"stopped" | "playing" | "paused"`; it is a transport state, not the AudioContext's `"running"` state. Calling `start()` again resets the transport, so a Play or launch handler that preserves playback uses:
+
+```typescript
+await context.resume(); // from a user gesture
+if (clock.state.value === "stopped") clock.start();
+else if (clock.state.value === "paused") clock.resume();
+// Already playing: leave its position and queued work alone.
+```
+
 The context belongs to its creator. `new Clock({ context, bpm })` creates its own timeline; pass `{ timeline }` to share an existing one. Both expose `clock.timeline` for beat/time conversion. A future start holds the start position until `when`; pauses hold musical position and seconds position. Tempo changes preserve the current beat. For live tempo curves, custom tick input, count-in and start boundaries, see [advanced](./clock-advanced.md#transport).
 
 ## Pattern edits and completion

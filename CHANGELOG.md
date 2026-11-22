@@ -13,6 +13,11 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ## [Unreleased]
 
+### Documentation and evaluation
+
+- **docs / skill:** clarify Clock transport states, empty processor registries, nullable launcher slots, file-backed clip media windows and fixed-tempo punch occurrence planning. These are existing APIs; runtime and persisted project formats are unchanged.
+- **evals:** accept public widget delegation, current MIDI held cells and signal cleanup; separate actual reference-read evidence from answer prose and keep source preparation distinct from hand-written recording engines. Historical frozen grades are retained.
+
 ### Added
 
 - **widgets:** selector `controls` and `audition` flags work independently (both default `true`), with `getViewport`, zoom/amplitude-zoom and scroll methods for shared-player views. `StepGridPluginContext.onCell` supplies each live step's tracked owner, geometry slot and scoped cleanup; step indices are zero-based.

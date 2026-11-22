@@ -86,15 +86,20 @@ try {
 
 The completed span's `dropouts` field is optional: a healthy take omits it, so inspect `span.dropouts?.length` or `span.dropouts ?? []`.
 
-`AudioMedia.peaks(startFrame, frameCount)` resolves to `{ min: Float32Array, max: Float32Array, duration: number }`. Pass that complete summary directly to the waveform; its `peaks` alternative takes a `Float32Array`, not another summary object. The frame range comes from the current clip's retained media window.
+`AudioMedia.peaks(startFrame, frameCount)` resolves to `{ min: Float32Array, max: Float32Array, duration: number }`. Pass that complete summary directly to the waveform; its `peaks` alternative takes a `Float32Array`, not another summary object. The frame range comes from the current clip's retained media window. File-backed audio clips expose `clip.media`, `clip.startFrame` and `clip.frameCount` directly. They are not nested under a `source` field. Re-read the current clip from `project.tracks` after a split, trim or reopen:
 
 ```typescript
 import { mountWaveform } from "@audiorective/widgets/waveform";
 
-const data = await media.peaks(startFrame, frameCount);
-const waveform = mountWaveform(waveformRoot, { data });
-// On view removal: waveform.dispose(); retain the borrowed media.
+const clip = project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === clipId);
+if (clip?.kind === "audio" && clip.media) {
+  const data = await clip.media.peaks(clip.startFrame, clip.frameCount);
+  const waveform = mountWaveform(waveformRoot, { data });
+  // Dispose this view when removing it; it does not own clip.media.
+}
 ```
+
+When the app opens a microphone for this take, release that microphone if later setup (`connect` or `recorder.ready`) fails, as well as after completion. Keep a borrowed microphone alive; its creator handles final disposal.
 
 `AudioMediaWriter` accepts a caller-owned `AudioMediaStorage` as an alternative to OPFS. The storage must write in order and return a readable `Blob` or `File` on finish. `AudioMedia` reads interleaved little-endian float32 frames; `dispose()` releases only storage made by its writer. The application retains `AudioMedia` while any clip or undo entry borrows it. The demo removes its temporary OPFS takes when a project closes; an interrupted browser session can leave temporary files in site storage.
 

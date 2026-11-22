@@ -351,6 +351,8 @@ function untracked<T>(fn: () => T): T;
 
 ### AudioProcessor (abstract)
 
+When a subclass explicitly declares an empty cells registry, `AudioProcessor<{}, {}>`, its build callback still returns `cells: {}`. For example, `super(context, () => ({ params: {}, cells: {}, latency: 0 }))`. Omitting the second type parameter leaves cells undeclared; explicitly declaring `{}` requires the empty registry in the build result.
+
 Base class for audio processing units. Generic over the param and cell registries it exposes. Subclasses pass a build callback to `super()` that returns those registries.
 
 ```typescript

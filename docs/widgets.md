@@ -213,7 +213,21 @@ For a per-step helper, attach a `StepGridPlugin` with `context.onCell(cell => ..
 
 ## Clip Grid
 
-`mountClipGrid(root, { launcher, launch?, cancel?, labels? })` renders buttons for an app-owned scene layout over an `@audiorective/launcher` `ClipLauncher` (or `workspace.session.value`), read through its cells and driven through its commands. Use `setLayout({ tracks, scenes })` when the grid changes: `tracks` are `{ track, label }` and each scene is `{ label, clips: [{ track, clip, label }] }` with at most one clip per track, where `track` and `clip` are the launcher's `Track` and `Clip` objects. The widget exposes `data-clip-state` as `idle`, `queued` or `active` for theming and keeps button state in sync with the launcher's `playing` and `queued` cells. The quantize of every launch is `launcher.quantize`, which the app owns.
+`mountClipGrid(root, { launcher, launch?, cancel?, labels? })` renders buttons for an app-owned scene layout over an `@audiorective/launcher` `ClipLauncher` (or `workspace.session.value`), read through its cells and driven through its commands. Use `setLayout({ tracks, scenes })` when the grid changes: `tracks` are `{ track, label }` and each scene is `{ label, clips: [{ track, clip, label }] }` with at most one clip per track, where `track` and `clip` are the launcher's `Track` and `Clip` objects. The widget exposes `data-clip-state` as `idle`, `queued` or `active` for theming and keeps button state in sync with the launcher's `playing` and `queued` cells. The quantize of every launch is `launcher.quantize`, which the app owns. Clip slots may be `null`; omit empty slots from each scene's layout instead of passing `null` as a `ClipGridClip`:
+
+```typescript
+const tracks = Object.values(launcher.tracks);
+grid.setLayout({
+  tracks: tracks.map((track) => ({ track, label: track.name })),
+  scenes: launcher.scenes.map((scene, index) => ({
+    label: scene.name,
+    clips: tracks.flatMap((track) => {
+      const clip = track.clips[index];
+      return clip ? [{ track, clip, label: `${track.name} ${index + 1}` }] : [];
+    }),
+  })),
+});
+```
 
 **Scope.** The grid is a plain table of buttons: a scene button per row (`launcher.launchScene(clips)`), a button per clip (`clip.launch()`), Cancel for all queued launches (`launcher.cancelQueued()`), a return-all button (`launcher.stopAll()`) and a `↩` per track (`track.stop()`). `data-clip-state` is its only visual state. It has no playback progress, per-clip colours, one-shot marker, gate or repeat press handling (`release()`), and no keyboard model beyond focusable buttons. For a performance grid that needs any of those, read the same launcher cells (`clip.playing`, `clip.queued`, `clip.position`, `launcher.queued`) and build the grid in your framework; the launcher is the contract, not the widget.
 
