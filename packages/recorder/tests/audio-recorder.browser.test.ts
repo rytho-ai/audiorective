@@ -178,6 +178,7 @@ test("invalid commands preserve the current take and dispose is final", async ()
   const settled = expect(active).rejects.toThrow("AudioRecorder is disposed.");
   await expect(recorder.record()).rejects.toThrow("AudioRecorder already has an active take.");
   await vi.waitFor(() => expect(recorder.cells.startsAt.value).toBe(0.1));
+  await expect(recorder.stop({ when: 0.1 })).rejects.toThrow("AudioRecorder stop must follow its start time.");
   await expect(recorder.stop({ when: NaN })).rejects.toThrow("AudioRecorder time must be finite, non-negative seconds.");
   expect(recorder.cells.state.value).toBe("armed");
   recorder.dispose();

@@ -367,14 +367,16 @@ export async function main(args = process.argv.slice(2), { codexCall = callCodex
     const mine = flat.filter((x) => x.ei === ei);
     const errors = mine.filter((x) => x.error).map((x) => x.error);
     const completed = mine.filter((x) => x.grades);
-    // An expectation's score is the share of completed runs in which it passed.
+    // Routing failures are assessed failures, even though their grader is skipped.
+    // Only incomplete calls are unknown and excluded from expectation averages.
+    const assessed = mine.filter((x) => x.grades || x.routing?.passed === false);
     const expectations = item.expectations.map((text, i) => ({
       text,
       passed: completed.filter((x) => x.grades[i].passed).length,
-      of: completed.length,
+      of: assessed.length,
       evidence: completed.map((x) => x.grades[i].evidence),
     }));
-    const score = completed.length ? expectations.reduce((sum, e) => sum + e.passed / e.of, 0) : 0;
+    const score = assessed.length ? expectations.reduce((sum, e) => sum + e.passed, 0) / assessed.length : 0;
     // Usage of every call that reached a result, solver and grader, including failed runs.
     const solverRuns = mine.map((x) => x.solverUsage).filter(Boolean);
     const graderRuns = mine.map((x) => x.graderUsage).filter(Boolean);
@@ -424,12 +426,19 @@ export async function main(args = process.argv.slice(2), { codexCall = callCodex
     for (const e of new Set(r.errors)) console.log(`        ${e}`);
     for (const e of r.expectations) if (e.of && e.passed < e.of) console.log(`        ✗ ${e.passed}/${e.of}  ${e.text.slice(0, 110)}`);
   }
-  const scored = results.filter((r) => !r.errors.length && r.routingPassed);
+  const scored = results.filter((r) => r.expectations.some((e) => e.of > 0));
   const sum = (xs, f) => xs.reduce((n, x) => n + f(x), 0);
   console.log(`\nexpectations met: ${sum(scored, (r) => r.score).toFixed(1)}/${sum(scored, (r) => r.total)}`);
-  console.log(`evals fully met:  ${scored.filter((r) => r.score === r.total).length}/${scored.length}`);
-  if (results.length !== scored.length)
-    console.log(`${results.length - scored.length} eval(s) had runs that did not complete; they are excluded above and fail the run.`);
+  console.log(`evals fully met:  ${scored.filter((r) => !r.errors.length && r.routingPassed && r.score === r.total).length}/${scored.length}`);
+  const routingFailures = results.filter((r) => !r.routingPassed);
+  console.log(
+    `routing failures: ${routingFailures.length} eval(s), ${sum(routingFailures, (r) => r.routing.filter((run) => run?.passed === false).length)} run(s); counted as unmet above.`,
+  );
+  const incomplete = results.filter((r) => r.errors.length);
+  if (incomplete.length)
+    console.log(
+      `incomplete calls: ${incomplete.length} eval(s), ${sum(incomplete, (r) => r.errors.length)} run(s); excluded from expectation averages and fail the run.`,
+    );
   console.log(
     backend === "codex"
       ? "cost: unavailable (Codex CLI reports tokens, not USD; excluded from Claude budgets)"

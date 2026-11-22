@@ -105,7 +105,7 @@ type Session = {
   /** Buffered and streamed takes settle one completion created up front. */
   promise: Promise<RecordedAudio | RecordedAudioSpan>;
   /** A `stop()` that arrived while the capture graph was still being built. */
-  pendingStop?: { when?: number };
+  pendingStop?: { when?: number; promise: Promise<RecordedAudio | RecordedAudioSpan>; reject(error: unknown): void };
   /** A length, as seconds or beats, applied once the start is fixed. */
   length?: number | NoteLength;
   /** Started at a clock boundary: leaving the transport before it arrives cancels the take. */
@@ -402,7 +402,15 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
       session.startBeat = startBeat;
       session.timeToBeat = clock && startBeat !== null ? (time) => clock.timeline.timeToBeat(time) : undefined;
       this.startsAtStore.value = plannedTime;
-      if (session.pendingStop) this.scheduleEnd(session, session.pendingStop.when ?? this.context.currentTime);
+      if (session.pendingStop) {
+        const pending = session.pendingStop;
+        const when = pending.when ?? this.context.currentTime;
+        if (Math.ceil(when * this.context.sampleRate) <= session.startFrame) {
+          session.pendingStop = undefined;
+          this.stateStore.value = "armed";
+          pending.reject(new RangeError("AudioRecorder stop must follow its start time."));
+        } else this.scheduleEnd(session, when);
+      }
     } catch (error) {
       if (this.active === session) this.fail(session, error);
     }
@@ -412,10 +420,12 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
    * Ends the current take early at `when` (default now) and resolves it, the same partial take `record()` resolves with what was captured; `cancel()` instead discards the take and rejects `record()` with `AbortError`.
    * On a take with `length` it can only shorten it.
    * A valid future `when` is retained while the capture graph is being built. Streaming completion drains accepted writes.
-   * The result selector must match the active take, otherwise this rejects with InvalidStateError. All Stop failures reject its Promise; stopping before the first capture frame also rejects the take and clears its pending capture.
+   * Without `when`, an armed take (capture has not been reported yet) is discarded: Stop and record reject with AbortError, leaving cells.error unchanged.
+   * An explicit `when` at or before the first capture frame rejects only this Stop with RangeError and preserves the take, including when preparation determines a later start.
+   * The result selector must match the active take, otherwise this rejects with InvalidStateError. All Stop failures reject its Promise.
    */
   stop(options: { result: "span"; when?: number }): Promise<RecordedAudioSpan>;
-  /** Buffered take: preserves its partial PCM, including a valid timed stop during preparation. */
+  /** Buffered take: returns partial PCM after capture; an untimed armed Stop instead cancels with AbortError without setting cells.error. Valid timed stops are retained during preparation. */
   stop(options?: { when?: number; result?: never }): Promise<RecordedAudio>;
   /** A dynamic selector returns the matching mode or rejects with InvalidStateError for a mismatched take. */
   stop(options: { when?: number; result?: "span" }): Promise<RecordedAudio | RecordedAudioSpan>;
@@ -448,16 +458,26 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
     const session = this.active;
     if (!session) throw new Error("AudioRecorder has no started take to stop.");
     if (untracked(() => this.stateStore.value) === "stopping") {
-      if (session.writeChunk) return session.promise;
+      if (session.writeChunk) return session.pendingStop?.promise ?? session.promise;
       throw new Error("AudioRecorder has no started take to stop.");
     }
-    if (!session.node) {
-      this.endFrame(options);
-      session.pendingStop = options;
-      this.stateStore.value = "stopping";
+    if (options.when === undefined && untracked(() => this.stateStore.value) === "armed") {
+      this.fail(session, abortError());
       return session.promise;
     }
     const frame = this.endFrame(options);
+    if (options.when !== undefined && Math.ceil(options.when * this.context.sampleRate) <= session.startFrame)
+      throw new RangeError("AudioRecorder stop must follow its start time.");
+    if (!session.node) {
+      let reject!: (error: unknown) => void;
+      const invalidStop = new Promise<never>((_resolve, fail) => {
+        reject = fail;
+      });
+      const promise = Promise.race([session.promise, invalidStop]);
+      session.pendingStop = { ...options, promise, reject };
+      this.stateStore.value = "stopping";
+      return promise;
+    }
     if (frame <= session.startFrame) {
       this.fail(session, new RangeError("AudioRecorder stop must follow its start time."));
       return session.promise;

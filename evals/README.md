@@ -38,7 +38,7 @@ node evals/run_functional_evals.mjs audiorective --skill-dir ../audiorective-mai
 node evals/run_functional_evals.mjs audiorective --ids 3,16,20 --runs 2 --model sonnet
 ```
 
-Options: `--skill-dir`, `--ids <a,b,c>`, `--limit <n>`, `--runs` (1), `--concurrency` (4), `--timeout` seconds (600), `--model`, `--grader-model`, `--json <file>`, `--user-settings` (see Isolation). The report lists each eval's expectations met, whether the skill was opened, and which reference files were read; the JSON also keeps every answer and the grader's evidence. A run that does not complete is reported as an error and excluded from the totals, and the exit code is non-zero.
+Options: `--skill-dir`, `--ids <a,b,c>`, `--limit <n>`, `--runs` (1), `--concurrency` (4), `--timeout` seconds (600), `--model`, `--grader-model`, `--json <file>`, `--user-settings` (see Isolation). The report lists each eval's expectations met, whether the skill was opened, and which reference files were read; the JSON also keeps every answer and the grader's evidence. A call that does not complete is reported separately as an error and excluded from expectation averages; an eval with no assessed runs is excluded from expectation totals. Any incomplete call fails the command. Routing failures are assessed as unmet, remain in per-run means and summary denominators, and fail the command. An eval with an incomplete call or a routing failure cannot count as fully met.
 
 ### Token and cost breakdown
 
@@ -102,4 +102,4 @@ The trigger and functional runners start `claude -p` with `--setting-sources pro
 
 ### Required reference routing
 
-A functional case can declare `required_references`, for example `["audiorective/references/launcher.md"]`. The runner checks each solver run's own reads before calling its grader. A missing reference leaves the answer and usage available, skips grading that run, reports `routing[].missingReferences`, and makes the command fail independently of expectation scores. The cross-run `references` union is a display summary and cannot satisfy another run's requirement.
+A functional case can declare `required_references`, for example `["audiorective/references/launcher.md"]`. The runner checks each solver run's own reads before calling its grader. A missing reference leaves the answer and usage available, skips grading that run, reports `routing[].missingReferences`, and makes the command fail independently of expectation scores. The cross-run `references` union is a display summary and cannot satisfy another run's requirement. Each routing-failed run counts as unmet in every expectation mean; a missing route cannot disappear from the summary denominator. The summary reports routing failures separately from incomplete calls.

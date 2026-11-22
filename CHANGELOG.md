@@ -16,7 +16,7 @@ predates that API. See the "Version mismatches" note in the skill.
 ### Documentation and evaluation
 
 - **docs / skill:** clarify Clock transport states, empty processor registries, nullable launcher slots, file-backed clip media windows and fixed-tempo punch occurrence planning. These are existing APIs; runtime and persisted project formats are unchanged.
-- **evals:** accept public widget delegation, current MIDI held cells and signal cleanup; separate actual reference-read evidence from answer prose and keep source preparation distinct from hand-written recording engines. Historical frozen grades are retained. Required reference reads are enforced per solver run before grading; a missing route fails the run even when its API happens to be correct.
+- **evals:** accept public widget delegation, current MIDI held cells and signal cleanup; separate actual reference-read evidence from answer prose and keep source preparation distinct from hand-written recording engines. Routing failures remain in per-run means and summary denominators as unmet; incomplete calls are reported separately. Historical frozen grades are retained. Required reference reads are enforced per solver run before grading; a missing route fails the run even when its API happens to be correct.
 
 ### Added
 
@@ -52,7 +52,7 @@ predates that API. See the "Version mismatches" note in the skill.
 ### Changed
 
 - **core / clock:** explicitly empty `AudioProcessor` registries may be omitted from the build result; omitted or `undefined` registries become frozen empty objects. Nonempty registries remain required. Concrete beat rulers accept a scheduler window and beat timing directly; concrete time rulers still require position, and custom `Ruler` implementations retain the full tick window contract.
-- **recorder:** every `stop()` failure rejects its Promise. A Stop at or before a pending take’s first frame rejects and clears that take during preparation or after preparation. Invalid selectors and invalid timestamps reject without cancelling an otherwise valid take; streaming Stop retains its completion Promise identity.
+- **recorder:** every `stop()` failure rejects its Promise. An untimed Stop while armed discards the take with `AbortError` without setting `cells.error`. An explicitly invalid stop time rejects only that request and preserves the take, including after preparation determines a later quantized start. Invalid selectors also preserve the take. Repeated streaming Stops retain the same completion Promise while draining writes.
 
 - **docs / skill:** recorder punch examples use the planned absolute transport range for the take’s current loop occurrence. Long-take examples guard optional dropout metadata and pass the complete `{ min, max, duration }` media peak summary to waveform views. Runtime contracts and persisted data are unchanged.
 

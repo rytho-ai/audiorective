@@ -414,5 +414,125 @@ test("one routed run cannot hide another run missing its required reference", as
     [true, false, false],
   );
   assert.equal(row.errors.length, 0, "routing failures are distinct from model/infrastructure errors");
+  assert.equal(row.score, count / 3, "routing failures count as unmet in each expectation mean");
+  assert.ok(row.expectations.every((e) => e.of === 3 && e.passed === 1));
   assert.deepEqual(row.references, ["audiorective/references/launcher.md"]);
+});
+
+test("routing failures remain in summary denominators and are separate from incomplete calls", async (t) => {
+  const { dir, skill } = skills(t),
+    out = join(dir, "routing-summary.json");
+  const suite = JSON.parse(readFileSync(new URL("./audiorective/evals.json", import.meta.url), "utf8")).evals;
+  const total = suite.filter((e) => [13, 70].includes(e.id)).reduce((n, e) => n + e.expectations.length, 0);
+  const passed = suite.find((e) => e.id === 13).expectations.length;
+  const lines = [];
+  const original = console.log;
+  console.log = (...args) => lines.push(args.join(" "));
+  t.after(() => {
+    console.log = original;
+  });
+  let graders = 0;
+  const code = await main(
+    [
+      "audiorective",
+      "--backend",
+      "codex",
+      "--model",
+      "pinned-model",
+      "--reasoning-effort",
+      "high",
+      "--skill-dir",
+      skill,
+      "--ids",
+      "13,70",
+      "--runs",
+      "1",
+      "--concurrency",
+      "1",
+      "--json",
+      out,
+    ],
+    {
+      codexCall: async (options) => {
+        if (options.reader) return { text: "answer", usage: usage(), metadata: { readerCalls: [fullRead()] } };
+        graders++;
+        return {
+          text: JSON.stringify({ results: Array.from({ length: passed }, (_, index) => ({ index, passed: true, evidence: "fixture" })) }),
+          usage: usage(),
+          metadata: { readerCalls: [] },
+        };
+      },
+    },
+  );
+  console.log = original;
+  const output = lines.join("\n");
+  assert.equal(code, 1);
+  assert.equal(graders, 1);
+  assert.match(output, new RegExp(`expectations met: ${passed}\\.0/${total}`));
+  assert.match(output, /evals fully met:\s+1\/2/);
+  assert.match(output, /routing failures:.*1 eval.*1 run/);
+  assert.doesNotMatch(output, /did not complete|excluded above/);
+});
+
+test("a mixed eval keeps routing failures in its mean while reporting a separate incomplete call", async (t) => {
+  const { dir, skill } = skills(t),
+    out = join(dir, "mixed-summary.json");
+  const count = JSON.parse(readFileSync(new URL("./audiorective/evals.json", import.meta.url), "utf8")).evals.find((e) => e.id === 70).expectations
+    .length;
+  const lines = [];
+  const original = console.log;
+  console.log = (...args) => lines.push(args.join(" "));
+  t.after(() => {
+    console.log = original;
+  });
+  let solvers = 0;
+  const code = await main(
+    [
+      "audiorective",
+      "--backend",
+      "codex",
+      "--model",
+      "pinned-model",
+      "--reasoning-effort",
+      "high",
+      "--skill-dir",
+      skill,
+      "--ids",
+      "70",
+      "--runs",
+      "3",
+      "--concurrency",
+      "1",
+      "--json",
+      out,
+    ],
+    {
+      codexCall: async (options) => {
+        if (options.reader) {
+          const n = solvers++;
+          return n === 2
+            ? { error: "fixture timeout", usage: usage(), metadata: { readerCalls: [] } }
+            : {
+                text: "answer",
+                usage: usage(),
+                metadata: { readerCalls: [fullRead(), ...(n === 0 ? [fullRead("audiorective/references/launcher.md", "reference")] : [])] },
+              };
+        }
+        return {
+          text: JSON.stringify({ results: Array.from({ length: count }, (_, index) => ({ index, passed: true, evidence: "fixture" })) }),
+          usage: usage(),
+          metadata: { readerCalls: [] },
+        };
+      },
+    },
+  );
+  console.log = original;
+  const row = JSON.parse(readFileSync(out, "utf8")).results[0],
+    output = lines.join("\n");
+  assert.equal(code, 1);
+  assert.equal(row.score, count / 2);
+  assert.ok(row.expectations.every((e) => e.of === 2));
+  assert.match(output, /evals fully met:\s+0\/1/);
+  assert.match(output, /routing failures:.*1 eval.*1 run/);
+  assert.match(output, /incomplete calls:.*1 eval.*1 run/);
 });
