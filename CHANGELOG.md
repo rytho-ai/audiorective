@@ -44,6 +44,8 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Changed
 
+- **pads / recorder:** repeated pending `Voice.stop(when)` calls on a PadBank replace the earlier Stop like core Voice; an already committed release or choke stays committed. Buffered recorder `startBeat` follows the actual first captured frame, including late quantized capture and sample rounding, so track placement does not snap late audio to its requested bar line.
+
 - **clock:** a refresh before the first dispatched start/seek window retains the requested beat, including when real audio time advances before the refill. In-progress callbacks and later edits keep current-boundary refills without replaying earlier cues.
 
 - **recorder / daw:** long captures use `record({ onChunk, ...timing })`, resolving a PCM-free span at natural completion or early Stop. Writers run serially with the bounded queue; failure/cancel stops capture, skips queued callbacks and drains the active callback before rejection. Buffered capture and valid timed Stop during graph preparation retain their behavior. DAW consumers observe writer failure without waiting for Stop; audio fallback waits for the recorder’s actual native capture-begin signal before playback, without the startup sleep.
@@ -94,6 +96,10 @@ predates that API. See the "Version mismatches" note in the skill.
   | `trigger({ when: point.time })` | `trigger({ when: point.when })` |
 
 ### Fixed
+
+- **core / pads:** an observer error remains reported while context-wide parameter readback continues; owner effects, graph watchers and AutomationBinding survive consumer-effect reruns until explicitly disposed. Aborted engine setup releases subsequently registered processors and helper graphs. Pad commands do not track voice start state; FilePlayer source/Stop/dispose publish coherent inactive state.
+- **effects:** Channel meter disposal is repeatable; effect readiness/error/buffer transitions are batched. Chain handovers wait for audio time across suspension. Rapid Distortion edits coalesce into a bounded pool of prebuilt silent arms with native gain handovers; they do not rewrite an audible curve or reserve caller-owned offline suspend points.
+- **recorder / midi / host:** scheduling Stop cannot exempt an unstarted audio take from transport cancellation; MIDI start/end timers recheck audio time across suspension and record commands do not track tempo. Cancelling a future WebCLAP note-off retains its channels, while executed releases leave later note-on ownership intact.
 
 - **clock:** detach retracts the registration's sounding and future owned events at the current audio time, preserving other schedulers; a retained detached window cannot register new events.
 - **clock:** a slider write after `cancelAndHoldAtTime(now)` preserves an incoming tempo ramp's historical integral, including repeated writes at the same instant, so transport beat does not jump.

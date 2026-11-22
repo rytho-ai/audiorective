@@ -35,10 +35,11 @@ test("record({ quantize: '1m', length: '1m' }) starts on a bar line and lasts on
   expect(startsAt).toBeGreaterThan(context.currentTime);
   const take = await taken;
 
-  expect(take.startBeat! % 4).toBe(0);
+  const boundaryBeat = Math.round(clock.timeline.timeToBeat(startsAt) / 4) * 4;
+  expect(take.startBeat).toBeCloseTo(clock.timeline.timeToBeat(take.startTime), 10);
   expect(take.startBeat).toBeGreaterThan(0);
   const rate = context.sampleRate;
-  expect(take.startFrame).toBe(Math.ceil(clock.timeline.beatToTime(take.startBeat!) * rate));
+  expect(take.startFrame).toBe(Math.ceil(clock.timeline.beatToTime(boundaryBeat) * rate));
   expect(take.endFrame).toBe(take.startFrame + rate); // a bar at 240 bpm is exactly one second: the length is exact in frames, whatever float noise the boundary times carry
   expect(take.startTime).toBe(startsAt);
   expect(take.endFrame - take.startFrame).toBe(rate);
@@ -48,15 +49,19 @@ test("record({ quantize: '1m', length: '1m' }) starts on a bar line and lasts on
 });
 
 test("a note-value quantize follows the beat, and a stopped clock rejects quantize", async () => {
-  const { clock, recorder } = await rig(240);
+  const { context, clock, recorder } = await rig(240);
   await expect(recorder.record({ quantize: "1m" })).rejects.toMatchObject({
     name: "InvalidStateError",
     message: "AudioRecorder quantize needs a playing clock.",
   });
   clock.start();
   await new Promise((done) => setTimeout(done, 120));
-  const take = await recorder.record({ quantize: "4n", length: 0.25 });
-  expect(Number.isInteger(take.startBeat)).toBe(true);
+  const recording = recorder.record({ quantize: "4n", length: 0.25 });
+  await vi.waitFor(() => expect(recorder.cells.startsAt.value).not.toBeNull());
+  const boundaryBeat = Math.round(clock.timeline.timeToBeat(recorder.cells.startsAt.value!));
+  const take = await recording;
+  expect(take.startFrame).toBe(Math.ceil(clock.timeline.beatToTime(boundaryBeat) * context.sampleRate));
+  expect(take.startBeat).toBeCloseTo(clock.timeline.timeToBeat(take.startTime), 10);
   expect(take.endFrame - take.startFrame).toBe(Math.round(0.25 * take.sampleRate));
 });
 

@@ -111,6 +111,7 @@ type Session = {
   /** Started at a clock boundary: leaving the transport before it arrives cancels the take. */
   quantized?: boolean;
   startBeat?: number | null;
+  timeToBeat?: (time: number) => number;
   node?: AudioWorkletNode;
   capture?: AudioParam;
   sink?: GainNode;
@@ -199,7 +200,7 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
   schedule(): void {}
   /** Clock scheduler contract: leaving the transport (stop, pause, seek, detach) cancels a take that is armed but has not started, quantized or `when`; a take already recording continues until `stop()` or its length. */
   reset(reason: RecorderResetReason): void {
-    if (reason !== "start" && this.active && untracked(() => this.stateStore.value) === "armed") this.cancel();
+    if (reason !== "start" && this.active && untracked(() => this.startedAtStore.value) === null) this.cancel();
   }
   /** Clock scheduler contract: called by `clock.attach`. */
   attached(handle: RecorderTransport): () => void {
@@ -231,7 +232,7 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
   /**
    * While attached to a Clock, the clock stopping, pausing, seeking or detaching cancels a take that is armed but has not started (a `when` or `quantize` start still ahead), rejecting with `AbortError`; a take already recording continues until `stop()` or its `length`.
    * Records one take and resolves with it after it ends, at `length` or at `stop()`. A quantized start waits for the clock's next boundary, and the take
-   * reports it as `startBeat` for buffered PCM. With `quantize` (or a note-value `length`) it rejects with `InvalidStateError` when the recorder is not attached to a Clock or, for `quantize`, the clock is not playing. Late worklet registration starts at the first available frame. Call it from a gesture on a running context.
+   * reports the actual first captured frame's beat as `startBeat` for buffered PCM, including a late quantized start. With `quantize` (or a note-value `length`) it rejects with `InvalidStateError` when the recorder is not attached to a Clock or, for `quantize`, the clock is not playing. Late worklet registration starts at the first available frame. Call it from a gesture on a running context.
    * Streaming returns a PCM-free span after capture and writes settle; failure/AbortError waits for an in-flight writer before rejecting.
    */
   record(options: StreamRecordOptions): Promise<RecordedAudioSpan>;
@@ -399,6 +400,7 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
       session.startFrame = planned;
       capture.setValueAtTime(1, Math.max(this.context.currentTime, (planned - 0.5) / this.context.sampleRate));
       session.startBeat = startBeat;
+      session.timeToBeat = clock && startBeat !== null ? (time) => clock.timeline.timeToBeat(time) : undefined;
       this.startsAtStore.value = plannedTime;
       if (session.pendingStop) this.scheduleEnd(session, session.pendingStop.when ?? this.context.currentTime);
     } catch (error) {
@@ -471,6 +473,12 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
   private receive(session: Session, message: RecorderMessage): void {
     if (this.active !== session || session.failed || session.captureEnded) return;
     if (message.type === "begin") {
+      try {
+        session.startBeat = session.timeToBeat?.(message.frame / this.context.sampleRate) ?? null;
+      } catch (error) {
+        this.fail(session, error);
+        return;
+      }
       if (untracked(() => this.stateStore.value) === "armed") {
         batch(() => {
           this.stateStore.value = "recording";

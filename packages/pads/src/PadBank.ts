@@ -196,11 +196,12 @@ export class PadBank extends AudioProcessor<
     if (hit.done) return;
     this.settle();
     const now = this.context.currentTime;
+    if (hit.done || hit.chokeAt <= now) return;
     const at = Math.max(when ?? now, now);
     if (at <= now || at <= hit.when) {
       this.finish(hit);
     } else {
-      hit.stopAt = Math.min(hit.stopAt, at);
+      hit.stopAt = at;
     }
     this.rebuild();
   }
@@ -231,7 +232,7 @@ export class PadBank extends AudioProcessor<
       throw error;
     }
     const state = cell(true);
-    const begun = cell(voice.started.value);
+    const begun = cell(untracked(() => voice.started.value));
     const created: Hit = { pad, when: at, order: ++this.nextOrder, gate, voice, state, begun, chokeAt: Infinity, stopAt: Infinity, done: false };
     this.hits.add(created);
     voice.started.subscribe((started) => {

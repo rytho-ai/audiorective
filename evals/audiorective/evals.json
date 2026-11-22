@@ -1169,6 +1169,29 @@
         "Awaits streaming completion/draining before writer.finish on success or abort/close on failure; relies on serial bounded toolkit callbacks instead of retaining all PCM or writing its own chunk queue",
         "Uses the same recorder.record({ length: seconds }) for buffered preview and disposes only owned recorder/attachment/input edge, preserving borrowed input/context/Clock"
       ]
+    },
+    {
+      "id": 90,
+      "prompt": "Using current Audiorective APIs, write a vanilla controller that borrows an existing PadBank and a playing AudioContext. Trigger one open-ended factory pad, schedule its Stop at now+0.2 seconds, then replace that still-pending Stop with now+0.5 seconds. A later control action may issue Stop again after the release has already begun. Use the same returned Voice throughout; keep the borrowed bank and context alive. Show code; do not run anything.",
+      "expected_output": "Uses PadBank trigger and its core-shaped Voice.stop; the owner replaces a pending Stop and ignores a Stop after release commitment.",
+      "files": [],
+      "expectations": [
+        "Triggers once and retains that returned Voice; uses voice.stop with absolute AudioContext times for the initial and replacement pending Stop",
+        "Relies on the Voice for replacement and committed-release semantics, without rebuilding nodes, hand-written gain gates, timers or a second voice",
+        "Leaves the borrowed PadBank and AudioContext alive and makes UI actions call the existing voice or owner directly"
+      ]
+    },
+    {
+      "id": 91,
+      "prompt": "My vanilla Audiorective editor already has a buffered AudioRecorder attached to its playing Clock and wired to an input; all three are borrowed. Write a Record action for the next bar and four bars of capture, then call commitTake(take, atBeat). Native capture can begin late when the main thread is busy, so the audio must be placed at its actual first-frame beat, even if that is not an integer bar. Do not run anything.",
+      "expected_output": "Records with native quantize/length and places returned PCM by the take’s actual startBeat without rounding it back to the requested bar line.",
+      "files": [],
+      "expectations": [
+        "Uses recorder.record({ quantize: \"1m\", length: \"4m\" }) and awaits its buffered take instead of calculating or scheduling the capture window by hand",
+        "Passes the returned take and its startBeat to commitTake, with a null guard if needed; does not round/snap the beat or substitute a requested bar, transport position or wall-clock timestamp",
+        "Adds no application delay, manual frame accounting or corrected take metadata; relies on the recorder to report actual placement",
+        "Preserves the borrowed recorder, Clock, input and context rather than disposing or replacing them"
+      ]
     }
   ]
 }

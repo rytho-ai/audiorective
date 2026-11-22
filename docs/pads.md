@@ -40,7 +40,7 @@ Pad IDs must be nonempty and unique. `group` names the choke group. `release` (d
 
 **Choke.** A hit in a choke group cuts every sounding voice of the pads in the same `group`, its own pad included, with the bank's `release` fade, at its own native audio start time, even if it was scheduled first. Pads without a `group` layer freely, whatever their sound. A factory pad is choked the same way as a sample pad.
 
-**Stopping.** `voice.stop()` with no time or a past time releases the voice now. `voice.stop(when)` schedules the release for `when` and is retractable like choke; stopping a hit before it starts drops it and removes its choke.
+**Stopping.** `voice.stop()` with no time or a past time releases the voice now. `voice.stop(when)` schedules the release for `when` and is retractable like choke. A later call replaces an earlier pending Stop, matching core `Voice`; a Stop after release has begun does nothing. A committed choke still cuts at its own deadline. Stopping a hit before it starts drops it and removes its choke.
 
 Choke is carried by a per-event gain gate, so stopping an unstarted hit retracts its future choke. A choke that already reached its deadline stays committed and cannot resurrect an earlier sound. The cleanup timer retires silent nodes; it does not time the audible cutoff.
 
