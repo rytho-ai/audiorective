@@ -78,7 +78,7 @@ If you see `Equalizer frequency response arrays must have the same length.`, all
 
 ### Notes on individual effects
 
-- **Distortion.** The waveshaper curve is Tone's shape normalized to unity peak, so `distortion = 0` is exactly unity gain (no coloration). A `distortion` change crossfades between two shapers over 10 ms, so a dragged drive control never clicks. `oversample` defaults to `"none"` because `"2x"`/`"4x"` add browser-defined latency the effect has no way to declare.
+- **Distortion.** The waveshaper curve is Tone's shape normalized to unity peak, so `distortion = 0` is exactly unity gain (no coloration). A `distortion` change crossfades prebuilt shaper arms over 10 ms; a curve is replaced only on a silent arm, so rapid drive edits stay continuous. These native handovers do not reserve or resume caller-owned offline suspend points. `oversample` defaults to `"none"` because `"2x"`/`"4x"` add browser-defined latency the effect has no way to declare.
 - **Phaser.** The wet arm sums the dry input with the phased signal at equal gain — that sum is what produces the notches, and `wet` blends between the plain dry input and that summed signal. With an even `stages` count, no notch sits exactly at `baseFrequency`.
 - **PingPongDelay.** Input is summed to mono and enters on the left delay line, then bounces through the cross-feedback path to the right and back. Echoes that have crossed that feedback path arrive one render quantum (128 samples) later than `delayTime`, since a cycle in a Web Audio graph always delays one of its nodes by a quantum.
 - **Compressor / Limiter / Ducker.** See [Compressor and Limiter](#compressor-and-limiter) and [Ducker](#ducker) below.

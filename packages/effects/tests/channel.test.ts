@@ -9,6 +9,18 @@ async function renderStereo(build: (ctx: OfflineAudioContext) => void, frames = 
 }
 
 describe("Channel", () => {
+  it("dispose and Symbol.dispose can be repeated with a native meter attached", async () => {
+    const context = new AudioContext();
+    const channel = new Channel(context);
+    try {
+      channel.dispose();
+      expect(() => channel.dispose()).not.toThrow();
+      expect(() => channel[Symbol.dispose]()).not.toThrow();
+    } finally {
+      await context.close();
+    }
+  });
+
   it("gain scales, mute silences, unmute restores", async () => {
     const buf = await renderStereo((ctx) => {
       const ch = new Channel(ctx, { gain: 0.5, muted: true });

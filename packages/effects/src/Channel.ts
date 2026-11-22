@@ -203,6 +203,7 @@ function startMeter(ctx: BaseAudioContext, source: AudioNode, level: { value: nu
   analysers.forEach((analyser, i) => splitter.connect(analyser, i));
   const data = new Float32Array(analysers[0]!.fftSize);
   let frame = 0;
+  let stopped = false;
   const tick = () => {
     let peak = 0;
     for (const analyser of analysers) {
@@ -210,10 +211,12 @@ function startMeter(ctx: BaseAudioContext, source: AudioNode, level: { value: nu
       for (let i = 0; i < data.length; i++) peak = Math.max(peak, Math.abs(data[i]!));
     }
     level.value = peak > 0 ? 20 * Math.log10(peak) : -Infinity;
-    frame = requestAnimationFrame(tick);
+    if (!stopped) frame = requestAnimationFrame(tick);
   };
   frame = requestAnimationFrame(tick);
   return () => {
+    if (stopped) return;
+    stopped = true;
     cancelAnimationFrame(frame);
     source.disconnect(splitter);
     splitter.disconnect();

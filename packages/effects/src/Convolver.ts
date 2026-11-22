@@ -1,4 +1,4 @@
-import { AudioBufferCache, cell, readonlyCell, type Cell, type ReadonlyCell } from "@audiorective/core";
+import { AudioBufferCache, batch, cell, readonlyCell, type Cell, type ReadonlyCell } from "@audiorective/core";
 import { Effect, type EffectOptions } from "./Effect";
 
 export interface ConvolverOptions extends EffectOptions {
@@ -41,10 +41,12 @@ export class Convolver extends Effect<{}, { buffer: ReadonlyCell<AudioBuffer | n
     return this._buffer.value;
   }
   set buffer(b: AudioBuffer | null) {
-    this.node.buffer = b;
-    this._buffer.value = b;
-    this.loadToken++;
-    this.setReady(b !== null);
+    batch(() => {
+      this.node.buffer = b;
+      this._buffer.value = b;
+      this.loadToken++;
+      this.setReady(b !== null);
+    });
   }
 
   /** Loads the impulse response at `url` (cached per context); rejects with the fetch or decode error, which `cells.error` also holds. */

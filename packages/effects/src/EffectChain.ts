@@ -508,7 +508,9 @@ export class EffectChain extends AudioProcessor<Record<never, never>, { effects:
     }
     setTimeout(
       () => {
-        if (!this.gone) work();
+        if (this.gone) return;
+        if (context.state !== "closed" && context.currentTime < time) this.at(time, work);
+        else work();
       },
       Math.max(0, (time - context.currentTime) * 1000) + 5,
     );

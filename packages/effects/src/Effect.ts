@@ -1,5 +1,6 @@
 import {
   AudioProcessor,
+  batch,
   cell,
   readonlyCell,
   untracked,
@@ -192,16 +193,20 @@ export abstract class Effect<P extends ParamRegistry = {}, C extends CellRegistr
   /** Marks the effect `"loading"` until `work` settles, then `"ready"` or `"error"`. The latest call wins. */
   protected track(work: Promise<unknown>): void {
     const token = ++this._token;
-    this._status.value = "loading";
-    this._error.value = null;
+    batch(() => {
+      this._status.value = "loading";
+      this._error.value = null;
+    });
     const done = work.then(
       () => {
         if (token === this._token && !this._gone) this._status.value = "ready";
       },
       (cause: unknown) => {
         if (token === this._token && !this._gone) {
-          this._error.value = cause instanceof Error ? cause : new Error("Effect failed to load.", { cause });
-          this._status.value = "error";
+          batch(() => {
+            this._error.value = cause instanceof Error ? cause : new Error("Effect failed to load.", { cause });
+            this._status.value = "error";
+          });
         }
         throw cause;
       },
@@ -213,8 +218,10 @@ export abstract class Effect<P extends ParamRegistry = {}, C extends CellRegistr
   /** Sets `"ready"` or `"loading"` directly, for effects whose readiness is a state rather than a promise. */
   protected setReady(ready: boolean): void {
     this._token++;
-    this._error.value = null;
-    this._status.value = ready ? "ready" : "loading";
+    batch(() => {
+      this._error.value = null;
+      this._status.value = ready ? "ready" : "loading";
+    });
     if (ready) {
       this._resolveReady?.();
       this._resolveReady = undefined;
