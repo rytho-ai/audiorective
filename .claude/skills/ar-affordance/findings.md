@@ -2,7 +2,7 @@
 
 What the experiments established, with the evidence. Consult this when designing a variant or arguing for a shape. Append a section per component as it is done. Raw results live in the git-ignored `blueprints/probes/` of the machine that ran them; the numbers below are the summary of record.
 
-Measurement for all numbers: Sonnet solver, 3 runs per task, guess mode gives only the `.d.ts`, functional mode gives the skill; graders isolated from personal settings unless noted.
+Historical experiments without a backend label use Sonnet. Sections labeled Codex use their stated model and isolation; compare controls and candidates within that backend. Guess mode gives only the `.d.ts`; functional mode gives the staged skill. Runs and grading exceptions are recorded per experiment.
 
 ## What agents already know (mirror these)
 
@@ -163,3 +163,17 @@ The preregistered varying-input-form count is0/18, below the3/18 threshold for p
 - When the implementation deviates from the decided design even slightly, guess runs show it as 3/3 hand-written glue — re-verify against the design, not just the old control.
 - One rule across components (quantize boundary, cancel-on-transport-exit, `stop` vs `cancel`) — a mismatch found in one component usually exists in its siblings.
 - Hidden suites need judgement: separate candidate bugs, suite rules stricter than the brief, and real package bugs before acting.
+
+### Automation, Clock and cross-component closure (Codex, 2026-11-22)
+
+Matched Codex gpt-6.1-sol/high runs retain one Clock owner, audio-time when, cancel(time), and an awaitable coalesced refresh. The completion-shape comparison tied on its preregistered differences; select the smaller direct Promise by the tie rule, without declaring an empirical winner. Real ClockLab retains its141 frozen checks×3, with20 PCM comparisons each, zero engine workarounds and the ordinary35-line instrument/event adapter. Formal true Clock types compile12/12 and score72/72; the repaired recorder's fresh true-type cohort compiles3/3 against actual packages and scores18/18.
+
+Three independent blind Boolean-name answers each choose muted for Channel and lane:6 observations from3 answers, not6 independent agents. Conditioned historical typed guesses are kept separate. The streaming recorder variants each compile3/3 and score18/18; adopt record({ onChunk }) by the preregistered smaller-public-surface tie rule. Page LOC differences are confounded by UI/storage choices. Remove the old stream entry pair; capture owns serial bounded delivery and drain-before-rejection, while storage finalization remains app-owned. The repaired real consumer retains its frozen12/12 checks×3.
+
+G1 confirms15 repaired findings and2 intended behaviors. Owned watchers outlive the creating effect, command reads stay untracked, state tuples publish in one batch, isolated observer errors stay observable, and branch retirement follows native audio time. The first offline-suspend shaper repair failed composition with a caller's later reservation; reject it and use fixed native handover arms. Full runtime verification is1901/1901,0skip,19 typecheck projects and11 DAW smokes. Browser-only evidence is Chromium; port-level host MIDI evidence and actual plug-in smoke have distinct scopes.
+
+The final functional source audit caught errors that blind graders passed: optional span.dropouts read without a guard, a complete media peak summary nested inside a Float32Array field, and loop-local punch bounds passed as global beats. Correct the reachable reference examples and metadata schema, keep runtime/types unchanged, and rerun only cases34/76 with old answers reused for grading. Common raw results15/18→18/18 and11/15→15/15; the first old score is17/18 under an explicit optional-read clarification, because ignoring optional metadata cannot dereference it. Two original generated long-take controllers run native capture/OPFS/save/reopen/waveform; all three new punch main modules compile, and their original punch bodies pass six native timing/PCM checks with a capture-port double. Neither result claims three complete hardware/UI apps.
+
+Method whitelists also rejected valid native input routing and a documented post-fader meter tap. Keep original grades and separate public type/PCM-backed adjudication; wrong/missing connections and disconnect-all remain failing controls. The initial recorder total is74/84→75/84; an earlier Root78/84 tally was an arithmetic mistake, preserved with a source-file correction. These results support source/PCM inspection alongside grading, not treating every numerical increase as API improvement. The existing Clock start({ atBeat }) form still needs the recorded stage9 canonical-API audit. Full same-backend baseline, DAW and final skill slimming remain pending.
+
+Evidence: development-tree blueprints/probes/affordance-automation-clock/verification-final-prep and blueprints/thoughts/2026-11-22-G1-repair-report.md. The initial117 paired functional sources and6 replacements were all read; the accepted set combines111 unchanged initial sources and6 replacements. No identical-input solver rerolls. Current work uses Codex with no fast override; native USD is unknown and historical Claude spending stays separate.

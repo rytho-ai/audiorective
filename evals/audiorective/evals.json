@@ -497,7 +497,7 @@
       "files": [],
       "expectations": [
         "Creates AudioMediaWriter or createOpfsAudioMediaWriter (imported from daw/runtime) and passes writeChunk as AudioRecorder.record({ onChunk })",
-        "Finishes with the span from record({ onChunk }) (or stop({ result: \"span\" }) for early completion), safely handles optional span.dropouts (absent on a healthy take), passes that completed span to writer.finish, then calls Project.addAudioMediaClip at a Workspace.takePosition-derived project second.",
+        "Finishes with the span from record({ onChunk }) (or stop({ result: \"span\" }) for early completion), when reading optional span.dropouts, handles its absence on a healthy take (ignoring this optional metadata is also valid), passes that completed span to writer.finish, then calls Project.addAudioMediaClip at a Workspace.takePosition-derived project second.",
         "Splits or trims the media clip with Project methods without converting all media into Float32Array channels",
         "Saves to a WritableStream with saveWorkspaceTo and reopens a Blob/File with openWorkspaceBlob",
         "Passes the AudioMedia.peaks result ({ min, max, duration }) directly as waveform data (or makes an equivalent valid peak projection), and disposes caller-owned temporary media only after clips and undo state release it; does not nest that summary inside a Float32Array peaks field.",
