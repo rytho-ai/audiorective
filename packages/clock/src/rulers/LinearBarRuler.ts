@@ -1,6 +1,7 @@
+import type { BeatTiming } from "@audiorective/core";
 import type { CoreTickWindow } from "../types";
 import { beatsPerBar, gridPoints } from "./Ruler";
-import type { GridPoint, Ruler, TimelineLike } from "./Ruler";
+import type { GridPoint, Ruler } from "./Ruler";
 
 export interface LinearBarRulerOptions {
   numerator: number;
@@ -39,7 +40,7 @@ export class LinearBarRuler implements Ruler<LinearBarWindow, LinearBarPoint> {
     return { bar, beatInBar, numerator: this._numerator, denominator: this._denominator };
   }
 
-  read(window: CoreTickWindow, timeline: TimelineLike): LinearBarWindow {
+  read(window: Pick<CoreTickWindow, "beat">, timeline: BeatTiming): LinearBarWindow {
     const point = this.at(window.beat.start);
     return {
       ...point,

@@ -15,7 +15,7 @@ processor; add `input` only when the processor transforms incoming audio (an eff
 when it produces audio from scratch (an instrument). Anything the rest of the class also
 needs on `this` gets assigned **after** `super()` returns — `this` isn't usable until then.
 
-When a subclass explicitly declares an empty cells registry, `AudioProcessor<{}, {}>`, its build callback still returns `cells: {}`. For example, `super(context, () => ({ params: {}, cells: {}, latency: 0 }))`. Omitting the second type parameter leaves cells undeclared; explicitly declaring `{}` requires the empty registry in the build result.
+Declare both registries explicitly, for example `AudioProcessor<{}, {}>` for a processor with no reactive fields. Empty registries may be omitted from the build result: `super(context, () => ({ latency: 0 }))`. Registries with declared keys remain required and fully typed; `processor.params` and `processor.cells` are frozen objects even when empty.
 
 ### Wrong — nodes on `this` before `super()`, no `output`
 

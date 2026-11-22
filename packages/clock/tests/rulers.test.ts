@@ -342,3 +342,24 @@ describe("gridPoints — scheduler timing", () => {
     ]);
   });
 });
+
+test("concrete rulers accept scheduler windows and preserve full-window readings across cycles", () => {
+  const cycle = new CycleBarRuler({ numerator: 4, denominator: 4, bars: 4, from: 12 });
+  const linear = new LinearBarRuler({ numerator: 4, denominator: 4 });
+  const timing: BeatTiming = { beatToTime: (beat) => beat / 2, timeToBeat: (time) => time * 2 };
+  const simple = { beat: { start: 36, end: 40 } };
+  expect([...cycle.read(simple, timing).grid(4)]).toEqual([{ beat: 36, when: 18, step: 2, cycle: 1 }]);
+  for (let n = 0; n < 400; n++) {
+    const full = makeWindow(n / 4 - 8, n / 4 - 8 + 0.6);
+    const scheduler = { beat: full.beat, time: { current: 0 }, own() {} };
+    const a = cycle.read(scheduler, timing),
+      b = cycle.read(full, identityTimeline);
+    expect([...a.grid(16)]).toEqual([...b.grid(16)]);
+    expect(a.spans.map((span) => [span.fromCycle, span.toCycle, span.toTime(span.fromCycle)])).toEqual(
+      b.spans.map((span) => [span.fromCycle, span.toCycle, span.toTime(span.fromCycle)]),
+    );
+    expect([...linear.read(scheduler, timing).grid(4)]).toEqual([...linear.read(full, identityTimeline).grid(4)]);
+    expect(new LinearTimeRuler().read(scheduler, identityTimeline)).toEqual({ seconds: 0 });
+    expect(new CycleTimeRuler({ seconds: 2 }).read(scheduler, identityTimeline)).toEqual({ cycle: 0, secondsInCycle: 0, phase: 0 });
+  }
+});

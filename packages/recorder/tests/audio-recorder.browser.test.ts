@@ -63,7 +63,7 @@ test("streams ordered PCM chunks without returning a full in-memory take", async
     },
   });
   await vi.waitFor(() => expect(recorder.cells.startsAt.value).toBe(0.1));
-  expect(() => recorder.stop()).toThrow("AudioRecorder stop result does not match active take.");
+  await expect(recorder.stop()).rejects.toThrow("AudioRecorder stop result does not match active take.");
   const pending = recorder.stop({ result: "span", when: 0.3 });
   await context.startRendering();
   const span = await pending;
@@ -173,12 +173,12 @@ test("invalid commands preserve the current take and dispose is final", async ()
   disposers.push(() => recorder.dispose());
   await expect(recorder.record({ when: NaN })).rejects.toThrow("AudioRecorder time must be finite, non-negative seconds.");
   expect(recorder.cells.state.value).toBe("idle");
-  expect(() => recorder.stop()).toThrow("AudioRecorder has no started take to stop.");
+  await expect(recorder.stop()).rejects.toThrow("AudioRecorder has no started take to stop.");
   const active = recorder.record({ when: 0.1 });
   const settled = expect(active).rejects.toThrow("AudioRecorder is disposed.");
   await expect(recorder.record()).rejects.toThrow("AudioRecorder already has an active take.");
   await vi.waitFor(() => expect(recorder.cells.startsAt.value).toBe(0.1));
-  expect(() => recorder.stop({ when: 0.1 })).toThrow("AudioRecorder stop must follow its start time.");
+  await expect(recorder.stop({ when: NaN })).rejects.toThrow("AudioRecorder time must be finite, non-negative seconds.");
   expect(recorder.cells.state.value).toBe("armed");
   recorder.dispose();
   await settled;

@@ -11,7 +11,7 @@
         "Constructs the audio nodes as local variables before calling super() and binds params to AudioParams via bind",
         "Exposes a getter named output on the processor",
         "The filter sweep (setValueAtTime / linearRampToValueAtTime against currentTime) is implemented as a method on the processor class, not inside a React component or hook",
-        "The React button delegates AudioParam scheduling to the processor method; normal gesture resume and error UI in the handler are valid and do not count as audio scheduling.",
+        "The React button delegates the sweep to one processor method. Normal gesture resume and error UI in the handler are valid. The component contains no AudioParam scheduling, currentTime arithmetic, timers or animation-frame loop driving the sweep.",
         "Uses useValue to read a param in a React component and writes back with param.value = ...",
         "Creates the engine with createEngine and exposes EngineProvider/useEngine via createEngineContext",
         "Does not import or use Tone.js",
@@ -118,8 +118,8 @@
         "Uses player.setSelection and player.audition for headless operation instead of synthesizing DOM gestures",
         "Uses renderer and grid options per view without mirroring selection into a separate store",
         "Disposeing one view leaves player and peer usable; final cleanup disposes both views then player",
-        "If a custom playhead or external status observer is needed, uses documented subscribe for non-clock changes and animation-frame position reads; relying on the supplied widgets for their own updates is valid without extra subscriptions.",
-        "Does not invent destructive PCM editing or mix incompatible package versions; optional stretch uses an injected processor. A prompt explicitly using the current repository build needs no additional Unreleased reminder."
+        "If a custom playhead or external status observer is needed, observes `player.cells` through `effect`, `useValue` or `cells.x.subscribe`, and reads `player.position` on animation frames; does not call a removed `player.subscribe` or poll with a timer. Relying on the supplied widgets for their own updates is valid without extra subscriptions.",
+        "Does not invent destructive PCM editing, mix incompatible package versions, or direct the user to a published release for APIs listed under Unreleased; optional stretch uses an injected processor. A prompt explicitly using the current repository build needs no additional Unreleased reminder."
       ]
     },
     {
@@ -317,7 +317,7 @@
         "Uses MidiKeyboard.open(context, { instrument }) from @audiorective/midi/web, opened from a click, instead of hand-written navigator.requestMIDIAccess and status-byte decoding; the instrument is the synth or a two-method { noteOn, noteOff } adapter over it",
         "Sustain pedal logic (deferring releases while the pedal is down) lives in MidiKeyboard (its sustain option, default true) or the audio-layer object, not in UI handlers",
         "Reads keyboard.held (the current public ReadonlyCell) through subscribe, an effect or useValue; no duplicate held-note UI store. Does not invent keyboard.cells.held.",
-        "Cleans up MidiKeyboard through dispose() or its supplied AbortSignal, releasing held notes. If MidiRecorder is discussed, describes take recording rather than claiming it routes live notes to the synth."
+        "Teardown actually calls `dispose()` on the MidiKeyboard or aborts the AbortSignal passed to `MidiKeyboard.open`, releasing held notes; passing a signal that is never aborted fails. If MidiRecorder is discussed, describes take recording rather than claiming it routes live notes to the synth."
       ]
     },
     {
@@ -386,7 +386,7 @@
         "Resumes the context, attaches the recorder to the playing clock, awaits recorder.record({ quantize: \"1m\" }) to start on the next bar and ends it with recorder.stop(), which resolves the pending record() with the take",
         "Uses take.notes and take.duration with new MidiClip(take.notes) and pianoRollModel(clip) for the piano roll, and passes absolute take.startTime/endTime (and take.startBeat) to the future clip owner",
         "Understands take.events preserves controllers including sustain while note projection ends at key release; does not claim sustain automatically extends notes",
-        "Leaves live keyboard-to-synth noteOn/noteOff and sustain playback in the app audio owner, separate from the silent recorder and piano-roll view. Keeping an existing app monitoring route in place is valid; implementing it again here is not required.",
+        "States that live keyboard-to-synth noteOn/noteOff and sustain playback stay in the app audio owner, separate from the silent recorder and piano-roll view. Implementing that route here is not required, but the answer must not replace it (for example by assigning `input.onmidimessage`), add a second route to the synth, or omit live monitoring from the ownership boundary.",
         "Uses recorder.cancel() to discard (record() rejects with AbortError, which the app catches), recorder.dispose() for listener cleanup, and leaves the borrowed MIDI input and AudioContext owned by the app",
         "Does not invent a Track/Clip owner, apply unmeasured latency correction, or treat mapped MIDI event times as sample accurate"
       ]
@@ -931,10 +931,11 @@
         "Chooses @audiorective/launcher ClipLauncher attached to a Clock (clock.attach(launcher)) as the launch engine.",
         "Does not build on `@audiorective/daw` `Workspace.session`, or says it launches only in-memory PCM clips on Project tracks so step-pattern clips need the standalone route",
         "Makes each step-pattern clip a `scheduler` clip holding a `StepSequencer` (for example `{ scheduler: seq, loop: true, length: \"1m\" }`), and does not call `clock.attach(seq)` for it or connect its lanes to the track by hand: the launcher routes and switches it on the boundary",
-        "Launches clips, scenes and per-track stop through clip.launch(), launcher.launchScene() and track.stop(), directly or delegated to mountClipGrid; sets bar quantization with quantize: \"1m\" (the default), without caller-owned pending-launch queues or beat scheduling.",
+        "Launches clips, scenes and per-track stop through `clip.launch()`, `launcher.launchScene()` and `track.stop()`, directly or delegated to `mountClipGrid`; sets bar quantization with `quantize: \"1m\"` (the default), without caller-owned pending-launch queues or beat scheduling. Any wrapper around these commands, including mountClipGrid's `launch` option, must not restart or seek a transport that is already playing: Clock states are `\"stopped\" | \"playing\" | \"paused\"`, and calling `clock.start()` during playback fails this expectation because the launch no longer lands on the next bar.",
         "Reads launcher-owned playing/queued cells or clip.position, or delegates rendered state to mountClipGrid, without a second launch-state store or polling timer. Exact event timestamps, if needed, use started/ended events.",
         "Does not write its own launch scheduler, audio driver or transport adapter, and does not call a removed `queue`, `advance` or `reset`"
-      ]
+      ],
+      "required_references": ["audiorective/references/launcher.md"]
     },
     {
       "id": 71,
@@ -1006,7 +1007,7 @@
         "Turns the take into a launcher buffer clip with loop true and launches it with clip.launch({ at: ... }) at the take's end beat. Accepts timeline.timeToBeat(take.endTime), or take.startBeat plus its known beat length at the prompt's unchanged 120 BPM in 4/4; does not hand-compute offsetBeats lateness compensation.",
         "Overdubs with recorder overdub(...) and punches the requested bars with punch(...), then applies the result with clip.configure({ buffer }). The punch fromBeat/toBeat are absolute transport beats for the same planned capture occurrence as the take, including later loop cycles; fixed loop-local 8/16 with a nonzero loop origin is not a valid punch range.",
         "Reads the loop's current audio from clip.buffer.value instead of keeping a second PCM copy",
-        "Uses toolkit overdub/punch to sum or replace captured frames rather than implementing those engines by hand. Preparing a four-bar source buffer by repeating an existing shorter loop is source preparation, not a replacement for those helpers; it must not become a second retained PCM store."
+        "Uses toolkit overdub/punch for every sum or replacement involving captured take frames. The only allowed manual PCM step is expanding the clip's current shorter loop by copying whole, unmodified passes into a temporary buffer applied with `clip.configure({ buffer })`; it must not read take frames, mix, fade, or retain a second PCM store."
       ]
     },
     {
@@ -1129,8 +1130,8 @@
       "files": [],
       "expectations": [
         "Passes the existing curve as lane points and a getter reading the existing duration cell, without mirroring authored state or manually remounting on each edit.",
-        "Mounts with a positive finite initial duration; later invalid duration disables input and cancels stale preview without throwing or committing, and validity restores the same view with current points and limits. Delegating this behavior to the toolkit is valid.",
-        "Updates the existing owner through onCommit once per completed gesture and shows view-only cleanup on editor removal, preserving borrowed owners. A native dialog close listener is not required when the app retains the editor for reopening.",
+        "Mounts with a positive finite initial duration and passes the owner's raw duration through a tracked getter, without clamping or substituting a fallback. A later invalid duration disables input and cancels stale preview without throwing or committing, and validity restores the same view with current points and limits. Delegating this behavior to the toolkit is valid.",
+        "Updates the existing owner through `onCommit` once per completed gesture and shows view-only cleanup on editor removal, preserving borrowed owners. A native dialog close listener is not required when the app retains one mounted editor for reopening; an answer that mounts on each open must dispose the previous view first.",
         "Delegates Escape to the lane without a blanket global handler or cancel prevention: active drag cancels first; with no drag the native dialog may dismiss. Toolkit-owned idle field restoration need not be reimplemented or restated by the caller."
       ]
     },

@@ -4,6 +4,15 @@ title: Clock
 
 `@audiorective/clock` owns one musical transport and its look-ahead scheduling. Attach patterns, recorders, players and automation to it; UI handlers edit those owners and read their state. The clock reads absolute `AudioContext` seconds, while its musical axis uses quarter-note beats.
 
+For a Play button or a launcher command that should preserve the current transport, call `clock.play()`: it starts when stopped, resumes when paused, and does nothing when already playing. The caller resumes its AudioContext from the user gesture:
+
+```typescript
+await context.resume();
+clock.play();
+```
+
+Use `clock.start(when?, offsetBeats?)` for an explicit fresh start or position jump.
+
 ## Start a pattern from a click
 
 This Vanilla browser example plays a built-in tone; it needs no sample download.
@@ -41,6 +50,7 @@ An existing shared clock is enough: `clock.attach(seq)` returns an idempotent de
 
 | Action                                       | Call / reading                                                         |
 | -------------------------------------------- | ---------------------------------------------------------------------- |
+| Start / resume while preserving playback     | `clock.play()`                                                         |
 | Start at an audio instant and musical offset | `clock.start(when?, offsetBeats?)`; defaults now, beat 0               |
 | Half-second future start                     | `clock.start(context.currentTime + 0.5)`                               |
 | Count in from beat −3                        | `clock.start(context.currentTime, -3)`                                 |
@@ -56,9 +66,7 @@ An existing shared clock is enough: `clock.attach(seq)` returns an idempotent de
 
 ```typescript
 await context.resume(); // from a user gesture
-if (clock.state.value === "stopped") clock.start();
-else if (clock.state.value === "paused") clock.resume();
-// Already playing: leave its position and queued work alone.
+clock.play(); // Already playing: leave its position and queued work alone.
 ```
 
 The context belongs to its creator. `new Clock({ context, bpm })` creates its own timeline; pass `{ timeline }` to share an existing one. Both expose `clock.timeline` for beat/time conversion. A future start holds the start position until `when`; pauses hold musical position and seconds position. Tempo changes preserve the current beat. For live tempo curves, custom tick input, count-in and start boundaries, see [advanced](./clock-advanced.md#transport).

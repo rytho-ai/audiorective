@@ -59,6 +59,7 @@ export class FilePlayer extends AudioProcessor<
     audio.crossOrigin = opts.crossOrigin === undefined ? "anonymous" : opts.crossOrigin;
     audio.preload = opts.preload ?? "metadata";
     audio.loop = opts.loop ?? false;
+    audio.defaultPlaybackRate = opts.playbackRate ?? 1;
     audio.playbackRate = opts.playbackRate ?? 1;
 
     const source = ctx.createMediaElementSource(audio);
@@ -85,6 +86,7 @@ export class FilePlayer extends AudioProcessor<
           default: opts.playbackRate ?? 1,
           bind: {
             set: (v) => {
+              audio.defaultPlaybackRate = v;
               audio.playbackRate = v;
             },
           },

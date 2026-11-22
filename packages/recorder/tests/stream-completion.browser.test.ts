@@ -193,12 +193,12 @@ test("stop rejects the wrong result mode without destroying either take and lega
   expect("startStream" in recorder).toBe(false);
   expect("stopStream" in recorder).toBe(false);
   const buffered = recorder.record({ when: 0.1 });
-  expect(() => recorder.stop({ result: "span", when: 0.2 })).toThrowError(expect.objectContaining({ name: "InvalidStateError" }));
+  await expect(recorder.stop({ result: "span", when: 0.2 })).rejects.toMatchObject({ name: "InvalidStateError" });
   expect(recorder.cells.state.value).toBe("armed");
   recorder.cancel();
   await expect(buffered).rejects.toMatchObject({ name: "AbortError" });
   const streamed = recorder.record({ when: 0.1, length: 0.1, onChunk() {} });
-  expect(() => recorder.stop({ when: 0.2 })).toThrowError(expect.objectContaining({ name: "InvalidStateError" }));
+  await expect(recorder.stop({ when: 0.2 })).rejects.toMatchObject({ name: "InvalidStateError" });
   expect(recorder.cells.state.value).toBe("armed");
   await context.startRendering();
   expect(await streamed).toMatchObject({ startFrame: 4800, endFrame: 9600, channelCount: 1 });

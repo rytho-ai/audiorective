@@ -99,3 +99,7 @@ Codex JSON stores actual CLI tokens by call role, including cached input and rea
 ## Isolation from user settings
 
 The trigger and functional runners start `claude -p` with `--setting-sources project`, so only the throwaway project's own `.claude/` loads. Without it, every run also loads the maintainer's `~/.claude`: installed plugins and their skills (about 90 here, including generic ones such as a music-making skill described as "use whenever audio is to be produced"), user `CLAUDE.md` and auto-memory. Those compete with the skill under test and make its trigger rate depend on the machine: eval 16 (a React drum machine) opened the skill in 3 of 7 solver runs with user settings loaded and 7 of 7 without. Evals must measure the skill, not one person's setup. Pass `--user-settings` to either runner to load user settings again, for example to check how the skill behaves next to your own plugins. (`--setting-sources ""` would also drop the project-staged skill, so it is not used here; the guess runner needs no skills and keeps `""`.)
+
+### Required reference routing
+
+A functional case can declare `required_references`, for example `["audiorective/references/launcher.md"]`. The runner checks each solver run's own reads before calling its grader. A missing reference leaves the answer and usage available, skips grading that run, reports `routing[].missingReferences`, and makes the command fail independently of expectation scores. The cross-run `references` union is a display summary and cannot satisfy another run's requirement.

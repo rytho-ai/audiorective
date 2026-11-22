@@ -35,7 +35,7 @@ test("a buffered second stop keeps its original error and preserves the first st
   const recording = recorder.record({ when: 0.1 });
   await vi.waitFor(() => expect(recorder.cells.startsAt.value).toBe(0.1));
   const firstStop = recorder.stop({ when: 0.2 });
-  expect(() => recorder.stop({ when: 0.3 })).toThrow("AudioRecorder has no started take to stop.");
+  await expect(recorder.stop({ when: 0.3 })).rejects.toThrow("AudioRecorder has no started take to stop.");
   await context.startRendering();
   const take = await firstStop;
   expect(await recording).toBe(take);

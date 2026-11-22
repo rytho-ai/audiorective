@@ -16,9 +16,11 @@ predates that API. See the "Version mismatches" note in the skill.
 ### Documentation and evaluation
 
 - **docs / skill:** clarify Clock transport states, empty processor registries, nullable launcher slots, file-backed clip media windows and fixed-tempo punch occurrence planning. These are existing APIs; runtime and persisted project formats are unchanged.
-- **evals:** accept public widget delegation, current MIDI held cells and signal cleanup; separate actual reference-read evidence from answer prose and keep source preparation distinct from hand-written recording engines. Historical frozen grades are retained.
+- **evals:** accept public widget delegation, current MIDI held cells and signal cleanup; separate actual reference-read evidence from answer prose and keep source preparation distinct from hand-written recording engines. Historical frozen grades are retained. Required reference reads are enforced per solver run before grading; a missing route fails the run even when its API happens to be correct.
 
 ### Added
+
+- **clock:** `play()` starts a stopped transport, resumes a paused one, and leaves an already playing transport and its queued events in place. `start(when, offset)` retains its explicit position-jump behavior.
 
 - **widgets:** selector `controls` and `audition` flags work independently (both default `true`), with `getViewport`, zoom/amplitude-zoom and scroll methods for shared-player views. `StepGridPluginContext.onCell` supplies each live step's tracked owner, geometry slot and scoped cleanup; step indices are zero-based.
 - **widgets:** direct dBFS peak callbacks or PCM `LevelMeterSource`, explicit `LevelMeterHandle`/`LevelSnapshot` types, public `MixerStripSettings`/`MixerMeter`, and player-owned `WaveStretchAnchor` plus `ClipEnvelope` exports. Scalar peak sources report unknown RMS as `null`; PCM sources retain measured peak/RMS.
@@ -48,6 +50,9 @@ predates that API. See the "Version mismatches" note in the skill.
 - **core:** `resolveHitEdit`, `Random` and `HitTiming`, the per-event transform merge shared by `StepSequencer` and `MidiClip`.
 
 ### Changed
+
+- **core / clock:** explicitly empty `AudioProcessor` registries may be omitted from the build result; omitted or `undefined` registries become frozen empty objects. Nonempty registries remain required. Concrete beat rulers accept a scheduler window and beat timing directly; concrete time rulers still require position, and custom `Ruler` implementations retain the full tick window contract.
+- **recorder:** every `stop()` failure rejects its Promise. A Stop at or before a pending take’s first frame rejects and clears that take during preparation or after preparation. Invalid selectors and invalid timestamps reject without cancelling an otherwise valid take; streaming Stop retains its completion Promise identity.
 
 - **docs / skill:** recorder punch examples use the planned absolute transport range for the take’s current loop occurrence. Long-take examples guard optional dropout metadata and pass the complete `{ min, max, duration }` media peak summary to waveform views. Runtime contracts and persisted data are unchanged.
 
@@ -103,6 +108,9 @@ predates that API. See the "Version mismatches" note in the skill.
   | `trigger({ when: point.time })` | `trigger({ when: point.when })` |
 
 ### Fixed
+
+- **core:** `disconnect(processor.input)` removes connections established using the processor owner and vice versa. `FilePlayer` preserves its initial or edited playback rate across media loads and source changes.
+- **pads:** rebuilding a choke group preserves an already committed release envelope and its original retirement time, avoiding a gain jump or extended tail.
 
 - **core / pads:** an observer error remains reported while context-wide parameter readback continues; owner effects, graph watchers and AutomationBinding survive consumer-effect reruns until explicitly disposed. Aborted engine setup releases subsequently registered processors and helper graphs. Pad commands do not track voice start state; FilePlayer source/Stop/dispose publish coherent inactive state.
 - **effects:** Channel meter disposal is repeatable; effect readiness/error/buffer transitions are batched. Chain handovers wait for audio time across suspension. Rapid Distortion edits coalesce into a bounded pool of prebuilt silent arms with native gain handovers; they do not rewrite an audible curve or reserve caller-owned offline suspend points.

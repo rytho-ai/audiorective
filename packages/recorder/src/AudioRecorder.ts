@@ -412,18 +412,22 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
    * Ends the current take early at `when` (default now) and resolves it, the same partial take `record()` resolves with what was captured; `cancel()` instead discards the take and rejects `record()` with `AbortError`.
    * On a take with `length` it can only shorten it.
    * A valid future `when` is retained while the capture graph is being built. Streaming completion drains accepted writes.
-   * The result selector must match the active take, otherwise this throws InvalidStateError.
+   * The result selector must match the active take, otherwise this rejects with InvalidStateError. All Stop failures reject its Promise; stopping before the first capture frame also rejects the take and clears its pending capture.
    */
   stop(options: { result: "span"; when?: number }): Promise<RecordedAudioSpan>;
   /** Buffered take: preserves its partial PCM, including a valid timed stop during preparation. */
   stop(options?: { when?: number; result?: never }): Promise<RecordedAudio>;
-  /** A dynamic selector returns the matching mode or throws InvalidStateError for a mismatched take. */
+  /** A dynamic selector returns the matching mode or rejects with InvalidStateError for a mismatched take. */
   stop(options: { when?: number; result?: "span" }): Promise<RecordedAudio | RecordedAudioSpan>;
   stop(options: { when?: number; result?: "span" } = {}): Promise<RecordedAudio | RecordedAudioSpan> {
-    if (this.disposed) throw new Error("AudioRecorder is disposed.");
-    if (this.active && Boolean(this.active.writeChunk) !== (options.result === "span"))
-      throw new DOMException("AudioRecorder stop result does not match active take.", "InvalidStateError");
-    return this.stopCapture(options);
+    try {
+      if (this.disposed) throw new Error("AudioRecorder is disposed.");
+      if (this.active && Boolean(this.active.writeChunk) !== (options.result === "span"))
+        throw new DOMException("AudioRecorder stop result does not match active take.", "InvalidStateError");
+      return this.stopCapture(options);
+    } catch (error) {
+      return Promise.reject(error);
+    }
   }
 
   private endFrame(options: { when?: number }): number {
@@ -454,7 +458,10 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
       return session.promise;
     }
     const frame = this.endFrame(options);
-    if (frame <= session.startFrame) throw new RangeError("AudioRecorder stop must follow its start time.");
+    if (frame <= session.startFrame) {
+      this.fail(session, new RangeError("AudioRecorder stop must follow its start time."));
+      return session.promise;
+    }
     this.stateStore.value = "stopping";
     try {
       session.capture!.setValueAtTime(0, (frame - 0.5) / this.context.sampleRate);

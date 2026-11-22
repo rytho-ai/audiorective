@@ -77,10 +77,16 @@ const readerConfig = (staged) => ({
   args: [join(here, "codex-reader.mjs"), "--root", staged],
   allowedTools: ["open_skill", "read_file", "list_files", "search"],
 });
-export async function runCodexFunctional(
-  item,
-  { skillName, staged, model, graderModel = model, reasoningEffort, graderReasoningEffort = reasoningEffort, timeoutMs, call = callCodex },
-) {
+function referenceRouting(item, references) {
+  const required = item.required_references ?? [];
+  if (!Array.isArray(required) || required.some((path) => typeof path !== "string" || !/^[^/]+\/references\/[^/]+\.md$/.test(path)))
+    throw new TypeError("required_references must list canonical skill/reference Markdown paths.");
+  const missingReferences = required.filter((path) => !references.includes(path));
+  return { requiredReferences: [...required], runReferences: [...references], missingReferences, passed: missingReferences.length === 0 };
+}
+
+export async function runCodexSolver(item, { skillName, staged, model, reasoningEffort, timeoutMs, call = callCodex }) {
+  referenceRouting(item, []); // Validate the declared routing contract before any model call.
   let solved;
   try {
     solved = await call({
@@ -101,6 +107,21 @@ export async function runCodexFunctional(
   if (solved.error) return { ...context, error: `solver: ${solved.error}` };
   const answer = String(solved.text ?? "");
   if (!answer.trim()) return { ...context, error: "solver: empty answer" };
+  return {
+    ...context,
+    answer,
+    usedSkill: readStats.openedSkills.includes(skillName),
+    references: readStats.references,
+    turns: solved.usage?.turns,
+    routing: referenceRouting(item, readStats.references),
+  };
+}
+
+export async function runCodexFunctional(item, options) {
+  const solved = await runCodexSolver(item, options);
+  if (solved.error || !solved.routing.passed) return solved;
+  const { model, graderModel = model, reasoningEffort, graderReasoningEffort = reasoningEffort, timeoutMs, call = callCodex } = options;
+  const answer = solved.answer;
   let graded;
   try {
     graded = await call({
@@ -111,17 +132,14 @@ export async function runCodexFunctional(
       systemPrompt: "Grade only the supplied answer and expectations. No tools, skills or external sources are available.",
     });
   } catch (error) {
-    return { ...context, answer, error: `grader: ${error.message}` };
+    return { ...solved, error: `grader: ${error.message}` };
   }
-  const gradeContext = { ...context, answer, graderUsage: graded.usage, graderMetadata: graded.metadata };
+  const gradeContext = { ...solved, graderUsage: graded.usage, graderMetadata: graded.metadata };
   if (graded.error) return { ...gradeContext, error: `grader: ${graded.error}` };
   const grades = parseGrades(String(graded.text ?? ""), item.expectations.length);
   if (!grades) return { ...gradeContext, error: "grader: reply was not the requested JSON" };
   return {
     ...gradeContext,
-    usedSkill: readStats.openedSkills.includes(skillName),
-    references: readStats.references,
-    turns: solved.usage?.turns,
     grades,
   };
 }
@@ -300,14 +318,17 @@ export async function main(args = process.argv.slice(2), { codexCall = callCodex
       return runCodexFunctional(item, { skillName, staged, model, graderModel, reasoningEffort, graderReasoningEffort, timeoutMs, call: codexCall });
     const solved = await claude(item.prompt + SOLVER_NOTE, { cwd: project, tools: "Skill,Read,Glob,Grep", maxTurns: 40, useModel: model });
     if (solved.error) return { error: `solver: ${solved.error}` };
+    const routing = referenceRouting(item, solved.references);
     const solverUsage = solved.usage;
     if (!solved.text.trim()) return { error: "solver: empty answer", solverUsage };
+    if (!routing.passed) return { answer: solved.text, solverUsage, references: solved.references, routing, costUsd: solved.costUsd };
     const graded = await claude(gradePrompt(item, solved.text), { cwd: graderDir, tools: "", maxTurns: 1, useModel: graderModel });
     if (graded.error) return { error: `grader: ${graded.error}`, answer: solved.text, solverUsage };
     const grades = parseGrades(graded.text, item.expectations.length);
     if (!grades) return { error: "grader: reply was not the requested JSON", answer: solved.text, solverUsage, graderUsage: graded.usage };
     return {
       answer: solved.text,
+      routing,
       usedSkill: solved.skills.some((s) => s.includes(skillName)),
       references: solved.references,
       turns: solved.turns,
@@ -362,6 +383,8 @@ export async function main(args = process.argv.slice(2), { codexCall = callCodex
       id: item.id,
       prompt: item.prompt,
       errors,
+      routing: mine.map((run) => run.routing ?? null),
+      routingPassed: mine.every((run) => run.routing?.passed !== false),
       runs: mine.length,
       score,
       total: item.expectations.length,
@@ -391,14 +414,17 @@ export async function main(args = process.argv.slice(2), { codexCall = callCodex
   });
 
   for (const r of results) {
-    const mark = r.errors.length ? "ERROR" : r.score === r.total ? "PASS " : "PART ";
+    const mark = r.errors.length ? "ERROR" : !r.routingPassed ? "ROUTE" : r.score === r.total ? "PASS " : "PART ";
     console.log(
       `${mark} #${String(r.id).padEnd(3)} ${r.score.toFixed(1).padStart(4)}/${r.total}  skill ${r.usedSkill}/${r.runs}  ${r.prompt.slice(0, 70)}`,
     );
+    r.routing.forEach((run, index) => {
+      if (run && !run.passed) console.log(`        routing run ${index + 1}: missing ${run.missingReferences.join(", ")}`);
+    });
     for (const e of new Set(r.errors)) console.log(`        ${e}`);
     for (const e of r.expectations) if (e.of && e.passed < e.of) console.log(`        ✗ ${e.passed}/${e.of}  ${e.text.slice(0, 110)}`);
   }
-  const scored = results.filter((r) => !r.errors.length);
+  const scored = results.filter((r) => !r.errors.length && r.routingPassed);
   const sum = (xs, f) => xs.reduce((n, x) => n + f(x), 0);
   console.log(`\nexpectations met: ${sum(scored, (r) => r.score).toFixed(1)}/${sum(scored, (r) => r.total)}`);
   console.log(`evals fully met:  ${scored.filter((r) => r.score === r.total).length}/${scored.length}`);
@@ -445,6 +471,6 @@ export async function main(args = process.argv.slice(2), { codexCall = callCodex
         2,
       ) + "\n",
     );
-  return results.every((r) => !r.errors.length) ? 0 : 1;
+  return results.every((r) => !r.errors.length && r.routingPassed) ? 0 : 1;
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = await main();

@@ -341,3 +341,78 @@ test("grader indices are unique and complete, normalize reorderings, and require
   ])
     assert.equal(grade(invalid), null, JSON.stringify(invalid));
 });
+
+test("required routing is checked per solver before the grader, including guessing the right API", async () => {
+  let calls = 0;
+  const routed = { ...item, required_references: ["audiorective/references/launcher.md"] };
+  const result = await runCodexFunctional(routed, {
+    ...opts,
+    call: async () => {
+      calls++;
+      return { text: "Use ClipLauncher with clock.attach(launcher).", usage: usage(), metadata: { readerCalls: [fullRead()] } };
+    },
+  });
+  assert.equal(calls, 1, "missing routing must prevent the grader call");
+  assert.equal(result.answer, "Use ClipLauncher with clock.attach(launcher).");
+  assert.deepEqual(result.routing.missingReferences, routed.required_references);
+  assert.equal(result.routing.passed, false);
+  assert.equal(result.grades, undefined);
+});
+
+test("one routed run cannot hide another run missing its required reference", async (t) => {
+  const { dir, skill } = skills(t),
+    out = join(dir, "routing.json");
+  let solvers = 0,
+    graders = 0;
+  const count = JSON.parse(readFileSync(new URL("./audiorective/evals.json", import.meta.url), "utf8")).evals.find((e) => e.id === 70).expectations
+    .length;
+  const code = await main(
+    [
+      "audiorective",
+      "--backend",
+      "codex",
+      "--model",
+      "pinned-model",
+      "--reasoning-effort",
+      "high",
+      "--skill-dir",
+      skill,
+      "--ids",
+      "70",
+      "--runs",
+      "3",
+      "--concurrency",
+      "1",
+      "--json",
+      out,
+    ],
+    {
+      codexCall: async (options) => {
+        if (options.reader) {
+          const first = solvers++ === 0;
+          return {
+            text: "answer",
+            usage: usage(),
+            metadata: { readerCalls: [fullRead(), ...(first ? [fullRead("audiorective/references/launcher.md", "reference")] : [])] },
+          };
+        }
+        graders++;
+        return {
+          text: JSON.stringify({ results: Array.from({ length: count }, (_, index) => ({ index, passed: true, evidence: "fixture" })) }),
+          usage: usage(),
+          metadata: { readerCalls: [] },
+        };
+      },
+    },
+  );
+  const row = JSON.parse(readFileSync(out, "utf8")).results[0];
+  assert.equal(code, 1);
+  assert.equal(solvers, 3);
+  assert.equal(graders, 1);
+  assert.deepEqual(
+    row.routing.map((run) => run.passed),
+    [true, false, false],
+  );
+  assert.equal(row.errors.length, 0, "routing failures are distinct from model/infrastructure errors");
+  assert.deepEqual(row.references, ["audiorective/references/launcher.md"]);
+});

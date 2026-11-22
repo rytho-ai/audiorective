@@ -57,3 +57,5 @@ Empty or duplicate pad IDs throw `TypeError`; an unknown ID passed to `assign` o
 | `Pad Bank pad IDs must be nonempty and unique.` | Empty or repeated pad ID                                  | Give each pad a stable unique ID.           |
 | `Unknown pad.`                                  | `assign()` or `routePad()` received an ID not in the bank | Use a declared pad ID.                      |
 | `PadBank is disposed.`                          | Trigger, assign or routePad after cleanup                 | Create a new PadBank; `dispose()` is final. |
+
+A choke whose deadline has arrived keeps its existing fade and endpoint when later hits are added or the choking voice ends. Cancelling a hit before its deadline still retracts its pending choke; a committed fade never jumps back to full gain.

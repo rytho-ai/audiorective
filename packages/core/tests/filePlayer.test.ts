@@ -262,3 +262,26 @@ describe("FilePlayer", () => {
     p.dispose();
   });
 });
+
+describe("FilePlayer speed survives native source loading", () => {
+  test.each([1.5, 2])("constructor playbackRate %s remains effective after loading and replacement", async (rate) => {
+    const context = new AudioContext();
+    const player = makePlayer(context, { playbackRate: rate });
+    try {
+      let loaded = once(player.audio, "loadedmetadata");
+      player.src = wavDataUri(0.4);
+      await loaded;
+      expect(player.audio.playbackRate).toBe(rate);
+      expect(player.params.playbackRate.value).toBe(rate);
+      player.playbackRate = 1.25;
+      loaded = once(player.audio, "loadedmetadata");
+      player.src = wavDataUri(0.6);
+      await loaded;
+      expect(player.audio.playbackRate).toBe(1.25);
+      expect(player.params.playbackRate.value).toBe(1.25);
+    } finally {
+      player.dispose();
+      await context.close();
+    }
+  });
+});

@@ -351,7 +351,7 @@ function untracked<T>(fn: () => T): T;
 
 ### AudioProcessor (abstract)
 
-When a subclass explicitly declares an empty cells registry, `AudioProcessor<{}, {}>`, its build callback still returns `cells: {}`. For example, `super(context, () => ({ params: {}, cells: {}, latency: 0 }))`. Omitting the second type parameter leaves cells undeclared; explicitly declaring `{}` requires the empty registry in the build result.
+Declare both registries explicitly, for example `AudioProcessor<{}, {}>` for a processor with no reactive fields. Empty registries may be omitted from the build result: `super(context, () => ({ latency: 0 }))`. Registries with declared keys remain required and fully typed; `processor.params` and `processor.cells` are frozen objects even when empty.
 
 Base class for audio processing units. Generic over the param and cell registries it exposes. Subclasses pass a build callback to `super()` that returns those registries.
 
@@ -395,6 +395,8 @@ interface BuildHelpers {
 ```
 
 **`connect(destination, output?, input?)`** mirrors `AudioNode.connect`: it wires the processor's `output` to an `AudioNode`, an `AudioParam`, a `SchedulableParam` (its backing `AudioParam`) or another `AudioProcessor` (its `input`), and returns `destination`, so calls chain: `osc.connect(filter).connect(ctx.destination)`. `output` and `input` pick channel indices. Connecting the same edge twice is one connection. `disconnect(destination)` removes that destination's edges and `disconnect()` removes every connection the processor made through `connect`. Edges that nodes make among themselves (`node.connect(processor.input)`) are plain Web Audio and untouched. See [Latency (PDC)](#latency-pdc) for how a `connect` edge takes part in compensation.
+
+`disconnect(processor)` and `disconnect(processor.input)` remove the same destination route, regardless of which form was passed to `connect`. A schedulable parameter and its underlying AudioParam likewise identify the same destination.
 
 **`dispose()`** disconnects everything the processor connected with `connect()` and every edge that fed it, stops all effects, calls `dispose()` on every param in the registry (cleaning up bind effects and `ParamSync` registrations), and stops and disconnects any internally-created `ConstantSourceNode`s and the internal silencer gain that keeps them alive. Cells are not disposed automatically — they're plain reactive containers with no audio-graph resources. A second call does nothing, and `[Symbol.dispose]()` calls `dispose()` (including a subclass override), so a `using` declaration disposes at scope exit.
 

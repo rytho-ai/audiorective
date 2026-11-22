@@ -41,6 +41,8 @@ type Hit = {
   begun: Cell<boolean>;
   /** Time the gate starts closing: the earliest of a later same-group hit and the hit's own scheduled stop. */
   chokeAt: number;
+  /** Committed gate endpoint; later edits cannot restart an audible release. */
+  chokeEnd: number;
   /** Scheduled stop time from `voice.stop(when)`; Infinity when the hit has none. */
   stopAt: number;
   done: boolean;
@@ -150,7 +152,7 @@ export class PadBank extends AudioProcessor<
   /** Retire every hit whose gate has finished closing. */
   private settle(): void {
     const now = this.context.currentTime;
-    for (const hit of [...this.hits]) if (hit.chokeAt + this.release <= now) this.finish(hit);
+    for (const hit of [...this.hits]) if (hit.chokeEnd <= now) this.finish(hit);
   }
 
   private rebuild(): void {
@@ -159,6 +161,10 @@ export class PadBank extends AudioProcessor<
     const now = this.context.currentTime;
     let nextRetire = Infinity;
     for (const hit of this.hits) {
+      if (hit.chokeAt <= now) {
+        nextRetire = Math.min(nextRetire, hit.chokeEnd);
+        continue;
+      }
       let chokeAt = hit.stopAt;
       if (hit.pad.group !== undefined) {
         for (const incoming of this.hits) {
@@ -169,14 +175,15 @@ export class PadBank extends AudioProcessor<
         }
       }
       hit.chokeAt = chokeAt;
+      hit.chokeEnd = Number.isFinite(chokeAt) ? Math.max(now, chokeAt) + this.release : Infinity;
       const gain = hit.gate.gain;
       gain.cancelScheduledValues(now);
       gain.setValueAtTime(1, now);
       if (Number.isFinite(chokeAt)) {
         const start = Math.max(now, chokeAt);
         gain.setValueAtTime(1, start);
-        gain.linearRampToValueAtTime(0, start + this.release);
-        nextRetire = Math.min(nextRetire, start + this.release);
+        gain.linearRampToValueAtTime(0, hit.chokeEnd);
+        nextRetire = Math.min(nextRetire, hit.chokeEnd);
       }
     }
     // The timer only retires silent nodes. The gain events above schedule the actual fade.
@@ -233,7 +240,19 @@ export class PadBank extends AudioProcessor<
     }
     const state = cell(true);
     const begun = cell(untracked(() => voice.started.value));
-    const created: Hit = { pad, when: at, order: ++this.nextOrder, gate, voice, state, begun, chokeAt: Infinity, stopAt: Infinity, done: false };
+    const created: Hit = {
+      pad,
+      when: at,
+      order: ++this.nextOrder,
+      gate,
+      voice,
+      state,
+      begun,
+      chokeAt: Infinity,
+      chokeEnd: Infinity,
+      stopAt: Infinity,
+      done: false,
+    };
     this.hits.add(created);
     voice.started.subscribe((started) => {
       if (!started || created.done) return;

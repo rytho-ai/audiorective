@@ -15,7 +15,7 @@ export class LinearTimeRuler implements Ruler<LinearTimePoint, LinearTimePoint> 
     return { seconds: timeline.position };
   }
 
-  read(_window: CoreTickWindow, timeline: TimelineLike): LinearTimePoint {
+  read(_window: Pick<CoreTickWindow, "beat">, timeline: TimelineLike): LinearTimePoint {
     return this.at(0, timeline);
   }
 }

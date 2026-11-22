@@ -1,6 +1,7 @@
+import type { BeatTiming } from "@audiorective/core";
 import type { CoreTickWindow } from "../types";
 import { assertFiniteOffset, assertPositiveLength, beatsPerBar, cycleGridPoints } from "./Ruler";
-import type { CycleGridPoint, Ruler, TimelineLike } from "./Ruler";
+import type { CycleGridPoint, Ruler } from "./Ruler";
 
 export interface CycleBarRulerOptions {
   numerator: number;
@@ -77,7 +78,7 @@ export class CycleBarRuler implements Ruler<CycleBarWindow, CycleBarPoint> {
     return { cycle, barInCycle, beatInBar, phase };
   }
 
-  read(window: CoreTickWindow, timeline: TimelineLike): CycleBarWindow {
+  read(window: Pick<CoreTickWindow, "beat">, timeline: BeatTiming): CycleBarWindow {
     const point = this.at(window.beat.start);
     return {
       ...point,
@@ -86,7 +87,7 @@ export class CycleBarRuler implements Ruler<CycleBarWindow, CycleBarPoint> {
     };
   }
 
-  private _spans(startBeat: number, endBeat: number, timeline: TimelineLike): CycleSpan[] {
+  private _spans(startBeat: number, endBeat: number, timeline: BeatTiming): CycleSpan[] {
     const spans: CycleSpan[] = [];
     let cursor = startBeat;
     while (cursor < endBeat) {

@@ -26,8 +26,14 @@ export interface BuildHelpers {
 type Undeclared<Msg extends string> = { [K in Msg]: never };
 export type BuildResult<P extends ParamRegistry, C extends CellRegistry> = (string extends keyof P
   ? { params?: Undeclared<"Error: params not declared — add a P type parameter to AudioProcessor"> }
-  : { params: P }) &
-  (string extends keyof C ? { cells?: Undeclared<"Error: cells not declared — add a C type parameter to AudioProcessor"> } : { cells: C }) & {
+  : [keyof P] extends [never]
+    ? { params?: P }
+    : { params: P }) &
+  (string extends keyof C
+    ? { cells?: Undeclared<"Error: cells not declared — add a C type parameter to AudioProcessor"> }
+    : [keyof C] extends [never]
+      ? { cells?: C }
+      : { cells: C }) & {
     latency?: number | Param<number>;
   };
 
@@ -99,8 +105,8 @@ export abstract class AudioProcessor<P extends ParamRegistry = ParamRegistry, C 
     };
 
     const result = build(helpers);
-    this.params = Object.freeze("params" in result ? result.params : {}) as Readonly<P>;
-    this.cells = Object.freeze("cells" in result ? result.cells : {}) as Readonly<C>;
+    this.params = Object.freeze(result.params ?? {}) as Readonly<P>;
+    this.cells = Object.freeze(result.cells ?? {}) as Readonly<C>;
 
     const declared = "latency" in result ? (result as { latency?: number | Param<number> }).latency : undefined;
     this.declaredLatency = declared !== undefined;
@@ -153,11 +159,18 @@ export abstract class AudioProcessor<P extends ParamRegistry = ParamRegistry, C 
 
   /** Removes the connection made by connect(destination), or all of this processor's connections when omitted. */
   disconnect(destination?: AudioNode | AudioProcessor | AudioParam | SchedulableParam): void {
-    removeConnections(this.context, (from, to) => from === this && (destination === undefined || to === destination));
+    const target =
+      destination instanceof AudioProcessor ? destination.input : destination instanceof SchedulableParam ? destination.audioParam : destination;
+    const matches = (to: AudioNode | AudioProcessor | AudioParam | SchedulableParam) => {
+      if (destination === undefined || to === destination) return true;
+      const endpoint = to instanceof AudioProcessor ? to.input : to instanceof SchedulableParam ? to.audioParam : to;
+      return target !== undefined && endpoint === target;
+    };
+    removeConnections(this.context, (from, to) => from === this && matches(to));
     const out = this.output;
     const kept: typeof this._nativeWires = [];
     for (const wire of this._nativeWires) {
-      if (destination === undefined || wire.to === destination) {
+      if (matches(wire.to)) {
         try {
           out?.disconnect(wire.to, wire.output, wire.input);
         } catch {

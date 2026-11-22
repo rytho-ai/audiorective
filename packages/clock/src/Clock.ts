@@ -264,6 +264,13 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     }
   }
 
+  /** Starts from stopped, resumes a pause, and preserves position and queued events when already playing. Call context.resume() from the user gesture. */
+  play(): void {
+    const state = this._timeline._transportState;
+    if (state === "stopped") this.start();
+    else if (state === "paused") this.resume();
+  }
+
   /**
    * Begins playback with the Web Audio shape: beat `offsetBeats` sounds at audio-context time `when`, exactly,
    * following the tempo curve from there. Always a position jump (bumps `generation`).

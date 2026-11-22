@@ -40,7 +40,7 @@ export class CycleTimeRuler implements Ruler<CycleTimePoint, CycleTimePoint> {
     return { cycle, secondsInCycle, phase };
   }
 
-  read(_window: CoreTickWindow, timeline: TimelineLike): CycleTimePoint {
+  read(_window: Pick<CoreTickWindow, "beat">, timeline: TimelineLike): CycleTimePoint {
     return this.at(0, timeline);
   }
 }

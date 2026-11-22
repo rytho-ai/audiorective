@@ -43,7 +43,7 @@ describe("commands called inside an effect do not subscribe it", () => {
       recorder.schedule();
       recorder.reset("pause");
       recorder.attached({ timeline: context as never, state: { value: "stopped" }, meter: { value: [4, 4] }, detach() {} })();
-      expect(() => recorder.stop()).toThrow("AudioRecorder has no started take to stop.");
+      void recorder.stop().catch(() => undefined);
       void recorder.record({ when: 0.1 }).catch(() => undefined);
       recorder.cancel();
     });
