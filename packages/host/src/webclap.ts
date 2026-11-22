@@ -66,7 +66,7 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
   private readonly synced: Map<number, number>;
   private readonly infoStore: Cell<readonly WebClapParameter[]>;
   /** Channels each sounding note was started on, so `noteOff(note)` releases it where it plays. */
-  private readonly noteChannels = new Map<number, Set<number>>();
+  private readonly noteChannels = new Map<number, Map<number, object>>();
   private disposed = false;
 
   /** Tracked frozen parameter metadata in the plug-in's order (id, name, min, max, default, text, step); `host.params[String(info.id)]` is its live Param. Last reported by the plug-in; the same value as `cells.parameterInfo`. Live values are in `params`. */
@@ -173,18 +173,29 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
     if (!Number.isFinite(velocity) || velocity < 0 || velocity > 1) throw new RangeError("WebCLAP velocity must be 0..1.");
     const channel = options.channel ?? 0;
     if (!Number.isInteger(channel) || channel < 0 || channel > 15) throw new RangeError("WebCLAP channel must be an integer 0-15.");
-    const channels = this.noteChannels.get(note) ?? new Set<number>();
-    channels.add(channel);
+    const event = this.scheduleMidi([0x90 | channel, note, Math.max(1, Math.round(velocity * 127))], options.when ?? this.context.currentTime);
+    const channels = this.noteChannels.get(note) ?? new Map<number, object>();
+    channels.set(channel, {});
     this.noteChannels.set(note, channels);
-    return this.scheduleMidi([0x90 | channel, note, Math.max(1, Math.round(velocity * 127))], options.when ?? this.context.currentTime);
+    return event;
   }
 
   /** Releases `note` at `when` (audio seconds, default now) on every channel it was started on. */
   noteOff(note: number, when: number = this.context.currentTime): WebClapEvent {
     if (!Number.isInteger(note) || note < 0 || note > 127) throw new RangeError("WebCLAP note must be an integer 0-127.");
-    const channels = this.noteChannels.get(note);
-    this.noteChannels.delete(note);
-    const events = [...(channels ?? [0])].map((channel) => this.scheduleMidi([0x80 | channel, note, 0], when));
+    const channels = this.noteChannels.get(note) ?? new Map([[0, {}]]);
+    const events = [...channels].map(([channel, owner]) => {
+      const event = this.scheduleMidi([0x80 | channel, note, 0], when);
+      event.onEnded(() => {
+        const current = this.noteChannels.get(note);
+        // Scheduling or cancelling an off does not release its channel; executing it does.
+        // An older off must also leave a later note-on's ownership intact.
+        if (current?.get(channel) !== owner) return;
+        current.delete(channel);
+        if (!current.size) this.noteChannels.delete(note);
+      });
+      return event;
+    });
     if (events.length === 1) return events[0]!;
     return {
       cancel: () => events.forEach((event) => event.cancel()),

@@ -176,6 +176,40 @@ describe("WebClapHost params", () => {
     expect(port.sent.map((m) => m.data)).toEqual([[0x80, 61, 0]]);
   });
 
+  it("cancelling a future note-off preserves every channel for the replacement release", async () => {
+    const { host, port } = await load();
+    host.noteOn(60, { channel: 2 });
+    host.noteOn(60, { channel: 5 });
+    host.noteOff(60, 8).cancel();
+    port.sent.length = 0;
+    host.noteOff(60, 6);
+    expect(port.sent.map((message) => message.data)).toEqual([
+      [0x82, 60, 0],
+      [0x85, 60, 0],
+    ]);
+    host.dispose();
+  });
+
+  it("an executed off retires its ownership while preserving a later note-on on the same channel", async () => {
+    const { host, port } = await load();
+    host.noteOn(60, { channel: 2 });
+    host.noteOn(60, { channel: 5 });
+    port.sent.length = 0;
+    host.noteOff(60, 8);
+    const releases = port.sent.filter((message) => message.type === "schedule");
+    host.noteOn(60, { channel: 2, when: 9 });
+    for (const message of releases) port.onmessage?.({ data: { type: "executed", id: message.id } });
+    port.sent.length = 0;
+    const final = host.noteOff(60, 10);
+    expect(port.sent.map((message) => message.data)).toEqual([[0x82, 60, 0]]);
+    port.onmessage?.({ data: { type: "executed", id: port.sent[0].id } });
+    final.cancel();
+    port.sent.length = 0;
+    host.noteOff(60, 11);
+    expect(port.sent.map((message) => message.data)).toEqual([[0x80, 60, 0]]);
+    host.dispose();
+  });
+
   it("noteOn returns the cancellable event of its message", async () => {
     const { host, port } = await load();
     const event = host.noteOn(60, { when: 5 });

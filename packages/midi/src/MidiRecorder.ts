@@ -210,7 +210,7 @@ export class MidiRecorder {
       else startBeat = Math.ceil(clock.timeline.timeToBeat(now + QUANTIZE_LEAD) / size - EPS) * size;
       startTime = Math.max(clock.timeline.beatToTime(startBeat), now);
     } else if (playing && clock) startBeat = clock.timeline.timeToBeat(startTime);
-    const bpm = clock?.timeline.bpm?.value ?? 120;
+    const bpm = untracked(() => clock?.timeline.bpm?.value ?? 120);
     const timeline = clock?.timeline;
     const beginBeat = startBeat;
     let endTime: number | null = null;
@@ -241,18 +241,21 @@ export class MidiRecorder {
       this.startedAtStore.value = immediate ? startTime : null;
       this.stateStore.value = immediate ? "recording" : "armed";
     });
-    if (!immediate)
-      session.startTimer = setTimeout(
-        () => {
-          if (this.active !== session) return;
-          batch(() => {
-            this.startsAtStore.value = null;
-            this.startedAtStore.value = startTime;
-            this.stateStore.value = "recording";
-          });
-        },
-        (startTime - now) * 1000,
-      );
+    if (!immediate) {
+      const begin = () => {
+        if (this.active !== session) return;
+        if (this.context.currentTime < startTime) {
+          session.startTimer = setTimeout(begin, Math.max(1, (startTime - this.context.currentTime) * 1000));
+          return;
+        }
+        batch(() => {
+          this.startsAtStore.value = null;
+          this.startedAtStore.value = startTime;
+          this.stateStore.value = "recording";
+        });
+      };
+      session.startTimer = setTimeout(begin, (startTime - now) * 1000);
+    }
     if (endTime !== null) this.scheduleEnd(session, endTime, END_GRACE);
     if (options.signal) {
       session.onAbort = () =>
@@ -267,7 +270,15 @@ export class MidiRecorder {
     session.endTime = end;
     const wait = end - this.context.currentTime;
     if (wait <= 0 && grace === 0) this.finish(session);
-    else session.endTimer = setTimeout(() => this.finish(session), Math.max(0, wait + grace) * 1000);
+    else
+      session.endTimer = setTimeout(
+        () => {
+          if (this.active !== session) return;
+          if (this.context.currentTime < end) this.scheduleEnd(session, end, grace);
+          else this.finish(session);
+        },
+        Math.max(0.001, wait + grace) * 1000,
+      );
   }
 
   /** Ends the current take at `when` (default now) and resolves it, the same take `record()` resolves; `cancel()` instead discards it. */
