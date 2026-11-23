@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { Clock } from "@audiorective/clock";
 import { AudioRecorder } from "../src/AudioRecorder";
 
@@ -112,7 +112,7 @@ test.each([false, true])("a Stop invalidated by the prepared quantized start rej
     await expect(stopped).rejects.toThrow("AudioRecorder stop must follow its start time.");
     expect(recorder.cells.state.value).toBe("armed");
     expect(recorder.cells.error.value).toBeNull();
-    expect(recorder.cells.startsAt.value).toBe(1.5);
+    await vi.waitFor(() => expect(recorder.cells.startsAt.value).toBe(1.5));
     await context.startRendering();
     const captured = await take;
     expect(captured.startFrame).toBe(72000);

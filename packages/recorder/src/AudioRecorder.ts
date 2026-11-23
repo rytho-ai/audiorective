@@ -30,6 +30,9 @@ export type RecorderResetReason = "start" | "stop" | "pause" | "seek" | "detach"
 
 /** Seconds of lead a quantized start keeps, so the capture graph exists before the boundary. */
 const QUANTIZE_LEAD = 0.05;
+const RENDER_QUANTUM = 128;
+/** Seconds past `now` a queued begin message can still report as the first captured frame. */
+const BEGIN_MESSAGE_MARGIN = 0.25;
 const EPS = 1e-7;
 function noteBeats(value: string, barBeats: number): number {
   const m = /^(\d+(?:\.\d+)?)([mn])$/.exec(value);
@@ -105,7 +108,9 @@ type Session = {
   /** Buffered and streamed takes settle one completion created up front. */
   promise: Promise<RecordedAudio | RecordedAudioSpan>;
   /** A `stop()` that arrived while the capture graph was still being built. */
-  pendingStop?: { when?: number; promise: Promise<RecordedAudio | RecordedAudioSpan>; reject(error: unknown): void };
+  pendingStop?: { when?: number };
+  /** The transport moved after capture began, so `timeToBeat` holds the mapping from before that move. */
+  beatMapRetained?: boolean;
   /** A length, as seconds or beats, applied once the start is fixed. */
   length?: number | NoteLength;
   /** Started at a clock boundary: leaving the transport before it arrives cancels the take. */
@@ -198,9 +203,37 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
 
   /** Clock scheduler contract: a recorder schedules nothing per window; `clock.attach(recorder)` only gives it the transport `record({ quantize })` reads. */
   schedule(): void {}
-  /** Clock scheduler contract: leaving the transport (stop, pause, seek, detach) cancels a take that is armed but has not started, quantized or `when`; a take already recording continues until `stop()` or its length. */
+  /** Clock scheduler contract: leaving the transport (stop, pause, seek, detach) cancels a take whose first frame is still ahead on the audio clock, quantized or `when`; a take past that frame continues until `stop()` or its length, even while its begin notification is queued. */
   reset(reason: RecorderResetReason): void {
-    if (reason !== "start" && this.active && untracked(() => this.startedAtStore.value) === null) this.cancel();
+    const session = this.active;
+    if (!session || untracked(() => this.startedAtStore.value) !== null) return;
+    const now = this.context.currentTime;
+    if (!session.node || Math.ceil(now * this.context.sampleRate) <= session.startFrame) {
+      if (reason !== "start") this.cancel();
+      return;
+    }
+    this.retainBeatMap(session, now);
+  }
+  /**
+   * Capture has begun but its begin message is queued, and reset runs before the transport moves.
+   * The first frame is the planned start or a later render-quantum boundary, so sampling those frames keeps its beat exact on a tempo curve.
+   */
+  private retainBeatMap(session: Session, now: number): void {
+    const timeToBeat = session.timeToBeat;
+    if (!timeToBeat || session.beatMapRetained) return;
+    session.beatMapRetained = true;
+    const rate = this.context.sampleRate;
+    const firstQuantum = Math.floor(session.startFrame / RENDER_QUANTUM);
+    const lastFrame = Math.ceil((now + BEGIN_MESSAGE_MARGIN) * rate);
+    const frames = [session.startFrame];
+    for (let quantum = firstQuantum + 1; quantum * RENDER_QUANTUM < lastFrame; quantum++) frames.push(quantum * RENDER_QUANTUM);
+    frames.push(lastFrame);
+    const beats = frames.map((frame) => timeToBeat(frame / rate));
+    session.timeToBeat = (time) => {
+      const frame = time * rate;
+      const index = Math.max(0, Math.min(frames.length - 2, Math.floor(frame / RENDER_QUANTUM) - firstQuantum));
+      return beats[index] + ((frame - frames[index]) * (beats[index + 1] - beats[index])) / (frames[index + 1] - frames[index]);
+    };
   }
   /** Clock scheduler contract: called by `clock.attach`. */
   attached(handle: RecorderTransport): () => void {
@@ -290,6 +323,13 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
     const [n, d] = untracked(() => clock.meter.value);
     return (n * 4) / d;
   }
+  /** Exactly on a boundary starts there, like the launcher; otherwise the first boundary at least QUANTIZE_LEAD ahead. */
+  private quantizedBeat(clock: RecorderTransport, quantize: Exclude<Quantize, "none">): number {
+    const size = noteBeats(quantize, this.barBeats(clock));
+    const nowBeat = clock.timeline.timeToBeat(this.context.currentTime);
+    if (Math.abs(nowBeat / size - Math.round(nowBeat / size)) < EPS) return Math.round(nowBeat / size) * size;
+    return Math.ceil(clock.timeline.timeToBeat(this.context.currentTime + QUANTIZE_LEAD) / size - EPS) * size;
+  }
 
   private async startCapture(
     options: { when?: number },
@@ -337,6 +377,12 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
       }
     }
     try {
+      // A Stop during preparation is judged against the boundary requested now, not one a slow preparation moves it to.
+      if (take.quantize !== "none") {
+        const clock = this.requirePlayingClock("quantize");
+        const requested = clock.timeline.beatToTime(this.quantizedBeat(clock, take.quantize));
+        session.startFrame = Math.ceil(Math.max(requested, this.context.currentTime) * this.context.sampleRate);
+      }
       // A preloaded recorder wires its native graph before the caller resumes an offline render.
       if (!this.registered) await this.ready;
       if (this.active !== session || session.failed) return;
@@ -344,14 +390,7 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
       let boundaryBeat: number | null = null;
       if (take.quantize !== "none") {
         const clock = this.requirePlayingClock("quantize");
-        const size = noteBeats(take.quantize, this.barBeats(clock));
-        const nowBeat = clock.timeline.timeToBeat(this.context.currentTime);
-        // Exactly on a boundary starts there, like the launcher; otherwise the first boundary at least QUANTIZE_LEAD ahead.
-        if (Math.abs(nowBeat / size - Math.round(nowBeat / size)) < EPS) boundaryBeat = Math.round(nowBeat / size) * size;
-        else {
-          const base = clock.timeline.timeToBeat(this.context.currentTime + QUANTIZE_LEAD);
-          boundaryBeat = Math.ceil(base / size - EPS) * size;
-        }
+        boundaryBeat = this.quantizedBeat(clock, take.quantize);
         when = clock.timeline.beatToTime(boundaryBeat);
       }
       if (!Number.isFinite(when) || when < 0) throw new RangeError("AudioRecorder time must be finite, non-negative seconds.");
@@ -403,17 +442,10 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
       session.timeToBeat = clock && startBeat !== null ? (time) => clock.timeline.timeToBeat(time) : undefined;
       this.startsAtStore.value = plannedTime;
       if (session.pendingStop) {
-        const pending = session.pendingStop;
-        let frame: number | null;
-        try {
-          frame = this.endFrame(session, pending);
-        } catch (error) {
-          session.pendingStop = undefined;
-          this.stateStore.value = "armed";
-          pending.reject(error);
-          return;
-        }
-        if (frame === null) this.fail(session, abortError());
+        // Accepted after the requested start. If the prepared start has overtaken it, no audio can fall before this Stop.
+        const now = this.context.currentTime;
+        const frame = Math.ceil(Math.max(session.pendingStop.when ?? now, now) * this.context.sampleRate);
+        if (frame <= session.startFrame) this.fail(session, abortError());
         else this.scheduleEnd(session, frame);
       }
     } catch (error) {
@@ -426,7 +458,7 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
    * On a take with `length` it can only shorten it.
    * A valid future `when` is retained while the capture graph is being built. Streaming completion drains accepted writes.
    * Uses effective = max(when ?? now, now), rounded up to a sample frame. If it is after the first frame, keeps captured audio even while state is armed and the begin notification is queued.
-   * Otherwise an omitted or past/present `when` cancels both promises with AbortError without setting cells.error; a future `when` rejects only Stop with RangeError and preserves the take. Preparation revalidates the same timing rules.
+   * Otherwise an omitted or past/present `when` cancels both promises with AbortError without setting cells.error; a future `when` rejects only Stop with RangeError and preserves the take. While preparing, the requested `when` or quantized boundary is the first frame: a future Stop not after it rejects at once, and a Stop after it that a later prepared start overtakes cancels.
    * The result selector must match the active take, otherwise this rejects with InvalidStateError. All Stop failures reject its Promise.
    */
   stop(options: { result: "span"; when?: number }): Promise<RecordedAudioSpan>;
@@ -466,7 +498,7 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
     const session = this.active;
     if (!session) throw new Error("AudioRecorder has no started take to stop.");
     if (untracked(() => this.stateStore.value) === "stopping") {
-      if (session.writeChunk) return session.pendingStop?.promise ?? session.promise;
+      if (session.writeChunk) return session.promise;
       throw new Error("AudioRecorder has no started take to stop.");
     }
     const frame = this.endFrame(session, options);
@@ -475,14 +507,9 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
       return session.promise;
     }
     if (!session.node) {
-      let reject!: (error: unknown) => void;
-      const invalidStop = new Promise<never>((_resolve, fail) => {
-        reject = fail;
-      });
-      const promise = Promise.race([session.promise, invalidStop]);
-      session.pendingStop = { ...options, promise, reject };
+      session.pendingStop = options;
       this.stateStore.value = "stopping";
-      return promise;
+      return session.promise;
     }
     this.stateStore.value = "stopping";
     try {
