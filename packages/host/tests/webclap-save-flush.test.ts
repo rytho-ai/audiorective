@@ -27,6 +27,35 @@ beforeAll(async () => {
 });
 
 describe("WebCLAP worklet save", () => {
+  it("does not run the plug-in during a save, so a ringing tail is not skipped", async () => {
+    const host = new HostClass() as Host & { runSilentQuantum(): void };
+    host.ready = true;
+    host.params = 100;
+    host.plugin = 1;
+    let quanta = 0;
+    host.runSilentQuantum = () => void quanta++;
+    host.events = [{ type: 5, id: 7, value: 0.5 }];
+    host.writeEvents = function (this: Host) {
+      this.events = [];
+    };
+    host.fn = () => () => undefined;
+    host.saveState = () => new ArrayBuffer(1);
+    await host.handle({ type: "saveState", settle: true } as { type: string });
+    expect(quanta).toBe(0);
+  });
+
+  it("lets a plug-in apply loaded state on a context that is not rendering", () => {
+    const host = new HostClass() as Host & { state: number; settleLoadedState(buffer: ArrayBuffer): void; runSilentQuantum(): void };
+    host.ready = true;
+    host.state = 200;
+    let quanta = 0;
+    host.runSilentQuantum = () => void quanta++;
+    const wanted = Uint8Array.of(1, 2);
+    host.saveState = () => (quanta >= 32 ? wanted.slice().buffer : Uint8Array.of(0, 0).buffer);
+    host.settleLoadedState(wanted.buffer);
+    expect(quanta).toBe(32);
+  });
+
   it("hands queued parameters to the plug-in before saving and leaves queued notes", async () => {
     const order: string[] = [];
     const host = new HostClass();

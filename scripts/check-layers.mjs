@@ -44,6 +44,7 @@ const DAW_PROJECT = [
   "clip-envelope.ts",
   "project-persistence.ts",
   "project-edits.ts",
+  "selection.ts",
 ];
 const DAW_CODEC = ["dawproject.ts"];
 const DAW_INTERNAL = ["internal/*"];

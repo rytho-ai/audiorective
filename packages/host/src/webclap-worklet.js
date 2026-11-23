@@ -13,6 +13,7 @@ const EVENT_SLOT = 48; // bytes per input event slot (the largest event we send,
 const MAX_EVENTS = 512;
 const SCRATCH_BYTES = 1 << 20; // for page messages and state blobs
 
+const STATE_SETTLE_QUANTA = 1024;
 const EVENT = { NOTE_ON: 0, NOTE_OFF: 1, NOTE_CHOKE: 2, PARAM_VALUE: 5, GESTURE_BEGIN: 7, GESTURE_END: 8, MIDI: 10 };
 const EXT = {
   PARAMS: "clap.params",
@@ -342,9 +343,12 @@ class ClapHost extends AudioWorkletProcessor {
         return this.port.postMessage({ type: "synced" });
       case "saveState":
         this.flushParamEvents();
+        this.afterMainThreadCall();
+        if (m.withParams) this.port.postMessage({ type: "params", params: this.paramInfos() });
         return this.port.postMessage({ type: "state", bytes: this.saveState() });
       case "loadState":
         this.loadState(m.bytes);
+        if (m.settle) this.settleLoadedState(m.bytes);
         this.port.postMessage({ type: "params", params: this.paramInfos() });
         this.port.postMessage({ type: "stateLoaded" });
         break;
@@ -789,10 +793,10 @@ class ClapHost extends AudioWorkletProcessor {
   // A parameter set just before a save may still wait for process(), which does not run while the context is
   // suspended. Hand it to the plugin now so the saved state includes it; notes stay queued for their quantum.
   flushParamEvents() {
-    if (!this.ready || !this.params) return;
+    if (!this.ready || !this.params) return false;
     const queued = this.events;
     const params = queued.filter((event) => event.type === EVENT.PARAM_VALUE);
-    if (!params.length) return;
+    if (!params.length) return false;
     this.events = params;
     while (this.events.length) {
       this.writeEvents();
@@ -800,6 +804,38 @@ class ClapHost extends AudioWorkletProcessor {
       this.eventCount = 0;
     }
     this.events = queued.filter((event) => event.type !== EVENT.PARAM_VALUE);
+    return true;
+  }
+
+  // Some plug-ins apply loaded state inside process(), which never runs on a context that is not rendering yet (an
+  // offline render being prepared, or a suspended page). Give them silent quanta after a load. Audio output is discarded;
+  // note output stays queued for the next real quantum. A plain save never does this: it would advance ringing tails.
+  runSilentQuantum() {
+    const v = this.view;
+    this.eventCount = 0;
+    v.setBigUint64(this.processPtr, this.steadyTime, true);
+    v.setUint32(this.processPtr + 8, QUANTUM, true);
+    for (const port of this.inputPorts) for (const channel of port.channels) new Float32Array(this.memory.buffer, channel, QUANTUM).fill(0);
+    v.setUint32(this.processPtr + 24, this.inputPorts.length, true);
+    v.setUint32(this.processPtr + 28, this.outputPorts.length, true);
+    this.inProcess = true;
+    this.fn(this.plugin + 36)(this.plugin, this.processPtr);
+    this.inProcess = false;
+    this.flushRequested = false;
+    this.steadyTime += BigInt(QUANTUM);
+    this.afterMainThreadCall();
+  }
+
+  settleLoadedState(buffer) {
+    if (!this.ready || !this.state) return;
+    const expected = new Uint8Array(buffer);
+    for (let quantum = 0; quantum < STATE_SETTLE_QUANTA; quantum++) {
+      if (quantum % 4 === 0) {
+        const saved = this.saveState();
+        if (saved && saved.byteLength === expected.length && new Uint8Array(saved).every((byte, index) => byte === expected[index])) return;
+      }
+      this.runSilentQuantum();
+    }
   }
 
   // Between process calls: flush if the plugin asked (so its output events arrive even while the audio is

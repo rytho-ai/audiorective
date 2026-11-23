@@ -361,7 +361,6 @@ const trackShellKeys = ["id", "name", "kind", "busRole", "routing", "volume", "m
 
 /** Headless project content. AudioContext and UI state are not part of the file. */
 export class Project {
-  readonly bpm: number;
   readonly signature: readonly [number, number];
   /** The only store for observable content. Written by `commit`, read tracked by the public getters. */
   private readonly store: Cell<ProjectState>;
@@ -411,11 +410,11 @@ export class Project {
 
   constructor(options: ProjectOptions = {}) {
     validateXmlText(options.title ?? "Untitled");
-    this.bpm = options.bpm ?? 120;
+    const bpm = options.bpm ?? 120;
     this.signature = Object.freeze([...(options.signature ?? [4, 4])] as [number, number]);
     if (
-      !Number.isFinite(this.bpm) ||
-      this.bpm <= 0 ||
+      !Number.isFinite(bpm) ||
+      bpm <= 0 ||
       !Number.isInteger(this.signature[0]) ||
       this.signature[0] <= 0 ||
       !Number.isInteger(this.signature[1]) ||
@@ -430,7 +429,7 @@ export class Project {
         clipNames: new Map(),
         title: options.title ?? "Untitled",
         masterVolume: 1,
-        tempoMap: new TempoMap(this.bpm),
+        tempoMap: new TempoMap(bpm),
         tracks: Object.freeze([]),
         markers: Object.freeze([]),
       }),
@@ -798,10 +797,24 @@ export class Project {
     return Object.freeze(untracked(() => clips.sort((a, b) => a.time - b.time)));
   }
 
+  /** The tempo at beat 0. Tracked. */
+  get bpm(): number {
+    return this.store.value.tempoMap.initialBpm;
+  }
+
+  /** Replace the tempo map. A change at beat 0 sets the starting tempo; without one the starting tempo stays. */
   setTempoChanges(changes: readonly TempoChange[]): void {
     assertProjectActive(this);
-    const tempoMap = new TempoMap(this.bpm, changes);
-    this.commit({ tempoMap });
+    const starts = changes.filter(({ beat }) => beat === 0);
+    if (starts.length > 1) throw new RangeError("Project tempo changes need unique positive beats and BPM.");
+    const bpm = starts[0]?.bpm ?? this.s.tempoMap.initialBpm;
+    if (starts.length && (!Number.isFinite(bpm) || bpm < 1)) throw new RangeError("Project BPM must be a finite number of at least 1.");
+    this.commit({
+      tempoMap: new TempoMap(
+        bpm,
+        changes.filter(({ beat }) => beat !== 0),
+      ),
+    });
   }
 
   get markers(): readonly ProjectMarker[] {
@@ -816,7 +829,7 @@ export class Project {
   private snapshotUntracked(borrowAudio = false): Project {
     assertProjectActive(this);
     const state = this.s;
-    const copy = new Project({ title: state.title, bpm: this.bpm, signature: this.signature });
+    const copy = new Project({ title: state.title, bpm: state.tempoMap.initialBpm, signature: this.signature });
     const tracks = Object.freeze(
       state.tracks.map((track) =>
         Object.freeze({

@@ -483,6 +483,8 @@ const gesture = attachClipGesture(clipElement, {
 gesture.dispose();
 ```
 
+`onSelect` runs at pointerdown, before the drag. Update the selected styling in place there: replacing the clip element ends the gesture.
+
 Each mounted clip re-evaluates its tracked `origin()` when Project changes. Build a clip-ID index once per revision and use constant-time lookups; avoid searching every track separately for every clip. If the app replaces the Project object, invalidate that index as well. Document-level Escape listeners exist only during active drags.
 
 The supplied Project owns the source state; the getter rereads its current clip instead of capturing a stale position. It is tracked and returns undefined when the clip is unavailable. Actual origin time/track changes cancel a stale drag. Pointer drags freeze their origin; every keyboard nudge reads the latest owner origin. Left/Right move one beat, Shift four; Alt bypasses pointer snapping. `origin.time` and `onMove.time` use `timeUnit` (seconds by default, or beats); pointer geometry stays in seconds through the structural time map (`secondsToBeat`, `beatToSeconds`, `snapSeconds`). Keep the same element after committing a nudge so focus survives. Escape, pointercancel, lost capture and dispose commit no move.

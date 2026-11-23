@@ -183,6 +183,41 @@ describe("project.applyEdits", () => {
     expect(fingerprint(project)).toBe(before);
   });
 
+  it("moves adjacent clips together in any order and judges overlap on the final arrangement", () => {
+    for (const order of [
+      [0, 1],
+      [1, 0],
+    ]) {
+      const project = new Project({ bpm: 60 });
+      const track = project.addTrack("A", "audio");
+      const clips = [project.addAudioClip(track.id, pcm(2), 0), project.addAudioClip(track.id, pcm(2), 2)];
+      const receipt = project.applyEdits({
+        expectedVersion: version(project),
+        label: "Move",
+        ops: order.map((index) => ({ type: "moveClip", clip: { clipId: clips[index].id }, position: { byBeats: 1 } })),
+      });
+      expect(receipt.status).toBe("applied");
+      expect(clips.map(({ id }) => clipById(project, id)?.time)).toEqual([1, 3]);
+    }
+    const project = new Project({ bpm: 60 });
+    const track = project.addTrack("A", "audio");
+    const first = project.addAudioClip(track.id, pcm(2), 0);
+    const second = project.addAudioClip(track.id, pcm(2), 2);
+    const third = project.addAudioClip(track.id, pcm(1), 4);
+    const before = fingerprint(project);
+    const receipt = project.applyEdits({
+      expectedVersion: version(project),
+      label: "Blocked",
+      ops: [
+        { type: "moveClip", clip: { clipId: first.id }, position: { byBeats: 1 } },
+        { type: "moveClip", clip: { clipId: second.id }, position: { byBeats: 1 } },
+      ],
+    });
+    expect(receipt).toMatchObject({ status: "rejected", code: "overlap", opIndex: 1 });
+    expect(fingerprint(project)).toBe(before);
+    expect(third.time).toBe(4);
+  });
+
   it("rejects both position forms and an ambiguous copied clip", () => {
     const { project, drumOutro } = song();
     const both = project.applyEdits({
@@ -542,6 +577,35 @@ describe("project.edit", () => {
     const { project } = song();
     project.edit("Nothing", () => undefined);
     expect(project.cells.history.value).toEqual({});
+  });
+});
+
+describe("base tempo", () => {
+  it("changes beat 0 as an undoable edit, keeps later changes, and survives save and reopen", () => {
+    const { project, keyChorus, vocal } = song();
+    const beforeSeconds = project.clipTimeSeconds(keyChorus);
+    const later = project.tempoMap.changes;
+    project.edit("Tempo", () => project.setTempoChanges([{ beat: 0, bpm: 60 }, ...later]));
+    expect(project.bpm).toBe(60);
+    expect(project.tempoMap.changes).toHaveLength(3);
+    expect(keyChorus.time).toBe(8);
+    expect(project.clipTimeSeconds(keyChorus)).toBe(8);
+    expect(clipById(project, vocal.id)?.time).toBe(4);
+    expect(openDawProject(saveDawProject(project)).project.bpm).toBe(60);
+    expect(project.snapshot().bpm).toBe(60);
+    project.undo();
+    expect(project.bpm).toBe(120);
+    expect(project.clipTimeSeconds(keyChorus)).toBe(beforeSeconds);
+    expect(() => project.setTempoChanges([{ beat: 0, bpm: 0 }])).toThrow(/at least 1/);
+    expect(() => project.setTempoChanges([{ beat: 0, bpm: 5e-324 }])).toThrow(/at least 1/);
+    expect(() =>
+      project.setTempoChanges([
+        { beat: 0, bpm: 90 },
+        { beat: 0, bpm: 100 },
+      ]),
+    ).toThrow(/unique/);
+    project.setTempoChanges([{ beat: 4, bpm: 90 }]);
+    expect(project.bpm).toBe(120);
   });
 });
 

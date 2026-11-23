@@ -57,7 +57,7 @@ export type CopyRangeEdit = Readonly<{
 export type MoveClipEdit = Readonly<{
   type: "moveClip";
   clip: EditClipSelector;
-  /** Beats follow the tempo map at the time this step runs. Landing on another clip of the track rejects the request. */
+  /** Beats follow the tempo map at the time this step runs. A clip that ends the request on top of another clip rejects it. */
   position: Readonly<{ atBeat: number; byBeats?: never }> | Readonly<{ byBeats: number; atBeat?: never }>;
 }>;
 export type SetNoteVelocityEdit = Readonly<{
@@ -335,7 +335,7 @@ function resolveClip(project: Project, selector: EditClipSelector, copies: Proje
   return fail("clip-not-found", `Clip "${id}" does not exist.`);
 }
 
-function moveClip(project: Project, op: MoveClipEdit, copies: ProjectEditCopies): void {
+function moveClip(project: Project, op: MoveClipEdit, copies: ProjectEditCopies, moved: Map<string, number>, index: number): void {
   const { track, clip } = resolveClip(project, op.clip, copies);
   const hasAt = op.position?.atBeat !== undefined;
   const hasBy = op.position?.byBeats !== undefined;
@@ -345,10 +345,8 @@ function moveClip(project: Project, op: MoveClipEdit, copies: ProjectEditCopies)
   const beat = hasAt ? op.position.atBeat! : startBeat + op.position.byBeats!;
   if (!validBeat(beat)) fail("invalid-operation", "moveClip needs a finite target at or after beat 0.");
   const time = clip.kind === "midi" ? beat : tempo.beatToSeconds(beat);
-  const end = time + clip.duration;
-  const blocker = track.clips.find((other) => other.id !== clip.id && other.time < end - EPSILON && other.time + other.duration > time + EPSILON);
-  if (blocker) fail("overlap", `Clip "${clip.id}" would overlap clip "${blocker.id}".`);
   project.moveClip(clip.id, track.id, time);
+  moved.set(clip.id, index);
 }
 
 function setNoteVelocity(project: Project, op: SetNoteVelocityEdit, copies: ProjectEditCopies): void {
@@ -367,10 +365,11 @@ function setNoteVelocity(project: Project, op: SetNoteVelocityEdit, copies: Proj
 export function runProjectEdits(project: Project, ops: readonly ProjectEditOperation[]): ProjectEditCopies {
   if (!Array.isArray(ops)) throw new ProjectEditFailure("invalid-request", "applyEdits needs an ops array.");
   const copies: ProjectEditCopies = {};
+  const moved = new Map<string, number>();
   ops.forEach((op: ProjectEditOperation, index) => {
     try {
       if (op?.type === "copyRange") copyRange(project, op, copies);
-      else if (op?.type === "moveClip") moveClip(project, op, copies);
+      else if (op?.type === "moveClip") moveClip(project, op, copies, moved, index);
       else if (op?.type === "setNoteVelocity") setNoteVelocity(project, op, copies);
       else if (op?.type === "renameClip") project.setClipName(resolveClip(project, op.clip, copies).clip.id, op.name);
       else fail("invalid-operation", `Unknown edit type "${String((op as { type?: unknown } | null)?.type)}".`);
@@ -379,5 +378,16 @@ export function runProjectEdits(project: Project, ops: readonly ProjectEditOpera
       throw new ProjectEditFailure("edit-failed", error instanceof Error ? error.message : String(error), index);
     }
   });
+  // Checked on the final arrangement, so clips moved together may pass through each other's old positions.
+  for (const [clipId, index] of moved) {
+    const track = project.tracks.find((item) => item.clips.some(({ id }) => id === clipId));
+    const clip = track?.clips.find(({ id }) => id === clipId);
+    if (!track || !clip) continue;
+    const end = clip.time + clip.duration;
+    const blocker = track.clips.find(
+      (other) => other.id !== clipId && other.time < end - EPSILON && other.time + other.duration > clip.time + EPSILON,
+    );
+    if (blocker) throw new ProjectEditFailure("overlap", `Clip "${clipId}" would overlap clip "${blocker.id}".`, index);
+  }
   return copies;
 }

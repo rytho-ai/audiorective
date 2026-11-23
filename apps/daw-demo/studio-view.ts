@@ -1,5 +1,6 @@
 import { createClipStretchEngine, mountClipStretchView, type AudioClipEditorTool } from "./clip-stretch-view";
 import type { WebClapDescriptor } from "@audiorective/host/webclap";
+import { selectionFor, type ProjectSelection } from "@audiorective/daw";
 import {
   audioClipTimeMap,
   unityClipEnvelope,
@@ -81,9 +82,38 @@ const button = (label: string, action: () => void | Promise<void>, title?: strin
 };
 
 export class StudioView {
-  selectedTrackId: string | undefined;
-  selectedClipId: string | undefined;
-  private selectedNote?: { clipId: string; noteId: string };
+  /** The selection of the Project now in the Workspace, shared with anything else working on it. */
+  get selection(): ProjectSelection {
+    return selectionFor(this.workspace.project);
+  }
+  get selectedTrackId(): string | undefined {
+    return this.selection.state.value.trackId ?? undefined;
+  }
+  set selectedTrackId(id: string | undefined) {
+    this.selection.selectTrack(id !== undefined && this.workspace.project.tracks.some((track) => track.id === id) ? id : null);
+  }
+  get selectedClipId(): string | undefined {
+    return this.selection.state.value.clipIds[0];
+  }
+  set selectedClipId(id: string | undefined) {
+    const trackId = this.selection.state.value.trackId;
+    const exists = id !== undefined && this.workspace.project.tracks.some((track) => track.clips.some((clip) => clip.id === id));
+    this.selection.selectClips(exists ? [id] : []);
+    this.selection.selectTrack(trackId);
+  }
+  private get selectedNote(): { clipId: string; noteId: string } | undefined {
+    const { openClipId, noteIds } = this.selection.state.value;
+    return openClipId !== null && noteIds.length ? { clipId: openClipId, noteId: noteIds[0] } : undefined;
+  }
+  private set selectedNote(note: { clipId: string; noteId: string } | undefined) {
+    const clip = note && this.workspace.project.tracks.flatMap((track) => track.clips).find((item) => item.id === note.clipId);
+    if (!note || clip?.kind !== "midi" || !clip.midi.notes.value.some((item) => item.id === note.noteId)) {
+      this.selection.selectNotes([]);
+      return;
+    }
+    this.selection.openClip(note.clipId);
+    this.selection.selectNotes([note.noteId]);
+  }
   private noteHighlightObserver?: MutationObserver;
   private editorPitchRange?: { low: number; high: number };
   private readonly viewScale = cell(55);
@@ -428,11 +458,12 @@ export class StudioView {
   }
 
   private delete(): void {
-    if (!this.selectedClipId) return;
+    const clipId = this.selectedClipId;
+    if (!clipId) return;
     try {
       this.disposeClipView();
-      this.history.record("刪除片段", () => this.workspace.project.removeClip(this.selectedClipId!));
-      this.editorViewStates.delete(this.selectedClipId);
+      this.history.record("刪除片段", () => this.workspace.project.removeClip(clipId));
+      this.editorViewStates.delete(clipId);
       this.selectedClipId = undefined;
       this.selectedNote = undefined;
       this.render();

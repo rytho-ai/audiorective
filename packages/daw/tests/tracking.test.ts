@@ -122,6 +122,7 @@ const rows: Array<{ name: string; read: (ctx: Ctx) => unknown; mutate: (ctx: Ctx
     mutate: (c) => c.project.setDeviceState(c.deviceId, new Uint8Array([1, 2, 3])),
   },
   { name: "Project.tracks (removeDevice)", read: (c) => c.project.tracks[0].devices, mutate: (c) => c.project.removeDevice(c.deviceId) },
+  { name: "Project.bpm (setTempoChanges)", read: (c) => c.project.bpm, mutate: (c) => c.project.setTempoChanges([{ beat: 0, bpm: 90 }]) },
   { name: "Project.tempoMap", read: (c) => c.project.tempoMap, mutate: (c) => c.project.setTempoChanges([{ beat: 4, bpm: 60 }]) },
   {
     name: "Project.clipName (setClipName)",

@@ -2,14 +2,15 @@
 title: DAW project, runtime and DAWproject
 ---
 
-`@audiorective/daw` owns a small audio/MIDI project and stores it as a `.dawproject` ZIP. It has three entries and a convenience root:
+`@audiorective/daw` owns a small audio/MIDI project and stores it as a `.dawproject` ZIP. It has four entries and a convenience root:
 
 | Entry                          | Owns                                                                                                                                                                    | Environment                            |
 | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
 | `@audiorective/daw/project`    | `Project`, `MidiClip`, tempo map, `AudioMedia`, clip envelope (`ClipEnvelope`, `normalizeClipEnvelope`, `unityClipEnvelope`, `clipGainAt`) and `ClipStretchAnchor`      | Node.js and browser, no `AudioContext` |
+| `@audiorective/daw/selection`  | `selectionFor`, `ProjectSelection`: the selection shared by views and agents. Pure, outside the file and undo                                                           |
 | `@audiorective/daw/dawproject` | The `.dawproject` codec: `openDawProject`, `openDawProjectBlob`, `saveDawProject`, `saveDawProjectTo`                                                                   | Node.js and browser, no `AudioContext` |
 | `@audiorective/daw/runtime`    | `Workspace`, `scheduleClipEnvelope`; borrows a caller-owned `AudioContext`, schedules the project through Clock and hosts WebCLAP devices. It does not import the codec | Browser                                |
-| `@audiorective/daw`            | Re-exports all three and adds `openWorkspace`, `openWorkspaceBlob`, `saveWorkspace`, `saveWorkspaceTo`                                                                  | Browser                                |
+| `@audiorective/daw`            | Re-exports all four and adds `openWorkspace`, `openWorkspaceBlob`, `saveWorkspace`, `saveWorkspaceTo`                                                                   | Browser                                |
 
 A project-file tool imports only `daw/project` and `daw/dawproject`; it loads no runtime, clock or host. Headless playback of a `Project` the caller already holds imports `daw/runtime` and never loads the codec. The root entry joins the two for apps that open and save files around a running `Workspace`. Widgets render the project and recorders capture takes; `daw` and `widgets` never import each other, so the app wires them.
 
@@ -47,7 +48,7 @@ A MIDI clip is always in **beats** (quarter notes): `MidiClip.time` is its posit
 
 ### Tempo and arrangement time
 
-`Project.tempoMap` converts musical beats to project seconds and back. The initial `Project.bpm` is beat zero; `setTempoChanges` adds step changes at later beats. The running Workspace automatically rebases Clock's absolute AudioContext tempo events. Await `workspace.flush()` when a following operation depends on the change. `Workspace.position`, `seek`, audio clips, markers and track-volume automation use **project seconds**. MIDI clips use **beats**.
+`Project.tempoMap` converts musical beats to project seconds and back. `Project.bpm` is the tempo at beat zero. `setTempoChanges` replaces the tempo map: an entry at beat 0 sets the starting tempo, and without one the starting tempo stays. The running Workspace automatically rebases Clock's absolute AudioContext tempo events. Await `workspace.flush()` when a following operation depends on the change. `Workspace.position`, `seek`, audio clips, markers and track-volume automation use **project seconds**. MIDI clips use **beats**.
 
 ```typescript
 project.setTempoChanges([{ beat: 4, bpm: 60 }]); // 120 BPM until beat 4, then 60 BPM
@@ -128,11 +129,15 @@ const receipt = project.applyEdits({
 if (receipt.status === "applied") project.undo({ expectedVersion: receipt.version });
 ```
 
-The request is plain JSON. Operations run in order and publish together. `status: "conflict"` means the Project changed since `expectedVersion`; `status: "rejected"` carries a `code` and the failing `opIndex`. Neither changes the Project. `copyRange` with `placement: "insert"` opens room at `atBeat` on every track: later clips, tempo changes, markers and volume automation move later and keep their musical position, and a clip crossing `atBeat` is split. `moveClip` rejects a position that lands on another clip of the track. A receipt's `copies[as]` maps each source clip to its copy.
+The request is plain JSON. Operations run in order and publish together. `status: "conflict"` means the Project changed since `expectedVersion`; `status: "rejected"` carries a `code` and the failing `opIndex`. Neither changes the Project. `copyRange` with `placement: "insert"` opens room at `atBeat` on every track: later clips, tempo changes, markers and volume automation move later and keep their musical position, and a clip crossing `atBeat` is split. `moveClip` rejects a request whose final arrangement puts the clip on top of another clip, so adjacent clips can move together in any order. A receipt's `copies[as]` maps each source clip to its copy.
 
-`project.edit(label, () => { ... })` groups synchronous calls to the clip, note, tempo, marker and volume-automation methods into one edit, and rolls them all back if the callback throws. It is the entry for gestures that need PCM or other non-JSON data. Mixer, routing, device and track-list changes are outside its scope.
+`project.edit(label, () => { ... })` groups synchronous calls to the clip, note, tempo, marker and volume-automation methods into one edit, and rolls them all back if the callback throws. It is the entry for gestures that need PCM or other non-JSON data. Project methods called outside `edit` or `applyEdits` apply immediately but are not recorded in undo. Mixer, routing, device and track-list changes are outside its scope.
 
 `project.undo()` and `project.redo()` step through one history shared by every caller, up to 50 edits; `project.cells.history` holds the next labels. Undo returns `conflict` and leaves the Project alone when a later change touched what that edit changed. An unrelated change, such as a fader move, does not block it. Passing `expectedVersion` makes any later change a conflict. `project.cells.version` covers structure and note edits; capturing live plug-in state during a save does not advance it.
+
+### Share what is selected
+
+`selectionFor(project)` from `@audiorective/daw/selection` returns the one `ProjectSelection` of that Project, so separate views and agent tools share it by passing the Project. `selection.state` is a tracked cell of `{ trackId, clipIds, openClipId, noteIds, range }`, plain JSON. Change it with `selectClips`, `toggleClip`, `selectTrack`, `selectRange`, `openClip`, `selectNotes` and `clear`. It is outside the file, undo and `project.cells.version`. Deleted content leaves the selection by itself and stays out even if an undo restores it. Zoom, scroll and tools stay in the app, and the playhead stays on `Workspace`.
 
 ### Check an edit before handing it back
 
@@ -483,6 +488,10 @@ A small [Cubase 14 export shared on the Steinberg forum](https://forums.steinber
 | `renderMixRange was cancelled.`                                                                                                                                  | The caller's `signal` aborted the render. Render again when needed.                                 |
 | `Workspace save stopped: the project changed after expectedVersion was read.`                                                                                    | Read the project again, verify it and save with the new version.                                    |
 | `Project clip name must be a string.` / `Project clip name must not be empty.`                                                                                   | Pass non-blank text.                                                                                |
+| `Project BPM must be a finite number of at least 1.`                                                                                                             | Pass a starting tempo such as `{ beat: 0, bpm: 120 }`.                                              |
+| `ProjectSelection needs an existing track.` / `ProjectSelection needs existing clips.` / `ProjectSelection needs an existing clip.`                              | Pass IDs from the current Project.                                                                  |
+| `ProjectSelection note selection needs an open MIDI clip.` / `ProjectSelection needs existing notes of the open clip.`                                           | Call `openClip` on a MIDI clip first, then pass its note IDs.                                       |
+| `ProjectSelection range needs 0 <= startBeat < endBeat.`                                                                                                         | Pass a non-empty half-open beat range.                                                              |
 | `Project edits cannot be nested.` / `Project history cannot change during an edit.`                                                                              | Finish the current `project.edit` callback first.                                                   |
 | `Project edit needs a non-empty label.` / `Project edit action must be synchronous.`                                                                             | Pass a label and a callback that does not return a promise.                                         |
 | `Project edit covers clips, notes, tempo, markers and volume automation only.`                                                                                   | Make mixer, routing, device and track-list changes outside `project.edit`.                          |

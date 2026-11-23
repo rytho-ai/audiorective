@@ -28,6 +28,10 @@
       "types": "./dist/project.d.ts",
       "import": "./dist/project.js"
     },
+    "./selection": {
+      "types": "./dist/selection.d.ts",
+      "import": "./dist/selection.js"
+    },
     "./dawproject": {
       "types": "./dist/dawproject.d.ts",
       "import": "./dist/dawproject.js"

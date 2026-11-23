@@ -243,8 +243,12 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
   }
 
   async saveState(): Promise<Uint8Array> {
+    return this.readState(false);
+  }
+
+  private readState(withParams: boolean): Promise<Uint8Array> {
     const result = this.wait<Uint8Array>((waiter) => this.stateWaiters.push(waiter));
-    this.node.port.postMessage({ type: "saveState" });
+    this.node.port.postMessage({ type: "saveState", withParams });
     return result;
   }
 
@@ -252,10 +256,11 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
     if (!(bytes instanceof Uint8Array)) throw new TypeError("WebCLAP state needs bytes.");
     const expected = new Uint8Array(bytes);
     const confirmation = this.wait<void>((waiter) => this.loadStateWaiters.push(waiter));
-    this.node.port.postMessage({ type: "loadState", bytes: expected.buffer }, [expected.buffer]);
+    this.node.port.postMessage({ type: "loadState", bytes: expected.buffer, settle: this.context.state !== "running" }, [expected.buffer]);
     await confirmation;
     for (let attempt = 0; attempt < 10; attempt++) {
-      if (sameBytes(await this.saveState(), bytes)) return;
+      // The plug-in may report its loaded parameters only once the state has applied.
+      if (sameBytes(await this.readState(true), bytes)) return;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     throw new DOMException("WebCLAP state did not settle after load.", "TimeoutError");
