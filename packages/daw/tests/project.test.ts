@@ -575,7 +575,7 @@ describe("DAWproject native slice", () => {
     const project = new Project();
     const track = project.addTrack("Keys", "midi");
     const take = midiTake();
-    project.addMidiTake(track.id, { ...take, events: [...take.events, { beat: 0.1, data: new Uint8Array([0xc0, 12]) }] }, 0);
+    project.addMidiTake(track.id, { ...take, events: [...take.events, { beat: 0.1, data: new Uint8Array([0xf0, 12, 0xf7]) }] }, 0);
     expect(() => saveDawProject(project)).toThrow("Project MIDI has events outside supported portable content.");
     project.dispose();
   });

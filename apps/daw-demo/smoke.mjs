@@ -938,10 +938,11 @@ try {
     await waitUntil(0.4);
     const linear = sample();
     workspace.setTrackMuted(track.id, true);
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    // Allow the mute ramp and the analyser's 2048-frame window to settle.
+    await new Promise((resolve) => setTimeout(resolve, 100));
     const muted = sample();
     workspace.setTrackMuted(track.id, false);
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    await new Promise((resolve) => setTimeout(resolve, 100));
     const unmuted = sample();
     workspace.stop();
     workspace.context.createBuffer = createBuffer;

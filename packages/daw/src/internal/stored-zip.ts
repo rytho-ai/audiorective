@@ -13,7 +13,7 @@ for (let n = 0; n < 256; n++) {
   crcTable[n] = value >>> 0;
 }
 
-function crc32(previous: number, bytes: Uint8Array): number {
+export function crc32(previous: number, bytes: Uint8Array): number {
   let value = previous;
   for (const byte of bytes) value = crcTable[(value ^ byte) & 0xff] ^ (value >>> 8);
   return value >>> 0;

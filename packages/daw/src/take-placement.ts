@@ -13,7 +13,6 @@ export function placeTake(anchor: TakeAnchor, take: Readonly<{ startTime: number
   if (
     ![anchor.audioTime, anchor.projectTime, take.startTime, inputLatencySeconds].every(Number.isFinite) ||
     anchor.audioTime < 0 ||
-    anchor.projectTime < 0 ||
     take.startTime < 0 ||
     inputLatencySeconds < 0
   )

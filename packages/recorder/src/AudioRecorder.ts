@@ -203,13 +203,17 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
 
   /** Clock scheduler contract: a recorder schedules nothing per window; `clock.attach(recorder)` only gives it the transport `record({ quantize })` reads. */
   schedule(): void {}
-  /** Clock scheduler contract: leaving the transport (stop, pause, seek, detach) cancels a take whose first frame is still ahead on the audio clock, quantized or `when`; a take past that frame continues until `stop()` or its length, even while its begin notification is queued. */
+  /**
+   * Clock scheduler contract: leaving the transport (stop, pause, seek, detach) cancels a take whose first frame is still ahead on the audio clock, quantized or `when`.
+   * A transport `start` also cancels a quantized take whose first frame is still ahead, because its boundary was computed on the previous transport anchor; a take armed with an
+   * explicit `when` survives `start`, so `record({ when }); clock.start(when)` works. A take past its first frame continues until `stop()` or its length, even while its begin notification is queued.
+   */
   reset(reason: RecorderResetReason): void {
     const session = this.active;
     if (!session || untracked(() => this.startedAtStore.value) !== null) return;
     const now = this.context.currentTime;
     if (!session.node || Math.ceil(now * this.context.sampleRate) <= session.startFrame) {
-      if (reason !== "start") this.cancel();
+      if (reason !== "start" || session.quantized) this.cancel();
       return;
     }
     this.retainBeatMap(session, now);

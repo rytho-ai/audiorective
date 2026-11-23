@@ -32,8 +32,16 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 const context = new AudioContext({ latencyHint: "interactive" });
 const samples = new SampleLibrary(context);
 samples.output.connect(context.destination);
-const options = { destination: context.destination, workletUrl: new URL("../../packages/host/dist/webclap-worklet.js", import.meta.url).href };
 const synthBundle = "/plugin/oxo-synth2.wclap";
+const trustedBundles = new Set([new URL(synthBundle, location.href).href]);
+const options = {
+  destination: context.destination,
+  workletUrl: new URL("../../packages/host/dist/webclap-worklet.js", import.meta.url).href,
+  resolveBundle(device: { bundleUrl: string }) {
+    const url = URL.parse(device.bundleUrl, location.href)?.href;
+    return url && trustedBundles.has(url) ? url : undefined;
+  },
+};
 const addDefaultSynth = (project: Project, trackId: string) =>
   project.addWebClapDevice(trackId, {
     pluginId: "com.oxo.music.oxosynth2",
@@ -839,6 +847,7 @@ studio = new StudioView({
     const candidate = await WebClapHost.load(context, { url, pluginId, workletUrl: options.workletUrl });
     const descriptor = candidate.descriptor;
     candidate.dispose();
+    trustedBundles.add(new URL(url, location.href).href);
     return descriptor;
   },
   addNote,

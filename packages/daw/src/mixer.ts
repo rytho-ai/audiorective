@@ -1,3 +1,4 @@
+import { smoothGain } from "./internal/playback-gain";
 import { batch } from "@audiorective/core";
 import { Channel, SendBus } from "@audiorective/effects";
 import { soloRouting } from "./mixer-routing";
@@ -15,6 +16,7 @@ export type MixerStrip = Pick<TrackRuntime, "channel" | "sendName">;
 export class Mixer {
   private readonly sendBus: SendBus;
   private sendSerial = 0;
+  private masterVolume?: number;
 
   constructor(
     private readonly context: AudioContext,
@@ -97,7 +99,11 @@ export class Mixer {
   }
 
   applyMaster(): void {
-    this.output.gain.setValueAtTime(this.project().masterVolume, this.context.currentTime);
+    const volume = this.project().masterVolume;
+    if (volume === this.masterVolume) return;
+    if (this.masterVolume === undefined) this.output.gain.setValueAtTime(volume, this.context.currentTime);
+    else smoothGain(this.context, this.output.gain, volume);
+    this.masterVolume = volume;
   }
 
   /** Write Project's master volume, gain, pan, mute, solo and send values into the strips. */

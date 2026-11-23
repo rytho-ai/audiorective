@@ -1,5 +1,5 @@
 import { AudioProcessor, cell, readonlyCell, type Param, type ReadonlyCell, type SchedulableParam } from "@audiorective/core";
-import { SMOOTHING } from "./internal/smoothing";
+import { fadeTo, SMOOTHING } from "./internal/smoothing";
 import type { SendBus } from "./SendBus";
 
 export interface ChannelOptions {
@@ -135,7 +135,7 @@ export class Channel extends AudioProcessor<
           default: opts.muted ?? false,
           bind: {
             set: (m) => {
-              mute.gain.value = m ? 0 : 1;
+              fadeTo(ctx, mute.gain, m ? 0 : 1, 0.006);
             },
           },
         }),
@@ -143,7 +143,7 @@ export class Channel extends AudioProcessor<
           default: true,
           bind: {
             set: (enabled) => {
-              output.gain.value = enabled ? 1 : 0;
+              fadeTo(ctx, output.gain, enabled ? 1 : 0, 0.006);
             },
           },
         }),

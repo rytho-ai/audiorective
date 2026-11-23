@@ -122,7 +122,11 @@ try {
       const saved = await window.__daw.api.saveWorkspace(workspace);
       const stateBytes = project.tracks.find(({ id }) => id === result.id).devices[0].state.byteLength;
       workspace.dispose();
-      reopened = await window.__daw.api.openWorkspace(context, saved, { destination: analyser, workletUrl });
+      reopened = await window.__daw.api.openWorkspace(context, saved, {
+        destination: analyser,
+        workletUrl,
+        resolveBundle: (device) => (device.pluginId === pluginId ? bundleUrl : undefined),
+      });
       await reopened.play();
       const replay = await peak();
       const restoredHost = reopened.host(device.id);

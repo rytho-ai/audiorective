@@ -1,3 +1,5 @@
+import { importedBundles } from "./project-persistence";
+import { holdSeconds, playbackLead, smoothGain } from "./internal/playback-gain";
 import { Clock, Timeline } from "@audiorective/clock";
 import type { LoopRange, TickSource, TickWindow } from "@audiorective/clock";
 import { batch, cell, effect, readonlyCell, untracked, type Cell, type Readable, type ReadonlyCell } from "@audiorective/core";
@@ -27,6 +29,7 @@ import type { TrackRuntime } from "./track-runtime";
 export type WorkspaceOptions = {
   destination?: AudioNode;
   workletUrl?: string;
+  /** Resolve bundle hints from opened files. Returning undefined declines the URL. */
   resolveBundle?: (device: WebClapDevice) => string | Promise<string | undefined> | undefined;
   /** Messages produced before the workspace existed, such as file-open warnings; they precede the workspace's own. */
   warnings?: readonly string[];
@@ -78,6 +81,7 @@ export class Workspace {
   /** Mirrors `cells.auditioningRange`. */
   readonly auditioningRange: ReadonlyCell<RangeAuditionState | null>;
   private readonly topologyPending = cell(false);
+  private readonly mediaError = cell<string | null>(null);
   private readonly applicationError = cell<string | null>(null);
   private readonly warningMessages = cell<readonly string[]>(Object.freeze([]));
   private readonly audition: Audition;
@@ -109,6 +113,7 @@ export class Workspace {
   private readonly tracks = new Map<string, TrackRuntime>();
   private readonly scheduler: ClipScheduler;
   private readonly noteOff: Array<() => void> = [];
+  private readonly midiClipPositions = new WeakMap<MidiClip, number>();
   private readonly seekPoint = cell({ seconds: 0 });
   private activeTempoMap: TempoMap;
   private commitTail: Promise<void> = Promise.resolve();
@@ -119,6 +124,10 @@ export class Workspace {
   private applyingOwnEdit = false;
   private failedApplication?: { cause: unknown };
   private playRequest = 0;
+  /** A seek into file-backed media is waiting for its chunks; the transport is held `playing` at the target until they arrive. */
+  private resumingSeek = false;
+  private seekResume?: Promise<void>;
+  private readonly heldAnchors = new WeakSet<TakeAnchor>();
   private disposed = false;
   private readonly mixer: Mixer;
 
@@ -128,7 +137,9 @@ export class Workspace {
     if (options.ownsProject) this.ownedProject = project;
     this.activeTempoMap = project.tempoMap;
     this.options = options;
-    this.scheduler = new ClipScheduler(context, (message) => this.warn(message));
+    this.scheduler = new ClipScheduler(context, (error) => {
+      this.mediaError.value = error?.message ?? null;
+    });
     this.output = context.createGain();
     this.mixer = new Mixer(context, this.output, this.tracks, () => this.project);
     this.stretch = new ClipStretch(
@@ -159,7 +170,7 @@ export class Workspace {
     this.auditioningRange = this.audition.cells.range;
     this.cells = Object.freeze({
       needsSync: readonlyCell(this.topologyPending),
-      error: readonlyCell(this.applicationError),
+      error: readonlyCell(() => this.applicationError.value ?? this.mediaError.value),
       warnings: readonlyCell(this.warningMessages),
       session: this.session,
       auditioningClip: this.auditioningClip,
@@ -229,17 +240,16 @@ export class Workspace {
   }
 
   /** Clock tempo events are absolute AudioContext times; rebase them at each transport anchor. */
-  private rebaseTempo(atBeat: number): void {
-    const now = this.context.currentTime;
+  private rebaseTempo(atBeat: number, anchorTime = this.context.currentTime): void {
     const map = this.activeTempoMap;
     const currentBpm = map.bpmAtBeat(atBeat);
     this.timeline.bpm.cancelScheduledValues(0);
     this.timeline.bpm.setValueAtTime(currentBpm, 0);
-    this.timeline.bpm.setValueAtTime(currentBpm, now);
+    this.timeline.bpm.setValueAtTime(currentBpm, anchorTime);
     const startSeconds = map.beatToSeconds(atBeat);
     for (const change of map.changes) {
       if (change.beat <= atBeat) continue;
-      this.timeline.bpm.setValueAtTime(change.bpm, now + map.beatToSeconds(change.beat) - startSeconds);
+      this.timeline.bpm.setValueAtTime(change.bpm, anchorTime + map.beatToSeconds(change.beat) - startSeconds);
     }
   }
 
@@ -247,12 +257,30 @@ export class Workspace {
   takeAnchor(audioTime = this.context.currentTime): TakeAnchor {
     if (this.disposed) throw new Error("Workspace is disposed.");
     assertTakeAudioTime(audioTime);
-    return untracked(() => ({ audioTime, projectTime: this.position, advancing: this.clock.state.value === "playing" }));
+    return untracked(() => {
+      const advancing = this.clock.state.value === "playing";
+      const anchor: TakeAnchor = { audioTime, projectTime: advancing ? this.projectTimeAt(audioTime) : this.position, advancing };
+      if (this.resumingSeek) this.heldAnchors.add(anchor);
+      return anchor;
+    });
+  }
+
+  /**
+   * Project seconds at `audioTime` while the transport plays. Before the transport's start (the short lead `play()` leaves, or the moment of a seek)
+   * the timeline continues backwards at the same rate, so a take that began earlier keeps its true offset.
+   */
+  private projectTimeAt(audioTime: number): number {
+    const beat = this.timeline.timeToBeat(audioTime);
+    const seconds = this.activeTempoMap.beatToSeconds(beat);
+    const start = this.timeline.beatToTime(beat);
+    return start > audioTime + 1e-7 ? seconds - (start - audioTime) : seconds;
   }
 
   /** Positive input latency moves a take earlier. Use preroll when this would cross project zero. */
   takePosition(anchor: TakeAnchor, take: Readonly<{ startTime: number }>, inputLatencySeconds = 0): number {
     if (this.disposed) throw new Error("Workspace is disposed.");
+    if (this.heldAnchors.has(anchor))
+      throw new RangeError("Workspace take anchor was captured while a seek waited for media; capture it after the seek has resumed.");
     return placeTake(anchor, take, inputLatencySeconds);
   }
 
@@ -401,7 +429,11 @@ export class Workspace {
       runtime.rack.output.connect(automationGain);
       let previous: WebClapHost | undefined;
       for (const device of track.devices) {
-        const bundleUrl = (await this.options.resolveBundle?.(device)) ?? device.bundleUrl;
+        const bundleUrl = this.options.resolveBundle
+          ? await this.options.resolveBundle(device)
+          : importedBundles.get(this.project)?.has(device.id)
+            ? undefined
+            : device.bundleUrl;
         if (!bundleUrl) {
           this.warn(`Device ${device.name} has no WebCLAP bundle.`);
           continue;
@@ -503,12 +535,13 @@ export class Workspace {
     const tempoChanged = this.activeTempoMap !== project.tempoMap;
     let clipsChanged = false;
     let refreshClips = false;
+    const invalidatedAudio = new Set<string>();
     const gainEdits = new Map<string, AudioClipGainAutomation | undefined>();
     for (const track of tracks) {
       const runtime = this.tracks.get(track.id)!;
       if (runtime.clips !== track.clips && track.kind !== "bus") {
         clipsChanged = true;
-        if (!refreshClips) refreshClips = !collectGainAutomationEdits(runtime.clips, track.clips, gainEdits);
+        refreshClips = this.invalidateClips(runtime, track.clips, invalidatedAudio, gainEdits) || refreshClips;
       }
       runtime.clips = track.clips;
       updateRack(runtime, track);
@@ -516,10 +549,18 @@ export class Workspace {
     }
     this.mixer.applyRouting(tracks);
     this.mixer.applyMixer();
-    if (clipsChanged) this.audition.stopStale();
+    if (clipsChanged) {
+      this.audition.stopStale();
+      this.scheduler.prune(this.tracks.values());
+    }
     if (tempoChanged) this.seek(position);
-    else if (refreshClips) this.refreshArrangement();
-    else if (gainEdits.size) this.scheduler.setGainAutomation(gainEdits);
+    else if (refreshClips) {
+      this.scheduler.cancelAudio(invalidatedAudio);
+      this.reconcileSession();
+      this.bindNotes();
+      void this.clock.refresh();
+    }
+    if (gainEdits.size) this.scheduler.setGainAutomation(gainEdits);
     if (tempoChanged && refreshClips) this.bindNotes();
     this.topologyPending.value = false;
   }
@@ -532,7 +573,7 @@ export class Workspace {
       runtime.automationBinding = undefined;
       runtime.automationCurve = undefined;
       runtime.automationPoints = undefined;
-      runtime.automationGain.gain.setValueAtTime(1, this.context.currentTime);
+      smoothGain(this.context, runtime.automationGain.gain, 1);
       return;
     }
     if (runtime.automationPoints === points) return;
@@ -547,10 +588,10 @@ export class Workspace {
       runtime.automationGain.gain.setValueAtTime(runtime.automationCurve.valueAt(this.position), this.context.currentTime);
   }
 
-  private positionAutomation(seconds: number, playing: boolean): void {
+  private positionAutomation(seconds: number, playing: boolean, when?: number): void {
     for (const runtime of this.tracks.values()) {
       if (!runtime.automationCurve || !runtime.automationBinding) continue;
-      if (playing) runtime.automationBinding.start({ from: seconds });
+      if (playing) runtime.automationBinding.start({ from: seconds, when });
       else {
         runtime.automationBinding.stop();
         runtime.automationGain.gain.setValueAtTime(runtime.automationCurve.valueAt(seconds), this.context.currentTime);
@@ -622,26 +663,33 @@ export class Workspace {
 
   async play(): Promise<void> {
     if (this.disposed) throw new Error("Workspace is disposed.");
-    if (untracked(() => this.clock.state.value === "playing")) return;
+    if (untracked(() => this.clock.state.value === "playing")) return this.seekResume;
     const request = ++this.playRequest;
     await this.flush();
     if (request !== this.playRequest) return;
     // An offline render is started by its owner; its context cannot be resumed before then.
     if (!isOfflineContext(this.context)) await this.context.resume();
     const position = this.position;
+    this.scheduler.retryFailures();
     await this.prefetchMediaAt(position);
     if (request !== this.playRequest) return;
+    this.resumingSeek = false;
+    await this.startArrangement(position);
+  }
+
+  private startArrangement(position: number): Promise<void> {
     this.activeTempoMap = untracked(() => this.project.tempoMap);
     const beat = this.activeTempoMap.secondsToBeat(position);
-    this.rebaseTempo(beat);
-    // Clock's resume assumes its look-ahead tail survived pause. Workspace owns
-    // and cancels that tail, so re-anchor at the frozen beat before refilling.
-    this.clock.start({ atBeat: beat });
-    this.positionAutomation(position, true);
-    this.clock.refresh();
+    const now = this.context.currentTime;
+    const when = isOfflineContext(this.context) ? now : Math.ceil((now + playbackLead) * this.context.sampleRate) / this.context.sampleRate;
+    this.rebaseTempo(beat, when);
+    this.clock.start(when, beat);
+    this.positionAutomation(position, true, when);
+    return this.clock.refresh();
   }
   pause(): void {
     this.playRequest++;
+    this.resumingSeek = false;
     untracked(() => this.positionAutomation(this.position, false));
     this.clock.pause();
     this.cancelAudio();
@@ -649,6 +697,7 @@ export class Workspace {
   }
   stop(): void {
     this.playRequest++;
+    this.resumingSeek = false;
     batch(() => {
       this.clock.stop();
       this.seekPoint.value = { seconds: 0 };
@@ -662,17 +711,42 @@ export class Workspace {
   }
   private seekUntracked(seconds: number): void {
     if (!Number.isFinite(seconds) || seconds < 0) throw new RangeError("Workspace seek needs non-negative seconds.");
-    this.playRequest++;
+    const request = ++this.playRequest;
+    const playing = this.clock.state.value === "playing";
+    this.scheduler.retryFailures();
+    const prefetched = playing ? this.prefetchMediaAt(seconds) : undefined;
+    this.resumingSeek = !!prefetched;
     this.allNotesOff();
     this.cancelAudio();
     this.activeTempoMap = this.project.tempoMap;
     const beat = this.activeTempoMap.secondsToBeat(seconds);
+    if (prefetched) {
+      // Hold the transport playing at the target: a start in the far future keeps `playing` with the position frozen at `beat` and schedules
+      // nothing until `startArrangement` re-anchors it once the chunks are in.
+      const hold = this.context.currentTime + holdSeconds;
+      this.rebaseTempo(beat, hold);
+      // Schedulers get the real seek first (an armed take is cancelled, as on any seek), then the hold.
+      this.clock.seek(beat);
+      this.clock.start(hold, beat);
+      this.seekPoint.value = { seconds };
+      this.positionAutomation(seconds, false);
+      const resume = prefetched.then(() => {
+        if (request !== this.playRequest || this.disposed) return;
+        this.resumingSeek = false;
+        if (this.clock.state.value === "playing") return this.startArrangement(seconds);
+      });
+      this.seekResume = resume;
+      void resume.finally(() => {
+        if (this.seekResume === resume) this.seekResume = undefined;
+      });
+      return;
+    }
     this.rebaseTempo(beat);
     this.clock.seek(beat);
     // A seek to the same target still moves a paused or advancing playhead.
     this.seekPoint.value = { seconds };
-    this.positionAutomation(seconds, this.clock.state.value === "playing");
-    if (this.clock.state.value === "playing") this.clock.refresh();
+    this.positionAutomation(seconds, playing);
+    if (playing) void this.clock.refresh();
   }
   refresh(): void {
     this.allNotesOff();
@@ -686,26 +760,64 @@ export class Workspace {
   private refreshArrangementUntracked(): void {
     if (this.disposed) throw new Error("Workspace is disposed.");
     this.audition.stopStale();
+    const invalidatedAudio = new Set<string>();
+    const gainEdits = new Map<string, AudioClipGainAutomation | undefined>();
     for (const track of this.project.tracks) {
       const runtime = this.tracks.get(track.id);
-      if (runtime?.kind === track.kind) runtime.clips = track.clips;
+      if (runtime?.kind !== track.kind) continue;
+      this.invalidateClips(runtime, track.clips, invalidatedAudio, gainEdits);
+      runtime.clips = track.clips;
     }
     this.reconcileSession();
-    this.cancelAudio();
+    this.scheduler.prune(this.tracks.values());
+    this.scheduler.setGainAutomation(gainEdits);
+    this.scheduler.cancelAudio(invalidatedAudio);
     this.bindNotes();
-    this.refresh();
+    void this.clock.refresh();
+  }
+
+  private invalidateClips(
+    runtime: TrackRuntime,
+    clips: ProjectTrack["clips"],
+    invalidatedAudio: Set<string>,
+    gainEdits: Map<string, AudioClipGainAutomation | undefined>,
+  ): boolean {
+    if (runtime.clips === clips) return false;
+    if (runtime.kind === "midi") {
+      if (runtime.midiHost && this.clock.state.value === "playing") {
+        const next = new Set(clips);
+        const beat = this.timeline.timeToBeat(this.context.currentTime);
+        const changedPlayingClip = runtime.clips.some((clip) => {
+          if (!(clip instanceof MidiClip)) return false;
+          const time = this.midiClipPositions.get(clip) ?? clip.time;
+          return time <= beat && beat <= time + clip.duration && (!next.has(clip) || clip.time !== time);
+        });
+        if (changedPlayingClip) runtime.midiHost.allNotesOff();
+      }
+      return true;
+    }
+    if (collectGainAutomationEdits(runtime.clips, clips, gainEdits)) return false;
+    const next = new Set(clips);
+    for (const clip of runtime.clips) if (clip.kind === "audio" && !next.has(clip)) invalidatedAudio.add(clip.id);
+    return true;
   }
 
   private bindNotes(): void {
     for (const off of this.noteOff.splice(0)) off();
-    for (const track of this.tracks.values())
-      for (const clip of track.clips)
-        if (clip instanceof MidiClip)
-          this.noteOff.push(
-            clip.midi.revision.subscribe(() => {
-              if (this.clock.state.value === "playing") this.refresh();
-            }),
-          );
+    for (const track of this.tracks.values()) {
+      for (const clip of track.clips) {
+        if (!(clip instanceof MidiClip)) continue;
+        this.midiClipPositions.set(clip, clip.time);
+        this.noteOff.push(
+          clip.midi.revision.subscribe(() => {
+            if (this.clock.state.value !== "playing") return;
+            const beat = this.timeline.timeToBeat(this.context.currentTime);
+            if (clip.time <= beat && beat <= clip.time + clip.duration) track.midiHost?.allNotesOff();
+            void this.clock.refresh();
+          }),
+        );
+      }
+    }
   }
 
   setTrackVolume(trackId: string, value: number): void {
@@ -864,7 +976,7 @@ export class Workspace {
     return this.scheduler.settled();
   }
 
-  private prefetchMediaAt(position: number): Promise<void> {
+  private prefetchMediaAt(position: number): Promise<void> | undefined {
     return this.scheduler.prefetchMediaAt(this.tracks.values(), position);
   }
 

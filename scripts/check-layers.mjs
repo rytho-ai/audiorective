@@ -34,7 +34,16 @@ const CAPABILITIES = {
 /** Packages that may import `@audiorective/core*` and nothing else of ours. */
 const CORE_ONLY = ["clock", "midi", "host", "effects", "devtools", "react", "threejs", "playcanvas", ...Object.keys(CAPABILITIES)];
 
-const DAW_PROJECT = ["project.ts", "model.ts", "rack-preset.ts", "media.ts", "clip-time-map.ts", "tempo-map.ts", "clip-envelope.ts"];
+const DAW_PROJECT = [
+  "project.ts",
+  "model.ts",
+  "rack-preset.ts",
+  "media.ts",
+  "clip-time-map.ts",
+  "tempo-map.ts",
+  "clip-envelope.ts",
+  "project-persistence.ts",
+];
 const DAW_CODEC = ["dawproject.ts"];
 const DAW_INTERNAL = ["internal/*"];
 const DAW_RUNTIME = [

@@ -1,4 +1,13 @@
 import {
+  assertProjectActive,
+  collidesWithProjectId,
+  importedBundles,
+  markProjectDisposed,
+  nextProjectId,
+  validateXmlText,
+  validProjectId,
+} from "./project-persistence";
+import {
   normalizeRackEffects,
   normalizeRackPreset,
   retainRackMacroTargets,
@@ -277,7 +286,6 @@ const clipSeconds = (tempoMap: TempoMap, clip: ProjectClip, localTime = 0): numb
   return clip.kind === "midi" ? tempoMap.beatToSeconds(position) : position;
 };
 
-const validId = (id: string) => /^[A-Za-z_][A-Za-z0-9_.-]*$/.test(id);
 const validTime = (time: number) => Number.isFinite(time) && time >= 0;
 
 /** Headless project content. AudioContext and UI state are not part of the file. */
@@ -292,7 +300,6 @@ export class Project {
    * `MidiClip.midi`, which owns its notes.
    */
   readonly cells: Readonly<{ revision: ReadonlyCell<number>; content: ReadonlyCell<ProjectContent> }>;
-  private nextId = 1;
 
   /** Untracked read of the current snapshot, for the owner's own logic. */
   private get s(): ProjectState {
@@ -306,6 +313,7 @@ export class Project {
   }
 
   constructor(options: ProjectOptions = {}) {
+    validateXmlText(options.title ?? "Untitled");
     this.bpm = options.bpm ?? 120;
     this.signature = Object.freeze([...(options.signature ?? [4, 4])] as [number, number]);
     if (
@@ -354,6 +362,7 @@ export class Project {
   }
 
   setMasterVolume(value: number): void {
+    assertProjectActive(this);
     if (!Number.isFinite(value) || value < 0) throw new RangeError("Project master volume needs a finite non-negative value.");
     if (value === this.s.masterVolume) return;
     this.commit({ masterVolume: value });
@@ -374,6 +383,7 @@ export class Project {
   }
 
   setTempoChanges(changes: readonly TempoChange[]): void {
+    assertProjectActive(this);
     const tempoMap = new TempoMap(this.bpm, changes);
     this.commit({ tempoMap });
   }
@@ -388,6 +398,7 @@ export class Project {
   }
 
   private snapshotUntracked(): Project {
+    assertProjectActive(this);
     const state = this.s;
     const copy = new Project({ title: state.title, bpm: this.bpm, signature: this.signature });
     const tracks = Object.freeze(
@@ -411,12 +422,16 @@ export class Project {
       for (const device of track.devices) copy.ids.add(device.id);
       for (const clip of track.clips) copy.ids.add(clip.id);
     }
-    copy.nextId = this.nextId;
+    nextProjectId.set(copy, nextProjectId.get(this) ?? 1);
+    const untrusted = importedBundles.get(this);
+    if (untrusted) importedBundles.set(copy, new Set(untrusted));
     return copy;
   }
 
   setMarkers(markers: readonly ProjectMarker[]): void {
+    assertProjectActive(this);
     if (markers.some((marker) => typeof marker.name !== "string")) throw new RangeError("Project markers need unique non-negative times and names.");
+    for (const marker of markers) validateXmlText(marker.name);
     const sorted = markers.map((marker) => Object.freeze({ time: marker.time, name: marker.name.trim() })).sort((a, b) => a.time - b.time);
     if (sorted.some((marker, index) => !validTime(marker.time) || !marker.name || (index > 0 && sorted[index - 1].time === marker.time)))
       throw new RangeError("Project markers need unique non-negative times and names.");
@@ -428,6 +443,8 @@ export class Project {
   }
 
   setTitle(title: string): void {
+    assertProjectActive(this);
+    validateXmlText(title);
     if (!title.trim()) throw new RangeError("Project title must not be empty.");
     this.commit({ title: title.trim() });
   }
@@ -437,11 +454,16 @@ export class Project {
       id ??
       (() => {
         let candidate: string;
-        do candidate = `${prefix}${this.nextId++}`;
-        while (this.ids.has(candidate));
+        let next = nextProjectId.get(this) ?? 1;
+        do candidate = `${prefix}${next++}`;
+        while (collidesWithProjectId(candidate, this.ids));
+        nextProjectId.set(this, next);
         return candidate;
       })();
-    if (!validId(chosen) || this.ids.has(chosen)) throw new Error("Project IDs must be unique XML IDs.");
+    if (!validProjectId(chosen) || collidesWithProjectId(chosen, this.ids)) throw new Error("Project IDs must be unique XML IDs.");
+    const suffix = /^(?:clip|device|track)(\d+)$/.exec(chosen);
+    const number = suffix && Number(suffix[1]);
+    if (number && Number.isSafeInteger(number + 1)) nextProjectId.set(this, Math.max(number + 1, nextProjectId.get(this) ?? 1));
     this.ids.add(chosen);
     return chosen;
   }
@@ -451,6 +473,8 @@ export class Project {
     kind: TrackKind,
     options: { id?: string; volume?: number; muted?: boolean; solo?: boolean; pan?: number; busRole?: BusRole } = {},
   ): ProjectTrack {
+    assertProjectActive(this);
+    validateXmlText(name);
     if (!name || (kind !== "audio" && kind !== "midi" && kind !== "bus") || !Number.isFinite(options.volume ?? 1) || (options.volume ?? 1) < 0)
       throw new RangeError("Project tracks need a name, kind and non-negative volume.");
     if (
@@ -493,30 +517,36 @@ export class Project {
   }
 
   setTrackVolume(trackId: string, value: number): void {
+    assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.id === trackId);
     if (!track || !Number.isFinite(value) || value < 0) throw new RangeError("Project track volume needs an existing track and non-negative value.");
     this.replace(track, { volume: value });
   }
 
   setTrackName(trackId: string, name: string): void {
+    assertProjectActive(this);
+    validateXmlText(name);
     const track = this.s.tracks.find((item) => item.id === trackId);
     if (!track || !name.trim()) throw new RangeError("Project track name needs an existing track and non-empty name.");
     this.replace(track, { name: name.trim() });
   }
 
   setTrackMuted(trackId: string, muted: boolean): void {
+    assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.id === trackId);
     if (!track || typeof muted !== "boolean") throw new RangeError("Project track mute needs an existing track and boolean value.");
     this.replace(track, { muted });
   }
 
   setTrackSolo(trackId: string, solo: boolean): void {
+    assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.id === trackId);
     if (!track || typeof solo !== "boolean") throw new RangeError("Project track solo needs an existing track and boolean value.");
     this.replace(track, { solo });
   }
 
   setTrackPan(trackId: string, pan: number): void {
+    assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.id === trackId);
     if (!track || !Number.isFinite(pan) || Math.abs(pan) > 1)
       throw new RangeError("Project track pan needs an existing track and a value from -1 to 1.");
@@ -525,6 +555,7 @@ export class Project {
 
   /** Atomically replace the dry output and post-fader sends for one track. */
   setTrackRouting(trackId: string, routing: TrackRouting): void {
+    assertProjectActive(this);
     const tracks = new Map(this.s.tracks.map((track) => [track.id, track]));
     const track = tracks.get(trackId);
     if (!track) throw new Error("Project track routing needs an existing track.");
@@ -557,6 +588,7 @@ export class Project {
 
   /** Replace the ordered built-in inserts after the track's WebCLAP devices. */
   setTrackEffects(trackId: string, effects: readonly RackEffect[]): void {
+    assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.id === trackId);
     if (!track) throw new Error("Project effects need an existing track.");
     const checked = normalizeRackEffects(effects);
@@ -565,6 +597,7 @@ export class Project {
 
   /** Apply both the ordered inserts and their macro settings as one Project edit. */
   setTrackRackPreset(trackId: string, preset: RackPreset): void {
+    assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.id === trackId);
     if (!track) throw new Error("Project effects need an existing track.");
     const { effects, macros } = normalizeRackPreset(preset);
@@ -572,6 +605,7 @@ export class Project {
   }
 
   setTrackMacroValue(trackId: string, macroId: string, value: number): void {
+    assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.id === trackId);
     const macro = track?.effectMacros.find((item) => item.id === macroId);
     if (!track || !macro) throw new Error("Project macro needs an existing track and macro.");
@@ -583,13 +617,17 @@ export class Project {
   }
 
   removeTrack(trackId: string): void {
+    assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.id === trackId);
     if (!track) throw new Error("Project track does not exist.");
     for (const clip of track.clips) {
       this.ids.delete(clip.id);
       if (clip instanceof MidiClip) clip.dispose();
     }
-    for (const device of track.devices) this.ids.delete(device.id);
+    for (const device of track.devices) {
+      this.ids.delete(device.id);
+      importedBundles.get(this)?.delete(device.id);
+    }
     this.ids.delete(track.id);
     const tracks = Object.freeze(
       this.s.tracks
@@ -610,10 +648,12 @@ export class Project {
   }
 
   addWebClapDevice(trackId: string, details: Omit<WebClapDevice, "kind" | "id" | "state"> & { id?: string; state?: Uint8Array }): WebClapDevice {
+    assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.id === trackId);
     if (!track) throw new Error("Project device needs an existing track.");
     if (!details.pluginId || !details.name || typeof details.bundleUrl !== "string" || (details.state && !(details.state instanceof Uint8Array)))
       throw new Error("Project WebCLAP device needs an ID, name, bundle URL and byte state.");
+    for (const value of [details.pluginId, details.name, details.vendor ?? "", details.version ?? ""]) validateXmlText(value);
     const id = this.reserve(details.id, "device");
     const device: WebClapDevice = Object.freeze({
       kind: "webclap",
@@ -630,6 +670,7 @@ export class Project {
   }
 
   setDeviceState(deviceId: string, bytes: Uint8Array): void {
+    assertProjectActive(this);
     if (!(bytes instanceof Uint8Array)) throw new TypeError("Project device state needs bytes.");
     const track = this.s.tracks.find((item) => item.devices.some((device) => device.id === deviceId));
     if (!track) throw new Error("Project device needs an existing track.");
@@ -638,13 +679,16 @@ export class Project {
   }
 
   removeDevice(deviceId: string): void {
+    assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.devices.some((device) => device.id === deviceId));
     if (!track) throw new Error("Project device needs an existing track.");
     this.ids.delete(deviceId);
+    importedBundles.get(this)?.delete(deviceId);
     this.replace(track, { devices: Object.freeze(track.devices.filter((device) => device.id !== deviceId)) });
   }
 
   setVolumeAutomation(trackId: string, points: readonly AutomationPoint[]): void {
+    assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.id === trackId);
     if (!track) throw new Error("Project automation needs an existing track.");
     const sorted = points.map((point) => Object.freeze({ ...point })).sort((a, b) => a.time - b.time);
@@ -663,6 +707,7 @@ export class Project {
   }
 
   addAudioClip(trackId: string, audio: ProjectAudio, time: number, options: AudioClipOptions = {}): AudioClip {
+    assertProjectActive(this);
     const track = this.track(trackId, "audio");
     if (!validTime(time) || !validPcm(audio)) throw new RangeError("Project audio clips need a time, sample rate and equal-length PCM channels.");
     const stretch = normalizeClipStretch(options.stretch, audio.sampleRate, audio.channels.length, audio.channels[0].length);
@@ -691,6 +736,7 @@ export class Project {
     time: number,
     options: AudioClipOptions & { startFrame?: number; frameCount?: number } = {},
   ): MediaAudioClip {
+    assertProjectActive(this);
     const track = this.track(trackId, "audio");
     if (!(media instanceof AudioMedia)) throw new TypeError("Project media clip needs an AudioMedia asset.");
     const startFrame = options.startFrame ?? 0;
@@ -726,6 +772,7 @@ export class Project {
   }
 
   addMidiClip(trackId: string, data: ProjectMidiData, time: number, options: { id?: string } = {}): MidiClip {
+    assertProjectActive(this);
     const track = this.track(trackId, "midi");
     if (!validTime(time)) throw new RangeError("Project clip time must be finite and non-negative.");
     const id = this.reserve(options.id, "clip");
@@ -741,6 +788,7 @@ export class Project {
 
   /** Adds a recorded take as a clip: its notes, duration and non-note messages are already beats from its start. `time` is the clip position in project beats, default the take's `startBeat` (0 when it has none). */
   addMidiTake(trackId: string, take: MidiTake, time: number = take.startBeat ?? 0): MidiClip {
+    assertProjectActive(this);
     if (!validTime(time)) throw new RangeError("Project clip time must be finite and non-negative.");
     return this.addMidiClip(
       trackId,
@@ -750,6 +798,7 @@ export class Project {
   }
 
   moveClip(clipId: string, trackId: string, time: number): void {
+    assertProjectActive(this);
     if (!validTime(time)) throw new RangeError("Project clip time must be finite and non-negative.");
     const source = this.s.tracks.find((item) => item.clips.some((clip) => clip.id === clipId));
     const target = this.s.tracks.find((item) => item.id === trackId);
@@ -772,6 +821,7 @@ export class Project {
   }
 
   duplicateClip(clipId: string, time: number, trackId?: string): ProjectClip {
+    assertProjectActive(this);
     return untracked(() => this.duplicateClipUntracked(clipId, time, trackId));
   }
 
@@ -799,6 +849,7 @@ export class Project {
 
   /** Replace the clip's playback gain and fades while borrowing the same source PCM. */
   setAudioClipEnvelope(clipId: string, settings: ClipEnvelope): AudioClip {
+    assertProjectActive(this);
     const { track, clip } = this.clipAndTrack(clipId);
     if (clip.kind !== "audio") throw new Error("Project clip envelope needs an audio clip.");
     const envelope = normalizeClipEnvelope(settings, clip.duration);
@@ -812,6 +863,7 @@ export class Project {
 
   /** Set gain automation in original source seconds. An empty curve clears it. */
   setAudioClipGainAutomation(clipId: string, points: readonly AutomationPoint[]): AudioClip {
+    assertProjectActive(this);
     const { track, clip } = this.clipAndTrack(clipId);
     if (clip.kind !== "audio") throw new Error("Project clip gain automation needs an audio clip.");
     const { gainAutomation: previous, ...audio } = clip;
@@ -831,6 +883,7 @@ export class Project {
 
   /** Apply a prepared render only to the exact clip revision the processor borrowed. */
   applyAudioClipStretch(expected: AudioClip, ratio: number, rendered?: ProjectAudio, warp: readonly ClipStretchAnchor[] = []): AudioClip {
+    assertProjectActive(this);
     const { track, clip } = this.clipAndTrack(expected.id);
     if (clip !== expected) throw new Error("Audio clip changed while rendering stretch.");
     const original = expected.stretch?.source ?? audioSource(expected);
@@ -961,6 +1014,7 @@ export class Project {
 
   /** Keep the clip ID while removing material outside its local interval. */
   trimClip(clipId: string, start: number, end: number): ProjectClip {
+    assertProjectActive(this);
     const { track, clip } = this.clipAndTrack(clipId);
     const duration = untracked(() => clip.duration);
     if (!validTime(start) || !Number.isFinite(end) || start >= end || end > duration)
@@ -973,6 +1027,7 @@ export class Project {
 
   /** Split at a local time; the left side keeps the original ID. */
   splitClip(clipId: string, offset: number): readonly [ProjectClip, ProjectClip] {
+    assertProjectActive(this);
     const { track, clip } = this.clipAndTrack(clipId);
     const duration = untracked(() => clip.duration);
     if (!Number.isFinite(offset) || offset <= 0 || offset >= duration) throw new RangeError("Project split needs a time inside the clip.");
@@ -996,6 +1051,7 @@ export class Project {
   }
 
   removeClip(clipId: string): void {
+    assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.clips.some((clip) => clip.id === clipId));
     const clip = track?.clips.find((item) => item.id === clipId);
     if (!track || !clip) throw new Error("Project clip does not exist.");
@@ -1005,6 +1061,7 @@ export class Project {
   }
 
   dispose(): void {
+    if (!markProjectDisposed(this)) return;
     for (const track of this.s.tracks) for (const clip of track.clips) if (clip instanceof MidiClip) clip.dispose();
   }
 }

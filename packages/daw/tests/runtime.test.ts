@@ -293,17 +293,18 @@ describe("workspace automatic application", () => {
   test("Workspace mixer writes apply immediately and Project mixer edits apply once without refreshing Arrangement", async () => {
     const { project, track, workspace, clock } = await setup();
     const masterGain = vi.mocked(workspace.output.gain.setValueAtTime);
+    const strip = fakes.channels.at(-1) as unknown as { params: { gain: { value: number }; pan: { value: number } } };
     masterGain.mockClear();
     const refreshes = clock.refresh.mock.calls.length;
     workspace.setTrackVolume(track.id, 0.4);
     workspace.setTrackPan(track.id, -1);
-    expect(masterGain).toHaveBeenCalledTimes(2);
+    expect(strip.params.gain.value).toBe(0.4);
+    expect(strip.params.pan.value).toBe(-1);
     await workspace.flush();
-    expect(masterGain).toHaveBeenCalledTimes(2);
-    expect(clock.refresh.mock.calls.length).toBe(refreshes);
     project.setTrackVolume(track.id, 0.6);
     await workspace.flush();
-    expect(masterGain).toHaveBeenCalledTimes(3);
+    expect(strip.params.gain.value).toBe(0.6);
+    expect(masterGain).not.toHaveBeenCalled();
     expect(clock.refresh.mock.calls.length).toBe(refreshes);
     workspace.dispose();
     project.dispose();

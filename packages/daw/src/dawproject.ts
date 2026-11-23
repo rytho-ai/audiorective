@@ -1,3 +1,4 @@
+import { assertProjectActive, importedBundles, nextProjectId, validProjectId, validateXmlText } from "./project-persistence";
 import { DOMImplementation, DOMParser, XMLSerializer } from "@xmldom/xmldom";
 import type { Document, Element } from "@xmldom/xmldom";
 import { unzipSync, zipSync, Unzip, UnzipInflate } from "fflate";
@@ -8,8 +9,9 @@ import { MidiClip, Project, audioChannelCount, normalizeClipGainAutomation } fro
 import type { ClipStretchAnchor } from "./clip-time-map";
 import type { AudioClip, AudioClipGainAutomation, AudioClipSource, AudioClipStretch, ProjectMidiEvent, ProjectTrack } from "./model";
 import { decodeWav, encodeWav, mediaFromWav, wavMediaEntry } from "./internal/wav";
-import { writeStoredZip } from "./internal/stored-zip";
+import { crc32, writeStoredZip } from "./internal/stored-zip";
 import type { StoredZipEntry } from "./internal/stored-zip";
+import { zipDirectory, zipBlobDirectory } from "./internal/zip-directory";
 
 type StoredEvent = { time: number; data: number[]; noteId?: string };
 type StoredClip = {
@@ -24,9 +26,31 @@ type StoredClip = {
   warpAnchors?: readonly ClipStretchAnchor[];
   gainAutomation?: AudioClipGainAutomation;
 };
-type PrivateState = { version: 1 | 2 | 3; clips: StoredClip[]; rackMacros?: Record<string, readonly RackMacroSettings[]> };
+type PrivateState = { version: 1 | 2 | 3; nextId?: number; clips: StoredClip[]; rackMacros?: Record<string, readonly RackMacroSettings[]> };
 type HostManifest = { version: 1; devices: Record<string, { kind: "webclap"; bundleUrl: string }> };
-type ControlPoint = { time: number; channel: number; controller: number; value: number };
+const midiExpressions = {
+  0xa0: "polyPressure",
+  0xb0: "channelController",
+  0xc0: "programChange",
+  0xd0: "channelPressure",
+  0xe0: "pitchBend",
+} as const;
+type Expression = (typeof midiExpressions)[keyof typeof midiExpressions];
+type ControlPoint = { time: number; channel: number; controller: number; value: number; expression?: Expression };
+
+function eventFromControl({ time, channel, controller, value, expression }: ControlPoint): ProjectMidiEvent {
+  const bytes =
+    expression === "pitchBend"
+      ? [0xe0 | channel, value & 127, value >> 7]
+      : expression === "channelPressure"
+        ? [0xd0 | channel, value]
+        : expression === "programChange"
+          ? [0xc0 | channel, value]
+          : expression === "polyPressure"
+            ? [0xa0 | channel, controller, value]
+            : [0xb0 | channel, controller, value];
+  return { time, data: new Uint8Array(bytes) };
+}
 type MediaEntry = { blob: Blob; header: Uint8Array };
 type ArchiveEntries = Record<string, Uint8Array | MediaEntry>;
 export type PortabilityReport = Readonly<{
@@ -97,8 +121,10 @@ function integerAttr(element: Element, name: string, minimum = 0, maximum = Numb
 
 function parseXml(bytes: Uint8Array, rootName: string): Element {
   const xml = decoder.decode(bytes);
+  validateXmlText(xml);
   const document = new DOMParser({
-    onError: (_level, message) => {
+    onError: (level, message) => {
+      if (level === "warning" && message.startsWith("Unicode replacement character detected")) return;
       throw new Error(`Project XML is invalid: ${message}`);
     },
   }).parseFromString(xml, "application/xml");
@@ -115,7 +141,14 @@ function fingerprint(
   duration: number,
   unit: "seconds" | "beats",
 ): string {
-  const ordered = [...controls].sort((a, b) => a.time - b.time || a.channel - b.channel || a.controller - b.controller || a.value - b.value);
+  const ordered = [...controls].sort(
+    (a, b) =>
+      a.time - b.time ||
+      a.channel - b.channel ||
+      (a.expression ?? "").localeCompare(b.expression ?? "") ||
+      a.controller - b.controller ||
+      a.value - b.value,
+  );
   const plain = JSON.stringify({
     time,
     duration,
@@ -130,11 +163,21 @@ function fingerprint(
 
 function controlsFromEvents(events: readonly ProjectMidiEvent[]): ControlPoint[] {
   return events.flatMap(({ time, data }) => {
-    if (data.length !== 3 || data[0] < 0x80 || data[0] >= 0xf0 || data[1] > 127 || data[2] > 127)
+    const status = data[0] & 0xf0;
+    const expression = midiExpressions[status as keyof typeof midiExpressions];
+    if (
+      data[0] < 0x80 ||
+      data[0] >= 0xf0 ||
+      data.length !== (status === 0xc0 || status === 0xd0 ? 2 : 3) ||
+      data.subarray(1).some((byte) => byte > 127)
+    )
       throw new Error("Project MIDI has events outside supported portable content.");
-    if ((data[0] & 0xf0) === 0x80 || (data[0] & 0xf0) === 0x90) return [];
-    if ((data[0] & 0xf0) !== 0xb0) throw new Error("Project MIDI has events outside supported portable content.");
-    return [{ time, channel: data[0] & 15, controller: data[1], value: data[2] }];
+    if (!expression) return [];
+    const channel = data[0] & 15;
+    if (status === 0xb0) return [{ time, channel, controller: data[1], value: data[2] }];
+    const controller = status === 0xa0 ? data[1] : 0;
+    const value = status === 0xe0 ? data[1] + (data[2] << 7) : status === 0xa0 ? data[2] : data[1];
+    return [{ time, channel, controller, value, expression }];
   });
 }
 
@@ -187,7 +230,7 @@ function writeClip(
       track: track.id,
       index,
       id: clip.id,
-      fingerprint: clip.stretch || clip.gainAutomation || gain !== 1 ? path : "",
+      fingerprint: path,
       ...(gain === 1 ? {} : { audioGain: gain }),
       ...(clip.stretch ? { stretchRatio: clip.stretch.ratio } : {}),
       ...(clip.stretch?.anchors?.length ? { warpAnchors: clip.stretch.anchors } : {}),
@@ -209,7 +252,7 @@ function writeClip(
   const controls = controlsFromEvents(clip.events);
   const groups = new Map<string, ControlPoint[]>();
   for (const control of controls) {
-    const key = `${control.channel}:${control.controller}`;
+    const key = `${control.expression ?? ""}:${control.channel}:${control.controller}`;
     const group = groups.get(key) ?? [];
     group.push(control);
     groups.set(key, group);
@@ -217,7 +260,12 @@ function writeClip(
   let groupIndex = 0;
   for (const group of groups.values()) {
     const points = append(content, "Points", { id: `${clip.id}-control${groupIndex++}`, timeUnit: unit });
-    append(points, "Target", { expression: "channelController", channel: group[0].channel, controller: group[0].controller });
+    const { expression, channel, controller } = group[0];
+    append(points, "Target", {
+      expression: expression ?? "channelController",
+      channel,
+      ...(!expression ? { controller } : expression === "polyPressure" ? { key: controller } : {}),
+    });
     for (const point of group) append(points, "IntegerPoint", { time: point.time, value: point.value });
   }
   state.clips.push({
@@ -231,6 +279,7 @@ function writeClip(
 }
 
 function prepareDawProject(project: Project): { entries: Record<string, Uint8Array>; mediaEntries: Map<string, AudioClipSource> } {
+  assertProjectActive(project);
   const document = new DOMImplementation().createDocument(null, "Project", null);
   const root = document.documentElement!;
   root.setAttribute("version", "1.0");
@@ -300,7 +349,7 @@ function prepareDawProject(project: Project): { entries: Record<string, Uint8Arr
   append(masterChannel, "Volume", { id: "masterVolume", unit: "linear", value: project.masterVolume });
   const arrangement = append(root, "Arrangement", { id: "arrangement" });
   const lanes = append(arrangement, "Lanes", { id: "projectLanes", timeUnit: "seconds" });
-  const state: PrivateState = { version: 3, clips: [] };
+  const state: PrivateState = { version: 3, nextId: nextProjectId.get(project) ?? 1, clips: [] };
   const racks = project.tracks.filter((track) => track.effectMacros.length);
   if (racks.length) state.rackMacros = Object.fromEntries(racks.map((track) => [track.id, track.effectMacros]));
   for (const track of project.tracks) {
@@ -330,7 +379,8 @@ function prepareDawProject(project: Project): { entries: Record<string, Uint8Arr
   }
   const metadata = new DOMImplementation().createDocument(null, "MetaData", null);
   append(metadata.documentElement!, "Title").textContent = project.title;
-  const serialize = (node: Document) => encoder.encode(`<?xml version="1.0" encoding="UTF-8"?>${new XMLSerializer().serializeToString(node)}`);
+  const serialize = (node: Document) =>
+    encoder.encode(`<?xml version="1.0" encoding="UTF-8"?>${new XMLSerializer().serializeToString(node).replaceAll("\r", "&#13;")}`);
   entries["project.xml"] = serialize(document);
   entries["metadata.xml"] = serialize(metadata);
   entries["audiorective/state.json"] = encoder.encode(JSON.stringify(state));
@@ -376,7 +426,13 @@ function readPrivate(bytes: Uint8Array | undefined, warnings: string[]): Private
     const value: unknown = JSON.parse(decoder.decode(bytes));
     if (!value || typeof value !== "object" || ![1, 2, 3].includes((value as PrivateState).version) || !Array.isArray((value as PrivateState).clips))
       throw new Error();
-    return value as PrivateState;
+    const state = value as PrivateState;
+    const ids = new Set<string>();
+    for (const clip of state.clips) {
+      if (!clip || typeof clip.id !== "string" || !validProjectId(clip.id) || ids.has(clip.id)) throw new Error();
+      ids.add(clip.id);
+    }
+    return state;
   } catch {
     warnings.push("Audiorective project details are invalid; standard project data was used.");
     return undefined;
@@ -435,19 +491,28 @@ function readMidi(clip: Element, trackId: string, index: number, unit: "seconds"
     attributesOnly(points, ["id", "timeUnit"]);
     if (attr(points, "timeUnit") !== unit) throw new Error("Project MIDI clip content time must match its clip lane.");
     const target = one(points, "Target")!;
-    attributesOnly(target, ["expression", "channel", "controller"]);
+    attributesOnly(target, ["expression", "channel", "controller", "key"]);
     childrenOnly(target, []);
-    if (attr(target, "expression") !== "channelController") throw new Error("Project MIDI has unsupported control automation.");
-    const channel = integerAttr(target, "channel", 0, 15),
-      controller = integerAttr(target, "controller", 0, 127);
+    const mode = attr(target, "expression");
+    if (!Object.values(midiExpressions).some((expression) => expression === mode))
+      throw new Error("Project MIDI has unsupported control automation.");
+    const channel = integerAttr(target, "channel", 0, 15);
+    const controller =
+      mode === "channelController" ? integerAttr(target, "controller", 0, 127) : mode === "polyPressure" ? integerAttr(target, "key", 0, 127) : 0;
     childrenOnly(points, ["Target", "IntegerPoint"]);
     for (const point of direct(points, "IntegerPoint")) {
       attributesOnly(point, ["time", "value"]);
       childrenOnly(point, []);
-      controls.push({ time: numberAttr(point, "time"), channel, controller, value: integerAttr(point, "value", 0, 127) });
+      controls.push({
+        time: numberAttr(point, "time"),
+        channel,
+        controller,
+        value: integerAttr(point, "value", 0, mode === "pitchBend" ? 16383 : 127),
+        ...(mode === "channelController" ? {} : { expression: mode as Expression }),
+      });
     }
   }
-  const match = stored?.clips.find((item) => item.track === trackId && item.index === index);
+  const match = stored?.clips.find((item) => item.track === trackId && content.getAttribute("id") === `${item.id}-content`);
   const expected = fingerprint(notes, controls, time, duration, unit);
   const usable =
     match &&
@@ -475,13 +540,14 @@ function readMidi(clip: Element, trackId: string, index: number, unit: "seconds"
     });
   const events: ProjectMidiEvent[] = usable
     ? match.events!.map((event) => ({ time: event.time, data: new Uint8Array(event.data), noteId: event.noteId }))
-    : controls.map(({ time, channel, controller, value }) => ({ time, data: new Uint8Array([0xb0 | channel, controller, value]) }));
+    : controls.map(eventFromControl);
   return { time, duration, notes, events, id: usable ? match.id : undefined };
 }
 
 /** Open the supported slice. Unknown structural content fails instead of disappearing. */
 export function openDawProject(bytes: Uint8Array): OpenDawProjectResult {
   if (!(bytes instanceof Uint8Array) || bytes.length > 128 * 1024 * 1024) throw new Error("Project archive is missing or too large.");
+  const directory = zipDirectory(bytes);
   let total = 0;
   const entries = unzipSync(bytes, {
     filter: (file) => {
@@ -490,12 +556,19 @@ export function openDawProject(bytes: Uint8Array): OpenDawProjectResult {
       return true;
     },
   });
+  for (const [name, entry] of directory)
+    verifyZipEntry(name, entry, entries[name]?.length ?? -1, crc32(0xffffffff, entries[name] ?? new Uint8Array()));
   return parseDawProjectEntries(entries);
+}
+
+function verifyZipEntry(name: string, entry: { size: number; crc: number }, size: number, crc: number): void {
+  if (size !== entry.size || (crc ^ 0xffffffff) >>> 0 !== entry.crc) throw new Error(`Project archive entry is corrupt: ${name}.`);
 }
 
 /** Open a Blob incrementally so embedded WAVs can stay file-backed. */
 export async function openDawProjectBlob(blob: Blob): Promise<OpenDawProjectResult> {
   if (!(blob instanceof Blob) || blob.size < 1 || blob.size > 4 * 1024 * 1024 * 1024) throw new Error("Project archive is missing or too large.");
+  const directory = await zipBlobDirectory(blob);
   const entries: ArchiveEntries = Object.create(null) as ArchiveEntries;
   const files = new Map<string, { chunks: (Uint8Array | Blob)[]; size: number; media: boolean }>();
   let failure: unknown;
@@ -506,6 +579,12 @@ export async function openDawProjectBlob(blob: Blob): Promise<OpenDawProjectResu
       failure = new Error("Project archive has duplicate or unsafe paths.");
       return;
     }
+    const declared = directory.get(file.name);
+    if (!declared) {
+      failure = new Error("Project archive is incomplete or corrupt.");
+      return;
+    }
+    let crc = 0xffffffff;
     const media = isAudioPath(file.name);
     const record = { chunks: [] as (Uint8Array | Blob)[], size: 0, media };
     files.set(file.name, record);
@@ -522,8 +601,16 @@ export async function openDawProjectBlob(blob: Blob): Promise<OpenDawProjectResu
         failure = new Error("Project archive is too large.");
         return;
       }
-      if (chunk?.length) record.chunks.push(media ? new Blob([chunk as Uint8Array<ArrayBuffer>]) : chunk);
+      if (record.size > declared.size) {
+        failure = new Error(`Project archive entry is corrupt: ${file.name}.`);
+        return;
+      }
+      if (chunk?.length) {
+        crc = crc32(crc, chunk);
+        record.chunks.push(media ? new Blob([chunk as Uint8Array<ArrayBuffer>]) : chunk);
+      }
       if (final) {
+        verifyZipEntry(file.name, declared, record.size, crc);
         if (media) {
           const mediaBlob = new Blob(record.chunks as BlobPart[]);
           entries[file.name] = { blob: mediaBlob, header: new Uint8Array() };
@@ -548,7 +635,7 @@ export async function openDawProjectBlob(blob: Blob): Promise<OpenDawProjectResu
     unzip.push(bytes, at + bytes.length === blob.size);
     if (failure) throw failure;
   }
-  if ([...files.keys()].some((path) => !entries[path])) throw new Error("Project archive is incomplete.");
+  if ([...directory.keys()].some((path) => !entries[path])) throw new Error("Project archive is incomplete.");
   for (const entry of Object.values(entries))
     if (!(entry instanceof Uint8Array)) entry.header = new Uint8Array(await entry.blob.slice(0, 44).arrayBuffer());
   return parseDawProjectEntries(entries);
@@ -595,6 +682,21 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
   const stored = readPrivate(entryBytes(entries, "audiorective/state.json"), warnings);
   const hostManifest = readHostManifest(entryBytes(entries, "audiorective/host.json"), warnings);
   const project = new Project({ title, bpm, signature });
+  const declaredNext = stored?.nextId;
+  let next = typeof declaredNext === "number" && Number.isSafeInteger(declaredNext) && declaredNext > 0 ? declaredNext : 1;
+  // Even an unusable sidecar record may hold an existing ID needed later in the import.
+  for (const id of [
+    ...(stored?.clips.map((clip) => clip.id) ?? []),
+    ...Array.from(root.getElementsByTagName("*"), (element) => element.getAttribute("id") ?? ""),
+  ]) {
+    const suffix = /^(?:track|device|clip)(\d+)(?:-|$)/.exec(id);
+    const number = suffix && Number(suffix[1]);
+    if (number && Number.isSafeInteger(number + 1)) next = Math.max(next, number + 1);
+  }
+  nextProjectId.set(project, next);
+  const matchedAudio = new Set<StoredClip>();
+  const untrusted = new Set<string>();
+  importedBundles.set(project, untrusted);
   try {
     const usedPaths = new Set(["project.xml", "metadata.xml"]);
     if (entries["audiorective/state.json"]) usedPaths.add("audiorective/state.json");
@@ -620,6 +722,8 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
       const role = attr(channel, "role");
       if (role === "master") {
         if (masterChannelId || destination || one(channel, "Sends", false)) throw new Error("Project has unsupported master routing.");
+        if (one(channel, "Devices", false) || one(channel, "Mute", false) || one(channel, "Pan", false) || channel.getAttribute("solo") === "true")
+          throw new Error("Project has unsupported master channel devices, mute, pan or solo.");
         masterChannelId = channelId;
         project.setMasterVolume(numberAttr(volumeElement, "value"));
         continue;
@@ -726,6 +830,7 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
             bundleUrl: location?.kind === "webclap" && typeof location.bundleUrl === "string" ? location.bundleUrl : "",
             state,
           });
+          untrusted.add(id);
         }
         if (effects.length) project.setTrackEffects(track.id, effects);
       }
@@ -810,8 +915,18 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
               Math.abs(frames / decoded.sampleRate - numberAttr(clip, "duration")) > 1e-9
             )
               throw new Error("Project audio asset does not match its XML metadata.");
-            const match = stored?.clips.find((item) => item.track === trackId && item.index === index);
-            const aligned = match?.fingerprint === path;
+            const identity = audio.getAttribute("id");
+            const match = stored?.clips.find(
+              (item) =>
+                !matchedAudio.has(item) &&
+                item.track === trackId &&
+                identity === `${item.id}-audio` &&
+                path === `audio/${item.id}.wav` &&
+                (item.fingerprint === path || item.fingerprint === ""),
+            );
+            if (match) matchedAudio.add(match);
+
+            const aligned = match !== undefined;
             const storedGain = aligned ? match.audioGain : undefined;
             const gain = typeof storedGain === "number" && Number.isFinite(storedGain) && storedGain >= 0 ? storedGain : 1;
             const fadeIn = clip.hasAttribute("fadeInTime") ? numberAttr(clip, "fadeInTime") : 0;
@@ -824,6 +939,8 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
               stretch = { ratio: match.stretchRatio, source: readAudioSource(original), anchors: match.warpAnchors };
             } else if (original) {
               warnings.push("A rendered audio clip was opened without its Audiorective stretch settings.");
+            } else if (!aligned) {
+              warnings.push(`Audio clip ${path} has no matching Audiorective details; standard project data was used.`);
             }
             if (original) usedPaths.add(originalPath);
             let gainAutomation: AudioClipGainAutomation | undefined;
@@ -912,6 +1029,8 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
       );
     }
     if (Object.keys(entries).some((path) => !usedPaths.has(path))) throw new Error("Project archive has unsupported files.");
+    if (stored?.clips.some((item) => !item.noteIds && !matchedAudio.has(item)))
+      warnings.push("Audiorective audio clip details no longer match the arrangement and were skipped.");
     return { project, warnings: Object.freeze(warnings) };
   } catch (error) {
     project.dispose();

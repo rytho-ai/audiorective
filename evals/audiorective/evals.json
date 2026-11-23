@@ -775,7 +775,7 @@
       "expectations": [
         "Passes pluginId to WebClapHost.load and describes index selection as the fallback",
         "Stores the bundle URL and exact pluginId with Project.addWebClapDevice on an effect bus, routes a source send and uses saveWorkspace/openWorkspace",
-        "Explains that Workspace uses the saved identity and state on reopen and checks for unresolved devices",
+        "Passes an explicit resolveBundle using the trusted bundle for the saved CLAP ID and checks for unresolved devices after reopen",
         "Separates the tested WASM32 imported memory support from claiming that every native CLAP binary runs in the browser"
       ]
     },

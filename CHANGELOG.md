@@ -13,6 +13,19 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ## [Unreleased]
 
+### Fixed
+
+- **daw:** Both project open paths validate ZIP completeness and entry CRCs. Unsupported master settings fail on open. Audio sidecar details follow clip identity, edited MIDI falls back to standard content with a warning, recorded MIDI channel messages round-trip, XML text is validated on entry, and generated IDs survive save and reopen without reusing deleted IDs. Disposed projects reject edits and saves.
+- **daw:** Media read failures report once per clip per playback run in `workspace.cells.error`, retry at the next `play()` or `seek()`, clear on a successful read and abort audio fallback export. A `seek()` while playing keeps the transport `playing` while it waits for file-backed media, and `takeAnchor(audioTime)` maps that audio time to project time, so a take placed from an anchor taken right after `play()` is exact; an anchor captured while a seek waits for media throws at `takePosition`.
+- **daw:** Live playback schedules starts in advance, waits for file-backed media at seek boundaries and buffers the next chunk ahead of its start. Unrelated arrangement edits preserve held MIDI notes. Source cancellation and live master changes use short gain fades.
+- **recorder:** A transport `start` cancels a pending `quantize` take (its boundary was planned on the previous anchor) with `AbortError`; a take armed with an explicit `when` still survives `start`.
+- **daw:** A seek that waits for media gives attached schedulers a real seek before holding the transport `playing`, so an armed recorder take is cancelled as on any seek.
+- **effects:** Channel mute and output gating transition smoothly during playback.
+
+### Migration
+
+- **daw / daw-demo:** A project file's WebCLAP URL requires app approval. Supply `resolveBundle` when opening a project. The demo approves its built-in synth and bundles that the user explicitly loads in the current session.
+
 ### Documentation and evaluation
 
 - **docs / skill:** clarify Clock transport states, empty processor registries, nullable launcher slots, file-backed clip media windows and fixed-tempo punch occurrence planning. These are existing APIs; runtime and persisted project formats are unchanged.

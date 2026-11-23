@@ -33,10 +33,31 @@ describe("Channel", () => {
         ch.params.muted.value = false;
         ctx.resume();
       });
-    });
+    }, 4096);
     const l = buf.getChannelData(0);
     expect(l[64]).toBeCloseTo(0, 6);
-    expect(l[250]).toBeCloseTo(0.5, 6);
+    expect(l[4095]).toBeCloseTo(0.5, 6);
+  });
+
+  it("smooths mute and output gating on a 0.5 signal", async () => {
+    for (const control of ["muted", "outputEnabled"] as const) {
+      const buffer = await renderStereo((ctx) => {
+        const channel = new Channel(ctx);
+        const source = new ConstantSourceNode(ctx, { offset: 0.5 });
+        source.connect(channel.input);
+        channel.output.connect(ctx.destination);
+        source.start();
+        void ctx.suspend(512 / ctx.sampleRate).then(() => {
+          channel.params[control].value = control === "muted";
+          return ctx.resume();
+        });
+      }, 4096);
+      const samples = buffer.getChannelData(0);
+      let maxStep = 0;
+      for (let i = 1; i < samples.length; i++) maxStep = Math.max(maxStep, Math.abs(samples[i] - samples[i - 1]));
+      expect(maxStep).toBeLessThan(0.005);
+      expect(samples.at(-1)).toBeCloseTo(0, 4);
+    }
   });
 
   it("pan = 1 puts a mono source in the right channel only", async () => {
