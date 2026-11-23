@@ -39,26 +39,19 @@ try {
       const parts = [];
       const { AudioRecorder } = await import(recorderModule);
       const originalRecord = AudioRecorder.prototype.record;
-      const originalPlay = Workspace.prototype.play;
       let capture;
       AudioRecorder.prototype.record = function (...args) {
         capture = this;
         return originalRecord.apply(this, args);
       };
-      Workspace.prototype.play = function (...args) {
-        assertCaptureBegan();
-        return originalPlay.apply(this, args);
-      };
-      function assertCaptureBegan() {
-        if (!capture) throw new Error("Export did not use the observed recorder.");
-        if (capture.cells.startedAt.value === null) throw new Error("Export playback began before native capture started.");
-      }
       try {
         await window.__daw.api.exportAudioFallbackTo(workspace, new WritableStream({ write: (chunk) => parts.push(chunk) }), { tailSeconds: 0.1 });
       } finally {
         AudioRecorder.prototype.record = originalRecord;
-        Workspace.prototype.play = originalPlay;
       }
+      if (!capture) throw new Error("Export did not use the observed recorder.");
+      // The export renders offline: it neither plays nor captures on the live context.
+      if (!(capture.context instanceof OfflineAudioContext)) throw new Error("Export captured on a live AudioContext.");
       const bytes = new Uint8Array(await new Blob(parts).arrayBuffer());
       const view = new DataView(bytes.buffer);
       const entries = [];

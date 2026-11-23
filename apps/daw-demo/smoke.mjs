@@ -1211,6 +1211,11 @@ try {
   const initialCurve = await curve.getAttribute("d");
   const handle = response.getByRole("button", { name: "截止頻率" });
   await handle.press("ArrowRight");
+  // The response curve redraws on an animation frame after the edit.
+  await curve.evaluate(async (path, before) => {
+    const deadline = performance.now() + 2000;
+    while (path.getAttribute("d") === before && performance.now() < deadline) await new Promise(requestAnimationFrame);
+  }, initialCurve);
   assert.notEqual(await curve.getAttribute("d"), initialCurve);
   assert.notEqual(await cutoff.getAttribute("aria-valuetext"), "1200 Hz");
   await cutoff.press("Home");

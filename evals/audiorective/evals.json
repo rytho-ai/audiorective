@@ -507,13 +507,13 @@
     {
       "id": 35,
       "prompt": "I need to hand an Audiorective WebCLAP DAW project to someone using another DAW who may not have my synth. Show the current save and audio delivery APIs, explain what they can edit or hear, and what compatibility I must still test. Do not run anything.",
-      "expected_output": "Shares a DAWproject for supported editable content plus a separate real-time audio fallback, without claiming universal plug-in or DAW import compatibility.",
+      "expected_output": "Shares a DAWproject for supported editable content plus a separate offline-rendered audio fallback, without claiming universal plug-in or DAW import compatibility.",
       "files": [],
       "expectations": [
         "Uses portabilityReport(project) from daw/dawproject to list standard content, matching CLAP plug-in dependencies and fidelity limits",
         "Uses saveWorkspaceTo for a file-backed DAWproject archive and exportAudioFallbackTo(workspace, destination) from daw/runtime for a separate mix/stems WAV ZIP",
         "Explains that the receiving DAW needs its own CLAP binary to recreate a hosted plug-in, while the WAV mix remains audible without it",
-        "Explains the audio fallback is captured in real time in a browser with OPFS, and has mix only above 15 tracks",
+        "Explains the audio fallback is rendered offline in a browser with OPFS, and has mix only above 15 tracks",
         "Does not claim arbitrary DAWproject import or cross-DAW editability without testing named DAWs and versions"
       ]
     },

@@ -1,5 +1,5 @@
 import { Clock, Timeline } from "@audiorective/clock";
-import type { LoopRange, TickWindow } from "@audiorective/clock";
+import type { LoopRange, TickSource, TickWindow } from "@audiorective/clock";
 import { batch, cell, effect, readonlyCell, untracked, type Cell, type Readable, type ReadonlyCell } from "@audiorective/core";
 import { AutomationBinding, AutomationCurve, audioParamTarget, type AutomationTarget } from "@audiorective/core/automation";
 import { WebClapHost } from "@audiorective/host/webclap";
@@ -32,7 +32,11 @@ export type WorkspaceOptions = {
   warnings?: readonly string[];
   /** Hand the Project to the Workspace: `dispose()` disposes it too. Ownership ends if `workspace.project` is later replaced. Default: the caller owns it. */
   ownsProject?: boolean;
+  /** @internal Drives the transport from an offline render loop instead of a timer; used by `exportAudioFallbackTo`. */
+  tickSource?: TickSource;
 };
+const isOfflineContext = (context: BaseAudioContext): boolean => typeof OfflineAudioContext !== "undefined" && context instanceof OfflineAudioContext;
+
 /** A borrowed transport view that can be passed directly to a player widget. */
 export type WorkspacePlayer = Readonly<{
   isPlaying: Readable<boolean>;
@@ -140,7 +144,13 @@ export class Workspace {
     );
     if (options.destination) this.output.connect(options.destination);
     this.timeline = new Timeline({ audioContext: context, bpm: project.bpm });
-    this.clock = new Clock({ timeline: this.timeline, lookAhead: 0.15, tickInterval: 0.025, onTick: (window) => this.schedule(window) });
+    this.clock = new Clock({
+      timeline: this.timeline,
+      lookAhead: 0.15,
+      tickInterval: 0.025,
+      tickSource: options.tickSource,
+      onTick: (window) => this.schedule(window),
+    });
     this.session = readonlyCell(() => {
       this.sessionRevision.$();
       return untracked(() => (this.sessionLauncher ??= this.buildSession()));
@@ -616,7 +626,8 @@ export class Workspace {
     const request = ++this.playRequest;
     await this.flush();
     if (request !== this.playRequest) return;
-    await this.context.resume();
+    // An offline render is started by its owner; its context cannot be resumed before then.
+    if (!isOfflineContext(this.context)) await this.context.resume();
     const position = this.position;
     await this.prefetchMediaAt(position);
     if (request !== this.playRequest) return;
@@ -846,6 +857,11 @@ export class Workspace {
     await this.flush();
     await this.serialize(() => this.captureStates());
     return this.project;
+  }
+
+  /** @internal Resolves when the audio and device messages scheduled by the transport so far are in place. An offline render awaits it while suspended. */
+  renderSettled(): Promise<void> {
+    return this.scheduler.settled();
   }
 
   private prefetchMediaAt(position: number): Promise<void> {

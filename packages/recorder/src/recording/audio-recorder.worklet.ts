@@ -12,6 +12,7 @@ class AudioRecorderProcessor extends AudioWorkletProcessor {
     this.length = options.processorOptions.length ?? null;
     this.firstFrame = null;
     this.endFrame = null;
+    this.nextQuantumFrame = null;
     this.chunkStart = 0;
     this.chunkLength = 0;
     this.chunks = Array.from({ length: this.channels }, () => new Float32Array(4096));
@@ -32,8 +33,12 @@ class AudioRecorderProcessor extends AudioWorkletProcessor {
     const input = inputs[0] || [];
     const count = outputs[0][0].length;
     const capture = parameters.capture;
+    // Chromium can report the previous quantum's currentFrame once and catch up on the next call, while every call still carries new audio.
+    // Only a currentFrame ahead of the expected quantum is a real skip.
+    const quantumFrame = Math.max(currentFrame, this.nextQuantumFrame ?? currentFrame);
+    this.nextQuantumFrame = quantumFrame + count;
     for (let index = 0; index < count; index++) {
-      const frame = currentFrame + index;
+      const frame = quantumFrame + index;
       const gate = (capture.length === 1 ? capture[0] : capture[index]) >= 0.5;
       const enabled = gate && frame >= this.startFrame && (this.length === null || this.firstFrame === null || frame < this.firstFrame + this.length);
       if (!enabled) {
@@ -49,8 +54,6 @@ class AudioRecorderProcessor extends AudioWorkletProcessor {
         this.firstFrame = frame;
         this.port.postMessage({ type: "begin", frame });
       }
-      // A render quantum repeated by the browser (a frame already captured) is skipped, so chunks stay contiguous.
-      if (this.endFrame !== null && frame < this.endFrame) continue;
       if (this.endFrame !== null && frame > this.endFrame) {
         const missing = frame - this.endFrame;
         if (missing > sampleRate * 2) {

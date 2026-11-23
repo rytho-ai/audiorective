@@ -293,6 +293,22 @@ describe("WebClapHost params", () => {
     }
   });
 
+  it("messagesHandled() round-trips the worklet without asking the plug-in for its state", async () => {
+    const { host, port } = await load();
+    const handled = host.messagesHandled();
+    expect(port.sent.map((message) => message.type)).toEqual(["sync"]);
+    port.onmessage?.({ data: { type: "synced" } });
+    await expect(handled).resolves.toBeUndefined();
+  });
+
+  it("dispose() rejects a pending messagesHandled()", async () => {
+    const { host } = await load();
+    const handled = host.messagesHandled();
+    const rejected = expect(handled).rejects.toBeInstanceOf(Error);
+    host.dispose();
+    await rejected;
+  });
+
   describe("WebClapHost platform error names", () => {
     it("initial worklet response expiry uses TimeoutError", async () => {
       vi.useFakeTimers();

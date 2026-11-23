@@ -57,6 +57,7 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
 
   private stateWaiters: Waiter<Uint8Array>[] = [];
   private loadStateWaiters: Waiter<void>[] = [];
+  private syncWaiters: Waiter<void>[] = [];
   private guiWaiter?: Waiter<string>;
   private editor?: HTMLIFrameElement;
   private editorListener?: (event: MessageEvent) => void;
@@ -234,6 +235,13 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
     this.pending.clear();
   }
 
+  /** @internal Resolves once the worklet has handled every message posted before this call, without calling into the plug-in. */
+  messagesHandled(): Promise<void> {
+    const result = this.wait<void>((waiter) => this.syncWaiters.push(waiter));
+    this.node.port.postMessage({ type: "sync" });
+    return result;
+  }
+
   async saveState(): Promise<Uint8Array> {
     const result = this.wait<Uint8Array>((waiter) => this.stateWaiters.push(waiter));
     this.node.port.postMessage({ type: "saveState" });
@@ -305,14 +313,21 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
   private dropWaiter(waiter: Waiter<never> | Waiter<unknown>): void {
     this.stateWaiters = this.stateWaiters.filter((w) => w !== waiter);
     this.loadStateWaiters = this.loadStateWaiters.filter((w) => w !== waiter);
+    this.syncWaiters = this.syncWaiters.filter((w) => w !== waiter);
     if (this.guiWaiter === waiter) this.guiWaiter = undefined;
   }
 
   /** Clears every pending response timer and rejects the callers still waiting on `saveState()`, `loadState()` or `mountEditor()`. */
   private rejectWaiters(error: Error): void {
-    const waiters: Waiter<never>[] = [...this.stateWaiters, ...this.loadStateWaiters, ...(this.guiWaiter ? [this.guiWaiter] : [])] as Waiter<never>[];
+    const waiters: Waiter<never>[] = [
+      ...this.stateWaiters,
+      ...this.loadStateWaiters,
+      ...this.syncWaiters,
+      ...(this.guiWaiter ? [this.guiWaiter] : []),
+    ] as Waiter<never>[];
     this.stateWaiters = [];
     this.loadStateWaiters = [];
+    this.syncWaiters = [];
     this.guiWaiter = undefined;
     for (const waiter of waiters) {
       clearTimeout(waiter.timer);
@@ -358,6 +373,9 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
         break;
       case "stateLoaded":
         this.settle(this.loadStateWaiters.shift(), undefined);
+        break;
+      case "synced":
+        this.settle(this.syncWaiters.shift(), undefined);
         break;
       case "gui":
         if (typeof message.uri === "string") {

@@ -5,6 +5,7 @@ import { scheduleClipEnvelope } from "./schedule-clip-envelope";
 import { audioClipTimeMap } from "./model";
 import type { AudioClip, AudioClipGainAutomation, PcmAudioClip } from "./model";
 import type { AudioMedia } from "./media";
+import type { WebClapHost } from "@audiorective/host/webclap";
 import type { TempoMap } from "./tempo-map";
 import { audioChunkSeconds, type AudioClipWindow, type AudioHandle, type TrackRuntime } from "./track-runtime";
 
@@ -18,6 +19,10 @@ export class ClipScheduler {
   private readonly audioBuffers = new WeakMap<PcmAudioClip["channels"], AudioBuffer>();
   private readonly sessionAudioBuffers = new WeakMap<PcmAudioClip, AudioBuffer>();
   private readonly mediaBuffers = new WeakMap<AudioMedia, Map<string, Promise<AudioBuffer>>>();
+  /** Media sources still waiting for their chunk, so an offline render can hold until what a window needs is scheduled. */
+  private readonly loading = new Set<Promise<void>>();
+  /** Devices that were sent MIDI since the last `settled()`. */
+  private readonly messaged = new Set<WebClapHost>();
 
   constructor(
     private readonly context: AudioContext,
@@ -42,12 +47,25 @@ export class ClipScheduler {
             if (beat < window.beat.start - 1e-8 || beat >= window.beat.end - 1e-8) continue;
             const when = timeline.beatToTime(beat);
             window.own(runtime.midiHost.scheduleMidi(event.data, when), when);
+            this.messaged.add(runtime.midiHost);
           }
         } else {
           this.scheduleAudioClipWindow(clip, runtime.session?.arrangementInput ?? runtime.input, span, window, this.scheduled);
         }
       }
     }
+  }
+
+  /**
+   * Resolves when every media source scheduled so far has its chunk and every device that was sent MIDI has handled it. An offline render awaits this
+   * while suspended, so a slow media read or a queued device message cannot land after the render has passed its start time.
+   */
+  async settled(): Promise<void> {
+    while (this.loading.size) await Promise.all([...this.loading]);
+    const hosts = [...this.messaged];
+    this.messaged.clear();
+    // Port messages are handled in order, so this reply proves the scheduled events arrived.
+    await Promise.all(hosts.map((host) => host.messagesHandled()));
   }
 
   /** Load the media chunks that cover `position` so playback starts without a gap. */
@@ -216,7 +234,7 @@ export class ClipScheduler {
       for (const listener of listeners) listener();
       listeners.clear();
     };
-    void this.loadMediaBuffer(clip, index)
+    const loading = this.loadMediaBuffer(clip, index)
       .then((buffer) => {
         if (cancelled) return end();
         source = this.context.createBufferSource();
@@ -234,6 +252,8 @@ export class ClipScheduler {
         this.warn(`Audio clip ${clip.id} could not read its media: ${String(error)}`);
         end();
       });
+    this.loading.add(loading);
+    void loading.finally(() => this.loading.delete(loading));
     return {
       clipId: clip.id,
       setGainAutomation: (next) => {

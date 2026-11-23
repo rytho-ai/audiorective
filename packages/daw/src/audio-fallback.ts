@@ -1,3 +1,4 @@
+import { ManualTickSource } from "@audiorective/clock";
 import { AudioRecorder, type RecordedAudioSpan } from "@audiorective/recorder";
 import type { AudioMedia } from "./media";
 import type { Project } from "./model";
@@ -14,7 +15,20 @@ export type AudioFallbackOptions = Readonly<{
   onProgress?: (fraction: number) => void;
 }>;
 
-/** Render mix and post-mixer track stems in real time to a companion ZIP of float32 WAVs. */
+/** Web Audio's render quantum; `OfflineAudioContext.suspend` pauses on these boundaries. */
+const RENDER_QUANTUM = 128;
+/** Seconds of audio between transport ticks; below the workspace clock's 0.15 s look-ahead, as live. */
+const TICK_INTERVAL = 0.025;
+/** The recorder posts at most 4096 frames per chunk and fails a take with 64 writes pending. */
+const CHUNK_FRAMES = 4096;
+/** Frames the render may run ahead of the OPFS writer before it waits. */
+const MAX_WRITE_LAG = 16 * CHUNK_FRAMES;
+
+/**
+ * Render mix and post-mixer track stems offline to a companion ZIP of float32 WAVs.
+ * An `OfflineAudioContext` renders the project in steps that match the transport's tick interval. Between steps the render is suspended while
+ * media chunks load, device messages land and the OPFS writer catches up, so contention on the main thread cannot drop frames.
+ */
 export async function exportAudioFallbackTo(
   workspace: Workspace,
   destination: WritableStream<Uint8Array>,
@@ -27,25 +41,43 @@ export async function exportAudioFallbackTo(
     if (signal?.aborted) throw new DOMException("Workspace audio fallback was cancelled.", "AbortError");
   };
   let project: Project | undefined;
-  let context: AudioContext | undefined;
+  let context: OfflineAudioContext | undefined;
   let recorder: AudioRecorder | undefined;
   let recording: Promise<RecordedAudioSpan> | undefined;
   let mediaWriter: Awaited<ReturnType<typeof createOpfsAudioMediaWriter>> | undefined;
   let media: AudioMedia | undefined;
   let render: Workspace | undefined;
+  let rendering: Promise<unknown> | undefined;
   let archiveStarted = false;
-  let progressTimer: ReturnType<typeof setInterval> | undefined;
-  const cancel = () => recorder?.cancel();
+  let wake: (() => void) | undefined;
+  // Settles the first reason to stop (cancellation or a failed writer), so every wait in the render loop can race it.
+  let interrupt!: (error: unknown) => void;
+  const interrupted = new Promise<never>((_, reject) => (interrupt = reject));
+  interrupted.catch(() => undefined);
+  const cancel = () => {
+    interrupt(new DOMException("Workspace audio fallback was cancelled.", "AbortError"));
+    recorder?.cancel();
+  };
   signal?.addEventListener("abort", cancel, { once: true });
   try {
     checkAbort();
     await workspace.flush();
     const renderProject = (await workspace.checkpoint()).snapshot();
     project = renderProject;
-    context = new AudioContext({ sampleRate: workspace.context.sampleRate });
-    const renderContext = context;
-    await context.resume();
-    render = await Workspace.create(context, renderProject, workspace.deviceOptions);
+    const sampleRate = workspace.context.sampleRate;
+    const duration = Math.max(workspace.duration, 0.1) + tail;
+    const frameCount = Math.ceil(duration * sampleRate);
+    // The destination only has to exist: stems stream through the recorder. One more quantum lets the recorder see the frame after its last.
+    const refused = (error: unknown) =>
+      new Error(`Workspace audio fallback could not start an offline render of ${duration.toFixed(1)} seconds: ${String(error)}`);
+    try {
+      context = new OfflineAudioContext(1, frameCount + RENDER_QUANTUM, sampleRate);
+    } catch (error) {
+      throw refused(error);
+    }
+    const offline = context;
+    const ticks = new ManualTickSource();
+    render = await Workspace.create(offline as unknown as AudioContext, renderProject, { ...workspace.deviceOptions, tickSource: ticks });
     if (render.warnings.length) throw new Error(`Workspace audio fallback has unresolved devices: ${render.warnings.join(" ")}`);
     const stemTracks = renderProject.tracks.length <= 15 ? renderProject.tracks : [];
     const buses = [
@@ -56,61 +88,91 @@ export async function exportAudioFallbackTo(
       })),
     ];
     const channels = buses.length * 2;
-    const merger = context.createChannelMerger(channels);
+    const merger = offline.createChannelMerger(channels);
     for (let index = 0; index < buses.length; index++) {
-      const splitter = context.createChannelSplitter(2);
+      const splitter = offline.createChannelSplitter(2);
       buses[index].node.connect(splitter);
       splitter.connect(merger, 0, index * 2);
       splitter.connect(merger, 1, index * 2 + 1);
     }
-    recorder = new AudioRecorder(context, { channels });
+    recorder = new AudioRecorder(offline, { channels });
     merger.connect(recorder.input);
-    mediaWriter = await createOpfsAudioMediaWriter(context.sampleRate, channels);
+    mediaWriter = await createOpfsAudioMediaWriter(sampleRate, channels);
     await recorder.ready;
     checkAbort();
-    recording = recorder.record({ onChunk: (chunk) => mediaWriter!.writeChunk(chunk), signal });
-    // A connected graph has not necessarily processed its first audio frame yet.
-    let stopWaiting: (() => void) | undefined;
-    const captureBegan = new Promise<void>((resolve) => {
-      stopWaiting = recorder!.cells.startedAt.subscribe(
-        (time) => {
-          if (time !== null) resolve();
-        },
-        { immediate: true },
-      );
+    let writtenFrames = 0;
+    const writer = mediaWriter;
+    // The node is built synchronously from here, before rendering starts, so capture begins on frame 0.
+    recording = recorder.record({
+      when: 0,
+      length: frameCount / sampleRate,
+      signal,
+      onChunk: async (chunk) => {
+        await writer.writeChunk(chunk);
+        writtenFrames = chunk.startFrame + chunk.channels[0].length;
+        wake?.();
+      },
     });
-    try {
-      await Promise.race([captureBegan, recording]);
-    } finally {
-      stopWaiting?.();
+    recording.catch(interrupt);
+    const hold = <T>(promise: Promise<T>): Promise<T> => Promise.race([promise, interrupted]);
+    // Waits until `done()`, woken by each finished write.
+    const until = async (done: () => boolean) => {
+      while (!done()) await hold(new Promise<void>((resolve) => (wake = resolve)));
+    };
+    await render.play();
+    ticks.tick();
+    await hold(render.renderSettled());
+    let tickIndex = 1;
+    let previous = 0;
+    const nextStop = (): number | undefined => {
+      previous = Math.max(Math.ceil((tickIndex++ * TICK_INTERVAL * sampleRate) / RENDER_QUANTUM) * RENDER_QUANTUM, previous + RENDER_QUANTUM);
+      return previous < frameCount ? previous : undefined;
+    };
+    // Ask for a time inside the quantum below the target so rounding cannot move the stop one quantum later.
+    const suspendAt = (frame: number) => offline.suspend((frame - RENDER_QUANTUM / 2) / sampleRate);
+    let stop = nextStop();
+    let suspended = stop === undefined ? undefined : suspendAt(stop);
+    suspended?.catch(() => undefined);
+    // Browsers may accept the context and refuse its buffer only here.
+    rendering = offline.startRendering().catch((error: unknown) => {
+      throw error instanceof DOMException && error.name === "NotSupportedError" ? refused(error) : error;
+    });
+    void rendering.catch(() => undefined);
+    let reported = 0;
+    while (stop !== undefined && suspended) {
+      await hold(Promise.race([suspended, rendering]));
+      checkAbort();
+      ticks.tick();
+      await hold(render.renderSettled());
+      const reachedFrames = stop;
+      await until(() => reachedFrames - writtenFrames <= MAX_WRITE_LAG);
+      const progress = Math.min(1, reachedFrames / frameCount);
+      if (progress - reported >= 0.01) {
+        reported = progress;
+        options.onProgress?.(progress);
+      }
+      stop = nextStop();
+      suspended = stop === undefined ? undefined : suspendAt(stop);
+      suspended?.catch(() => undefined);
+      await offline.resume();
     }
-    // Observe a failed writer even while playback is preparing its media.
-    await Promise.race([recording, render.play()]);
+    await hold(rendering);
+    const span = await hold(recording);
     checkAbort();
-    const origin = render.timeline.beatToTime(0);
-    const duration = Math.max(workspace.duration, 0.1) + tail;
-    const originFrame = Math.ceil(origin * context.sampleRate);
-    const endFrame = Math.ceil((origin + duration) * context.sampleRate);
-    progressTimer = setInterval(() => options.onProgress?.(Math.min(1, Math.max(0, (renderContext.currentTime - origin) / duration))), 250);
-    const span = await recorder.stop({ result: "span", when: origin + duration });
-    clearInterval(progressTimer);
-    progressTimer = undefined;
-    checkAbort();
-    if (span.dropouts?.some((gap) => gap.startFrame < endFrame && gap.endFrame > originFrame))
+    if (span.dropouts?.some((gap) => gap.startFrame < frameCount && gap.endFrame > 0))
       throw new Error("Workspace audio fallback lost audio frames during the project; retry the export.");
     media = await mediaWriter.finish(span);
-    const startFrame = originFrame - span.startFrame;
-    const frameCount = endFrame - originFrame;
-    if (startFrame < 0 || startFrame + frameCount > media.frameCount) throw new Error("Workspace audio fallback missed the project start or end.");
-    const files: StoredZipEntry[] = buses.map((bus, index) => wavMediaStereoPairEntry(bus.path, media!, startFrame, frameCount, index));
+    if (span.startFrame !== 0 || span.endFrame < frameCount || media.frameCount < frameCount)
+      throw new Error("Workspace audio fallback missed the project start or end.");
+    const files: StoredZipEntry[] = buses.map((bus, index) => wavMediaStereoPairEntry(bus.path, media!, 0, frameCount, index));
     const manifest = new TextEncoder().encode(
       JSON.stringify(
         {
           format: "audiorective-audio-fallback",
           version: 1,
           title: renderProject.title,
-          sampleRate: context.sampleRate,
-          durationSeconds: (endFrame - originFrame) / context.sampleRate,
+          sampleRate,
+          durationSeconds: frameCount / sampleRate,
           mix: "mix.wav",
           tracks: stemTracks.map((track) => ({ id: track.id, name: track.name, path: `tracks/${track.id}.wav` })),
           stemsOmitted: renderProject.tracks.length > 15,
@@ -134,7 +196,6 @@ export async function exportAudioFallbackTo(
     if (!archiveStarted) await destination.abort(error).catch(() => undefined);
     throw error;
   } finally {
-    if (progressTimer) clearInterval(progressTimer);
     signal?.removeEventListener("abort", cancel);
     cancel();
     await recording?.catch(() => undefined);
@@ -143,6 +204,7 @@ export async function exportAudioFallbackTo(
     await media?.dispose();
     render?.dispose();
     project?.dispose();
-    await context?.close();
+    // An unfinished offline render stays suspended until it is resumed; with the graph gone it runs out quickly.
+    if (rendering && context?.state === "suspended") await context.resume().catch(() => undefined);
   }
 }

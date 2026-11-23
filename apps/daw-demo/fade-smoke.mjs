@@ -159,6 +159,9 @@ try {
       };
       if (kind === "file") workspace.seek(1.75);
       await workspace.play();
+      // The render outruns a media read: let the first window schedule and its chunk load before starting.
+      await new Promise((resolve) => setTimeout(resolve));
+      await workspace.renderSettled();
       // A launch exactly on a boundary starts at once, and the Workspace clock ticks on wall-clock time, which an accelerated offline render outruns:
       // launch just after beat 0 (the first beat starts the clip) and tick the clock between the suspends.
       const sessionPumps = [];
@@ -226,6 +229,9 @@ try {
       const runtime = await Workspace.create(context, project, { destination: context.destination });
       if (kind !== "session") runtime.seek(blob ? 2.2 : 0.2);
       await runtime.play();
+      // The render outruns a media read: let the first window schedule and its chunk load before starting.
+      await new Promise((resolve) => setTimeout(resolve));
+      await runtime.renderSettled();
       // A launch exactly on a boundary starts at once, and the Workspace clock ticks on wall-clock time, which an accelerated offline render outruns:
       // launch just after beat 0 (the first beat starts the clip) and tick the clock between the suspends.
       const sessionPumps = [];
@@ -325,9 +331,15 @@ try {
       await workspace.auditionAudioClip(fileClip.id);
       await waitFor(() => mean() > 0.14 && mean() < 0.16);
       const first = mean();
-      await new Promise((resolve) => setTimeout(resolve, 1700));
-      await waitFor(() => mean() > 0.29);
-      const second = mean();
+      // The 0.3 plateau lasts 250 ms before the fade, so keep the reading that met it instead of reading again.
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      let second = NaN;
+      await waitFor(() => {
+        const value = mean();
+        if (value <= 0.29) return false;
+        second = value;
+        return true;
+      });
       await waitFor(() => workspace.auditioningClip.value === null && Math.abs(mean()) < 0.001);
       await workspace.auditionAudioClip(memoryClip.id);
       await waitFor(() => mean() > 0.49);
@@ -391,6 +403,8 @@ try {
     try {
       workspace.seek(0.7);
       await workspace.auditionRange({ start: 0.1, end: 0.45 }, { trackIds: [short.id, long.id] });
+      await new Promise((resolve) => setTimeout(resolve));
+      await workspace.renderSettled();
       // Offline rendering advances faster than a wall-clock worker. Drive the preview's real tick path.
       const clock = workspace.audition.current.clock;
       const pump = async (at, stop = false) => {
@@ -399,6 +413,7 @@ try {
         else {
           clock.refresh();
           await Promise.resolve(); // the refill tick runs in a microtask
+          await workspace.renderSettled();
         }
         await resume();
       };

@@ -338,6 +338,8 @@ class ClapHost extends AudioWorkletProcessor {
       case "clearScheduled":
         this.scheduled = [];
         break;
+      case "sync":
+        return this.port.postMessage({ type: "synced" });
       case "saveState":
         return this.port.postMessage({ type: "state", bytes: this.saveState() });
       case "loadState":

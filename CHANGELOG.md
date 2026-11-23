@@ -18,6 +18,11 @@ predates that API. See the "Version mismatches" note in the skill.
 - **docs / skill:** clarify Clock transport states, empty processor registries, nullable launcher slots, file-backed clip media windows and fixed-tempo punch occurrence planning. These are existing APIs; runtime and persisted project formats are unchanged.
 - **evals:** accept public widget delegation, current MIDI held cells and signal cleanup; separate actual reference-read evidence from answer prose and keep source preparation distinct from hand-written recording engines. Routing failures remain in per-run means and summary denominators as unmet; incomplete calls are reported separately. Historical frozen grades are retained. Required reference reads are enforced per solver run before grading; a missing route fails the run even when its API happens to be correct.
 
+### Changed
+
+- **daw:** `exportAudioFallbackTo` renders offline on an `OfflineAudioContext` instead of capturing a live context in real time, so the result no longer depends on real-time rendering or the tab staying active. Signature, ZIP layout, manifest, stems, cancellation, progress and errors are unchanged; the render waits between steps for file-backed media chunks, WebCLAP device messages and the OPFS writer, and the same project exports the same samples. Export duration is no longer tied to the project's length. The offline context holds one channel for the whole render in memory (about 11 MB per minute at 48 kHz); Chromium refuses a render above about 3.1 hours, which fails with the export's own error.
+- **recorder:** a worklet `currentFrame` that repeats for one render quantum and then catches up no longer discards 128 captured frames or reports a false `dropouts` gap. A real forward skip is still reported and filled with silence.
+
 ### Added
 
 - **clock:** `play()` starts a stopped transport, resumes a paused one, and leaves an already playing transport and its queued events in place. `start(when, offset)` retains its explicit position-jump behavior.

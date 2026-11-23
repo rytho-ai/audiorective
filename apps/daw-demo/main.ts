@@ -426,7 +426,7 @@ async function exportAudioFallback(): Promise<void> {
         });
     await exportAudioFallbackTo(workspace, destination, {
       signal: controller.signal,
-      onProgress: (fraction) => status(`正在即時匯出音訊 ${Math.round(fraction * 100)}%`),
+      onProgress: (fraction) => status(`正在匯出音訊 ${Math.round(fraction * 100)}%`),
     });
     if (!file) {
       const url = URL.createObjectURL(new Blob(parts as BlobPart[], { type: "application/zip" }));
