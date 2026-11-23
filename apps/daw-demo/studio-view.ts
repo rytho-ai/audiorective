@@ -153,7 +153,6 @@ export class StudioView {
         redoButton.title = redo ? `重做：${redo}` : "沒有可重做的編輯";
       },
     );
-    this.history.clear();
     const resizeGrip = $("lower-resize");
     const lowerPanel = document.querySelector<HTMLElement>(".lower-panel")!;
     const resizeLimit = () => {
@@ -699,6 +698,7 @@ export class StudioView {
   }
 
   render(): void {
+    this.history.watch();
     const workspace = this.workspace;
     const tracks = workspace.project.tracks.filter((track) => track.kind !== "bus");
     if (!workspace.project.tracks.some((track) => track.id === this.selectedTrackId)) this.selectedTrackId = tracks[0]?.id;

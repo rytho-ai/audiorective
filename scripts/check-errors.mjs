@@ -18,6 +18,8 @@ const WILD = new RegExp(`${W}[^${W}]*${W}`, "g");
  * Keep each reason to one line.
  */
 export const ALLOWLIST = {
+  "packages/daw/src/project-edits.ts::dynamic:message":
+    "ProjectEditFailure is caught by applyEdits and returned as a rejected receipt with a code; callers never see it thrown",
   "packages/core/src/errors.ts::dynamic:message":
     "base constructor of EngineEnvironmentError; the concrete messages are extracted from its call sites",
   "packages/devtools/src/assertLatency.ts::dynamic:formatMismatch(name, declared, runs, tolerance)":

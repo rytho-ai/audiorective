@@ -25,6 +25,19 @@ import { TempoMap } from "./tempo-map";
 import type { TempoChange } from "./tempo-map";
 import { ClipTimeMap, normalizeClipAnchors, type ClipStretchAnchor } from "./clip-time-map";
 import { normalizeClipEnvelope, unityClipEnvelope, type ClipEnvelope } from "./clip-envelope";
+import {
+  findProjectClips,
+  ProjectEditFailure,
+  projectOverview,
+  runProjectEdits,
+  type ProjectClipQuery,
+  type ProjectClipSummary,
+  type ProjectEditCopies,
+  type ProjectEditReceipt,
+  type ProjectEditRequest,
+  type ProjectOverview,
+  type ProjectVersion,
+} from "./project-edits";
 
 export type TrackKind = "audio" | "midi" | "bus";
 export type BusRole = "submix" | "effect";
@@ -274,6 +287,8 @@ export type ProjectOptions = Readonly<{
 
 type ProjectState = Readonly<{
   revision: number;
+  /** Counts content commits. A live device-state capture advances `revision` only. */
+  edits: number;
   title: string;
   masterVolume: number;
   tempoMap: TempoMap;
@@ -288,6 +303,49 @@ const clipSeconds = (tempoMap: TempoMap, clip: ProjectClip, localTime = 0): numb
 
 const validTime = (time: number) => Number.isFinite(time) && time >= 0;
 
+const HISTORY_LIMIT = 50;
+let nextProjectInstance = 1;
+
+type EditPlacement = Readonly<{ trackId: string; clip: ProjectClip; time: number; notes?: readonly MidiNote[] }>;
+type EditSide = Readonly<{
+  clips: ReadonlyMap<string, EditPlacement>;
+  tempoMap: TempoMap;
+  markers: readonly ProjectMarker[];
+  automation: ReadonlyMap<string, readonly AutomationPoint[]>;
+}>;
+type EditEntry = {
+  readonly label: string;
+  readonly ids: readonly string[];
+  readonly tempo: boolean;
+  readonly markers: boolean;
+  readonly automation: readonly string[];
+  before: EditSide;
+  after: EditSide;
+};
+
+/** `MidiClip.setNotes` makes a new array, so history compares notes by content. */
+const sameNotes = (a: readonly MidiNote[] | undefined, b: readonly MidiNote[] | undefined): boolean =>
+  a === b ||
+  (!!a &&
+    !!b &&
+    a.length === b.length &&
+    a.every((note, index) => {
+      const other = b[index];
+      return (
+        note === other ||
+        (note.id === other.id &&
+          note.pitch === other.pitch &&
+          note.velocity === other.velocity &&
+          note.start === other.start &&
+          note.duration === other.duration &&
+          note.channel === other.channel)
+      );
+    }));
+const samePlacement = (a: EditPlacement | undefined, b: EditPlacement | undefined): boolean =>
+  a === b || (!!a && !!b && a.trackId === b.trackId && a.clip === b.clip && a.time === b.time && sameNotes(a.notes, b.notes));
+const clipFrameTolerance = (clip: ProjectClip) => (clip.kind === "audio" ? 1 / clip.sampleRate : 1e-9);
+const trackShellKeys = ["id", "name", "kind", "busRole", "routing", "volume", "muted", "solo", "pan", "devices", "effects", "effectMacros"] as const;
+
 /** Headless project content. AudioContext and UI state are not part of the file. */
 export class Project {
   readonly bpm: number;
@@ -299,7 +357,20 @@ export class Project {
    * `revision` counts structural commits. `content` also re-runs for note edits made through a
    * `MidiClip.midi`, which owns its notes.
    */
-  readonly cells: Readonly<{ revision: ReadonlyCell<number>; content: ReadonlyCell<ProjectContent> }>;
+  readonly cells: Readonly<{
+    revision: ReadonlyCell<number>;
+    /** One version across structure and individual note edits. Pass it to `applyEdits` as `expectedVersion`. */
+    version: ReadonlyCell<ProjectVersion>;
+    /** The labels of the next undo and redo, when there is one. */
+    history: ReadonlyCell<Readonly<{ undo?: string; redo?: string }>>;
+    content: ReadonlyCell<ProjectContent>;
+  }>;
+  private readonly historyLabels = new Cell<Readonly<{ undo?: string; redo?: string }>>(Object.freeze({}));
+  private undoStack: EditEntry[] = [];
+  private redoStack: EditEntry[] = [];
+  private editing?: { retired: Set<MidiClip> };
+  /** Note revisions spent by rolled-back edits, so a failed edit leaves the version unchanged. */
+  private spentNoteRevisions = 0;
 
   /** Untracked read of the current snapshot, for the owner's own logic. */
   private get s(): ProjectState {
@@ -307,9 +378,22 @@ export class Project {
   }
 
   /** Replace part of the snapshot and advance the revision in one write. */
-  private commit(patch: Partial<Omit<ProjectState, "revision">>): void {
+  private commit(patch: Partial<Omit<ProjectState, "revision" | "edits">>, isEdit = true): void {
     const current = this.s;
-    this.store.value = Object.freeze({ ...current, ...patch, revision: current.revision + 1 });
+    this.store.value = Object.freeze({ ...current, ...patch, revision: current.revision + 1, edits: current.edits + (isEdit ? 1 : 0) });
+  }
+
+  private noteRevisions(state: ProjectState): number {
+    let total = 0;
+    for (const track of state.tracks) for (const clip of track.clips) if (clip instanceof MidiClip) total += clip.midi.revision.value;
+    return total;
+  }
+
+  /** A clip leaving the arrangement stays alive while an edit in progress or the history may bring it back. */
+  private retire(clip: ProjectClip): void {
+    if (!(clip instanceof MidiClip)) return;
+    if (this.editing) this.editing.retired.add(clip);
+    else clip.dispose();
   }
 
   constructor(options: ProjectOptions = {}) {
@@ -329,6 +413,7 @@ export class Project {
     this.store = new Cell<ProjectState>(
       Object.freeze({
         revision: 0,
+        edits: 0,
         title: options.title ?? "Untitled",
         masterVolume: 1,
         tempoMap: new TempoMap(this.bpm),
@@ -337,8 +422,14 @@ export class Project {
       }),
     );
     const store = this.store;
+    const instance = `${(nextProjectInstance++).toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     this.cells = Object.freeze({
       revision: readonlyCell(() => store.value.revision),
+      version: readonlyCell(() => {
+        const state = store.value;
+        return `${instance}:${state.edits}:${this.noteRevisions(state) - this.spentNoteRevisions}` as ProjectVersion;
+      }),
+      history: readonlyCell(this.historyLabels),
       content: readonlyCell<ProjectContent>(() => {
         const state = store.value;
         const midi = new Map<string, { notes: readonly MidiNote[]; duration: number }>();
@@ -346,6 +437,300 @@ export class Project {
           for (const clip of track.clips) if (clip instanceof MidiClip) midi.set(clip.id, { notes: clip.midi.notes.value, duration: clip.duration });
         return Object.freeze({ revision: state.revision, midi });
       }),
+    });
+  }
+
+  /** Read a compact, JSON-serializable view and the version it describes. */
+  overview(): ProjectOverview {
+    return projectOverview(this, this.cells.version.value);
+  }
+
+  /** Return the named marker by chronological occurrence, starting at 1. */
+  findMarker(query: Readonly<{ name: string; occurrence?: number }>): ProjectMarker | undefined {
+    const occurrence = query.occurrence ?? 1;
+    if (!Number.isInteger(occurrence) || occurrence < 1) throw new RangeError("Project marker occurrence must be a positive integer.");
+    return this.markers.filter((marker) => marker.name === query.name)[occurrence - 1];
+  }
+
+  /** Match clips by exact track and half-open beat range; the default relation is `"overlaps"`. */
+  findClips(query: ProjectClipQuery = {}): readonly ProjectClipSummary[] {
+    return findProjectClips(this, query);
+  }
+
+  /**
+   * Apply JSON-serializable operations in order as one undoable edit. A stale `expectedVersion` returns `conflict`;
+   * a step that cannot run returns `rejected` with its `opIndex`. Either way the Project is left as it was.
+   */
+  applyEdits(request: ProjectEditRequest): ProjectEditReceipt {
+    assertProjectActive(this);
+    const version = untracked(() => this.cells.version.value);
+    if (!request || typeof request !== "object")
+      return { status: "rejected", version, code: "invalid-request", reason: "applyEdits needs { expectedVersion, label, ops }." };
+    if (request.expectedVersion !== version)
+      return { status: "conflict", version, reason: "The project changed since this version was read. Read it again and rebuild the edit." };
+    if (typeof request.label !== "string" || !request.label.trim())
+      return { status: "rejected", version, code: "invalid-request", reason: "applyEdits needs a non-empty label." };
+    try {
+      // A rehearsal on a borrowed copy finds a failing step before any listener of this Project can observe it.
+      const rehearsal = untracked(() => this.snapshotUntracked(true));
+      try {
+        rehearsal.runEdit(request.label, () => runProjectEdits(rehearsal, request.ops));
+      } finally {
+        rehearsal.dispose();
+      }
+      let copies: ProjectEditCopies = {};
+      const entry = this.runEdit(request.label, () => {
+        copies = runProjectEdits(this, request.ops);
+      }).entry;
+      return this.appliedReceipt(entry, "after", copies);
+    } catch (error) {
+      if (error instanceof ProjectEditFailure)
+        return {
+          status: "rejected",
+          version,
+          code: error.code,
+          reason: error.message,
+          ...(error.opIndex === undefined ? {} : { opIndex: error.opIndex }),
+        };
+      throw error;
+    }
+  }
+
+  /**
+   * Group synchronous calls to this Project's clip, note, tempo, marker and volume-automation methods into one undoable edit.
+   * If `action` throws, every step is rolled back and the error is rethrown.
+   */
+  edit<T>(label: string, action: () => T): T {
+    assertProjectActive(this);
+    return this.runEdit(label, action).result;
+  }
+
+  /**
+   * Undo the latest edit as one step. Returns `conflict` and changes nothing if something it touched has changed since.
+   * With `expectedVersion`, any later change to the Project is a conflict.
+   */
+  undo(options: Readonly<{ expectedVersion?: ProjectVersion }> = {}): ProjectEditReceipt {
+    return this.stepHistory("undo", options.expectedVersion);
+  }
+
+  /** Redo the latest undone edit, under the same conflict rules as `undo`. */
+  redo(options: Readonly<{ expectedVersion?: ProjectVersion }> = {}): ProjectEditReceipt {
+    return this.stepHistory("redo", options.expectedVersion);
+  }
+
+  /** Forget undo and redo, for example after loading unrelated content into this Project. */
+  clearHistory(): void {
+    assertProjectActive(this);
+    if (this.editing) throw new Error("Project history cannot change during an edit.");
+    const dropped = [...this.undoStack, ...this.redoStack];
+    this.undoStack = [];
+    this.redoStack = [];
+    this.releaseClips(dropped);
+    this.publishHistory();
+  }
+
+  private publishHistory(): void {
+    const undo = this.undoStack.at(-1)?.label;
+    const redo = this.redoStack.at(-1)?.label;
+    this.historyLabels.value = Object.freeze({ ...(undo === undefined ? {} : { undo }), ...(redo === undefined ? {} : { redo }) });
+  }
+
+  private captureSide(): EditSide {
+    const state = this.s;
+    const clips = new Map<string, EditPlacement>();
+    const automation = new Map<string, readonly AutomationPoint[]>();
+    for (const track of state.tracks) {
+      automation.set(track.id, track.volumeAutomation);
+      for (const clip of track.clips)
+        clips.set(clip.id, {
+          trackId: track.id,
+          clip,
+          time: clip.time,
+          ...(clip instanceof MidiClip ? { notes: clip.midi.notes.value } : {}),
+        });
+    }
+    return { clips, tempoMap: state.tempoMap, markers: state.markers, automation };
+  }
+
+  private runEdit<T>(label: string, action: () => T): { result: T; entry: EditEntry | undefined } {
+    if (this.editing) throw new Error("Project edits cannot be nested.");
+    if (typeof label !== "string" || !label.trim()) throw new RangeError("Project edit needs a non-empty label.");
+    return untracked(() =>
+      batch(() => {
+        const previous = this.s;
+        const previousIds = new Set(this.ids);
+        const previousNextId = nextProjectId.get(this);
+        const previousRevisions = this.noteRevisions(previous);
+        const before = this.captureSide();
+        const editing = { retired: new Set<MidiClip>() };
+        this.editing = editing;
+        try {
+          const result = action();
+          if (typeof (result as { then?: unknown } | null | undefined)?.then === "function") {
+            (result as unknown as Promise<unknown>).then(undefined, () => undefined);
+            throw new TypeError("Project edit action must be synchronous.");
+          }
+          this.assertEditScope(previous);
+          this.editing = undefined;
+          const after = this.captureSide();
+          for (const clip of editing.retired) if (before.clips.get(clip.id)?.clip !== clip && after.clips.get(clip.id)?.clip !== clip) clip.dispose();
+          const ids = [...new Set([...before.clips.keys(), ...after.clips.keys()])].filter(
+            (id) => !samePlacement(before.clips.get(id), after.clips.get(id)),
+          );
+          const automation = [...after.automation.keys()].filter((id) => before.automation.get(id) !== after.automation.get(id));
+          const tempo = before.tempoMap !== after.tempoMap;
+          const markers = before.markers !== after.markers;
+          if (!ids.length && !automation.length && !tempo && !markers) return { result, entry: undefined };
+          const entry: EditEntry = { label: label.trim(), ids, tempo, markers, automation, before, after };
+          this.pushHistory(entry);
+          return { result, entry };
+        } catch (error) {
+          this.editing = undefined;
+          for (const track of this.s.tracks)
+            for (const clip of track.clips) if (clip instanceof MidiClip && before.clips.get(clip.id)?.clip !== clip) clip.dispose();
+          for (const clip of editing.retired) if (!before.clips.has(clip.id) || before.clips.get(clip.id)!.clip !== clip) clip.dispose();
+          for (const { clip, time, notes } of before.clips.values()) {
+            if (!(clip instanceof MidiClip)) continue;
+            midiClipTimes.get(clip)!.value = time;
+            if (!sameNotes(clip.midi.notes.value, notes)) clip.midi.setNotes(notes!);
+          }
+          this.store.value = previous;
+          this.ids.clear();
+          for (const id of previousIds) this.ids.add(id);
+          if (previousNextId === undefined) nextProjectId.delete(this);
+          else nextProjectId.set(this, previousNextId);
+          this.spentNoteRevisions += this.noteRevisions(previous) - previousRevisions;
+          throw error;
+        }
+      }),
+    );
+  }
+
+  private assertEditScope(previous: ProjectState): void {
+    const state = this.s;
+    const unchanged =
+      state.title === previous.title &&
+      state.masterVolume === previous.masterVolume &&
+      state.tracks.length === previous.tracks.length &&
+      state.tracks.every((track, index) => trackShellKeys.every((key) => track[key] === previous.tracks[index][key]));
+    if (!unchanged) throw new Error("Project edit covers clips, notes, tempo, markers and volume automation only.");
+  }
+
+  private pushHistory(entry: EditEntry): void {
+    const dropped = this.redoStack;
+    this.redoStack = [];
+    this.undoStack.push(entry);
+    if (this.undoStack.length > HISTORY_LIMIT) dropped.push(this.undoStack.shift()!);
+    this.releaseClips(dropped);
+    this.publishHistory();
+  }
+
+  /** Dispose MIDI clips held only by history entries that were just dropped. */
+  private releaseClips(dropped: readonly EditEntry[]): void {
+    const reachable = new Set<ProjectClip>(this.s.tracks.flatMap((track) => track.clips));
+    for (const entry of [...this.undoStack, ...this.redoStack])
+      for (const side of [entry.before, entry.after]) for (const { clip } of side.clips.values()) reachable.add(clip);
+    for (const entry of dropped)
+      for (const side of [entry.before, entry.after])
+        for (const { clip } of side.clips.values()) if (clip instanceof MidiClip && !reachable.has(clip)) clip.dispose();
+  }
+
+  private appliedReceipt(entry: EditEntry | undefined, side: "before" | "after", copies: ProjectEditCopies = {}): ProjectEditReceipt {
+    const version = untracked(() => this.cells.version.value);
+    if (!entry) return { status: "applied", version, created: [], changed: [], removed: [], copies };
+    const target = entry[side];
+    const source = side === "after" ? entry.before : entry.after;
+    return {
+      status: "applied",
+      version,
+      created: entry.ids.filter((id) => target.clips.has(id) && !source.clips.has(id)),
+      changed: entry.ids.filter((id) => target.clips.has(id) && source.clips.has(id)),
+      removed: entry.ids.filter((id) => !target.clips.has(id)),
+      copies,
+    };
+  }
+
+  private stepHistory(kind: "undo" | "redo", expectedVersion: ProjectVersion | undefined): ProjectEditReceipt {
+    assertProjectActive(this);
+    const version = untracked(() => this.cells.version.value);
+    if (this.editing) throw new Error("Project history cannot change during an edit.");
+    if (expectedVersion !== undefined && expectedVersion !== version)
+      return { status: "conflict", version, reason: "The project changed since this version was read." };
+    const stack = kind === "undo" ? this.undoStack : this.redoStack;
+    const entry = stack.at(-1);
+    if (!entry) return { status: "rejected", version, code: kind === "undo" ? "nothing-to-undo" : "nothing-to-redo", reason: `Nothing to ${kind}.` };
+    const from = kind === "undo" ? "after" : "before";
+    const to = kind === "undo" ? "before" : "after";
+    if (!this.sideIsCurrent(entry, entry[from]) || !this.sideCanApply(entry, entry[to]))
+      return { status: "conflict", version, reason: `A later change touched what "${entry.label}" edited, so it was left in place.` };
+    untracked(() =>
+      batch(() => {
+        this.applySide(entry, entry[to]);
+        entry[to] = this.captureSide();
+        stack.pop();
+        (kind === "undo" ? this.redoStack : this.undoStack).push(entry);
+        this.publishHistory();
+      }),
+    );
+    return this.appliedReceipt(entry, to);
+  }
+
+  private sideIsCurrent(entry: EditEntry, side: EditSide): boolean {
+    const current = this.captureSide();
+    return (
+      entry.ids.every((id) => samePlacement(current.clips.get(id), side.clips.get(id))) &&
+      (!entry.tempo || current.tempoMap === side.tempoMap) &&
+      (!entry.markers || current.markers === side.markers) &&
+      entry.automation.every((id) => current.automation.get(id) === side.automation.get(id))
+    );
+  }
+
+  /** The clips coming back need their tracks, and must not land on content that arrived after this side was captured. */
+  private sideCanApply(entry: EditEntry, side: EditSide): boolean {
+    const touched = new Set(entry.ids);
+    const tracks = new Map(this.s.tracks.map((track) => [track.id, track]));
+    return entry.ids.every((id) => {
+      const placement = side.clips.get(id);
+      if (!placement) return true;
+      const track = tracks.get(placement.trackId);
+      if (track?.kind !== placement.clip.kind) return false;
+      const { clip, time } = placement;
+      const tolerance = clipFrameTolerance(clip);
+      return track.clips.every(
+        (other) =>
+          touched.has(other.id) ||
+          side.clips.get(other.id)?.clip === other ||
+          other.time >= time + clip.duration - tolerance ||
+          other.time + other.duration <= time + tolerance,
+      );
+    });
+  }
+
+  private applySide(entry: EditEntry, side: EditSide): void {
+    const ids = new Set(entry.ids);
+    for (const id of ids) {
+      const placement = side.clips.get(id);
+      if (placement?.clip instanceof MidiClip) {
+        midiClipTimes.get(placement.clip)!.value = placement.time;
+        if (!sameNotes(placement.clip.midi.notes.value, placement.notes)) placement.clip.midi.setNotes(placement.notes!);
+      }
+      if (placement) this.ids.add(id);
+      else this.ids.delete(id);
+    }
+    const tracks = this.s.tracks.map((track) => {
+      const touchesAutomation = entry.automation.includes(track.id);
+      const incoming = entry.ids.flatMap((id) => (side.clips.get(id)?.trackId === track.id ? [side.clips.get(id)!.clip] : []));
+      if (!touchesAutomation && !incoming.length && !track.clips.some((clip) => ids.has(clip.id))) return track;
+      return Object.freeze({
+        ...track,
+        clips: this.sortClips([...track.clips.filter((clip) => !ids.has(clip.id)), ...incoming]),
+        ...(touchesAutomation ? { volumeAutomation: side.automation.get(track.id) ?? track.volumeAutomation } : {}),
+      });
+    });
+    this.commit({
+      tracks: Object.freeze(tracks),
+      ...(entry.tempo ? { tempoMap: side.tempoMap } : {}),
+      ...(entry.markers ? { markers: side.markers } : {}),
     });
   }
 
@@ -397,7 +782,7 @@ export class Project {
     return untracked(() => this.snapshotUntracked());
   }
 
-  private snapshotUntracked(): Project {
+  private snapshotUntracked(borrowAudio = false): Project {
     assertProjectActive(this);
     const state = this.s;
     const copy = new Project({ title: state.title, bpm: this.bpm, signature: this.signature });
@@ -410,7 +795,9 @@ export class Project {
             track.clips.map((clip) =>
               clip instanceof MidiClip
                 ? new MidiClip(clip.id, clip.time, { notes: clip.midi.notes.value, duration: clip.duration, events: clip.events })
-                : snapshotAudioClip(clip),
+                : borrowAudio
+                  ? clip
+                  : snapshotAudioClip(clip),
             ),
           ),
         }),
@@ -622,7 +1009,7 @@ export class Project {
     if (!track) throw new Error("Project track does not exist.");
     for (const clip of track.clips) {
       this.ids.delete(clip.id);
-      if (clip instanceof MidiClip) clip.dispose();
+      this.retire(clip);
     }
     for (const device of track.devices) {
       this.ids.delete(device.id);
@@ -676,6 +1063,18 @@ export class Project {
     if (!track) throw new Error("Project device needs an existing track.");
     const devices = track.devices.map((device) => (device.id === deviceId ? Object.freeze({ ...device, state: new Uint8Array(bytes) }) : device));
     this.replace(track, { devices: Object.freeze(devices) });
+  }
+
+  /** @internal Fold a running plug-in's state into the Project. It is not an edit: the version and undo history ignore it. */
+  captureDeviceState(deviceId: string, bytes: Uint8Array): void {
+    assertProjectActive(this);
+    const track = this.s.tracks.find((item) => item.devices.some((device) => device.id === deviceId));
+    if (!track) throw new Error("Project device needs an existing track.");
+    const devices = track.devices.map((device) => (device.id === deviceId ? Object.freeze({ ...device, state: new Uint8Array(bytes) }) : device));
+    this.commit(
+      { tracks: Object.freeze(this.s.tracks.map((item) => (item === track ? Object.freeze({ ...item, devices: Object.freeze(devices) }) : item))) },
+      false,
+    );
   }
 
   removeDevice(deviceId: string): void {
@@ -1021,7 +1420,7 @@ export class Project {
       throw new RangeError("Project trim needs 0 <= start < end <= clip duration.");
     const trimmed = this.segment(clip, start, end, clip.id);
     this.replace(track, { clips: this.sortClips(track.clips.map((item) => (item.id === clipId ? trimmed : item))) });
-    if (clip instanceof MidiClip) clip.dispose();
+    this.retire(clip);
     return trimmed;
   }
 
@@ -1046,7 +1445,7 @@ export class Project {
     this.replace(track, {
       clips: this.sortClips([...track.clips.filter((item) => item.id !== clipId), left, right]),
     });
-    if (clip instanceof MidiClip) clip.dispose();
+    this.retire(clip);
     return [left, right];
   }
 
@@ -1057,11 +1456,16 @@ export class Project {
     if (!track || !clip) throw new Error("Project clip does not exist.");
     this.replace(track, { clips: Object.freeze(track.clips.filter((item) => item.id !== clipId)) });
     this.ids.delete(clipId);
-    if (clip instanceof MidiClip) clip.dispose();
+    this.retire(clip);
   }
 
   dispose(): void {
     if (!markProjectDisposed(this)) return;
     for (const track of this.s.tracks) for (const clip of track.clips) if (clip instanceof MidiClip) clip.dispose();
+    const history = [...this.undoStack, ...this.redoStack];
+    this.undoStack = [];
+    this.redoStack = [];
+    for (const entry of history)
+      for (const side of [entry.before, entry.after]) for (const { clip } of side.clips.values()) if (clip instanceof MidiClip) clip.dispose();
   }
 }

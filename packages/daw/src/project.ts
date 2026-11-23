@@ -23,6 +23,21 @@ export type {
   ProjectDevice,
   WebClapDevice,
 } from "./model";
+export type {
+  BeatRange,
+  CopyRangeEdit,
+  EditClipSelector,
+  MoveClipEdit,
+  ProjectClipQuery,
+  ProjectClipSummary,
+  ProjectEditOperation,
+  ProjectEditReceipt,
+  ProjectEditRejection,
+  ProjectEditRequest,
+  ProjectOverview,
+  ProjectVersion,
+  SetNoteVelocityEdit,
+} from "./project-edits";
 export type { ClipTimeMap, ClipStretchAnchor } from "./clip-time-map";
 export { clipGainAt, normalizeClipEnvelope, unityClipEnvelope } from "./clip-envelope";
 export type { ClipEnvelope } from "./clip-envelope";

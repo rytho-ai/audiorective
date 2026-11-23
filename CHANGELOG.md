@@ -13,6 +13,10 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ## [Unreleased]
 
+### Added
+
+- **daw:** `Project.applyEdits`, `edit`, `undo`, `redo`, `clearHistory`, `overview`, `findMarker`, `findClips`, `cells.version` and `cells.history`: atomic, versioned, JSON-serializable project edits with one shared undo history.
+
 ### Fixed
 
 - **daw:** Both project open paths validate ZIP completeness and entry CRCs. Unsupported master settings fail on open. Audio sidecar details follow clip identity, edited MIDI falls back to standard content with a warning, recorded MIDI channel messages round-trip, XML text is validated on entry, and generated IDs survive save and reopen without reusing deleted IDs. Disposed projects reject edits and saves.

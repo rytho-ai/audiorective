@@ -43,6 +43,7 @@ const DAW_PROJECT = [
   "tempo-map.ts",
   "clip-envelope.ts",
   "project-persistence.ts",
+  "project-edits.ts",
 ];
 const DAW_CODEC = ["dawproject.ts"];
 const DAW_INTERNAL = ["internal/*"];

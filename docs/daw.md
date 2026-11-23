@@ -111,6 +111,29 @@ Use `await saveWorkspaceTo(workspace, writableStream)` or `saveDawProjectTo(proj
 
 Tracks have `muted`, `solo` and `pan` (`-1` left, `0` center, `1` right), alongside linear `volume`. Use `Project.setTrackMuted`, `setTrackSolo`, `setTrackPan` or the matching `Workspace` methods. The Workspace methods apply mixer controls immediately. Solo follows the graph to and from a bus, and mute wins over solo. Each track and bus is an `@audiorective/effects` `Channel` strip; the runtime writes `Project` values into its params and the project stays the only owner.
 
+### Edit a project as one undoable step
+
+`project.overview()` returns a JSON-safe summary with the current `version`. `project.findMarker({ name, occurrence })` and `project.findClips({ trackId, trackName, range, relation })` locate content; ranges are half-open beats. Pass the version you read to `applyEdits`:
+
+```typescript
+const { version } = project.overview();
+const receipt = project.applyEdits({
+  expectedVersion: version,
+  label: "Repeat chorus, late vocal",
+  ops: [
+    { type: "copyRange", range: { startBeat: 32, endBeat: 48 }, atBeat: 48, placement: "insert", as: "chorus" },
+    { type: "moveClip", clip: { fromCopy: "chorus", trackName: "Vocals" }, position: { byBeats: 1 } },
+  ],
+});
+if (receipt.status === "applied") project.undo({ expectedVersion: receipt.version });
+```
+
+The request is plain JSON. Operations run in order and publish together. `status: "conflict"` means the Project changed since `expectedVersion`; `status: "rejected"` carries a `code` and the failing `opIndex`. Neither changes the Project. `copyRange` with `placement: "insert"` opens room at `atBeat` on every track: later clips, tempo changes, markers and volume automation move later and keep their musical position, and a clip crossing `atBeat` is split. `moveClip` rejects a position that lands on another clip of the track. A receipt's `copies[as]` maps each source clip to its copy.
+
+`project.edit(label, () => { ... })` groups synchronous calls to the clip, note, tempo, marker and volume-automation methods into one edit, and rolls them all back if the callback throws. It is the entry for gestures that need PCM or other non-JSON data. Mixer, routing, device and track-list changes are outside its scope.
+
+`project.undo()` and `project.redo()` step through one history shared by every caller, up to 50 edits; `project.cells.history` holds the next labels. Undo returns `conflict` and leaves the Project alone when a later change touched what that edit changed. An unrelated change, such as a fader move, does not block it. Passing `expectedVersion` makes any later change a conflict. `project.cells.version` covers structure and note edits; capturing live plug-in state during a save does not advance it.
+
 ### Apply Project edits to the live graph
 
 Workspace batches edits made directly to its Project and applies changes to clips, tempo, mixer settings, volume automation, routes, built-in inserts and hosted patch state. It can also add or remove a bus with no new hosted device while preserving other tracks and transport.
@@ -446,6 +469,11 @@ A small [Cubase 14 export shared on the Steinberg forum](https://forums.steinber
 | `Audio clip changed while rendering stretch.` / `Audio clip stretch was cancelled.`                                                                              | Prepare a new result using the current clip revision and apply it once.                             |
 | `Project clip stretch needs a positive ratio and matching rendered audio.` / `Project clip stretch needs a compatible original audio window and positive ratio.` | Retain the original sample rate and channel count. Render the requested rounded output frame count. |
 | `Project clip stretch source is missing.`                                                                                                                        | Reopen an intact Audiorective project archive with its source WAV.                                  |
+| `Project edits cannot be nested.` / `Project history cannot change during an edit.`                                                                              | Finish the current `project.edit` callback first.                                                   |
+| `Project edit needs a non-empty label.` / `Project edit action must be synchronous.`                                                                             | Pass a label and a callback that does not return a promise.                                         |
+| `Project edit covers clips, notes, tempo, markers and volume automation only.`                                                                                   | Make mixer, routing, device and track-list changes outside `project.edit`.                          |
+| `Project clip query needs a range with 0 <= startBeat < endBeat.` / `Project clip query relation must be "overlaps" or "contained".`                             | Pass a half-open beat range and a supported relation.                                               |
+| `Project marker occurrence must be a positive integer.`                                                                                                          | Count occurrences from 1.                                                                           |
 | `Project clip envelope needs an audio clip.`                                                                                                                     | Pass an ID from a current audio track.                                                              |
 | `Project audio fades need seconds.`                                                                                                                              | Import clip fades in seconds.                                                                       |
 | `Project clip gain automation needs an audio clip.`                                                                                                              | Pass the ID of an existing audio clip.                                                              |

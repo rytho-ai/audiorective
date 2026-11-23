@@ -123,6 +123,66 @@ const rows: Array<{ name: string; read: (ctx: Ctx) => unknown; mutate: (ctx: Ctx
   },
   { name: "Project.tracks (removeDevice)", read: (c) => c.project.tracks[0].devices, mutate: (c) => c.project.removeDevice(c.deviceId) },
   { name: "Project.tempoMap", read: (c) => c.project.tempoMap, mutate: (c) => c.project.setTempoChanges([{ beat: 4, bpm: 60 }]) },
+  {
+    name: "Project.overview (setTrackName)",
+    read: (c) => c.project.overview().tracks[0].name,
+    mutate: (c) => c.project.setTrackName(c.trackId, "Lead"),
+  },
+  {
+    name: "Project.findMarker (setMarkers)",
+    read: (c) => c.project.findMarker({ name: "Hook" })?.time ?? null,
+    mutate: (c) => c.project.setMarkers([{ time: 1, name: "Hook" }]),
+  },
+  {
+    name: "Project.findClips (duplicateClip)",
+    read: (c) => c.project.findClips({ trackId: c.audioTrackId }).length,
+    mutate: (c) => void c.project.duplicateClip(c.audioClipId, 1),
+  },
+  {
+    name: "Project.cells.version (applyEdits)",
+    read: (c) => c.project.cells.version.value,
+    mutate: (c) =>
+      void c.project.applyEdits({
+        expectedVersion: c.project.cells.version.value,
+        label: "Move",
+        ops: [{ type: "moveClip", clip: { clipId: c.audioClipId }, position: { atBeat: 4 } }],
+      }),
+  },
+  {
+    name: "Project.cells.history (edit)",
+    read: (c) => c.project.cells.history.value,
+    mutate: (c) => c.project.edit("Move", () => c.project.moveClip(c.audioClipId, c.audioTrackId, 3)),
+  },
+  {
+    name: "Project.tracks (undo)",
+    read: (c) => c.project.tracks[1].clips,
+    mutate: (c) => {
+      c.project.edit("Move", () => c.project.moveClip(c.audioClipId, c.audioTrackId, 3));
+      c.project.undo();
+    },
+  },
+  {
+    name: "Project.tracks (redo)",
+    read: (c) => c.project.tracks[1].clips,
+    mutate: (c) => {
+      c.project.edit("Move", () => c.project.moveClip(c.audioClipId, c.audioTrackId, 3));
+      c.project.undo();
+      c.project.redo();
+    },
+  },
+  {
+    name: "Project.cells.history (clearHistory)",
+    read: (c) => c.project.cells.history.value,
+    mutate: (c) => {
+      c.project.edit("Move", () => c.project.moveClip(c.audioClipId, c.audioTrackId, 3));
+      c.project.clearHistory();
+    },
+  },
+  {
+    name: "Project.tracks (captureDeviceState)",
+    read: (c) => c.project.tracks[0].devices[0].state,
+    mutate: (c) => c.project.captureDeviceState(c.deviceId, new Uint8Array([4])),
+  },
   { name: "Project.markers", read: (c) => c.project.markers, mutate: (c) => c.project.setMarkers([{ time: 1, name: "A" }]) },
   { name: "Project.cells.revision", read: (c) => c.project.cells.revision.value, mutate: (c) => c.project.setTitle("Revised") },
   {

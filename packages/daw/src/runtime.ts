@@ -992,7 +992,7 @@ export class Workspace {
           const currentTrack = () => project.tracks.find(({ id }) => id === track.id);
           if (currentTrack()?.devices.find(({ id }) => id === device.id)?.state !== device.state) continue;
           this.reflectProjectEdit(() => {
-            project.setDeviceState(device.id, state);
+            project.captureDeviceState(device.id, state);
             const installed = currentTrack()?.devices.find(({ id }) => id === device.id);
             if (installed) runtime.deviceStates.set(device.id, installed.state);
           });
