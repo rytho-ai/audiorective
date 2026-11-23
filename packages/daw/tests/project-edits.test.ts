@@ -673,3 +673,105 @@ describe("copyRange insert invariants", () => {
     }
   });
 });
+
+describe("clip names", () => {
+  it("survive save, reopen, duplicate, split, trim and snapshot", () => {
+    const project = new Project({ bpm: 120 });
+    const audio = project.addTrack("Vocals", "audio");
+    const midi = project.addTrack("Keys", "midi");
+    const vocal = project.addAudioClip(audio.id, pcm(4), 0, { name: "Lead Vocal" });
+    const keys = project.addMidiClip(midi.id, { duration: 4, notes: [] }, 0, { name: "Chords" });
+    const { project: reopened } = openDawProject(saveDawProject(project));
+    expect(reopened.tracks.map((track) => reopened.clipName(track.clips[0].id))).toEqual(["Lead Vocal", "Chords"]);
+    const copy = project.snapshot();
+    expect(copy.clipName(copy.tracks[0].clips[0].id)).toBe("Lead Vocal");
+    expect(project.clipName(project.duplicateClip(vocal.id, 10).id)).toBe("Lead Vocal");
+    expect(project.splitClip(keys.id, 2).map((clip) => project.clipName(clip.id))).toEqual(["Chords", "Chords"]);
+    expect(project.clipName(project.trimClip(vocal.id, 1, 2).id)).toBe("Lead Vocal");
+    project.removeClip(vocal.id);
+    expect(project.clipName(vocal.id)).toBeUndefined();
+  });
+
+  it("opens a file whose clips carry a standard name attribute", () => {
+    const project = new Project({ bpm: 120 });
+    const track = project.addTrack("Keys", "midi");
+    project.addMidiClip(track.id, { duration: 1, notes: [] }, 0, { name: "Foreign" });
+    const reopened = openDawProject(saveDawProject(project)).project;
+    expect(reopened.clipName(reopened.tracks[0].clips[0].id)).toBe("Foreign");
+  });
+
+  it("are found exactly, can repeat, and can select a copy", () => {
+    const { project, vocals, vocal, drumChorus, keyChorus } = song();
+    project.setClipName(vocal.id, "Hook");
+    project.setClipName(drumChorus.id, "Hook");
+    project.setClipName(keyChorus.id, "Pad");
+    expect(project.findClips({ name: "Hook" })).toHaveLength(2);
+    expect(project.findClips({ name: "Hook", trackId: vocals.id }).map(({ id }) => id)).toEqual([vocal.id]);
+    expect(project.findClips({ name: "hook" })).toEqual([]);
+    expect(project.overview().tracks[1].clips[0].name).toBe("Hook");
+    const ambiguous = project.applyEdits({
+      expectedVersion: version(project),
+      label: "Ambiguous",
+      ops: [copyChorus, { type: "moveClip", clip: { fromCopy: "copy", name: "Hook" }, position: { byBeats: 1 } }],
+    });
+    expect(ambiguous).toMatchObject({ status: "rejected", code: "ambiguous-clip", opIndex: 1 });
+    const receipt = project.applyEdits({
+      expectedVersion: version(project),
+      label: "Named",
+      ops: [copyChorus, { type: "moveClip", clip: { fromCopy: "copy", name: "Hook", trackId: vocals.id }, position: { byBeats: 1 } }],
+    });
+    expect(receipt.status).toBe("applied");
+  });
+
+  it("rename as an undoable edit without replacing any clip object", () => {
+    const { project, vocal, keyChorus } = song();
+    const start = version(project);
+    const receipt = project.applyEdits({
+      expectedVersion: start,
+      label: "Rename",
+      ops: [
+        { type: "renameClip", clip: { clipId: vocal.id }, name: "Lead" },
+        { type: "renameClip", clip: { clipId: keyChorus.id }, name: "Pad" },
+      ],
+    });
+    if (receipt.status !== "applied") throw new Error(receipt.reason);
+    expect(receipt.changed.toSorted()).toEqual([vocal.id, keyChorus.id].toSorted());
+    expect(project.clipName(vocal.id)).toBe("Lead");
+    expect(clipById(project, vocal.id)).toBe(vocal);
+    expect(clipById(project, keyChorus.id)).toBe(keyChorus);
+    expect(project.clipName(keyChorus.id)).toBe("Pad");
+    expect(version(project)).not.toBe(start);
+    expect(project.undo().status).toBe("applied");
+    expect(project.clipName(vocal.id)).toBeUndefined();
+    expect(project.clipName(keyChorus.id)).toBeUndefined();
+    expect(project.redo().status).toBe("applied");
+    expect(project.clipName(keyChorus.id)).toBe("Pad");
+  });
+
+  it("keep the arrangement array through rename, undo and redo", () => {
+    const { project, vocals, vocal } = song();
+    const clips = () => project.tracks.find(({ id }) => id === vocals.id)!.clips;
+    const before = clips();
+    project.applyEdits({ expectedVersion: version(project), label: "Name", ops: [{ type: "renameClip", clip: { clipId: vocal.id }, name: "Lead" }] });
+    expect(clips()).toBe(before);
+    project.undo();
+    expect(clips()).toBe(before);
+    project.redo();
+    expect(clips()).toBe(before);
+  });
+
+  it("restores a name when a later step fails, and rejects a blank name", () => {
+    const { project, keyChorus } = song();
+    const receipt = project.applyEdits({
+      expectedVersion: version(project),
+      label: "Bad",
+      ops: [
+        { type: "renameClip", clip: { clipId: keyChorus.id }, name: "Pad" },
+        { type: "renameClip", clip: { clipId: keyChorus.id }, name: "   " },
+      ],
+    });
+    expect(receipt).toMatchObject({ status: "rejected", opIndex: 1 });
+    expect(project.clipName(keyChorus.id)).toBeUndefined();
+    expect(() => project.setClipName(keyChorus.id, "")).toThrow(/must not be empty/);
+  });
+});

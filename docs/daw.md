@@ -134,6 +134,14 @@ The request is plain JSON. Operations run in order and publish together. `status
 
 `project.undo()` and `project.redo()` step through one history shared by every caller, up to 50 edits; `project.cells.history` holds the next labels. Undo returns `conflict` and leaves the Project alone when a later change touched what that edit changed. An unrelated change, such as a fader move, does not block it. Passing `expectedVersion` makes any later change a conflict. `project.cells.version` covers structure and note edits; capturing live plug-in state during a save does not advance it.
 
+### Check an edit before handing it back
+
+Clips can have a non-unique name, saved as the standard DAWproject clip name. Read it with `project.clipName(clipId)`, set it with `project.setClipName(clipId, name)` or a `renameClip` operation, and filter with `findClips({ name })` or a `fromCopy` selector. Renaming never touches playback.
+
+`renderMixRange(workspace, { expectedVersion, range, prerollSeconds, seamBeats })` renders a beat range of the full mix offline, through every device and effect, without interrupting playback. It returns stereo PCM with `peakDbFS` and BS.1770 `loudnessLUFS`, or `status: "conflict"` when the version moved. `prerollSeconds` warms delays and reverbs and is discarded. The default is 2 seconds, or back to the first MIDI clip when that is earlier, because held notes and controllers need their history. A shorter explicit value returns `historyTruncated: true`. Each entry of `seams` compares the step at a beat with the 50 ms around it; `hasClick` also fires for a hard attack placed exactly on that beat.
+
+`await workspace.editStatus(version)` waits for queued edits and returns `"applied"`, `"needs-sync"`, `"failed"` or `"superseded"`. `saveWorkspace(workspace, { expectedVersion })` and `saveWorkspaceTo(workspace, destination, { expectedVersion })` refuse to write a Project that has moved on.
+
 ### Apply Project edits to the live graph
 
 Workspace batches edits made directly to its Project and applies changes to clips, tempo, mixer settings, volume automation, routes, built-in inserts and hosted patch state. It can also add or remove a bus with no new hosted device while preserving other tracks and transport.
@@ -469,6 +477,12 @@ A small [Cubase 14 export shared on the Steinberg forum](https://forums.steinber
 | `Audio clip changed while rendering stretch.` / `Audio clip stretch was cancelled.`                                                                              | Prepare a new result using the current clip revision and apply it once.                             |
 | `Project clip stretch needs a positive ratio and matching rendered audio.` / `Project clip stretch needs a compatible original audio window and positive ratio.` | Retain the original sample rate and channel count. Render the requested rounded output frame count. |
 | `Project clip stretch source is missing.`                                                                                                                        | Reopen an intact Audiorective project archive with its source WAV.                                  |
+| `renderMixRange needs a range with 0 <= startBeat < endBeat.` / `renderMixRange needs a range at least one frame long.`                                          | Pass a non-empty half-open beat range.                                                              |
+| `renderMixRange prerollSeconds must be finite and non-negative.` / `renderMixRange seamBeats must lie inside the range.`                                         | Use seconds of at least 0 and seam beats within `range`.                                            |
+| `renderMixRange has unresolved devices: …`                                                                                                                       | Supply `resolveBundle` so the render can load the same plug-ins.                                    |
+| `renderMixRange was cancelled.`                                                                                                                                  | The caller's `signal` aborted the render. Render again when needed.                                 |
+| `Workspace save stopped: the project changed after expectedVersion was read.`                                                                                    | Read the project again, verify it and save with the new version.                                    |
+| `Project clip name must be a string.` / `Project clip name must not be empty.`                                                                                   | Pass non-blank text.                                                                                |
 | `Project edits cannot be nested.` / `Project history cannot change during an edit.`                                                                              | Finish the current `project.edit` callback first.                                                   |
 | `Project edit needs a non-empty label.` / `Project edit action must be synchronous.`                                                                             | Pass a label and a callback that does not return a promise.                                         |
 | `Project edit covers clips, notes, tempo, markers and volume automation only.`                                                                                   | Make mixer, routing, device and track-list changes outside `project.edit`.                          |

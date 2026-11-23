@@ -2,4 +2,6 @@
 export * from "./runtime";
 export { exportAudioFallbackTo } from "./audio-fallback";
 export type { AudioFallbackOptions } from "./audio-fallback";
+export { renderMixRange } from "./mix-range";
+export type { MixRangeOptions, MixRangeResult, MixSeam } from "./mix-range";
 export { createOpfsAudioMediaWriter } from "./opfs-media";

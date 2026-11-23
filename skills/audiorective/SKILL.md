@@ -104,6 +104,7 @@ When no capability package or widget matches, build on core with your own `Audio
 | A waveform picture from peaks, no audio | `widgets/waveform` | the complete selector |
 | MIDI file notes: parse, edit, select, piano roll | `@audiorective/midi` (`parseMidi` to `MidiClip`) + `widgets/piano-roll` (`pianoRollModel(clip)`) | a second note store beside the clip |
 | Play, edit and save a DAWproject with WebCLAP devices | `daw` + `host/webclap`; `workspace.player` to `mountPlayer` | separate project or player state |
+| Undoable or agent-driven arrangement edits, version conflicts, checking an edit by rendering it | `Project.applyEdits` / `edit` / `undo`, `renderMixRange`, `workspace.editStatus`; `references/daw.md` | hand-written history, `snapshot()` swaps, `batch()` as rollback |
 | Read, edit or write `.dawproject` in Node (no audio) | `daw/project` + `daw/dawproject` only | `daw` root or `daw/runtime` |
 | Session view, clip launcher, scenes, follow actions, pattern clips | `clock` + `@audiorective/launcher` `ClipLauncher` (it plays the clips); `references/launcher.md`; a Project session: `workspace.session` | a hand-rolled launch scheduler or a custom driver |
 | A repeating automation curve that follows tempo ramps and transport seeks | `core/automation` `AutomationClip` + `clock.attach(clip)`; `references/automation.md` | page-owned beat mapping and native cancellation |

@@ -51,6 +51,7 @@ const DAW_RUNTIME = [
   "runtime.ts",
   "runtime-entry.ts",
   "audio-fallback.ts",
+  "mix-range.ts",
   "opfs-media.ts",
   "audio-track-session.ts",
   "mixer-routing.ts",

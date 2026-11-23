@@ -17,6 +17,7 @@ import { Mixer, type MixerStrip } from "./mixer";
 import { MidiClip, Project } from "./model";
 import type { TempoMap } from "./tempo-map";
 import type { AudioClipGainAutomation, PcmAudioClip, ProjectTrack, TrackRouting, WebClapDevice } from "./model";
+import type { ProjectVersion } from "./project-edits";
 
 export { scheduleClipEnvelope } from "./schedule-clip-envelope";
 export type { PreparedClipStretch } from "./clip-stretch";
@@ -25,6 +26,8 @@ export type { RangeAuditionState } from "./audition";
 import { collectGainAutomationEdits, deviceKeys, updateRack } from "./track-reconcile";
 import { assertTakeAudioTime, placeTake, type TakeAnchor } from "./take-placement";
 import type { TrackRuntime } from "./track-runtime";
+
+export type PlaybackEditStatus = "applied" | "needs-sync" | "failed" | "superseded";
 
 export type WorkspaceOptions = {
   destination?: AudioNode;
@@ -356,6 +359,25 @@ export class Workspace {
       if (tail === this.commitTail) break;
     }
     if (!this.disposed && this.failedApplication) throw this.failedApplication.cause;
+  }
+
+  /**
+   * Wait for queued edits, then report what playback does with `version`: `"applied"` is live, `"needs-sync"` waits for `sync()`,
+   * `"failed"` could not be applied (see `cells.error`), and `"superseded"` means the Project has since moved to another version.
+   */
+  async editStatus(version: ProjectVersion): Promise<PlaybackEditStatus> {
+    if (this.disposed) throw new Error("Workspace is disposed.");
+    let failed = false;
+    try {
+      await this.flush();
+    } catch {
+      failed = true;
+    }
+    return untracked(() => {
+      if (this.project.cells.version.value !== version) return "superseded";
+      if (failed) return "failed";
+      return this.topologyPending.value ? "needs-sync" : "applied";
+    });
   }
 
   /** Explicitly rebuild the graph after structural edits. Stops transport. */

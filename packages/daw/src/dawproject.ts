@@ -205,9 +205,10 @@ function writeClip(
   state: PrivateState,
   track: ProjectTrack,
   index: number,
+  name: string | undefined,
 ): void {
   const unit = clip.kind === "midi" ? "beats" : "seconds";
-  const element = append(clips, "Clip", { time: clip.time, duration: clip.duration, contentTimeUnit: unit });
+  const element = append(clips, "Clip", { ...(name === undefined ? {} : { name }), time: clip.time, duration: clip.duration, contentTimeUnit: unit });
   if (clip.kind === "audio") {
     const path = `audio/${clip.id}.wav`;
     const { gain = 1, fadeIn = 0, fadeOut = 0 } = clip.envelope ?? {};
@@ -359,7 +360,17 @@ function prepareDawProject(project: Project): { entries: Record<string, Uint8Arr
       const group = track.clips.filter((clip) => (clip.kind === "audio" ? unit === "seconds" : unit === "beats"));
       if (!group.length && (unit === "beats" || track.clips.length)) continue;
       const clips = append(lane, "Clips", { id: `${track.id}-clips${unit === "beats" ? "-beats" : ""}`, timeUnit: unit });
-      for (const clip of group) writeClip(clip, clips, entries, mediaEntries, state, track, index++);
+      for (const clip of group)
+        writeClip(
+          clip,
+          clips,
+          entries,
+          mediaEntries,
+          state,
+          track,
+          index++,
+          untracked(() => project.clipName(clip.id)),
+        );
     }
     if (track.volumeAutomation.length) {
       const points = append(lane, "Points", { id: `${track.id}-automation`, timeUnit: "seconds" });
@@ -459,7 +470,7 @@ function readHostManifest(bytes: Uint8Array | undefined, warnings: string[]): Ho
 }
 
 function readMidi(clip: Element, trackId: string, index: number, unit: "seconds" | "beats", stored: PrivateState | undefined, warnings: string[]) {
-  attributesOnly(clip, ["time", "duration", "contentTimeUnit"]);
+  attributesOnly(clip, ["name", "time", "duration", "contentTimeUnit"]);
   if (direct(clip, "Audio").length) throw new Error("Project MIDI clip has unsupported audio content.");
   const time = numberAttr(clip, "time");
   const duration = numberAttr(clip, "duration");
@@ -541,7 +552,7 @@ function readMidi(clip: Element, trackId: string, index: number, unit: "seconds"
   const events: ProjectMidiEvent[] = usable
     ? match.events!.map((event) => ({ time: event.time, data: new Uint8Array(event.data), noteId: event.noteId }))
     : controls.map(eventFromControl);
-  return { time, duration, notes, events, id: usable ? match.id : undefined };
+  return { name: clip.getAttribute("name") || undefined, time, duration, notes, events, id: usable ? match.id : undefined };
 }
 
 /** Open the supported slice. Unknown structural content fails instead of disappearing. */
@@ -887,10 +898,10 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
           if (track.kind === "midi") {
             const midi = readMidi(clip, trackId, index, unit, stored, warnings);
             // Seconds content converts to beats once the tempo map is known, after the arrangement is read.
-            if (unit === "beats") project.addMidiClip(trackId, midi, midi.time, { id: midi.id });
+            if (unit === "beats") project.addMidiClip(trackId, midi, midi.time, { id: midi.id, name: midi.name });
             else secondsMidi.push({ trackId, midi });
           } else {
-            attributesOnly(clip, ["time", "duration", "contentTimeUnit", "fadeTimeUnit", "fadeInTime", "fadeOutTime"]);
+            attributesOnly(clip, ["name", "time", "duration", "contentTimeUnit", "fadeTimeUnit", "fadeInTime", "fadeOutTime"]);
             if (clip.hasAttribute("fadeTimeUnit") && attr(clip, "fadeTimeUnit") !== "seconds") throw new Error("Project audio fades need seconds.");
             if (attr(clip, "contentTimeUnit") !== "seconds" || direct(clip, "Lanes").length)
               throw new Error("Project audio clip has unsupported content.");
@@ -951,7 +962,13 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
                 warnings.push("Invalid Audiorective clip gain automation was skipped.");
               }
             }
-            const options = { id: match?.id, envelope: { gain, fadeIn, fadeOut }, stretch, gainAutomation };
+            const options = {
+              id: match?.id,
+              name: clip.getAttribute("name") || undefined,
+              envelope: { gain, fadeIn, fadeOut },
+              stretch,
+              gainAutomation,
+            };
             const time = numberAttr(clip, "time");
             if (decoded.media) project.addAudioMediaClip(trackId, decoded.media, time, options);
             else project.addAudioClip(trackId, decoded, time, options);
@@ -1025,7 +1042,7 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
           events: midi.events.map((event) => ({ ...event, time: beat(event.time) })),
         },
         first,
-        { id: midi.id },
+        { id: midi.id, name: midi.name },
       );
     }
     if (Object.keys(entries).some((path) => !usedPaths.has(path))) throw new Error("Project archive has unsupported files.");

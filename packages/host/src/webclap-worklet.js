@@ -341,6 +341,7 @@ class ClapHost extends AudioWorkletProcessor {
       case "sync":
         return this.port.postMessage({ type: "synced" });
       case "saveState":
+        this.flushParamEvents();
         return this.port.postMessage({ type: "state", bytes: this.saveState() });
       case "loadState":
         this.loadState(m.bytes);
@@ -783,6 +784,22 @@ class ClapHost extends AudioWorkletProcessor {
       this.sine.render(left, right, position, QUANTUM);
     }
     if (events.length > 0) this.port.postMessage({ type: "notesOut", time: Number(time), events });
+  }
+
+  // A parameter set just before a save may still wait for process(), which does not run while the context is
+  // suspended. Hand it to the plugin now so the saved state includes it; notes stay queued for their quantum.
+  flushParamEvents() {
+    if (!this.ready || !this.params) return;
+    const queued = this.events;
+    const params = queued.filter((event) => event.type === EVENT.PARAM_VALUE);
+    if (!params.length) return;
+    this.events = params;
+    while (this.events.length) {
+      this.writeEvents();
+      this.fn(this.params + 20)(this.plugin, this.inEvents, this.outEvents);
+      this.eventCount = 0;
+    }
+    this.events = queued.filter((event) => event.type !== EVENT.PARAM_VALUE);
   }
 
   // Between process calls: flush if the plugin asked (so its output events arrive even while the audio is

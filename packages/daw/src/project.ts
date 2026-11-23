@@ -36,6 +36,7 @@ export type {
   ProjectEditRequest,
   ProjectOverview,
   ProjectVersion,
+  RenameClipEdit,
   SetNoteVelocityEdit,
 } from "./project-edits";
 export type { ClipTimeMap, ClipStretchAnchor } from "./clip-time-map";

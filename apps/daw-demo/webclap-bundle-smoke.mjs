@@ -119,6 +119,15 @@ try {
       const dry = await peak();
       mix.value = 1;
       const wet = await peak();
+      const deviceState = () => [...project.tracks.find(({ id }) => id === result.id).devices[0].state].join();
+      mix.value = 0;
+      await window.__daw.api.saveWorkspace(workspace);
+      const immediateState = deviceState();
+      await peak();
+      await window.__daw.api.saveWorkspace(workspace);
+      const settledState = deviceState();
+      mix.value = 1;
+      await peak();
       const saved = await window.__daw.api.saveWorkspace(workspace);
       const stateBytes = project.tracks.find(({ id }) => id === result.id).devices[0].state.byteLength;
       workspace.dispose();
@@ -131,6 +140,7 @@ try {
       const replay = await peak();
       const restoredHost = reopened.host(device.id);
       return {
+        parameterSavedImmediately: immediateState === settledState && immediateState !== deviceState(),
         firstId,
         missingId,
         missingIndex,
@@ -155,6 +165,7 @@ try {
   assert.match(report.missingId, /WebCLAP bundle has no plug-in with ID missing\.descriptor/);
   assert.match(report.missingIndex, /WebCLAP bundle has no plug-in at index 99/);
   assert.ok(report.stateBytes > 0);
+  assert.equal(report.parameterSavedImmediately, true);
   assert.equal(report.wetMixRestored, 1);
   assert.deepEqual(report.warnings, []);
   assert.deepEqual(errors, []);

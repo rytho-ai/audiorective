@@ -124,6 +124,11 @@ const rows: Array<{ name: string; read: (ctx: Ctx) => unknown; mutate: (ctx: Ctx
   { name: "Project.tracks (removeDevice)", read: (c) => c.project.tracks[0].devices, mutate: (c) => c.project.removeDevice(c.deviceId) },
   { name: "Project.tempoMap", read: (c) => c.project.tempoMap, mutate: (c) => c.project.setTempoChanges([{ beat: 4, bpm: 60 }]) },
   {
+    name: "Project.clipName (setClipName)",
+    read: (c) => c.project.clipName(c.audioClipId) ?? null,
+    mutate: (c) => c.project.setClipName(c.audioClipId, "Hook"),
+  },
+  {
     name: "Project.overview (setTrackName)",
     read: (c) => c.project.overview().tracks[0].name,
     mutate: (c) => c.project.setTrackName(c.trackId, "Lead"),

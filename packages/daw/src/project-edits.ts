@@ -9,6 +9,7 @@ export type BeatRange = Readonly<{ startBeat: number; endBeat: number }>;
 
 export type ProjectClipSummary = Readonly<{
   id: string;
+  name?: string;
   kind: "audio" | "midi";
   trackId: string;
   trackName: string;
@@ -29,6 +30,8 @@ export type ProjectOverview = Readonly<{
 }>;
 
 export type ProjectClipQuery = Readonly<{
+  /** Exact clip name. Names are not unique, so check how many clips match. */
+  name?: string;
   trackId?: string;
   /** Exact track name. */
   trackName?: string;
@@ -39,8 +42,8 @@ export type ProjectClipQuery = Readonly<{
 
 /** An existing clip, or one clip made by an earlier `copyRange` in the same request. */
 export type EditClipSelector =
-  | Readonly<{ clipId: string; fromCopy?: never; trackId?: never; trackName?: never }>
-  | Readonly<{ fromCopy: string; clipId?: never; trackId?: string; trackName?: string }>;
+  | Readonly<{ clipId: string; fromCopy?: never; trackId?: never; trackName?: never; name?: never }>
+  | Readonly<{ fromCopy: string; clipId?: never; trackId?: string; trackName?: string; name?: string }>;
 
 export type CopyRangeEdit = Readonly<{
   type: "copyRange";
@@ -64,8 +67,9 @@ export type SetNoteVelocityEdit = Readonly<{
   /** 0 to 1. */
   velocity: number;
 }>;
+export type RenameClipEdit = Readonly<{ type: "renameClip"; clip: EditClipSelector; name: string }>;
 /** One JSON-serializable step of `project.applyEdits`. */
-export type ProjectEditOperation = CopyRangeEdit | MoveClipEdit | SetNoteVelocityEdit;
+export type ProjectEditOperation = CopyRangeEdit | MoveClipEdit | SetNoteVelocityEdit | RenameClipEdit;
 
 export type ProjectEditRequest = Readonly<{
   /** The version the caller read. A different current version returns `conflict` and changes nothing. */
@@ -126,12 +130,14 @@ function clipBeats(tempo: TempoMap, clip: ProjectClip): readonly [number, number
   return [tempo.secondsToBeat(clip.time), tempo.secondsToBeat(clip.time + clip.duration)];
 }
 
-function summary(tempo: TempoMap, track: ProjectTrack, clip: ProjectClip): ProjectClipSummary {
+function summary(project: Project, tempo: TempoMap, track: ProjectTrack, clip: ProjectClip): ProjectClipSummary {
+  const name = project.clipName(clip.id);
   const [startBeat, endBeat] = clipBeats(tempo, clip);
   const startSeconds = clip.kind === "midi" ? tempo.beatToSeconds(clip.time) : clip.time;
   const endSeconds = clip.kind === "midi" ? tempo.beatToSeconds(clip.time + clip.duration) : clip.time + clip.duration;
   return {
     id: clip.id,
+    ...(name === undefined ? {} : { name }),
     kind: clip.kind,
     trackId: track.id,
     trackName: track.name,
@@ -155,7 +161,7 @@ export function projectOverview(project: Project, version: ProjectVersion): Proj
       id: track.id,
       name: track.name,
       kind: track.kind,
-      clips: track.clips.map((clip) => summary(tempo, track, clip)),
+      clips: track.clips.map((clip) => summary(project, tempo, track, clip)),
     })),
   };
 }
@@ -169,7 +175,8 @@ export function findProjectClips(project: Project, query: ProjectClipQuery): rea
   return project.tracks.flatMap((track) => {
     if ((query.trackId !== undefined && track.id !== query.trackId) || (query.trackName !== undefined && track.name !== query.trackName)) return [];
     return track.clips.flatMap((clip) => {
-      const item = summary(tempo, track, clip);
+      if (query.name !== undefined && project.clipName(clip.id) !== query.name) return [];
+      const item = summary(project, tempo, track, clip);
       if (range) {
         const end = item.startBeat + item.durationBeats;
         const matches =
@@ -303,15 +310,17 @@ function resolveClip(project: Project, selector: EditClipSelector, copies: Proje
   const hasId = selector.clipId !== undefined;
   const hasCopy = selector.fromCopy !== undefined;
   if (hasId === hasCopy) fail("invalid-operation", "A clip selector needs exactly one of clipId and fromCopy.");
-  if (hasId && (selector.trackId !== undefined || selector.trackName !== undefined))
-    fail("invalid-operation", "A clipId selector cannot also filter by track.");
+  if (hasId && (selector.trackId !== undefined || selector.trackName !== undefined || selector.name !== undefined))
+    fail("invalid-operation", "A clipId selector cannot also filter by track or name.");
   let id = selector.clipId;
   if (hasCopy) {
     if (!Object.hasOwn(copies, selector.fromCopy!)) fail("clip-not-found", `No earlier copyRange is named "${selector.fromCopy}".`);
-    const matches = copies[selector.fromCopy!].filter(({ trackId }) => {
+    const matches = copies[selector.fromCopy!].filter(({ id: copyId, trackId }) => {
       const track = project.tracks.find((item) => item.id === trackId);
       return (
-        (selector.trackId === undefined || trackId === selector.trackId) && (selector.trackName === undefined || track?.name === selector.trackName)
+        (selector.trackId === undefined || trackId === selector.trackId) &&
+        (selector.trackName === undefined || track?.name === selector.trackName) &&
+        (selector.name === undefined || project.clipName(copyId) === selector.name)
       );
     });
     if (!matches.length) fail("clip-not-found", `Copy "${selector.fromCopy}" has no clip on that track.`);
@@ -363,6 +372,7 @@ export function runProjectEdits(project: Project, ops: readonly ProjectEditOpera
       if (op?.type === "copyRange") copyRange(project, op, copies);
       else if (op?.type === "moveClip") moveClip(project, op, copies);
       else if (op?.type === "setNoteVelocity") setNoteVelocity(project, op, copies);
+      else if (op?.type === "renameClip") project.setClipName(resolveClip(project, op.clip, copies).clip.id, op.name);
       else fail("invalid-operation", `Unknown edit type "${String((op as { type?: unknown } | null)?.type)}".`);
     } catch (error) {
       if (error instanceof ProjectEditFailure) throw new ProjectEditFailure(error.code, error.message, index);

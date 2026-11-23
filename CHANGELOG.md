@@ -15,10 +15,12 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Added
 
+- **daw:** Clip names (`clipName`, `setClipName`, `renameClip`, `findClips({ name })`) round-trip through the standard DAWproject attribute, and files with named clips now open. `renderMixRange` renders and measures a beat range of the full mix, `workspace.editStatus(version)` reports playback state, and `saveWorkspace` / `saveWorkspaceTo` accept `expectedVersion`.
 - **daw:** `Project.applyEdits`, `edit`, `undo`, `redo`, `clearHistory`, `overview`, `findMarker`, `findClips`, `cells.version` and `cells.history`: atomic, versioned, JSON-serializable project edits with one shared undo history.
 
 ### Fixed
 
+- **host:** `saveState` hands parameter changes still queued for the audio thread to the plug-in first, so a value set right before a save is in the saved state.
 - **daw:** Both project open paths validate ZIP completeness and entry CRCs. Unsupported master settings fail on open. Audio sidecar details follow clip identity, edited MIDI falls back to standard content with a warning, recorded MIDI channel messages round-trip, XML text is validated on entry, and generated IDs survive save and reopen without reusing deleted IDs. Disposed projects reject edits and saves.
 - **daw:** Media read failures report once per clip per playback run in `workspace.cells.error`, retry at the next `play()` or `seek()`, clear on a successful read and abort audio fallback export. A `seek()` while playing keeps the transport `playing` while it waits for file-backed media, and `takeAnchor(audioTime)` maps that audio time to project time, so a take placed from an anchor taken right after `play()` is exact; an anchor captured while a seek waits for media throws at `takePosition`.
 - **daw:** Live playback schedules starts in advance, waits for file-backed media at seek boundaries and buffers the next chunk ahead of its start. Unrelated arrangement edits preserve held MIDI notes. Source cancellation and live master changes use short gain fades.

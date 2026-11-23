@@ -47,7 +47,11 @@ const masterRouting: TrackRouting = Object.freeze({ outputBusId: null, sends: Ob
 /** A message at a clip-relative time in beats. */
 export type ProjectMidiEvent = Readonly<{ time: number; data: Uint8Array; noteId?: string }>;
 export type ProjectAudio = Pick<PCMData, "sampleRate" | "channels">;
-export type ProjectMarker = Readonly<{ time: number; name: string }>;
+export type ProjectMarker = Readonly<{
+  /** Position in project seconds. */
+  time: number;
+  name: string;
+}>;
 
 export type PcmAudioSource = ProjectAudio & Readonly<{ media?: never }>;
 export type MediaAudioSource = Readonly<{
@@ -65,7 +69,7 @@ export type AudioClipGainAutomation = Readonly<{
   points: readonly AutomationPoint[];
 }>;
 
-type AudioClipOptions = { id?: string; envelope?: ClipEnvelope; stretch?: AudioClipStretch; gainAutomation?: AudioClipGainAutomation };
+type AudioClipOptions = { id?: string; name?: string; envelope?: ClipEnvelope; stretch?: AudioClipStretch; gainAutomation?: AudioClipGainAutomation };
 
 interface AudioClipBase {
   readonly kind: "audio";
@@ -182,6 +186,13 @@ function snapshotAudioClip(clip: AudioClip): AudioClip {
 
 const midiClipTimes = new WeakMap<MidiClip, Cell<number>>();
 
+function normalizeClipName(name: string | undefined): string | undefined {
+  if (name === undefined) return undefined;
+  if (typeof name !== "string") throw new TypeError("Project clip name must be a string.");
+  validateXmlText(name);
+  return name.trim() ? name : undefined;
+}
+
 /** What a MIDI clip holds: notes, the clip length and the non-note messages, all in beats from the clip's start. */
 export type ProjectMidiData = Readonly<{ notes: readonly NoteInit[]; duration: number; events?: readonly ProjectMidiEvent[] }>;
 
@@ -289,6 +300,8 @@ type ProjectState = Readonly<{
   revision: number;
   /** Counts content commits. A live device-state capture advances `revision` only. */
   edits: number;
+  /** Display names by clip ID. Kept off the clip objects so that renaming never looks like an audio change to playback. */
+  clipNames: ReadonlyMap<string, string>;
   title: string;
   masterVolume: number;
   tempoMap: TempoMap;
@@ -306,7 +319,7 @@ const validTime = (time: number) => Number.isFinite(time) && time >= 0;
 const HISTORY_LIMIT = 50;
 let nextProjectInstance = 1;
 
-type EditPlacement = Readonly<{ trackId: string; clip: ProjectClip; time: number; notes?: readonly MidiNote[] }>;
+type EditPlacement = Readonly<{ trackId: string; clip: ProjectClip; time: number; name: string | undefined; notes?: readonly MidiNote[] }>;
 type EditSide = Readonly<{
   clips: ReadonlyMap<string, EditPlacement>;
   tempoMap: TempoMap;
@@ -342,7 +355,7 @@ const sameNotes = (a: readonly MidiNote[] | undefined, b: readonly MidiNote[] | 
       );
     }));
 const samePlacement = (a: EditPlacement | undefined, b: EditPlacement | undefined): boolean =>
-  a === b || (!!a && !!b && a.trackId === b.trackId && a.clip === b.clip && a.time === b.time && sameNotes(a.notes, b.notes));
+  a === b || (!!a && !!b && a.trackId === b.trackId && a.clip === b.clip && a.time === b.time && a.name === b.name && sameNotes(a.notes, b.notes));
 const clipFrameTolerance = (clip: ProjectClip) => (clip.kind === "audio" ? 1 / clip.sampleRate : 1e-9);
 const trackShellKeys = ["id", "name", "kind", "busRole", "routing", "volume", "muted", "solo", "pan", "devices", "effects", "effectMacros"] as const;
 
@@ -414,6 +427,7 @@ export class Project {
       Object.freeze({
         revision: 0,
         edits: 0,
+        clipNames: new Map(),
         title: options.title ?? "Untitled",
         masterVolume: 1,
         tempoMap: new TempoMap(this.bpm),
@@ -546,6 +560,7 @@ export class Project {
           trackId: track.id,
           clip,
           time: clip.time,
+          name: state.clipNames.get(clip.id),
           ...(clip instanceof MidiClip ? { notes: clip.midi.notes.value } : {}),
         });
     }
@@ -708,6 +723,13 @@ export class Project {
 
   private applySide(entry: EditEntry, side: EditSide): void {
     const ids = new Set(entry.ids);
+    // A name or note change leaves the arrangement array alone, so playback and auditions do not see a clip edit.
+    const moved = new Set(
+      entry.ids.filter((id) => {
+        const placement = side.clips.get(id);
+        return placement?.clip instanceof MidiClip && placement.clip.time !== placement.time;
+      }),
+    );
     for (const id of ids) {
       const placement = side.clips.get(id);
       if (placement?.clip instanceof MidiClip) {
@@ -720,14 +742,23 @@ export class Project {
     const tracks = this.s.tracks.map((track) => {
       const touchesAutomation = entry.automation.includes(track.id);
       const incoming = entry.ids.flatMap((id) => (side.clips.get(id)?.trackId === track.id ? [side.clips.get(id)!.clip] : []));
-      if (!touchesAutomation && !incoming.length && !track.clips.some((clip) => ids.has(clip.id))) return track;
+      const outgoing = track.clips.filter((clip) => ids.has(clip.id));
+      const sameClips = outgoing.length === incoming.length && outgoing.every((clip) => incoming.includes(clip) && !moved.has(clip.id));
+      if (!touchesAutomation && sameClips) return track;
       return Object.freeze({
         ...track,
-        clips: this.sortClips([...track.clips.filter((clip) => !ids.has(clip.id)), ...incoming]),
+        clips: sameClips ? track.clips : this.sortClips([...track.clips.filter((clip) => !ids.has(clip.id)), ...incoming]),
         ...(touchesAutomation ? { volumeAutomation: side.automation.get(track.id) ?? track.volumeAutomation } : {}),
       });
     });
+    const clipNames = new Map(this.s.clipNames);
+    for (const id of ids) {
+      const name = side.clips.get(id)?.name;
+      if (name === undefined) clipNames.delete(id);
+      else clipNames.set(id, name);
+    }
     this.commit({
+      clipNames,
       tracks: Object.freeze(tracks),
       ...(entry.tempo ? { tempoMap: side.tempoMap } : {}),
       ...(entry.markers ? { markers: side.markers } : {}),
@@ -803,7 +834,7 @@ export class Project {
         }),
       ),
     );
-    copy.commit({ masterVolume: state.masterVolume, tempoMap: state.tempoMap, markers: state.markers, tracks });
+    copy.commit({ masterVolume: state.masterVolume, tempoMap: state.tempoMap, markers: state.markers, clipNames: state.clipNames, tracks });
     for (const track of tracks) {
       copy.ids.add(track.id);
       for (const device of track.devices) copy.ids.add(device.id);
@@ -899,8 +930,11 @@ export class Project {
     return track;
   }
 
-  private replace(track: ProjectTrack, patch: Partial<ProjectTrack>): void {
-    this.commit({ tracks: Object.freeze(this.s.tracks.map((item) => (item.id === track.id ? Object.freeze({ ...item, ...patch }) : item))) });
+  private replace(track: ProjectTrack, patch: Partial<ProjectTrack>, state: Partial<Pick<ProjectState, "clipNames">> = {}): void {
+    this.commit({
+      ...state,
+      tracks: Object.freeze(this.s.tracks.map((item) => (item.id === track.id ? Object.freeze({ ...item, ...patch }) : item))),
+    });
   }
 
   setTrackVolume(trackId: string, value: number): void {
@@ -1031,7 +1065,7 @@ export class Project {
           });
         }),
     );
-    this.commit({ tracks });
+    this.commit({ tracks, ...this.unnamedClips(track.clips.map(({ id }) => id)) });
   }
 
   addWebClapDevice(trackId: string, details: Omit<WebClapDevice, "kind" | "id" | "state"> & { id?: string; state?: Uint8Array }): WebClapDevice {
@@ -1113,6 +1147,7 @@ export class Project {
     const duration = audio.channels[0].length / audio.sampleRate;
     const envelope = normalizeClipEnvelope(options.envelope ?? unityClipEnvelope, duration);
     const gainAutomation = normalizeClipGainAutomation(options.gainAutomation);
+    const name = normalizeClipName(options.name);
     const clip: AudioClip = Object.freeze({
       kind: "audio",
       id: this.reserve(options.id, "clip"),
@@ -1124,7 +1159,7 @@ export class Project {
       ...(envelope === unityClipEnvelope ? {} : { envelope }),
       ...(gainAutomation ? { gainAutomation } : {}),
     });
-    this.replace(track, { clips: this.sortClips([...track.clips, clip]) });
+    this.replace(track, { clips: this.sortClips([...track.clips, clip]) }, this.namedClip(clip.id, name));
     return clip;
   }
 
@@ -1153,6 +1188,7 @@ export class Project {
     const stretch = normalizeClipStretch(options.stretch, media.sampleRate, media.channelCount, frameCount);
     const envelope = normalizeClipEnvelope(options.envelope ?? unityClipEnvelope, duration);
     const gainAutomation = normalizeClipGainAutomation(options.gainAutomation);
+    const name = normalizeClipName(options.name);
     const clip: MediaAudioClip = Object.freeze({
       kind: "audio",
       id: this.reserve(options.id, "clip"),
@@ -1166,18 +1202,19 @@ export class Project {
       ...(envelope === unityClipEnvelope ? {} : { envelope }),
       ...(gainAutomation ? { gainAutomation } : {}),
     });
-    this.replace(track, { clips: this.sortClips([...track.clips, clip]) });
+    this.replace(track, { clips: this.sortClips([...track.clips, clip]) }, this.namedClip(clip.id, name));
     return clip;
   }
 
-  addMidiClip(trackId: string, data: ProjectMidiData, time: number, options: { id?: string } = {}): MidiClip {
+  addMidiClip(trackId: string, data: ProjectMidiData, time: number, options: { id?: string; name?: string } = {}): MidiClip {
     assertProjectActive(this);
     const track = this.track(trackId, "midi");
     if (!validTime(time)) throw new RangeError("Project clip time must be finite and non-negative.");
+    const name = normalizeClipName(options.name);
     const id = this.reserve(options.id, "clip");
     try {
       const clip = new MidiClip(id, time, data);
-      this.replace(track, { clips: this.sortClips([...track.clips, clip]) });
+      this.replace(track, { clips: this.sortClips([...track.clips, clip]) }, this.namedClip(id, name));
       return clip;
     } catch (error) {
       this.ids.delete(id);
@@ -1230,13 +1267,14 @@ export class Project {
     const clip = source?.clips.find((item) => item.id === clipId);
     if (!source || !clip) throw new Error("Project clip does not exist.");
     const target = trackId ?? source.id;
+    const name = this.s.clipNames.get(clipId);
     if (clip.kind === "audio") {
-      const options = { envelope: clip.envelope, stretch: clip.stretch, gainAutomation: clip.gainAutomation };
+      const options = { name, envelope: clip.envelope, stretch: clip.stretch, gainAutomation: clip.gainAutomation };
       return clip.media
         ? this.addAudioMediaClip(target, clip.media, time, { ...options, startFrame: clip.startFrame, frameCount: clip.frameCount })
         : this.addAudioClip(target, clip, time, options);
     }
-    return this.addMidiClip(target, { notes: untracked(() => clip.midi.notes.value), duration: clip.duration, events: clip.events }, time);
+    return this.addMidiClip(target, { notes: untracked(() => clip.midi.notes.value), duration: clip.duration, events: clip.events }, time, { name });
   }
 
   private clipAndTrack(clipId: string): { track: ProjectTrack; clip: ProjectClip } {
@@ -1244,6 +1282,34 @@ export class Project {
     const clip = track?.clips.find((item) => item.id === clipId);
     if (!track || !clip) throw new Error("Project clip does not exist.");
     return { track, clip };
+  }
+
+  /** A clip's display name. Names are not unique: several clips may share one. */
+  clipName(clipId: string): string | undefined {
+    return this.store.value.clipNames.get(clipId);
+  }
+
+  /** Set a clip's display name. It lives beside the clip, so playback and open editors are untouched. */
+  setClipName(clipId: string, name: string): void {
+    assertProjectActive(this);
+    const normalized = normalizeClipName(name);
+    if (normalized === undefined) throw new RangeError("Project clip name must not be empty.");
+    this.clipAndTrack(clipId);
+    if (this.s.clipNames.get(clipId) === normalized) return;
+    this.commit(this.namedClip(clipId, normalized));
+  }
+
+  private namedClip(clipId: string, name: string | undefined): Partial<Pick<ProjectState, "clipNames">> {
+    if (name === undefined) return {};
+    return { clipNames: new Map(this.s.clipNames).set(clipId, name) };
+  }
+
+  private unnamedClips(clipIds: readonly string[]): Partial<Pick<ProjectState, "clipNames">> {
+    const names = this.s.clipNames;
+    if (!clipIds.some((id) => names.has(id))) return {};
+    const next = new Map(names);
+    for (const id of clipIds) next.delete(id);
+    return { clipNames: next };
   }
 
   /** Replace the clip's playback gain and fades while borrowing the same source PCM. */
@@ -1442,9 +1508,11 @@ export class Project {
       this.ids.delete(rightId);
       throw error;
     }
-    this.replace(track, {
-      clips: this.sortClips([...track.clips.filter((item) => item.id !== clipId), left, right]),
-    });
+    this.replace(
+      track,
+      { clips: this.sortClips([...track.clips.filter((item) => item.id !== clipId), left, right]) },
+      this.namedClip(rightId, this.s.clipNames.get(clipId)),
+    );
     this.retire(clip);
     return [left, right];
   }
@@ -1454,7 +1522,7 @@ export class Project {
     const track = this.s.tracks.find((item) => item.clips.some((clip) => clip.id === clipId));
     const clip = track?.clips.find((item) => item.id === clipId);
     if (!track || !clip) throw new Error("Project clip does not exist.");
-    this.replace(track, { clips: Object.freeze(track.clips.filter((item) => item.id !== clipId)) });
+    this.replace(track, { clips: Object.freeze(track.clips.filter((item) => item.id !== clipId)) }, this.unnamedClips([clipId]));
     this.ids.delete(clipId);
     this.retire(clip);
   }
