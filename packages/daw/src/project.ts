@@ -1,5 +1,16 @@
 /** The Project model and its pure helpers. Loads without a DOM or AudioContext. */
 export { Project, MidiClip, audioClipSourceDuration, audioClipTimeMap } from "./model";
+export { defineExtension, defineOperation } from "./extensions";
+export type {
+  ExtensionDefinition,
+  JsonSchema,
+  JsonValue,
+  Mutable,
+  OperationInfo,
+  ProjectExtension,
+  ProjectOperation,
+  ProjectOperations,
+} from "./extensions";
 export type {
   ProjectMidiData,
   ProjectOptions,

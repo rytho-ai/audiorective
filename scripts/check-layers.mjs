@@ -43,6 +43,7 @@ const DAW_PROJECT = [
   "tempo-map.ts",
   "clip-envelope.ts",
   "project-persistence.ts",
+  "extensions.ts",
   "project-edits.ts",
   "selection.ts",
 ];

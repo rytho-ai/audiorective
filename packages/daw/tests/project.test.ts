@@ -618,7 +618,9 @@ describe("DAWproject native slice", () => {
     expect(() => openDawProject(zipSync(tempo))).toThrow("Project XML has unsupported Tempo content.");
     const extra = unzipSync(saveDawProject(project));
     extra["plugins/unknown-state.bin"] = new Uint8Array([1]);
-    expect(() => openDawProject(zipSync(extra))).toThrow("Project archive has unsupported files.");
+    const kept = openDawProject(zipSync(extra)).project;
+    expect(unzipSync(saveDawProject(kept))["plugins/unknown-state.bin"]).toEqual(new Uint8Array([1]));
+    kept.dispose();
     expect(() => project.addAudioClip(track.id, { sampleRate: 48_000, channels: [new Float32Array([Number.NaN])] }, 0)).toThrow(
       "Project audio clips need a time, sample rate and equal-length PCM channels.",
     );

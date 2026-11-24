@@ -2,6 +2,7 @@ import {
   assertProjectActive,
   collidesWithProjectId,
   importedBundles,
+  preservedEntries,
   markProjectDisposed,
   nextProjectId,
   validateXmlText,
@@ -21,6 +22,16 @@ import { AutomationCurve, type AutomationPoint } from "@audiorective/core/automa
 import { compileMidiPlaybackEvents, MidiClip as MidiNotes } from "@audiorective/midi";
 import type { MidiNote, MidiPlaybackEvent, MidiTake, NoteInit } from "@audiorective/midi";
 import { AudioMedia } from "./media";
+import {
+  checkArguments,
+  freezeJson,
+  thawJson,
+  type ExtensionDefinition,
+  type JsonValue,
+  type ProjectExtension,
+  type ProjectOperation,
+  type ProjectOperations,
+} from "./extensions";
 import { TempoMap } from "./tempo-map";
 import type { TempoChange } from "./tempo-map";
 import { ClipTimeMap, normalizeClipAnchors, type ClipStretchAnchor } from "./clip-time-map";
@@ -307,7 +318,12 @@ type ProjectState = Readonly<{
   tempoMap: TempoMap;
   tracks: readonly ProjectTrack[];
   markers: readonly ProjectMarker[];
+  /** Extension data by extension id, kept as saved even when no definition is loaded. */
+  extensions: ReadonlyMap<string, ExtensionRecord>;
 }>;
+
+/** One extension's saved data and the format version it was written with. */
+export type ExtensionRecord = Readonly<{ version: number; data: JsonValue }>;
 
 const clipSeconds = (tempoMap: TempoMap, clip: ProjectClip, localTime = 0): number => {
   const position = clip.time + localTime;
@@ -325,6 +341,7 @@ type EditSide = Readonly<{
   tempoMap: TempoMap;
   markers: readonly ProjectMarker[];
   automation: ReadonlyMap<string, readonly AutomationPoint[]>;
+  extensions: ReadonlyMap<string, ExtensionRecord>;
 }>;
 type EditEntry = {
   readonly label: string;
@@ -332,6 +349,7 @@ type EditEntry = {
   readonly tempo: boolean;
   readonly markers: boolean;
   readonly automation: readonly string[];
+  readonly extensions: readonly string[];
   before: EditSide;
   after: EditSide;
 };
@@ -360,11 +378,16 @@ const clipFrameTolerance = (clip: ProjectClip) => (clip.kind === "audio" ? 1 / c
 const trackShellKeys = ["id", "name", "kind", "busRole", "routing", "volume", "muted", "solo", "pan", "devices", "effects", "effectMacros"] as const;
 
 let captureDeviceHook: (project: Project, deviceId: string, bytes: Uint8Array) => void;
+let extensionRecordsHook: (project: Project, records?: ReadonlyMap<string, ExtensionRecord>) => ReadonlyMap<string, ExtensionRecord>;
 
 /** Headless project content. AudioContext and UI state are not part of the file. */
 export class Project {
   static {
     captureDeviceHook = (project, deviceId, bytes) => project.captureDevice(deviceId, bytes);
+    extensionRecordsHook = (project, records) => {
+      if (records) project.commit({ extensions: records }, false);
+      return project.s.extensions;
+    };
   }
 
   readonly signature: readonly [number, number];
@@ -389,6 +412,10 @@ export class Project {
   private editing?: { retired: Set<MidiClip> };
   /** Note revisions spent by rolled-back edits, so a failed edit leaves the version unchanged. */
   private spentNoteRevisions = 0;
+  private readonly extensionHandles = new Map<ExtensionDefinition<unknown>, ProjectExtension<unknown>>();
+  private readonly operationTable = new Map<string, ProjectOperation<never, unknown>>();
+  /** Named operations an app registers on this song, for its own buttons and for agents: `register`, `list`, `call`. */
+  readonly operations: ProjectOperations;
 
   /** Untracked read of the current snapshot, for the owner's own logic. */
   private get s(): ProjectState {
@@ -438,6 +465,7 @@ export class Project {
         tempoMap: new TempoMap(bpm),
         tracks: Object.freeze([]),
         markers: Object.freeze([]),
+        extensions: new Map(),
       }),
     );
     const store = this.store;
@@ -457,6 +485,89 @@ export class Project {
         return Object.freeze({ revision: state.revision, midi });
       }),
     });
+    const table = this.operationTable;
+    this.operations = Object.freeze({
+      register: (operation: ProjectOperation<never, unknown>) => {
+        assertProjectActive(this);
+        if (typeof operation?.name !== "string" || typeof operation.run !== "function" || operation.input?.type !== "object")
+          throw new TypeError("Project operations take an operation from defineOperation.");
+        if (table.has(operation.name)) throw new Error(`Project already has an operation named "${operation.name}".`);
+        table.set(operation.name, operation);
+        return () => {
+          if (table.get(operation.name) === operation) table.delete(operation.name);
+        };
+      },
+      list: () => Object.freeze([...table.values()].map(({ name, description, input }) => Object.freeze({ name, description, input }))),
+      call: <Result = unknown>(name: string, args: object = {}): Result => {
+        assertProjectActive(this);
+        const operation = table.get(name) as ProjectOperation<object, Result> | undefined;
+        if (!operation) throw new Error(`Project has no operation named "${name}".`);
+        checkArguments(name, operation.input, args);
+        return this.edit(operation.label ?? operation.description, () => operation.run(this, args));
+      },
+    });
+  }
+
+  /**
+   * This song's data for an app extension, created on first use: `const chain = project.extension(chainDefinition)`; `chain.value`, `chain.update((scenes) => { scenes.push(1); })`.
+   * Data the file holds for it is checked with the definition's `validate`; data that fails falls back to `defaultValue()` and stays in the file until changed.
+   */
+  extension<T>(definition: ExtensionDefinition<T>): ProjectExtension<T> {
+    assertProjectActive(this);
+    const known = this.extensionHandles.get(definition as ExtensionDefinition<unknown>);
+    if (known) return known as ProjectExtension<T>;
+    const { id } = definition;
+    const parsed = new WeakMap<ExtensionRecord, T>();
+    let fallback: T | undefined;
+    const read = (record: ExtensionRecord | undefined): T => {
+      // Data from a newer version of the extension reads as the default; `set` refuses to overwrite it.
+      if (!record || record.version > definition.version)
+        return (fallback ??= freezeJson(definition.defaultValue(), `Extension "${id}" default value`) as T);
+      const hit = parsed.get(record);
+      if (hit !== undefined) return hit;
+      let value: T;
+      try {
+        value = freezeJson(
+          definition.validate ? definition.validate(thawJson(record.data), record.version) : record.data,
+          `Extension "${id}" data`,
+        ) as T;
+      } catch {
+        value = read(undefined);
+      }
+      parsed.set(record, value);
+      return value;
+    };
+    const cell = readonlyCell(() => read(this.store.value.extensions.get(id)));
+    const set = (value: T) => {
+      assertProjectActive(this);
+      const current = this.s.extensions.get(id);
+      if (current && current.version > definition.version)
+        throw new Error(
+          `Extension "${id}" data was saved by its version ${current.version}; this app has version ${definition.version} and cannot change it.`,
+        );
+      const data = freezeJson(value, `Extension "${id}" data`);
+      if (JSON.stringify(data) === JSON.stringify(untracked(() => cell.value))) return;
+      const record: ExtensionRecord = Object.freeze({ version: definition.version, data });
+      parsed.set(record, record.data as T);
+      const extensions = new Map(this.s.extensions);
+      extensions.set(id, record);
+      this.commit({ extensions });
+    };
+    const handle: ProjectExtension<T> = Object.freeze({
+      definition,
+      get value() {
+        return cell.value;
+      },
+      subscribe: cell.subscribe.bind(cell),
+      set,
+      update: (recipe: (draft: never) => unknown) => {
+        const draft = thawJson(untracked(() => cell.value));
+        const returned = recipe(draft as never);
+        set((returned === undefined ? draft : returned) as T);
+      },
+    }) as ProjectExtension<T>;
+    this.extensionHandles.set(definition as ExtensionDefinition<unknown>, handle as unknown as ProjectExtension<unknown>);
+    return handle;
   }
 
   /** Read a compact, JSON-serializable view and the version it describes. */
@@ -498,6 +609,11 @@ export class Project {
         rehearsal.dispose();
       }
       let copies: ProjectEditCopies = {};
+      if (this.editing) {
+        // Inside an open edit the ops join its Undo step; the rehearsal above already proved they apply.
+        copies = runProjectEdits(this, request.ops);
+        return this.appliedReceipt(undefined, "after", copies);
+      }
       const entry = this.runEdit(request.label, () => {
         copies = runProjectEdits(this, request.ops);
       }).entry;
@@ -521,6 +637,15 @@ export class Project {
    */
   edit<T>(label: string, action: () => T): T {
     assertProjectActive(this);
+    if (this.editing) {
+      // Inside an open edit (an operation or another edit) the steps join that edit's Undo step.
+      const result = action();
+      if (typeof (result as { then?: unknown } | null | undefined)?.then === "function") {
+        (result as unknown as Promise<unknown>).then(undefined, () => undefined);
+        throw new TypeError("Project edit action must be synchronous.");
+      }
+      return result;
+    }
     return this.runEdit(label, action).result;
   }
 
@@ -569,7 +694,7 @@ export class Project {
           ...(clip instanceof MidiClip ? { notes: clip.midi.notes.value } : {}),
         });
     }
-    return { clips, tempoMap: state.tempoMap, markers: state.markers, automation };
+    return { clips, tempoMap: state.tempoMap, markers: state.markers, automation, extensions: state.extensions };
   }
 
   private runEdit<T>(label: string, action: () => T): { result: T; entry: EditEntry | undefined } {
@@ -600,8 +725,11 @@ export class Project {
           const automation = [...after.automation.keys()].filter((id) => before.automation.get(id) !== after.automation.get(id));
           const tempo = before.tempoMap !== after.tempoMap;
           const markers = before.markers !== after.markers;
-          if (!ids.length && !automation.length && !tempo && !markers) return { result, entry: undefined };
-          const entry: EditEntry = { label: label.trim(), ids, tempo, markers, automation, before, after };
+          const extensions = [...new Set([...before.extensions.keys(), ...after.extensions.keys()])].filter(
+            (id) => before.extensions.get(id) !== after.extensions.get(id),
+          );
+          if (!ids.length && !automation.length && !tempo && !markers && !extensions.length) return { result, entry: undefined };
+          const entry: EditEntry = { label: label.trim(), ids, tempo, markers, automation, extensions, before, after };
           this.pushHistory(entry);
           return { result, entry };
         } catch (error) {
@@ -701,7 +829,8 @@ export class Project {
       entry.ids.every((id) => samePlacement(current.clips.get(id), side.clips.get(id))) &&
       (!entry.tempo || current.tempoMap === side.tempoMap) &&
       (!entry.markers || current.markers === side.markers) &&
-      entry.automation.every((id) => current.automation.get(id) === side.automation.get(id))
+      entry.automation.every((id) => current.automation.get(id) === side.automation.get(id)) &&
+      entry.extensions.every((id) => current.extensions.get(id) === side.extensions.get(id))
     );
   }
 
@@ -767,7 +896,18 @@ export class Project {
       tracks: Object.freeze(tracks),
       ...(entry.tempo ? { tempoMap: side.tempoMap } : {}),
       ...(entry.markers ? { markers: side.markers } : {}),
+      ...(entry.extensions.length ? { extensions: this.withExtensions(entry.extensions, side.extensions) } : {}),
     });
+  }
+
+  private withExtensions(ids: readonly string[], from: ReadonlyMap<string, ExtensionRecord>): ReadonlyMap<string, ExtensionRecord> {
+    const extensions = new Map(this.s.extensions);
+    for (const id of ids) {
+      const record = from.get(id);
+      if (record) extensions.set(id, record);
+      else extensions.delete(id);
+    }
+    return extensions;
   }
 
   get hasFileBackedAudio(): boolean {
@@ -853,7 +993,14 @@ export class Project {
         }),
       ),
     );
-    copy.commit({ masterVolume: state.masterVolume, tempoMap: state.tempoMap, markers: state.markers, clipNames: state.clipNames, tracks });
+    copy.commit({
+      masterVolume: state.masterVolume,
+      tempoMap: state.tempoMap,
+      markers: state.markers,
+      clipNames: state.clipNames,
+      tracks,
+      extensions: state.extensions,
+    });
     for (const track of tracks) {
       copy.ids.add(track.id);
       for (const device of track.devices) copy.ids.add(device.id);
@@ -862,6 +1009,8 @@ export class Project {
     nextProjectId.set(copy, nextProjectId.get(this) ?? 1);
     const untrusted = importedBundles.get(this);
     if (untrusted) importedBundles.set(copy, new Set(untrusted));
+    const preserved = preservedEntries.get(this);
+    if (preserved) preservedEntries.set(copy, preserved);
     return copy;
   }
 
@@ -1561,6 +1710,11 @@ export class Project {
  * Runtime-only: store live plug-in state without counting it as an edit. Not exported from `@audiorective/daw`; an app without a Workspace
  * uses `project.setDeviceState`.
  */
+/** Codec access to the extension records: read them, or replace them without an Undo step when a file is opened. */
+export function extensionRecords(project: Project, records?: ReadonlyMap<string, ExtensionRecord>): ReadonlyMap<string, ExtensionRecord> {
+  return extensionRecordsHook(project, records);
+}
+
 export function captureDeviceState(project: Project, deviceId: string, bytes: Uint8Array): void {
   captureDeviceHook(project, deviceId, bytes);
 }

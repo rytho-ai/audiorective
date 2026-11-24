@@ -15,6 +15,7 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Added
 
+- **daw:** Extensions: `defineExtension` and `project.extension(definition)` keep app data in the song (saved as `extensions/<id>/data.json`, undoable, versioned); `defineOperation` and `project.operations` register named operations an app or AI assistant can list and call as one Undo step.
 - **launcher:** `playChain(scenes)` plays scenes back to back for their lengths and then stops; `launcher.chain` reports the position.
 - **daw:** `workspace.arrangement` (and `WorkspaceOptions.arrangement`) turns timeline playback off for Session-only apps, also while playing.
 - **daw:** `WorkspaceOptions.instruments` plays a page-made `Sampler` sound on a MIDI track without a plug-in, in Arrangement, Session and offline renders.
@@ -27,6 +28,7 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Fixed
 
+- **daw:** Opening a `.dawproject` with files this codec does not use keeps them and writes them back unchanged on save, instead of failing with `Project archive has unsupported files.`
 - **launcher:** A launch waiting for `clock.start()` with no time now begins exactly on beat 0 instead of at the next timer tick.
 - **launcher:** A scheduler clip stopped in the same look-ahead as a clock refresh (another track's launch, an edit, a tempo change) still cuts its held notes at the stop instead of letting them ring.
 - **daw:** `workspace.deviceOptions` approves the bundle URLs the workspace has loaded, so a file saved from it opens again with its plug-ins; other URLs still need `resolveBundle`.

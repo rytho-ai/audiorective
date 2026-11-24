@@ -1,3 +1,4 @@
+import { keepsFileBackedEntries } from "./dawproject";
 import { openDawProject, openDawProjectBlob, saveDawProject, saveDawProjectTo } from "./dawproject";
 import { Workspace, type WorkspaceOptions } from "./runtime";
 import type { OpenDawProjectResult } from "./dawproject";
@@ -39,7 +40,7 @@ export async function openWorkspaceBlob(context: AudioContext, blob: Blob, optio
 export async function saveWorkspace(workspace: Workspace, options: SaveWorkspaceOptions = {}): Promise<Uint8Array<ArrayBuffer>> {
   const project = await workspace.checkpoint();
   assertSaveVersion(project, options);
-  if (project.hasFileBackedAudio) {
+  if (project.hasFileBackedAudio || keepsFileBackedEntries(project)) {
     const chunks: Uint8Array[] = [];
     let length = 0;
     await saveDawProjectTo(

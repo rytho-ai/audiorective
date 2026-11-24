@@ -1,9 +1,10 @@
 import { captureDeviceState } from "../src/model";
 import { describe, expect, test } from "vitest";
 import { effect } from "@audiorective/core";
-import { AudioMedia, MidiClip, Project, type AudioClip } from "../src";
+import { AudioMedia, MidiClip, Project, defineExtension, type AudioClip } from "../src";
 import * as modelSourceModule from "../src/model.ts?raw";
 import { coverageGaps, watch } from "../../../scripts/tracking-coverage.mjs";
+const trackedChain = defineExtension({ id: "tracking.chain", defaultValue: (): number[] => [] });
 
 const touchedProject = new Set<string>();
 const touchedClip = new Set<string>();
@@ -191,6 +192,11 @@ const rows: Array<{ name: string; read: (ctx: Ctx) => unknown; mutate: (ctx: Ctx
     mutate: (c) => captureDeviceState(c.project, c.deviceId, new Uint8Array([4])),
   },
   { name: "Project.markers", read: (c) => c.project.markers, mutate: (c) => c.project.setMarkers([{ time: 1, name: "A" }]) },
+  {
+    name: "Project.extension (value)",
+    read: (c) => c.project.extension(trackedChain).value,
+    mutate: (c) => c.project.extension(trackedChain).set([1]),
+  },
   { name: "Project.cells.revision", read: (c) => c.project.cells.revision.value, mutate: (c) => c.project.setTitle("Revised") },
   {
     name: "Project.clipTimeSeconds (tempo change)",

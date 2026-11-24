@@ -1,0 +1,51 @@
+{
+  "area": "daw-extensions",
+  "description": "API-shape experiment for app extensions of a DAW project: app-owned data saved in the song file, and named operations an app or agent can call. Expectations describe behaviour, not names.",
+  "tasks": [
+    {
+      "id": "E1-chain-data",
+      "prompt": "A browser groovebox built on the toolkit has an open song as `project` and its running engine as `workspace`. Besides the music, the app keeps a song chain: an ordered list of scene numbers such as [0, 0, 1, 2], which the standard song format has no place for. Write the app code that keeps the chain as part of the song: the user edits it (append a scene, remove an entry, clear it), each edit is one Undo step together with the rest of the song's history and counts as a song change, it is saved inside the same `.dawproject` file and comes back when the file is opened again. Another app built on the same toolkit that knows nothing about chains must be able to open that file, edit the music and save it again without losing the chain. Show the current chain in the page and keep it up to date after undo, redo and reopening.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;",
+      "expectations": [
+        "Stores the chain as app data that belongs to the song, not in markers, clip names or a separate file.",
+        "Each chain edit is one undoable step in the song's shared history and changes the song version.",
+        "The chain is written into the same .dawproject file when saving.",
+        "The chain is restored when the file is opened again.",
+        "An app that does not know about the chain keeps it intact when it opens, edits and re-saves the file.",
+        "The page shows the chain from reactive state and updates after undo, redo and reopening."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "No markers, clip names or local storage as the chain store",
+          "none": ["setMarkers", "setClipName", "renameClip", "localStorage"]
+        },
+        {
+          "expectation": 4,
+          "label": "No hand-written ZIP surgery",
+          "none": ["unzipSync", "zipSync", "from \"fflate\"", "JSZip"]
+        }
+      ]
+    },
+    {
+      "id": "E2-named-operation",
+      "prompt": "A browser podcast editor built on the toolkit has an open episode as `project` and its running engine as `workspace`: tracks named Host A, Host B and Music, with audio clips placed in seconds. Package a \"Remove gap\" operation the app adds to the toolkit: given a start and end time in seconds, it removes that time from every track, splitting clips at the edges, deleting what lies inside and moving everything after it earlier, so all tracks stay in sync. Make it a named operation with a short description and typed arguments that the page's button calls, and that other code (for example an AI assistant) can discover and call by name without importing the app's modules. One call is one Undo step and changes the song version; if the range is invalid it fails with a clear error and changes nothing. Call it once from a button for 10 to 20 seconds and show what the operation reports back.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;",
+      "expectations": [
+        "Registers the operation under a name with a description and typed arguments.",
+        "Other code can list the available operations and call this one by name.",
+        "The operation splits, removes and moves clips on every track so later material moves earlier by exactly the range length.",
+        "One call is a single undoable step in the song's history and changes the song version.",
+        "An invalid range throws a clear error and leaves the song unchanged.",
+        "The page's button calls the operation through the same registration and shows its result."
+      ],
+      "checks": [
+        {
+          "expectation": 1,
+          "label": "Not a global or window function registry",
+          "none": ["window\\.\\w+\\s*=", "globalThis\\.\\w+\\s*="]
+        }
+      ]
+    }
+  ]
+}

@@ -2,6 +2,8 @@ import type { Project } from "./model";
 
 export const nextProjectId = new WeakMap<Project, number>();
 export const importedBundles = new WeakMap<Project, Set<string>>();
+/** Archive files an opened project did not use, written back unchanged on save so other apps' and extensions' data survives. */
+export const preservedEntries = new WeakMap<Project, ReadonlyMap<string, Uint8Array | Blob>>();
 const disposed = new WeakSet<Project>();
 
 export function assertProjectActive(project: Project): void {

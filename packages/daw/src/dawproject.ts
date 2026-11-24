@@ -1,11 +1,12 @@
-import { assertProjectActive, importedBundles, nextProjectId, validProjectId, validateXmlText } from "./project-persistence";
+import { assertProjectActive, importedBundles, nextProjectId, preservedEntries, validProjectId, validateXmlText } from "./project-persistence";
 import { DOMImplementation, DOMParser, XMLSerializer } from "@xmldom/xmldom";
 import type { Document, Element } from "@xmldom/xmldom";
 import { unzipSync, zipSync, Unzip, UnzipInflate } from "fflate";
 import { untracked } from "@audiorective/core";
 import type { NoteInit } from "@audiorective/midi";
 import type { RackEffect, RackMacroSettings } from "./rack-preset";
-import { MidiClip, Project, audioChannelCount, normalizeClipGainAutomation } from "./model";
+import { MidiClip, Project, audioChannelCount, extensionRecords, normalizeClipGainAutomation, type ExtensionRecord } from "./model";
+import { EXTENSION_ID } from "./extensions";
 import type { ClipStretchAnchor } from "./clip-time-map";
 import type { AudioClip, AudioClipGainAutomation, AudioClipSource, AudioClipStretch, ProjectMidiEvent, ProjectTrack } from "./model";
 import { decodeWav, encodeWav, mediaFromWav, wavMediaEntry } from "./internal/wav";
@@ -279,7 +280,11 @@ function writeClip(
   });
 }
 
-function prepareDawProject(project: Project): { entries: Record<string, Uint8Array>; mediaEntries: Map<string, AudioClipSource> } {
+function prepareDawProject(project: Project): {
+  entries: Record<string, Uint8Array>;
+  mediaEntries: Map<string, AudioClipSource>;
+  preserved: Array<[string, Uint8Array | Blob]>;
+} {
   assertProjectActive(project);
   const document = new DOMImplementation().createDocument(null, "Project", null);
   const root = document.documentElement!;
@@ -404,19 +409,35 @@ function prepareDawProject(project: Project): { entries: Record<string, Uint8Arr
       ids.add(id);
     }
   }
-  return { entries, mediaEntries };
+  for (const [id, record] of extensionRecords(project))
+    entries[extensionPath(id)] = encoder.encode(JSON.stringify({ version: record.version, data: record.data }));
+  // Files kept from the opened archive go back unchanged; a path this save writes itself takes precedence.
+  const preserved: Array<[string, Uint8Array | Blob]> = [];
+  for (const [path, bytes] of preservedEntries.get(project) ?? []) if (!entries[path] && !mediaEntries.has(path)) preserved.push([path, bytes]);
+  return { entries, mediaEntries, preserved };
 }
+
+/** Whether saving needs `saveDawProjectTo`: a file kept from a Blob-opened archive is still a Blob. */
+export function keepsFileBackedEntries(project: Project): boolean {
+  return [...(preservedEntries.get(project)?.values() ?? [])].some((entry) => !(entry instanceof Uint8Array));
+}
+
+const extensionPath = (id: string) => `extensions/${id}/data.json`;
+const EXTENSION_PATH = /^extensions\/([^/]+)\/data\.json$/;
 
 /** Save the in-memory project slice as a standards-shaped .dawproject ZIP. */
 export function saveDawProject(project: Project): Uint8Array {
-  const { entries, mediaEntries } = prepareDawProject(project);
-  if (mediaEntries.size) throw new Error("Project file-backed audio needs saveDawProjectTo().");
+  const { entries, mediaEntries, preserved } = prepareDawProject(project);
+  if (mediaEntries.size || preserved.some(([, bytes]) => !(bytes instanceof Uint8Array)))
+    throw new Error("Project file-backed audio needs saveDawProjectTo().");
+  for (const [path, bytes] of preserved) entries[path] = bytes as Uint8Array;
   return zipSync(entries, { level: 6 });
 }
 
 /** Write a portable archive incrementally with CRC and size in each local ZIP header. */
 export async function saveDawProjectTo(project: Project, destination: WritableStream<Uint8Array>): Promise<void> {
-  const { entries, mediaEntries } = prepareDawProject(project);
+  const { entries, mediaEntries, preserved } = prepareDawProject(project);
+  for (const [path, bytes] of preserved) if (bytes instanceof Uint8Array) entries[path] = bytes;
   const files: StoredZipEntry[] = Object.entries(entries).map(([path, bytes]) => ({
     path,
     size: bytes.length,
@@ -428,6 +449,16 @@ export async function saveDawProjectTo(project: Project, destination: WritableSt
     if (!clip.media) throw new Error("Project media asset is missing.");
     files.push(wavMediaEntry(path, clip.media, clip.startFrame, clip.frameCount));
   }
+  for (const [path, blob] of preserved)
+    if (blob instanceof Blob)
+      files.push({
+        path,
+        size: blob.size,
+        async *chunks() {
+          for (let at = 0; at < blob.size; at += 1024 * 1024)
+            yield new Uint8Array(await blob.slice(at, Math.min(blob.size, at + 1024 * 1024)).arrayBuffer());
+        },
+      });
   await writeStoredZip(files, destination);
 }
 
@@ -650,6 +681,25 @@ export async function openDawProjectBlob(blob: Blob): Promise<OpenDawProjectResu
   for (const entry of Object.values(entries))
     if (!(entry instanceof Uint8Array)) entry.header = new Uint8Array(await entry.blob.slice(0, 44).arrayBuffer());
   return parseDawProjectEntries(entries);
+}
+
+function readExtensionRecord(bytes: Uint8Array): ExtensionRecord | undefined {
+  try {
+    const value = JSON.parse(decoder.decode(bytes)) as { version?: unknown; data?: unknown };
+    if (!value || typeof value !== "object" || !Number.isInteger(value.version) || (value.version as number) < 1 || !("data" in value))
+      return undefined;
+    return Object.freeze({ version: value.version as number, data: deepFreeze(value.data) as ExtensionRecord["data"] });
+  } catch {
+    return undefined;
+  }
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === "object") {
+    for (const child of Object.values(value)) deepFreeze(child);
+    Object.freeze(value);
+  }
+  return value;
 }
 
 function entryBytes(entries: ArchiveEntries, path: string): Uint8Array | undefined {
@@ -1045,7 +1095,21 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
         { id: midi.id, name: midi.name },
       );
     }
-    if (Object.keys(entries).some((path) => !usedPaths.has(path))) throw new Error("Project archive has unsupported files.");
+    // Extension data comes back as records; every other file this codec does not use is kept and written back unchanged on save.
+    const records = new Map<string, ExtensionRecord>();
+    const preserved = new Map<string, Uint8Array | Blob>();
+    for (const [path, entry] of Object.entries(entries)) {
+      if (usedPaths.has(path)) continue;
+      const id = EXTENSION_PATH.exec(path)?.[1];
+      const record = id !== undefined && EXTENSION_ID.test(id) && entry instanceof Uint8Array ? readExtensionRecord(entry) : undefined;
+      if (record) records.set(id!, record);
+      else {
+        if (id !== undefined) warnings.push(`Extension data in ${path} could not be read and is kept unchanged.`);
+        preserved.set(path, entry instanceof Uint8Array ? entry : entry.blob);
+      }
+    }
+    if (records.size) extensionRecords(project, records);
+    if (preserved.size) preservedEntries.set(project, preserved);
     if (stored?.clips.some((item) => !item.noteIds && !matchedAudio.has(item)))
       warnings.push("Audiorective audio clip details no longer match the arrangement and were skipped.");
     return { project, warnings: Object.freeze(warnings) };
