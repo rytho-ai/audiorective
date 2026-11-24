@@ -108,7 +108,7 @@ When no capability package or widget matches, build on core with your own `Audio
 | Loop a bar or beat range of DAW playback | `workspace.loop` (`setRegion`, `setEnabled`); `references/daw.md` | a timer that seeks back |
 | Which clips, notes or range the user selected, shared by views and agents | `daw/selection` `selectionFor(project)`; `references/daw.md` | selection fields in app state or in the Project |
 | Read, edit or write `.dawproject` in Node (no audio) | `daw/project` + `daw/dawproject` only | `daw` root or `daw/runtime` |
-| Session view, clip launcher, scenes, follow actions, pattern clips | `clock` + `@audiorective/launcher` `ClipLauncher` (it plays the clips); `references/launcher.md`; a Project session: `workspace.session` | a hand-rolled launch scheduler or a custom driver |
+| Session view, clip launcher, scenes, follow actions, pattern clips | `clock` + `@audiorective/launcher` `ClipLauncher` (it plays the clips); `references/launcher.md`; a Project session: `workspace.session` (MIDI tracks sound through a WebCLAP device or a page-made `instruments` sampler) | a hand-rolled launch scheduler or a custom driver |
 | A repeating automation curve that follows tempo ramps and transport seeks | `core/automation` `AutomationClip` + `clock.attach(clip)`; `references/automation.md` | page-owned beat mapping and native cancellation |
 | An editable curve driving a parameter, macro, or clip gain | `core/automation`; clips: `Project.setAudioClipGainAutomation` | hand-scheduled ramps |
 | A user-editable effect chain: add, remove, reorder, bypass, save and load | `EffectChain` (`add`/`remove`/`move`, `toJSON`/`restore`); each effect's `params.bypass` | hand-wired `connect`/`disconnect` or a bypass gain per effect |

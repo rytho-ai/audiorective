@@ -1,5 +1,7 @@
 import type { AutomationBinding, AutomationCurve, AutomationPoint } from "@audiorective/core/automation";
 import type { WebClapHost } from "@audiorective/host/webclap";
+import type { Sampler } from "@audiorective/core";
+import type { MidiSink } from "./midi-sink";
 import type { Channel, Send } from "@audiorective/effects";
 import type { RackEffect, RackMacroSettings } from "./rack-preset";
 import type { TrackRack } from "./track-rack";
@@ -47,5 +49,8 @@ export type TrackRuntime = {
   input: AudioNode;
   session?: AudioTrackSession;
   hosts: Map<string, WebClapHost>;
-  midiHost?: WebClapHost;
+  /** Where the track's MIDI plays: its first WebCLAP device, or its `instruments` sampler. */
+  midi?: MidiSink;
+  /** The sampler built from `WorkspaceOptions.instruments`, when the track plays one. */
+  sampler?: Sampler;
 };

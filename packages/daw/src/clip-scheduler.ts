@@ -1,3 +1,4 @@
+import type { MidiSink } from "./midi-sink";
 import { stopSource } from "./internal/playback-gain";
 import type { TickWindow, Timeline } from "@audiorective/clock";
 import { AutomationBinding, AutomationCurve, audioParamTarget } from "@audiorective/core/automation";
@@ -7,7 +8,6 @@ import { scheduleClipEnvelope } from "./schedule-clip-envelope";
 import { audioClipTimeMap } from "./model";
 import type { AudioClip, AudioClipGainAutomation, PcmAudioClip } from "./model";
 import type { AudioMedia } from "./media";
-import type { WebClapHost } from "@audiorective/host/webclap";
 import type { TempoMap } from "./tempo-map";
 import { audioChunkSeconds, type AudioClipWindow, type AudioHandle, type TrackRuntime } from "./track-runtime";
 
@@ -30,7 +30,7 @@ export class ClipScheduler {
   /** Media sources still waiting for their chunk, so an offline render can hold until what a window needs is scheduled. */
   private readonly loading = new Set<Promise<void>>();
   /** Devices that were sent MIDI since the last `settled()`. */
-  private readonly messaged = new Set<WebClapHost>();
+  private readonly messaged = new Set<MidiSink>();
   private refolds = 0;
 
   constructor(
@@ -68,7 +68,7 @@ export class ClipScheduler {
             this.scheduleAudioClipWindow(clip, destination, spanOf(segment), window, this.scheduled);
         }
       }
-      const host = runtime.midiHost;
+      const host = runtime.midi;
       if (!host) continue;
       const send = (data: Uint8Array, when: number) => {
         // A Session clip holds this track: its own scheduler plays the device instead.

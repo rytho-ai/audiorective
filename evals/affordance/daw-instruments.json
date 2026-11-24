@@ -1,0 +1,46 @@
+{
+  "area": "daw-page-instruments",
+  "description": "API-shape experiment for MIDI tracks that sound through an instrument the page itself provides instead of a WebCLAP plug-in. Expectations describe behaviour, not names.",
+  "tasks": [
+    {
+      "id": "I1-drum-tracks",
+      "prompt": "A browser groovebox has an open song as `project` and wants a running engine for it on `context`, an AudioContext. The song has four MIDI drum tracks named Kick, Snare, Hat and Clap with no plug-in on them, and one Bass track with a WebCLAP synth served at `/plugins/oxo-synth2.wclap`. The page makes the drum sounds itself with plain Web Audio: a kick is a sine oscillator whose pitch drops from 150 Hz to 50 Hz over 0.1 s, the others are short noise bursts through filters, and velocity (0 to 1) scales loudness. Write the code that creates the engine so that the drum tracks' notes play these sounds through each track's own volume, mute and send in the mixer, the same way the synth plays the Bass track, both in the Session view (launching clip row 0 on every track at the next bar) and when rendering bars 1 to 4 of the arrangement offline to measure the mix.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const context: AudioContext;",
+      "expectations": [
+        "Creates one engine for the song and gives each drum track its page-made sound without a plug-in.",
+        "Each drum hit starts at the note's scheduled time, sample-accurately, with loudness from the note's velocity.",
+        "Drum sound goes through the track's own mixer channel, so the track's volume, mute and send apply to it.",
+        "Launches clip row 0 on every track together on the next bar through the engine's session.",
+        "The offline render of bars 1 to 4 includes the drum sounds through the same mix.",
+        "Does not hand-write a scheduler, timer or a second transport to play drum notes."
+      ],
+      "checks": [
+        {
+          "expectation": 5,
+          "label": "No hand-written scheduling or separate launcher",
+          "none": ["\\bsetInterval\\s*\\(", "\\bnew\\s+Clock\\b", "\\bnew\\s+ClipLauncher\\b", "requestAnimationFrame"]
+        }
+      ]
+    },
+    {
+      "id": "I2-sampler-reopen",
+      "prompt": "A browser DAW plays a MIDI track called Keys with a sampler the page builds from an AudioBuffer it already has (`piano`, recorded at middle C, pitch 60): each note plays that buffer transposed by playbackRate, and releasing the note fades it out over 0.2 s. The Keys track has no plug-in. Write the code that opens a saved song from a `.dawproject` Blob `file` in a new engine on `context` with this sampler on the Keys track, plays the arrangement, and lets the user edit a note in the Keys clip while it plays and hear the change. Then save the song back to a Blob and open that Blob in a second engine on another AudioContext with the same sampler, and export the full song from it as an offline mixdown.",
+      "hostDeclarations": "declare const piano: AudioBuffer;\ndeclare const file: Blob;\ndeclare const context: AudioContext;",
+      "expectations": [
+        "Opens the file in an engine whose Keys track plays the page's sampler without a plug-in.",
+        "Each note starts the transposed buffer at its scheduled time and fades it out at its scheduled release.",
+        "Edits a note in the Keys clip through the song model while playing, without rebuilding or stopping the engine.",
+        "Saves the song through the engine to a Blob.",
+        "The second engine opened from the saved Blob plays Keys with the same sampler again.",
+        "The offline mixdown from the second engine includes the sampler notes."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "No hand-written scheduling or separate launcher",
+          "none": ["\\bsetInterval\\s*\\(", "\\bnew\\s+Clock\\b", "\\bnew\\s+ClipLauncher\\b", "requestAnimationFrame"]
+        }
+      ]
+    }
+  ]
+}

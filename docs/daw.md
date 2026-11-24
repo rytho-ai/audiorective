@@ -299,6 +299,28 @@ const reopened = await openWorkspace(context, bytes, {
 
 For recorded takes, capture `const anchor = workspace.takeAnchor()` before arming `AudioRecorder`; use `workspace.takePosition(anchor, take, measuredInputLatencySeconds)` when adding the result to `Project`. For `MidiRecorder`, capture the anchor the same way before `record()`; `takePosition` returns project seconds, so convert it with `project.tempoMap.secondsToBeat(...)` before `addMidiTake`, whose position is project beats. A recorder attached to the playing Workspace clock already carries `take.startBeat`, which `addMidiTake` uses by default. `takePosition` maps the actual take start to project seconds while transport plays; while transport is stopped, it keeps the anchor's project cursor. `takeAnchor(audioTime)` maps that audio time to project time, so an anchor taken in the short lead `play()` leaves before the audible start is exact too: a take that starts before the transport's start is placed earlier by the same offset (and throws below project zero, as with latency). An anchor captured while a seek waits for media cannot be placed, because the audible start is not known yet; capture it after the seek resumes. A positive measured input latency moves the placement earlier. If that would cross project zero, the method throws instead of silently losing timing; record with preroll or reduce the correction. The demo exposes a locally stored millisecond correction field in its browser panel and defaults to zero until the user measures their device.
 
+### Page-made instruments
+
+A MIDI track without a WebCLAP device can play a sound the page makes itself. `WorkspaceOptions.instruments` maps track IDs to core [`Sampler`](./core.md) options (`sound`, `rootNote`, `release`, `polyphony`, `volume`); the Workspace builds one `Sampler` per track and plays that track's notes into its mixer channel, so volume, pan, mute, solo, sends and inserts apply. It plays in Arrangement, Session, `renderMixRange` and the audio fallback export, which rebuild the sampler on their own context through `workspace.deviceOptions`.
+
+```ts
+const kick: SoundFactory = (context, hit) => {
+  const osc = new OscillatorNode(context);
+  osc.frequency.setValueAtTime(150, hit.when);
+  osc.frequency.exponentialRampToValueAtTime(50, hit.when + 0.1);
+  const gain = new GainNode(context);
+  gain.gain.setValueAtTime(1, hit.when);
+  gain.gain.exponentialRampToValueAtTime(0.001, hit.when + 0.3);
+  osc.connect(gain);
+  return { output: gain, sources: [osc], duration: 0.3 };
+};
+const workspace = await Workspace.create(context, project, {
+  instruments: { [kickTrack.id]: { sound: kick }, [keysTrack.id]: { sound: pianoBuffer, rootNote: 60, release: 0.2 } },
+});
+```
+
+A note starts a voice at its time with its velocity (0..1 scales the level) and is released at its end over `release`, so a one-shot sound longer than its note is cut there unless `release` is long enough. A `SoundFactory` returns the voice unstarted; the sampler starts and stops it. The instruments are code, not file content: pass the same option to `openWorkspace`, `openWorkspaceBlob` or `Workspace.create` after opening (track IDs survive save and open). A track with a device plays the device and ignores its entry.
+
 ### Resolve saved plug-in bundles
 
 Bundle URLs from project files are hints. An app approves a URL by returning it from `WorkspaceOptions.resolveBundle`, or returns `undefined` to decline. This applies to both workspace open functions and to `Workspace.create` with a project read by the codec.
@@ -380,7 +402,7 @@ Attach a caller-owned `StepSequencer` with `workspace.transport.attach(seq)`. Ro
 
 ## Clip Launcher
 
-`workspace.session` is a [`ClipLauncher`](./launcher.md) over the Project's audio and MIDI tracks, as a cell (`workspace.cells.session`): `session.value.tracks[trackId].clips[i]` is the Session clip of the i-th clip of that track, `null` for a file-backed audio clip or a MIDI clip on a track without a device. A MIDI Session clip loops over its length through the track's first device; notes still sounding are released when the track changes clip, stops or returns to Arrangement, and that track's Arrangement MIDI is not sent while a Session clip holds it. Non-note MIDI events in a clip are not sent from Session. `workspace.sessionClip(trackId, clipId)` finds it by Project clip ID (a tracked reader). Launch with the launcher's own commands: `workspace.sessionClip(t, c).launch({ quantize: "4n" })`, `session.value.launchScene([clipA, clipB])` (one boundary for every listed track), `session.value.tracks[t].stop()` (back to Arrangement), `session.value.cancelQueued()`, and read `session.value.playing`, `queued` and each clip's cells. The launcher's [`quantize` cell](./launcher.md#layer-1-tracks-of-buffers) defaults to a bar of the Project's time signature; set it to `"4n"` for a beat or `"none"` for now.
+`workspace.session` is a [`ClipLauncher`](./launcher.md) over the Project's audio and MIDI tracks, as a cell (`workspace.cells.session`): `session.value.tracks[trackId].clips[i]` is the Session clip of the i-th clip of that track, `null` for a file-backed audio clip or a MIDI clip on a track with neither a device nor an [`instruments`](#page-made-instruments) entry. A MIDI Session clip loops over its length through the track's first device or its instrument; notes still sounding are released when the track changes clip, stops or returns to Arrangement, and that track's Arrangement MIDI is not sent while a Session clip holds it. Non-note MIDI events in a clip are not sent from Session. `workspace.sessionClip(trackId, clipId)` finds it by Project clip ID (a tracked reader). Launch with the launcher's own commands: `workspace.sessionClip(t, c).launch({ quantize: "4n" })`, `session.value.launchScene([clipA, clipB])` (one boundary for every listed track), `session.value.tracks[t].stop()` (back to Arrangement), `session.value.cancelQueued()`, and read `session.value.playing`, `queued` and each clip's cells. The launcher's [`quantize` cell](./launcher.md#layer-1-tracks-of-buffers) defaults to a bar of the Project's time signature; set it to `"4n"` for a beat or `"none"` for now.
 
 A launched clip plays through the track's devices, inserts and mixer (it is the launcher track's output connected to the track input) and takes that track away from Arrangement until it is stopped or a one-shot ends. Tracks that are not launched keep playing as before. Audio Session clips loop at their original sample rate and length and keep their recorded speed (`warp: false`); `clip.configure({ loop: false })` makes one a one-shot that returns the track to Arrangement at its exact audio end.
 

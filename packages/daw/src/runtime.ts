@@ -2,7 +2,19 @@ import { importedBundles } from "./project-persistence";
 import { holdSeconds, playbackLead, smoothGain } from "./internal/playback-gain";
 import { Clock, Timeline } from "@audiorective/clock";
 import type { LoopRange, TickSource, TickWindow } from "@audiorective/clock";
-import { batch, cell, effect, readonlyCell, untracked, type Cell, type Readable, type ReadonlyCell } from "@audiorective/core";
+import {
+  Sampler,
+  batch,
+  cell,
+  effect,
+  readonlyCell,
+  untracked,
+  type Cell,
+  type Readable,
+  type ReadonlyCell,
+  type SamplerOptions,
+} from "@audiorective/core";
+import { SamplerSink } from "./midi-sink";
 import { AutomationBinding, AutomationCurve, audioParamTarget, type AutomationTarget } from "@audiorective/core/automation";
 import { WebClapHost } from "@audiorective/host/webclap";
 import { ClipLauncher, type Clip as SessionClip, type ClipSpec } from "@audiorective/launcher";
@@ -30,11 +42,19 @@ import type { TrackRuntime } from "./track-runtime";
 
 export type PlaybackEditStatus = "applied" | "needs-sync" | "failed" | "superseded";
 
+/** A `Sampler` setup for one MIDI track: what it plays (`sound`), its root note, release and polyphony. */
+export type TrackInstrument = Omit<SamplerOptions, "signal">;
+
 export type WorkspaceOptions = {
   destination?: AudioNode;
   workletUrl?: string;
   /** Resolve bundle hints from opened files. Returning undefined declines the URL. */
   resolveBundle?: (device: WebClapDevice) => string | Promise<string | undefined> | undefined;
+  /**
+   * Sound for MIDI tracks without a plug-in, keyed by track id: each entry becomes a core `Sampler` playing that track's notes into its mixer channel, in Arrangement,
+   * Session and offline renders. `sound` may be a buffer or a `SoundFactory` for page-made sounds. Not saved in the file: pass it again when opening. A track with a WebCLAP device ignores its entry.
+   */
+  instruments?: Readonly<Record<string, TrackInstrument>>;
   /** Messages produced before the workspace existed, such as file-open warnings; they precede the workspace's own. */
   warnings?: readonly string[];
   /** Hand the Project to the Workspace: `dispose()` disposes it too. Ownership ends if `workspace.project` is later replaced. Default: the caller owns it. */
@@ -114,14 +134,15 @@ export class Workspace {
   /** Bundle URLs this workspace has loaded, by CLAP ID: already approved, so `deviceOptions` approves them again in a file saved from here. */
   private readonly loadedBundles = new Map<string, Set<string>>();
   /**
-   * What another workspace needs to load the same devices: a render workspace, or this project saved and opened again.
+   * What another workspace needs to load the same devices and instruments: a render workspace, or this project saved and opened again.
    * Its `resolveBundle` asks this workspace's own `resolveBundle` first, then approves a bundle URL this workspace has loaded for the same CLAP ID.
    */
-  get deviceOptions(): Pick<WorkspaceOptions, "workletUrl" | "resolveBundle"> {
+  get deviceOptions(): Pick<WorkspaceOptions, "workletUrl" | "resolveBundle" | "instruments"> {
     const resolve = this.options.resolveBundle;
     const loaded = this.loadedBundles;
     return {
       workletUrl: this.options.workletUrl,
+      instruments: this.options.instruments,
       resolveBundle: async (device) =>
         (resolve ? await resolve(device) : undefined) ??
         (device.bundleUrl && loaded.get(device.pluginId)?.has(device.bundleUrl) ? device.bundleUrl : undefined),
@@ -600,7 +621,7 @@ export class Workspace {
           if (previous) previous.output.connect(host.input);
           previous = host;
           runtime.hosts.set(device.id, host);
-          if (track.kind === "midi" && !runtime.midiHost) runtime.midiHost = host;
+          if (track.kind === "midi" && !runtime.midi) runtime.midi = host;
         } catch (error) {
           host?.dispose();
           this.warn(`Device ${device.name} could not load: ${String(error)}`);
@@ -609,6 +630,13 @@ export class Workspace {
       if (previous) {
         previous.output.connect(runtime.rack.input);
         runtime.input = [...runtime.hosts.values()][0].input;
+      }
+      // A track with a device plays the device; its instruments entry is ignored, so render workspaces sharing these options stay warning-free.
+      const instrument = track.kind === "midi" && !track.devices.length ? this.options.instruments?.[track.id] : undefined;
+      if (instrument) {
+        runtime.sampler = new Sampler(this.context, instrument);
+        runtime.sampler.connect(runtime.rack.input);
+        runtime.midi = new SamplerSink(runtime.sampler, this.context);
       }
       this.mixer.connectReceive(strip, runtime.input);
       if (track.kind !== "bus") runtime.session = new AudioTrackSession(this.context, runtime.input);
@@ -779,9 +807,9 @@ export class Workspace {
       onSchedule: ({ track, clip, when, endsAt }) => {
         const runtime = this.tracks.get(track.name);
         const handle = runtime?.session?.follow(when, clip !== null, endsAt);
-        if (!handle || !runtime?.midiHost) return handle;
+        if (!handle || !runtime?.midi) return handle;
         // A MIDI track hands over at `when`, to a clip or back to Arrangement: notes sounding there are released, and the look-ahead is refilled for whoever plays next.
-        const host = runtime.midiHost;
+        const host = runtime.midi;
         const releases = Array.from({ length: 16 }, (_, channel) => host.scheduleMidi([0xb0 | channel, 123, 0], when));
         void this.clock.refresh();
         const withdraw = () => {
@@ -807,7 +835,7 @@ export class Workspace {
 
   private sessionSpec(clip: ProjectTrack["clips"][number], trackId: string): ClipSpec | null {
     if (clip instanceof MidiClip) {
-      const host = this.tracks.get(trackId)?.midiHost;
+      const host = this.tracks.get(trackId)?.midi;
       if (!host || !(clip.duration > 0)) return null;
       // The project's note model is itself a clock scheduler; it plays into the track's first device and loops over the clip's length.
       clip.midi.instrument = host;
@@ -971,7 +999,7 @@ export class Workspace {
   ): boolean {
     if (runtime.clips === clips) return false;
     if (runtime.kind === "midi") {
-      if (runtime.midiHost && this.clock.state.value === "playing") {
+      if (runtime.midi && this.clock.state.value === "playing") {
         const next = new Set(clips);
         const beat = this.fold.toBeat(this.timeline.timeToBeat(this.context.currentTime));
         const changedPlayingClip = runtime.clips.some((clip) => {
@@ -979,7 +1007,7 @@ export class Workspace {
           const time = this.midiClipPositions.get(clip) ?? clip.time;
           return time <= beat && beat <= time + clip.duration && (!next.has(clip) || clip.time !== time);
         });
-        if (changedPlayingClip) runtime.midiHost.allNotesOff();
+        if (changedPlayingClip) runtime.midi.allNotesOff();
       }
       return true;
     }
@@ -999,7 +1027,7 @@ export class Workspace {
           clip.midi.revision.subscribe(() => {
             if (this.clock.state.value !== "playing") return;
             const beat = this.fold.toBeat(this.timeline.timeToBeat(this.context.currentTime));
-            if (clip.time <= beat && beat <= clip.time + clip.duration) track.midiHost?.allNotesOff();
+            if (clip.time <= beat && beat <= clip.time + clip.duration) track.midi?.allNotesOff();
             void this.clock.refresh();
           }),
         );
@@ -1201,7 +1229,10 @@ export class Workspace {
   }
 
   private allNotesOff(): void {
-    for (const track of this.tracks.values()) for (const host of track.hosts.values()) host.allNotesOff();
+    for (const track of this.tracks.values()) {
+      for (const host of track.hosts.values()) host.allNotesOff();
+      if (track.sampler) track.midi?.allNotesOff();
+    }
   }
 
   private cancelAudio(): void {
@@ -1212,6 +1243,7 @@ export class Workspace {
     runtime.session?.dispose();
     runtime.rack.dispose();
     for (const host of runtime.hosts.values()) host.dispose();
+    runtime.sampler?.dispose();
     runtime.automationBinding?.dispose();
     runtime.automationGain.disconnect();
     this.mixer.disposeStrip(runtime);

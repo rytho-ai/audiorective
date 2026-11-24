@@ -60,6 +60,7 @@ const DAW_RUNTIME = [
   "schedule-clip-envelope.ts",
   "track-runtime.ts",
   "clip-scheduler.ts",
+  "midi-sink.ts",
   "mixer.ts",
   "audition.ts",
   "clip-stretch.ts",
