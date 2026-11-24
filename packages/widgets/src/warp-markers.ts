@@ -1,4 +1,5 @@
-import { effect, untracked, type Readable } from "@audiorective/core";
+import { untracked, type Readable } from "@audiorective/core";
+import { effect } from "./detached-effect";
 import type { WaveStretchAnchor } from "@audiorective/player";
 export type { WaveStretchAnchor } from "@audiorective/player";
 import type { TimeViewPlugin } from "./types";

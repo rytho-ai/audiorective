@@ -1,4 +1,5 @@
-import { cell, effect, type Readable } from "@audiorective/core";
+import { cell, type Readable } from "@audiorective/core";
+import { effect } from "./detached-effect";
 
 /** The part of a launcher clip the grid reads and drives (an `@audiorective/launcher` `Clip` satisfies it). */
 export interface ClipGridClip {

@@ -1,7 +1,8 @@
 /** A `PianoRollModel` over a `MidiClip`: notes follow the clip, the selection is the model's own cell.
  * Reads: @audiorective/midi note types, core cells and effects. No DOM.
  */
-import { cell, effect, readonlyCell, untracked, type Cell } from "@audiorective/core";
+import { cell, readonlyCell, untracked, type Cell } from "@audiorective/core";
+import { effect } from "./detached-effect";
 import type { MidiClip, MidiNote, MidiRange } from "@audiorective/midi";
 import type { PianoRollModel } from "./piano-roll-types";
 

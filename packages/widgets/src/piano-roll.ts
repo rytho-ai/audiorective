@@ -399,7 +399,9 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
         const focused = ((event.target as Element | null)?.closest?.("[data-note-id]") as HTMLElement | null)?.dataset.noteId;
         const note = state.notes.find(({ id }) => id === (focused ?? activeNoteId));
         if (!note) return;
+        // Handled here: the note's element is about to leave the DOM, so an app's own Delete shortcut must not also act on it.
         event.preventDefault();
+        event.stopPropagation();
         activeNoteId = undefined;
         commitNote("delete", () => options.onNoteDelete!(note));
       });

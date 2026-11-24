@@ -1,5 +1,6 @@
 /** Maps each Audiorective player onto PlayerLike. Adapters hold no state and need no disposal. */
-import { effect, readonlyCell, untracked, type BufferPlayer, type FilePlayer } from "@audiorective/core";
+import { readonlyCell, untracked, type BufferPlayer, type FilePlayer } from "@audiorective/core";
+import { effect } from "../detached-effect";
 import type { WavePlayer } from "@audiorective/player";
 import type { PlayerLike } from "./types";
 

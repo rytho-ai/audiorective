@@ -48,11 +48,14 @@ export class ProjectSelection {
 
   private constructor(readonly project: Project) {
     this.state = readonlyCell(this.store);
-    effect(() => {
-      const current = this.store.value;
-      const next = this.resolve(current);
-      if (!sameSelection(current, next)) untracked(() => (this.store.value = next));
-    });
+    // Detached: the selection lives as long as its Project, even if first requested inside an effect that later re-runs.
+    untracked(() =>
+      effect(() => {
+        const current = this.store.value;
+        const next = this.resolve(current);
+        if (!sameSelection(current, next)) untracked(() => (this.store.value = next));
+      }),
+    );
   }
 
   private resolve(wanted: ProjectSelectionState): ProjectSelectionState {

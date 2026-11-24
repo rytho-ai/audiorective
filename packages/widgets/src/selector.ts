@@ -1,5 +1,6 @@
 /** Default waveform controls bound to a headless WavePlayer. */
-import { effect, untracked } from "@audiorective/core";
+import { untracked } from "@audiorective/core";
+import { effect } from "./detached-effect";
 import type {
   MountWaveformSelector,
   SelectorVersion,

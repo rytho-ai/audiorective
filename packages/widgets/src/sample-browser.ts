@@ -1,4 +1,4 @@
-import { effect } from "@audiorective/core";
+import { effect } from "./detached-effect";
 import type { Readable } from "@audiorective/core";
 
 export type SampleRow = Readonly<{ id: string; name: string; status: "loading" | "ready" | "error"; duration?: number; error?: string }>;

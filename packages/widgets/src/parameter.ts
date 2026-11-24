@@ -1,4 +1,5 @@
-import { effect, untracked } from "@audiorective/core";
+import { untracked } from "@audiorective/core";
+import { effect } from "./detached-effect";
 
 export type ParameterValue = {
   value: number;

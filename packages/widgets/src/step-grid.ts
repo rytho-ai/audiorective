@@ -1,4 +1,5 @@
-import { cell, effect, readonlyCell, untracked, type ValueRange } from "@audiorective/core";
+import { cell, readonlyCell, untracked, type ValueRange } from "@audiorective/core";
+import { effect } from "./detached-effect";
 import { createPluginHost } from "./plugin-host";
 import { stepGridStyles } from "./step-grid-style";
 import type {

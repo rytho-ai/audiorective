@@ -1,4 +1,5 @@
-import { effect, untracked, type Readable } from "@audiorective/core";
+import { untracked, type Readable } from "@audiorective/core";
+import { effect } from "./detached-effect";
 
 /** Linear gain and edge fades in clip-local seconds; structurally matches the Project clip envelope. */
 export type ClipEnvelope = Readonly<{ gain: number; fadeIn: number; fadeOut: number }>;

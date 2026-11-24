@@ -1,4 +1,5 @@
-import { effect, untracked } from "@audiorective/core";
+import { untracked } from "@audiorective/core";
+import { effect } from "./detached-effect";
 
 /** Reusable arrangement clip gestures over caller-owned elements and project data. */
 export type ArrangementTimeMap = Readonly<{

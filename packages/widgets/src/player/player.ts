@@ -1,5 +1,6 @@
 /** Plain player UI over a borrowed PlayerLike. Owns interaction state (scrub hold, notice); never owns playback. */
-import { effect, untracked } from "@audiorective/core";
+import { untracked } from "@audiorective/core";
+import { effect } from "../detached-effect";
 import { defaultRenderer } from "./renderer";
 import type { PlayerActions, PlayerFrame, PlayerHandle, PlayerOptions, PlayerRendererInstance } from "./types";
 

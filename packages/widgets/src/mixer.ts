@@ -1,4 +1,5 @@
-import { effect, untracked, type Readable } from "@audiorective/core";
+import { untracked, type Readable } from "@audiorective/core";
+import { effect } from "./detached-effect";
 import { mountLevelMeter, type LevelMeterSource } from "./level-meter";
 
 export type MixerStripSettings = Readonly<{

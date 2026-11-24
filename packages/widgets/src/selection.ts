@@ -1,5 +1,6 @@
 /** Selection metadata and interaction only. No audio transport or context dependency. */
-import { effect, untracked } from "@audiorective/core";
+import { untracked } from "@audiorective/core";
+import { effect } from "./detached-effect";
 import { prepareGrid, snapTime } from "./snap-time";
 import type { Selection, WaveformPluginContext, Unsubscribe, SnapMode, SelectionCommit, SelectionPluginOptions, SelectionPlugin } from "./types";
 export type { SnapMode, SelectionCommit, SelectionPluginOptions, SelectionPlugin } from "./types";

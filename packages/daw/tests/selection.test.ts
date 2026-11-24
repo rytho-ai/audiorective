@@ -1,4 +1,4 @@
-import { effect } from "@audiorective/core";
+import { Cell, effect } from "@audiorective/core";
 import { describe, expect, it } from "vitest";
 import { Project } from "../src/project";
 import { selectionFor } from "../src/selection";
@@ -127,5 +127,25 @@ describe("ProjectSelection", () => {
     project.removeClip(vocal.id);
     expect(seen).toHaveLength(count + 1);
     stop();
+  });
+});
+
+describe("ProjectSelection created inside an effect", () => {
+  it("keeps pruning after that effect re-runs", () => {
+    const { project, vocal } = song();
+    const fresh = new Project();
+    const track = fresh.addTrack("A", "audio");
+    const clip = fresh.addAudioClip(track.id, { sampleRate: 100, channels: [new Float32Array(10)] }, 0);
+    const tick = new Cell(0);
+    const stop = effect(() => {
+      void tick.value;
+      selectionFor(fresh);
+    });
+    selectionFor(fresh).selectClips([clip.id]);
+    tick.value = 1;
+    fresh.removeClip(clip.id);
+    expect(selectionFor(fresh).state.value.clipIds).toEqual([]);
+    stop();
+    expect(project.tracks[0].clips[0]).toBe(vocal);
   });
 });

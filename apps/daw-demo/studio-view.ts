@@ -306,8 +306,6 @@ export class StudioView {
       }
       if (target.closest("#automation-panel")) return;
       if (event.key === "Delete" || event.key === "Backspace") {
-        // The piano roll already handled a note it had focus on.
-        if (event.defaultPrevented) return;
         if (
           this.selectedNote?.clipId === this.selectedClipId &&
           document.querySelector<HTMLElement>(".studio")?.dataset.lowerOpen === "true" &&

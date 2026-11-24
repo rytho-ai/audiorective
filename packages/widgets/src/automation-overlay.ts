@@ -1,4 +1,5 @@
-import { effect, untracked, type Readable } from "@audiorective/core";
+import { untracked, type Readable } from "@audiorective/core";
+import { effect } from "./detached-effect";
 import { AutomationCurve, type AutomationPoint } from "@audiorective/core/automation";
 import type { TimeViewPlugin } from "./types";
 

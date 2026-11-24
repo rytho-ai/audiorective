@@ -23,6 +23,8 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Fixed
 
+- **widgets:** A widget mounted inside an effect keeps updating after that effect re-runs. A Delete handled by the piano roll no longer reaches the app's own key handlers.
+- **daw:** `selectionFor` keeps pruning when first called inside an effect.
 - **host:** A saved patch now loads on a context that is not rendering yet, so offline renders and exports work after a synth edit, and `params` reflect the loaded patch after the state settles.
 - **host:** `saveState` hands parameter changes still queued for the audio thread to the plug-in first, so a value set right before a save is in the saved state.
 - **daw:** Both project open paths validate ZIP completeness and entry CRCs. Unsupported master settings fail on open. Audio sidecar details follow clip identity, edited MIDI falls back to standard content with a warning, recorded MIDI channel messages round-trip, XML text is validated on entry, and generated IDs survive save and reopen without reusing deleted IDs. Disposed projects reject edits and saves.

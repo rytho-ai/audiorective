@@ -1,4 +1,5 @@
 /** Note gestures stay in the widget across replaceable layout and SVG/default drawing. */
+import { cell, effect } from "@audiorective/core";
 import { afterEach, expect, test, vi } from "vitest";
 import { userEvent } from "vitest/browser";
 import { mountPianoRoll, type PianoRollLayout, type PianoRollOptions, type PianoRollRenderer, type WaveformPluginContext } from "../src/piano-roll";
@@ -573,4 +574,33 @@ test("setActiveNote chooses the chord note a velocity drag edits after a remount
   await pointer({ action: "down", x, y: rect.top + 4 });
   await pointer({ action: "up", x, y: rect.top + 4 });
   expect(commit.mock.calls[0][0].note.id).toBe("high");
+});
+
+test("a handled Delete does not reach the app's own key handler", async () => {
+  const f = adding();
+  const seen = vi.fn();
+  document.addEventListener("keydown", seen);
+  own(() => document.removeEventListener("keydown", seen));
+  f.root.querySelector<HTMLElement>('[data-note-id="n"]')!.focus();
+  await userEvent.keyboard("{Delete}");
+  expect(f.remove).toHaveBeenCalledTimes(1);
+  expect(seen).not.toHaveBeenCalled();
+});
+
+test("a view mounted inside an effect keeps following its model after that effect re-runs", () => {
+  const m = rollModel([{ id: "n", start: 1, duration: 1, pitch: 60, velocity: 0.5 }], 8);
+  const root = host();
+  const tick = cell(0);
+  let roll: ReturnType<typeof mountPianoRoll> | undefined;
+  const stop = effect(() => {
+    tick.value;
+    roll ??= mountPianoRoll(root, { model: m, pitches: { low: 48, high: 72 } });
+  });
+  own(() => {
+    stop();
+    roll?.dispose();
+  });
+  tick.value = 1;
+  m.clip.edit((draft) => void draft.push({ id: "later", start: 3, duration: 1, pitch: 62, velocity: 0.5, channel: 0 }));
+  expect(root.querySelector('[data-note-id="later"]')).not.toBeNull();
 });
