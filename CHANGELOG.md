@@ -15,6 +15,8 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Added
 
+- **launcher:** `playChain(scenes)` plays scenes back to back for their lengths and then stops; `launcher.chain` reports the position.
+- **daw:** `workspace.arrangement` (and `WorkspaceOptions.arrangement`) turns timeline playback off for Session-only apps, also while playing.
 - **daw:** `WorkspaceOptions.instruments` plays a page-made `Sampler` sound on a MIDI track without a plug-in, in Arrangement, Session and offline renders.
 - **daw:** `workspace.session` launches MIDI clips through the track's first device, with note release on clip changes and Arrangement MIDI held back while Session owns the track.
 - **daw:** `workspace.loop` repeats a beat region on the audio clock with sample-accurate wraps, clip cuts, tempo and automation repeats, and MIDI note release.

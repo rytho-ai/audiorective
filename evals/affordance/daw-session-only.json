@@ -1,0 +1,51 @@
+{
+  "area": "daw-session-only-chain",
+  "description": "API-shape experiment for a Session-only app (scenes without the arrangement playing underneath) and for playing a chain of scenes in order. Expectations describe behaviour, not names.",
+  "tasks": [
+    {
+      "id": "Q1-session-only",
+      "prompt": "A browser groovebox has an open song as `project` and its running engine as `workspace`. The song is only a store of scenes: each track's i-th clip is its pattern for scene i, and where the clips sit on the timeline means nothing to this app, so nothing should ever play from the timeline. Build the transport and scene buttons: pressing a scene button while stopped starts playback with that scene from its first beat; pressing one while playing queues it for the next bar line, and it keeps looping until another scene is pressed. Show which scene is playing and which is queued. Stop silences everything. Tracks with nothing launched stay silent; you must not hear any clip just because the playhead passes its place on the timeline, and the clips must not be moved, copied or deleted to achieve this.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;",
+      "expectations": [
+        "Starting from stopped plays the pressed scene from its first beat.",
+        "A scene pressed while playing starts on the next bar line and loops until another scene is pressed.",
+        "Clips that are not launched are never heard because of their timeline position, through an engine setting rather than by moving the playhead far away, muting tracks or editing clips.",
+        "Playing and queued scene indicators come from reactive engine state.",
+        "Stop silences every track.",
+        "Does not hand-write timers, a second transport or its own launcher."
+      ],
+      "checks": [
+        {
+          "expectation": 5,
+          "label": "No hand-written timing or separate launcher",
+          "none": ["\\bsetInterval\\s*\\(", "\\bnew\\s+Clock\\b", "\\bnew\\s+ClipLauncher\\b", "requestAnimationFrame"]
+        },
+        {
+          "expectation": 2,
+          "label": "No far-away seek or clip edits",
+          "none": ["seek\\(\\s*\\d{3,}", "removeClip", "moveClip", "setTrackMuted"]
+        }
+      ]
+    },
+    {
+      "id": "Q2-scene-chain",
+      "prompt": "A browser groovebox has an open song as `project` and its running engine as `workspace`, used only as a store of scenes: each track's i-th clip is its pattern for scene i, and nothing plays from the timeline. Scenes are one or two bars long (the clip lengths). Build a song chain player: given a chain such as [0, 0, 1, 2] (scene A twice, then B, then C), pressing Play chain plays each entry for its full length, exactly once, starting the next entry on the exact beat the previous one ends, with no gap or overlap, and stops after the last entry. Show which chain position is playing. Pressing a scene button during the chain cancels the chain and queues that scene for the next bar as usual. Stop ends it.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;",
+      "expectations": [
+        "Plays the chain entries in order, including a repeated scene, each for its full one- or two-bar length.",
+        "Each entry starts exactly on the beat the previous one ends, decided by the engine rather than by timers.",
+        "Playback stops after the last entry.",
+        "Shows the playing chain position from engine state or events.",
+        "Pressing a scene during the chain cancels the remaining chain and queues that scene for the next bar.",
+        "Does not hand-write timers, polling, a second transport or its own launcher."
+      ],
+      "checks": [
+        {
+          "expectation": 5,
+          "label": "No hand-written timing or separate launcher",
+          "none": ["\\bsetInterval\\s*\\(", "\\bsetTimeout\\s*\\(", "\\bnew\\s+Clock\\b", "\\bnew\\s+ClipLauncher\\b", "requestAnimationFrame"]
+        }
+      ]
+    }
+  ]
+}

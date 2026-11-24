@@ -121,6 +121,13 @@ export interface QueuedChange {
   /** Beat of the boundary; null while the clock is stopped or paused. */
   beat: number | null;
 }
+/** The chain `playChain` is playing. */
+export interface SceneChain {
+  /** The scene indices, in play order. */
+  readonly scenes: readonly number[];
+  /** The entry sounding: `scenes[index]`; -1 until the first entry starts. */
+  readonly index: number;
+}
 export interface LauncherOptions {
   /** The context the clips play into. */
   context: BaseAudioContext;
@@ -189,7 +196,9 @@ type Inst = {
   owned: Map<{ cancel(time?: number): void }, { when: number; cut: number | null }>;
   cutFrom: number | null;
 };
-type Pending = { clip: Clip | null; source: LaunchSource; quantize: Quantize; beat: number | null; legato: boolean; asIf?: boolean };
+type Pending = { clip: Clip | null; source: LaunchSource; quantize: Quantize; beat: number | null; legato: boolean; asIf?: boolean; chain?: number };
+/** A `playChain` in progress: `entry` is the next entry to begin, at transport beat `start` (null until the transport gives the first one a beat). */
+type ChainRun = { scenes: readonly number[]; entry: number; start: number | null };
 type Commit = { kind: "start"; inst: Inst; when: number } | { kind: "stop"; target: Inst; when: number; beat: number };
 type Item = { when: number; rank: number; seq: number; owner: Inst | null; run: () => void };
 
@@ -469,6 +478,8 @@ export class ClipLauncher extends EventTarget implements Scheduler {
   readonly playing: ReadonlyCell<readonly Clip[]>;
   /** Every waiting launch and stop, soonest first. */
   readonly queued: ReadonlyCell<readonly QueuedChange[]>;
+  /** The chain `playChain` is playing: its scenes and the index of the entry sounding (-1 until the first starts); null when no chain plays. */
+  readonly chain: ReadonlyCell<SceneChain | null>;
 
   private readonly seed: number;
   private readonly transform?: LaunchTransform;
@@ -489,6 +500,8 @@ export class ClipLauncher extends EventTarget implements Scheduler {
   private readonly listeners: Array<[string, EventListenerOrEventListenerObject, boolean | AddEventListenerOptions | undefined]> = [];
   private readonly abortSignal?: AbortSignal;
   private readonly onAbort = () => this.dispose();
+  private readonly chainCell = cell<SceneChain | null>(null);
+  private chainRun: ChainRun | null = null;
 
   /** Each array is one track's scene slots; null leaves a slot empty. */
   constructor(tracks: Readonly<Record<string, readonly (ClipSpec | null)[]>>, options: LauncherOptions) {
@@ -516,6 +529,7 @@ export class ClipLauncher extends EventTarget implements Scheduler {
         .filter((q): q is QueuedChange => !!q)
         .sort((a, b) => (a.when ?? Infinity) - (b.when ?? Infinity)),
     );
+    this.chain = readonlyCell(this.chainCell);
     this.abortSignal = options.signal;
     if (this.abortSignal?.aborted) this.dispose();
     else this.abortSignal?.addEventListener("abort", this.onAbort);
@@ -658,6 +672,7 @@ export class ClipLauncher extends EventTarget implements Scheduler {
 
   // ------------------------------------------------------------ commands
   /** @internal */ _launchClip(clip: Clip, options?: LaunchOptions): void {
+    this.endChain();
     const track = clip.track;
     const c = clip._opts.value;
     const waiting = clip._queued.value;
@@ -679,6 +694,7 @@ export class ClipLauncher extends EventTarget implements Scheduler {
     this.finishCommand();
   }
   /** @internal */ _releaseClip(clip: Clip): void {
+    this.endChain();
     const mode = clip._opts.value.mode;
     if (mode !== "gate" && mode !== "repeat") return;
     const track = clip.track;
@@ -692,12 +708,14 @@ export class ClipLauncher extends EventTarget implements Scheduler {
     this.finishCommand();
   }
   /** @internal */ _stopTrack(track: Track, options?: LaunchOptions): void {
+    this.endChain();
     const playing = track.cur && track.cur.state !== "ended" && track.cur.stopBeat == null ? track.cur.clip : null;
     this.requestStop(track, "stop", options?.quantize ?? this.clipQuantize(playing));
   }
   /** Silences every track at the next boundary of `options.quantize`, else `launcher.quantize`; the clock keeps running. */
   stopAll(options?: LaunchOptions): void {
     untracked(() => {
+      this.endChain();
       const q = options?.quantize ?? this.quantize.value;
       const base = this.isPlaying() ? this.boundary(q, this.nowBeat()) : null;
       for (const t of Object.values(this.tracks)) this.request({ track: t, clip: null, source: "stop", quantize: q, fixedBeat: base });
@@ -710,28 +728,100 @@ export class ClipLauncher extends EventTarget implements Scheduler {
    */
   launchScene(scene: number | readonly Clip[], options?: LaunchOptions): void {
     untracked(() => {
-      const q = options?.quantize ?? this.quantize.value;
-      const base = this.isPlaying() ? this.boundary(q, this.nowBeat()) : null;
-      this.clearSceneTempos(true);
-      const clips = typeof scene === "number" ? Object.values(this.tracks).map((t) => t._clips[scene] ?? null) : scene;
-      for (const clip of clips)
-        if (clip)
-          this.request({
-            track: clip.track,
-            clip,
-            source: "scene",
-            quantize: q,
-            legato: options?.legato ?? clip._opts.value.legato,
-            fixedBeat: base,
-          });
-      const tempo = typeof scene === "number" ? this.scenes[scene]?.tempo.value : null;
-      if (tempo != null) this.addSceneTempo(base, tempo);
+      this.endChain();
+      this.sceneLaunch(scene, options?.quantize ?? this.quantize.value, undefined, options?.legato);
       this.finishCommand();
     });
+  }
+  /**
+   * Plays `scenes` (scene indices) once, in order: the first starts on the next boundary of `options.quantize` (else `launcher.quantize`), each next one on the exact beat the previous
+   * one ends, and every track stops when the last one ends. A scene lasts as long as its longest clip (a bar when none has a length). Any other launch, stop or `cancelQueued` ends the chain;
+   * the transport stopping, pausing or seeking ends it too. Read the position from `chain`.
+   */
+  playChain(scenes: readonly number[], options?: LaunchOptions): void {
+    if (!scenes.length || scenes.some((scene) => !Number.isInteger(scene) || scene < 0 || scene >= this.scenes.length))
+      throw new RangeError(`playChain needs scene indices from 0 to ${this.scenes.length - 1}.`);
+    untracked(() => {
+      this.endChain();
+      const chain = Object.freeze([...scenes]);
+      const q = options?.quantize ?? this.quantize.value;
+      const start = this.isPlaying() ? this.boundary(q, this.nowBeat()) : null;
+      this.chainRun = { scenes: chain, entry: 0, start };
+      this.chainCell.value = Object.freeze({ scenes: chain, index: -1 });
+      this.sceneLaunch(chain[0], q, start, options?.legato, 0);
+      this.finishCommand();
+    });
+  }
+  // `chain` tags a `playChain` entry, so ending the chain can withdraw it.
+  private sceneLaunch(
+    scene: number | readonly Clip[],
+    q: Quantize,
+    fixed: number | null | undefined,
+    legato: boolean | undefined,
+    chain?: number,
+  ): void {
+    const base = fixed !== undefined ? fixed : this.isPlaying() ? this.boundary(q, this.nowBeat()) : null;
+    this.clearSceneTempos(true);
+    const clips = typeof scene === "number" ? Object.values(this.tracks).map((t) => t._clips[scene] ?? null) : scene;
+    for (const clip of clips)
+      if (clip)
+        this.request({
+          track: clip.track,
+          clip,
+          source: "scene",
+          quantize: q,
+          legato: legato ?? clip._opts.value.legato,
+          fixedBeat: base,
+          chain,
+        });
+    const tempo = typeof scene === "number" ? this.scenes[scene]?.tempo.value : null;
+    if (tempo != null) this.addSceneTempo(base, tempo);
+  }
+  // A chain scene lasts as long as its longest clip.
+  private sceneBeats(scene: number): number {
+    let beats = 0;
+    for (const t of Object.values(this.tracks)) {
+      const clip = t._clips[scene];
+      if (clip) beats = Math.max(beats, this._materialBeats(clip) ?? 0);
+    }
+    return beats > EPS ? beats : this.barBeats();
+  }
+  // When the transport reaches the beat an entry begins (it is sounding, so no track's commit can still be withdrawn), report it and queue the next entry, or every
+  // track's stop, on the beat it ends. Driven by the chain's own beats, it advances through empty scenes and launches dropped by `chance` or `transform`.
+  private advanceChain(): boolean {
+    const run = this.chainRun;
+    // Compared in time: before the transport's anchor the beat reading is clamped, so a beat test would fire before a stopped-start chain begins.
+    if (!run || run.start == null || !this.isPlaying() || this.now() < this.beatTime(run.start) - 1e-9) return false;
+    if (run.entry >= run.scenes.length) {
+      this.endChain();
+      return true;
+    }
+    const index = run.entry;
+    const end = run.start + this.sceneBeats(run.scenes[index]);
+    this.chainCell.value = Object.freeze({ scenes: run.scenes, index });
+    run.entry = index + 1;
+    run.start = end;
+    if (run.entry < run.scenes.length) this.sceneLaunch(run.scenes[run.entry], "none", end, undefined, run.entry);
+    else
+      for (const t of Object.values(this.tracks))
+        this.request({ track: t, clip: null, source: "stop", quantize: "none", fixedBeat: end, chain: run.entry });
+    return true;
+  }
+  // Ends the chain and withdraws the changes it queued, so a command on one track does not leave the chain's next entry waiting on the others.
+  private endChain(): void {
+    if (!this.chainRun) return;
+    this.chainRun = null;
+    for (const t of Object.values(this.tracks))
+      if (t.pending?.chain !== undefined) {
+        this.withdraw(t, "cancelled");
+        this.syncCells(t);
+      }
+    if (this.chainCell.value) this.chainCell.value = null;
   }
   /** Withdraws every waiting launch and stop, and a waiting scene tempo. Returns whether any was withdrawn. */
   cancelQueued(): boolean {
     return untracked(() => {
+      this.endChain();
       let any = this.sceneTempos.some((s) => s.beat != null && s.time != null && s.time > this.now());
       this.clearSceneTempos(true);
       for (const t of Object.values(this.tracks)) any = this._cancelTrackQueued(t) || any;
@@ -787,6 +877,7 @@ export class ClipLauncher extends EventTarget implements Scheduler {
     chance?: boolean;
     keepWaiting?: boolean;
     asIf?: boolean;
+    chain?: number;
   }): void {
     const { track, clip, source } = o;
     let quantize = o.quantize;
@@ -812,7 +903,7 @@ export class ClipLauncher extends EventTarget implements Scheduler {
       if (p < 1 && rnd("chance") >= p) return void this.emit("skipped", track, clip, beat == null ? null : this.whenOf(beat));
     }
     if (!o.keepWaiting) this.withdraw(track, "cancelled");
-    track.pending = { clip, source, quantize, beat, legato, asIf: o.asIf };
+    track.pending = { clip, source, quantize, beat, legato, asIf: o.asIf, chain: o.chain };
     this.emit("queued", track, clip, beat == null ? null : this.beatTime(beat));
     this.syncCells(track);
     if (beat != null && beat < this.lastEnd - EPS) this.commitPending(track);
@@ -836,6 +927,7 @@ export class ClipLauncher extends EventTarget implements Scheduler {
   }
   private finishCommand(): void {
     if (this.inWindow) return;
+    while (this.advanceChain());
     if (this.dirtyFrom != null) {
       const from = this.dirtyFrom;
       this.dirtyFrom = null;
@@ -1322,6 +1414,7 @@ export class ClipLauncher extends EventTarget implements Scheduler {
       }
       for (const t of Object.values(this.tracks)) for (const inst of [...t.insts]) changed = this.tick(inst) || changed;
       for (const e of this.sceneTempos) if (e.beat != null && e.time == null && e.beat < this.lastEnd) this.applySceneTempo(e);
+      changed = this.advanceChain() || changed;
       if (!changed) break;
     }
   }
@@ -1335,6 +1428,8 @@ export class ClipLauncher extends EventTarget implements Scheduler {
       const stopping = dead(R) || (p && !p.clip && p.beat != null && p.beat <= R + EPS);
       inst.repeatBeat = null;
       if (!stopping && inst.track.cur === inst) {
+        // The repeat commits at once (R is inside the window); a launch waiting for a later boundary stays queued.
+        const waiting = p && p.beat != null && p.beat > R + EPS ? p : null;
         this.request({
           track: inst.track,
           clip: inst.clip,
@@ -1345,6 +1440,7 @@ export class ClipLauncher extends EventTarget implements Scheduler {
           keepWaiting: true,
           legato: false,
         });
+        if (waiting && !inst.track.pending) inst.track.pending = waiting;
         changed = true;
       }
     }
@@ -1498,6 +1594,8 @@ export class ClipLauncher extends EventTarget implements Scheduler {
     untracked(() => this.resetFor(reason));
   }
   private resetFor(reason: ResetReason): void {
+    // A chain waiting for the transport starts with it; stopping, pausing, seeking or detaching ends it.
+    if (reason !== "start") this.endChain();
     const now = this.now();
     const all = Object.values(this.tracks);
     batch(() => {
@@ -1614,6 +1712,7 @@ export class ClipLauncher extends EventTarget implements Scheduler {
       this.lastEnd = change.beat;
       this.lastWindow = null;
       for (const t of Object.values(this.tracks)) if (t.pending && t.pending.beat == null) t.pending = { ...t.pending, beat: change.beat };
+      if (this.chainRun && this.chainRun.start == null) this.chainRun.start = change.beat;
       for (const e of this.sceneTempos) if (e.beat == null) this.addSceneTempoAt(e, change);
       // A start at "now" leaves no look-ahead: fill the first window at once, or a launch waiting on this beat would sound at the next timer tick.
       if (change.when <= this.now() && Object.values(this.tracks).some((t) => t.pending)) void this.handle?.refresh();

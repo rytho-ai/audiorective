@@ -50,6 +50,7 @@ describe("commands called inside an effect do not subscribe it", () => {
       runs++;
       launcher.launchScene(0);
       launcher.launchScene([clip]);
+      launcher.playChain([0]);
       launcher.stopAll();
       launcher.cancelQueued();
       const onStarted = () => {};
@@ -153,6 +154,10 @@ describe("public readers are tracked", () => {
     await expectTracked(
       () => track.queued.value,
       () => track.clips[1]!.launch({ quantize: "2m" }),
+    );
+    await expectTracked(
+      () => launcher.chain.value,
+      () => launcher.playChain([0, 1]),
     );
     await expectTracked(
       () => launcher.quantize.value,

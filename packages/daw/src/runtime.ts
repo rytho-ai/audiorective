@@ -55,6 +55,8 @@ export type WorkspaceOptions = {
    * Session and offline renders. `sound` may be a buffer or a `SoundFactory` for page-made sounds. Not saved in the file: pass it again when opening. A track with a WebCLAP device ignores its entry.
    */
   instruments?: Readonly<Record<string, TrackInstrument>>;
+  /** Initial value of `workspace.arrangement`. Default true; false for an app that only plays Session clips. */
+  arrangement?: boolean;
   /** Messages produced before the workspace existed, such as file-open warnings; they precede the workspace's own. */
   warnings?: readonly string[];
   /** Hand the Project to the Workspace: `dispose()` disposes it too. Ownership ends if `workspace.project` is later replaced. Default: the caller owns it. */
@@ -159,6 +161,12 @@ export class Workspace {
    * runs into it and then repeats; a seek past its end plays on. `position` stays inside the region while it repeats.
    */
   readonly loop: WorkspaceLoop;
+  /**
+   * Whether the timeline plays. True (default) plays Arrangement clips wherever no Session clip holds the track; false plays only launched Session clips, so a track with nothing
+   * launched is silent and clip positions on the timeline are never heard. Writable while playing: turning it off releases Arrangement sound at once, turning it on schedules it again.
+   */
+  readonly arrangement: Cell<boolean>;
+  private stopWatchingArrangement?: () => void;
   /** How the continuous transport maps onto the arrangement. */
   private fold = new LoopFold(0, 0, null);
   /** The next loop cycle whose tempo events are not on the timeline yet. */
@@ -211,6 +219,7 @@ export class Workspace {
           throw new RangeError("Workspace loop region must last at least 20 ms.");
       },
     );
+    this.arrangement = cell(options.arrangement ?? true);
     this.clock = new Clock({
       timeline: this.timeline,
       lookAhead: 0.15,
@@ -218,6 +227,7 @@ export class Workspace {
       tickSource: options.tickSource,
       onTick: (window) => this.schedule(window),
     });
+    this.stopWatchingArrangement = this.arrangement.subscribe((on) => untracked(() => this.arrangementChanged(on)));
     this.session = readonlyCell(() => {
       this.sessionRevision.$();
       return untracked(() => (this.sessionLauncher ??= this.buildSession()));
@@ -1224,8 +1234,20 @@ export class Workspace {
       if (next <= through) break;
       through = next;
     }
-    this.scheduler.scheduleArrangement(this.tracks.values(), window, this.activeTempoMap, this.timeline, this.fold);
+    if (untracked(() => this.arrangement.value))
+      this.scheduler.scheduleArrangement(this.tracks.values(), window, this.activeTempoMap, this.timeline, this.fold);
     for (const wrap of this.fold.wraps(window.beat.start, window.beat.end)) this.programLoopAutomation(this.timeline.beatToTime(wrap));
+  }
+
+  /** Arrangement switched while playing: off releases its sound on tracks no Session clip holds; on refills the look-ahead. */
+  private arrangementChanged(on: boolean): void {
+    if (this.disposed || this.clock.state.value !== "playing") return;
+    if (!on) {
+      this.cancelAudio();
+      const now = this.context.currentTime;
+      for (const track of this.tracks.values()) if (!track.session?.playingAt(now)) track.midi?.allNotesOff();
+    }
+    void this.clock.refresh();
   }
 
   private allNotesOff(): void {
@@ -1261,6 +1283,7 @@ export class Workspace {
   dispose(): void {
     if (this.disposed) return;
     this.stopWatchingProject?.();
+    this.stopWatchingArrangement?.();
     this.stop();
     this.disposed = true;
     this.audition.stop();
