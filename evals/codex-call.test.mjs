@@ -16,10 +16,10 @@ writeFileSync(
   executable,
   `#!/usr/bin/env node
 import { appendFileSync, readFileSync } from 'node:fs';
-readFileSync(0, 'utf8'); // This would hang if the helper left stdin open.
+const stdin = readFileSync(0, 'utf8'); // This would hang if the helper left stdin open.
 const args = process.argv.slice(2);
-const prompt = args.at(-1);
-if (process.env.CALL_LOG) appendFileSync(process.env.CALL_LOG, JSON.stringify({args,cwd:process.cwd()})+'\\n');
+const prompt = args.at(-1) === '-' ? stdin : args.at(-1);
+if (process.env.CALL_LOG) appendFileSync(process.env.CALL_LOG, JSON.stringify({args,cwd:process.cwd(),stdinLength:stdin.length})+'\\n');
 const emit = (event) => process.stdout.write(JSON.stringify(event)+'\\n');
 const item = (value,type='item.completed') => emit({type,item:value});
 if (process.env.SCENARIO === 'timeout') { setInterval(()=>{},1000); }
@@ -59,6 +59,19 @@ const base = { prompt: "test", model: "pinned-model", reasoningEffort: "high", e
 const env = (scenario = "success") => ({ ...process.env, SCENARIO: scenario, CALL_LOG: log });
 
 // No live model/network calls: the fake executable speaks the CLI JSONL protocol.
+test("a prompt over one argv string's limit goes on stdin", async () => {
+  const prompt = "x".repeat(200_000);
+  const result = await callCodex({ ...base, prompt, env: env() });
+  assert.equal(result.error, undefined);
+  const call = JSON.parse(readFileSync(log, "utf8").trim().split("\n").at(-1));
+  assert.equal(call.args.at(-1), "-");
+  assert.equal(call.stdinLength, prompt.length);
+  await callCodex({ ...base, env: env() });
+  const small = JSON.parse(readFileSync(log, "utf8").trim().split("\n").at(-1));
+  assert.equal(small.args.at(-1), "test");
+  assert.equal(small.stdinLength, 0);
+});
+
 test("success uses a fresh isolated cwd, explicit model/effort, exact tokens and unknown USD", async () => {
   const result = await callCodex({ ...base, env: env() });
   assert.equal(result.error, undefined);

@@ -71,6 +71,8 @@ export class ClipScheduler {
       const host = runtime.midiHost;
       if (!host) continue;
       const send = (data: Uint8Array, when: number) => {
+        // A Session clip holds this track: its own scheduler plays the device instead.
+        if (runtime.session?.playingAt(when)) return;
         window.own(host.scheduleMidi(data, when), when);
         this.messaged.add(host);
       };

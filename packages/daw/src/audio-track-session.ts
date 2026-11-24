@@ -4,7 +4,8 @@ type Change = { when: number; playing: boolean; end: number | undefined };
 
 /**
  * Switches one track between Arrangement and Session upstream of its shared devices, effects and mixer. Session clips play through the launcher
- * into `input`; this holds the Arrangement side: its gain is 0 from a launch until a stop or the end of a one-shot, and 1 otherwise.
+ * into `input`; this holds the Arrangement side: its gain is 0 from a launch until a stop or the end of a one-shot, and 1 otherwise. A MIDI track
+ * has no Arrangement audio to gate, so its scheduler asks `playingAt` before sending Arrangement MIDI.
  */
 export class AudioTrackSession {
   readonly arrangementInput: GainNode;
@@ -33,6 +34,11 @@ export class AudioTrackSession {
       this.apply();
     };
     return { cancel: remove, reset: remove };
+  }
+
+  /** Whether a Session clip holds the track at audio time `time`, so Arrangement MIDI for it is not sent. */
+  playingAt(time: number): boolean {
+    return this.levelAt(time) === 0;
   }
 
   /** Arrangement gain at audio time `time`: 0 while the latest change at or before it is a clip that has not ended. */

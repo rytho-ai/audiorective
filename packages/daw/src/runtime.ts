@@ -15,7 +15,7 @@ import { ClipStretch, type PreparedClipStretch } from "./clip-stretch";
 import { createWorkspaceLoop, LoopFold, type WorkspaceLoop } from "./arrangement-loop";
 import { ClipScheduler } from "./clip-scheduler";
 import { Mixer, type MixerStrip } from "./mixer";
-import { MidiClip, Project } from "./model";
+import { captureDeviceState, MidiClip, Project } from "./model";
 import type { TempoMap } from "./tempo-map";
 import type { AudioClipGainAutomation, PcmAudioClip, ProjectTrack, TrackRouting, WebClapDevice } from "./model";
 import type { BeatRange, ProjectVersion } from "./project-edits";
@@ -73,9 +73,10 @@ export class Workspace {
   }
   readonly player: WorkspacePlayer;
   /**
-   * The Session view's launcher over this Workspace's audio tracks (mirrors `cells.session`): `session.value.tracks[trackId].clips[i]` is the i-th
-   * clip of that Project track, `null` when it is not an in-memory audio clip, so a grid reads a Project clip's state from its cells and launches
-   * it with `clip.launch()`. A launched clip plays through the track's devices, effects and mixer strip and takes the track away from Arrangement
+   * The Session view's launcher over this Workspace's audio and MIDI tracks (mirrors `cells.session`): `session.value.tracks[trackId].clips[i]` is
+   * the i-th clip of that Project track, `null` for a file-backed audio clip or a MIDI clip on a track without a device, so a grid reads a Project
+   * clip's state from its cells and launches it with `clip.launch()`; `launchScene(i)` launches row i on every track. A MIDI clip loops over its
+   * length through the track's first device, and notes still sounding are released when the track changes clip, stops or returns. A launched clip plays through the track's devices, effects and mixer strip and takes the track away from Arrangement
    * until it is stopped or a one-shot ends. The launcher follows `workspace.transport` (a launch made while stopped waits for `play()`; stop and
    * seek clear it) and is replaced by `sync()`, so read `session.value` inside the effect that uses it. It is built (the clips' audio copied into buffers) the first time it is read. See `sessionClip`.
    */
@@ -102,7 +103,7 @@ export class Workspace {
   private sessionLauncher?: ClipLauncher;
   /** Bumped when `sync()` replaces the launcher, so `session` readers re-run. */
   private readonly sessionRevision = cell(0);
-  private readonly sessionSources = new WeakMap<SessionClip, PcmAudioClip>();
+  private readonly sessionSources = new WeakMap<SessionClip, ProjectTrack["clips"][number]>();
   /** Bumped when `reconcileSession` replaces a session clip, so `sessionClip` readers re-run. */
   private readonly sessionClipEdits = cell(0);
 
@@ -110,9 +111,21 @@ export class Workspace {
   /** The Project this Workspace disposes with itself, when it was handed one. */
   private ownedProject?: Project;
   private readonly options: WorkspaceOptions;
-  /** What a separate render workspace needs to load the same devices. */
+  /** Bundle URLs this workspace has loaded, by CLAP ID: already approved, so `deviceOptions` approves them again in a file saved from here. */
+  private readonly loadedBundles = new Map<string, Set<string>>();
+  /**
+   * What another workspace needs to load the same devices: a render workspace, or this project saved and opened again.
+   * Its `resolveBundle` asks this workspace's own `resolveBundle` first, then approves a bundle URL this workspace has loaded for the same CLAP ID.
+   */
   get deviceOptions(): Pick<WorkspaceOptions, "workletUrl" | "resolveBundle"> {
-    return { workletUrl: this.options.workletUrl, resolveBundle: this.options.resolveBundle };
+    const resolve = this.options.resolveBundle;
+    const loaded = this.loadedBundles;
+    return {
+      workletUrl: this.options.workletUrl,
+      resolveBundle: async (device) =>
+        (resolve ? await resolve(device) : undefined) ??
+        (device.bundleUrl && loaded.get(device.pluginId)?.has(device.bundleUrl) ? device.bundleUrl : undefined),
+    };
   }
   private readonly tracks = new Map<string, TrackRuntime>();
   private readonly scheduler: ClipScheduler;
@@ -581,6 +594,8 @@ export class Workspace {
             this.warn(`Device ${device.name} has a different CLAP ID in its bundle.`);
             continue;
           }
+          if (!this.loadedBundles.has(device.pluginId)) this.loadedBundles.set(device.pluginId, new Set());
+          this.loadedBundles.get(device.pluginId)!.add(bundleUrl);
           if (device.state.length) await host.loadState(device.state);
           if (previous) previous.output.connect(host.input);
           previous = host;
@@ -596,7 +611,7 @@ export class Workspace {
         runtime.input = [...runtime.hosts.values()][0].input;
       }
       this.mixer.connectReceive(strip, runtime.input);
-      if (track.kind === "audio") runtime.session = new AudioTrackSession(this.context, runtime.input);
+      if (track.kind !== "bus") runtime.session = new AudioTrackSession(this.context, runtime.input);
       this.updateAutomation(runtime, track);
       return runtime;
     } catch (error) {
@@ -743,8 +758,8 @@ export class Workspace {
   }
 
   /**
-   * The Session clip of a Project audio clip: `session.value.tracks[trackId].clips[i]` for the clip's position in its track, or null when the
-   * clip is unknown or not an in-memory audio clip. Session clips loop and keep their recorded speed; `clip.configure({ loop: false })` makes one a one-shot.
+   * The Session clip of a Project clip: `session.value.tracks[trackId].clips[i]` for the clip's position in its track, or null when the
+   * clip is unknown, file-backed audio, or MIDI on a track without a device. Session clips loop and keep their recorded speed; `clip.configure({ loop: false })` makes one a one-shot.
    * A tracked reader: it re-runs when the Project's clips change and the session clips are replaced to match.
    */
   sessionClip(trackId: string, clipId: string): SessionClip | null {
@@ -758,10 +773,31 @@ export class Workspace {
   private buildSession(): ClipLauncher {
     const specs: Record<string, (ClipSpec | null)[]> = {};
     for (const track of this.project.tracks)
-      if (this.tracks.get(track.id)?.session) specs[track.id] = track.clips.map((clip) => this.sessionSpec(clip));
+      if (this.tracks.get(track.id)?.session) specs[track.id] = track.clips.map((clip) => this.sessionSpec(clip, track.id));
     const launcher = new ClipLauncher(specs, {
       context: this.context,
-      onSchedule: ({ track, clip, when, endsAt }) => this.tracks.get(track.name)?.session?.follow(when, clip !== null, endsAt),
+      onSchedule: ({ track, clip, when, endsAt }) => {
+        const runtime = this.tracks.get(track.name);
+        const handle = runtime?.session?.follow(when, clip !== null, endsAt);
+        if (!handle || !runtime?.midiHost) return handle;
+        // A MIDI track hands over at `when`, to a clip or back to Arrangement: notes sounding there are released, and the look-ahead is refilled for whoever plays next.
+        const host = runtime.midiHost;
+        const releases = Array.from({ length: 16 }, (_, channel) => host.scheduleMidi([0xb0 | channel, 123, 0], when));
+        void this.clock.refresh();
+        const withdraw = () => {
+          for (const release of releases) release.cancel();
+        };
+        return {
+          cancel: () => {
+            withdraw();
+            handle.cancel?.();
+          },
+          reset: () => {
+            withdraw();
+            handle.reset?.();
+          },
+        };
+      },
     });
     for (const id of Object.keys(specs)) launcher.tracks[id]!.connect(this.tracks.get(id)!.input);
     this.clock.attach(launcher);
@@ -769,7 +805,15 @@ export class Workspace {
     return launcher;
   }
 
-  private sessionSpec(clip: ProjectTrack["clips"][number]): ClipSpec | null {
+  private sessionSpec(clip: ProjectTrack["clips"][number], trackId: string): ClipSpec | null {
+    if (clip instanceof MidiClip) {
+      const host = this.tracks.get(trackId)?.midiHost;
+      if (!host || !(clip.duration > 0)) return null;
+      // The project's note model is itself a clock scheduler; it plays into the track's first device and loops over the clip's length.
+      clip.midi.instrument = host;
+      const [numerator, denominator] = this.project.signature;
+      return { scheduler: clip.midi, loop: true, length: `${clip.duration / ((numerator * 4) / denominator)}m`, name: clip.id };
+    }
     if (clip.kind !== "audio" || clip.media) return null;
     return { buffer: this.scheduler.sessionBufferFor(clip as PcmAudioClip), loop: true, warp: false, name: clip.id };
   }
@@ -777,7 +821,7 @@ export class Workspace {
   private recordSessionSources(launcher: ClipLauncher, track: ProjectTrack): void {
     track.clips.forEach((clip, index) => {
       const sessionClip = launcher.tracks[track.id]?.clips[index];
-      if (sessionClip && clip.kind === "audio" && !clip.media) this.sessionSources.set(sessionClip, clip);
+      if (sessionClip) this.sessionSources.set(sessionClip, clip);
     });
   }
 
@@ -792,13 +836,13 @@ export class Workspace {
       const count = Math.max(track.clips.length, sessionTrack.clips.length);
       for (let index = 0; index < count; index++) {
         const wanted = track.clips[index];
-        const spec = wanted ? this.sessionSpec(wanted) : null;
+        const spec = wanted ? this.sessionSpec(wanted, track.id) : null;
         const existing = sessionTrack.clips[index] ?? null;
         const source = existing ? this.sessionSources.get(existing) : undefined;
         if ((spec === null && existing === null) || (spec !== null && existing !== null && source === wanted)) continue;
         replaced = true;
         const clip = sessionTrack.setClip(index, spec);
-        if (clip && wanted?.kind === "audio" && !wanted.media) this.sessionSources.set(clip, wanted as PcmAudioClip);
+        if (clip && wanted) this.sessionSources.set(clip, wanted);
       }
     }
     if (replaced) this.sessionClipEdits.value++;
@@ -1135,7 +1179,7 @@ export class Workspace {
           const currentTrack = () => project.tracks.find(({ id }) => id === track.id);
           if (currentTrack()?.devices.find(({ id }) => id === device.id)?.state !== device.state) continue;
           this.reflectProjectEdit(() => {
-            project.captureDeviceState(device.id, state);
+            captureDeviceState(project, device.id, state);
             const installed = currentTrack()?.devices.find(({ id }) => id === device.id);
             if (installed) runtime.deviceStates.set(device.id, installed.state);
           });

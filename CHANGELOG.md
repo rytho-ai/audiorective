@@ -15,6 +15,7 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Added
 
+- **daw:** `workspace.session` launches MIDI clips through the track's first device, with note release on clip changes and Arrangement MIDI held back while Session owns the track.
 - **daw:** `workspace.loop` repeats a beat region on the audio clock with sample-accurate wraps, clip cuts, tempo and automation repeats, and MIDI note release.
 - **widgets:** The piano roll adds `onNoteAdd`, `onNoteDelete` and `velocityLane`; `onNoteEdit` also reports `kind: "velocity"`.
 - **daw:** `@audiorective/daw/selection` adds `selectionFor(project)`, one shared `ProjectSelection` per Project for views and agents, outside the file, undo and version. `setTempoChanges` accepts an entry at beat 0 to set the starting tempo.
@@ -23,6 +24,10 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Fixed
 
+- **launcher:** A launch waiting for `clock.start()` with no time now begins exactly on beat 0 instead of at the next timer tick.
+- **launcher:** A scheduler clip stopped in the same look-ahead as a clock refresh (another track's launch, an edit, a tempo change) still cuts its held notes at the stop instead of letting them ring.
+- **daw:** `workspace.deviceOptions` approves the bundle URLs the workspace has loaded, so a file saved from it opens again with its plug-ins; other URLs still need `resolveBundle`.
+- **daw:** Live plug-in state capture is no longer on the public `Project` type; apps without a Workspace use `project.setDeviceState`.
 - **widgets:** A widget mounted inside an effect keeps updating after that effect re-runs. A Delete handled by the piano roll no longer reaches the app's own key handlers.
 - **daw:** `selectionFor` keeps pruning when first called inside an effect.
 - **host:** A saved patch now loads on a context that is not rendering yet, so offline renders and exports work after a synth edit, and `params` reflect the loaded patch after the state settles.

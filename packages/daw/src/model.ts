@@ -359,8 +359,14 @@ const samePlacement = (a: EditPlacement | undefined, b: EditPlacement | undefine
 const clipFrameTolerance = (clip: ProjectClip) => (clip.kind === "audio" ? 1 / clip.sampleRate : 1e-9);
 const trackShellKeys = ["id", "name", "kind", "busRole", "routing", "volume", "muted", "solo", "pan", "devices", "effects", "effectMacros"] as const;
 
+let captureDeviceHook: (project: Project, deviceId: string, bytes: Uint8Array) => void;
+
 /** Headless project content. AudioContext and UI state are not part of the file. */
 export class Project {
+  static {
+    captureDeviceHook = (project, deviceId, bytes) => project.captureDevice(deviceId, bytes);
+  }
+
   readonly signature: readonly [number, number];
   /** The only store for observable content. Written by `commit`, read tracked by the public getters. */
   private readonly store: Cell<ProjectState>;
@@ -1112,8 +1118,8 @@ export class Project {
     this.replace(track, { devices: Object.freeze(devices) });
   }
 
-  /** @internal Fold a running plug-in's state into the Project. It is not an edit: the version and undo history ignore it. */
-  captureDeviceState(deviceId: string, bytes: Uint8Array): void {
+  /** Fold a running plug-in's state into the Project. It is not an edit: the version and undo history ignore it. Reached through `captureDeviceState`. */
+  private captureDevice(deviceId: string, bytes: Uint8Array): void {
     assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.devices.some((device) => device.id === deviceId));
     if (!track) throw new Error("Project device needs an existing track.");
@@ -1549,4 +1555,12 @@ export class Project {
     for (const entry of history)
       for (const side of [entry.before, entry.after]) for (const { clip } of side.clips.values()) if (clip instanceof MidiClip) clip.dispose();
   }
+}
+
+/**
+ * Runtime-only: store live plug-in state without counting it as an edit. Not exported from `@audiorective/daw`; an app without a Workspace
+ * uses `project.setDeviceState`.
+ */
+export function captureDeviceState(project: Project, deviceId: string, bytes: Uint8Array): void {
+  captureDeviceHook(project, deviceId, bytes);
 }

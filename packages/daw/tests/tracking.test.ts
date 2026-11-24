@@ -1,3 +1,4 @@
+import { captureDeviceState } from "../src/model";
 import { describe, expect, test } from "vitest";
 import { effect } from "@audiorective/core";
 import { AudioMedia, MidiClip, Project, type AudioClip } from "../src";
@@ -187,7 +188,7 @@ const rows: Array<{ name: string; read: (ctx: Ctx) => unknown; mutate: (ctx: Ctx
   {
     name: "Project.tracks (captureDeviceState)",
     read: (c) => c.project.tracks[0].devices[0].state,
-    mutate: (c) => c.project.captureDeviceState(c.deviceId, new Uint8Array([4])),
+    mutate: (c) => captureDeviceState(c.project, c.deviceId, new Uint8Array([4])),
   },
   { name: "Project.markers", read: (c) => c.project.markers, mutate: (c) => c.project.setMarkers([{ time: 1, name: "A" }]) },
   { name: "Project.cells.revision", read: (c) => c.project.cells.revision.value, mutate: (c) => c.project.setTitle("Revised") },

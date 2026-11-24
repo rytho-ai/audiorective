@@ -392,6 +392,52 @@ describe("MidiClip in a ClipLauncher", () => {
     }
   });
 
+  test("a refresh in the pump that commits a stop still cuts the stopped track's held note", async () => {
+    const ctx = new OfflineAudioContext(1, 7 * SR, SR);
+    const ticks = new ManualTickSource();
+    const clock = new Clock({ context: ctx, tickSource: ticks, bpm: 120, lookAhead: 0.1 });
+    disposers.push(() => clock.dispose());
+    // revocable like a plug-in host: a retracted call never sounds
+    const calls: Array<Call & { live: boolean }> = [];
+    const log = (call: Call) => {
+      const entry = { ...call, live: true };
+      calls.push(entry);
+      return { cancel: () => void (entry.live = false) };
+    };
+    const inst: Instrument = {
+      noteOn: (pitch, o) => log({ kind: "on", pitch, when: o?.when ?? NaN }),
+      noteOff: (pitch, when) => log({ kind: "off", pitch, when: when ?? NaN }),
+    };
+    const launcher = new ClipLauncher(
+      {
+        a: [{ scheduler: new MidiClip([note(60, 0, 16)], { instrument: inst }), loop: true, length: "4m" }],
+        b: [{ scheduler: new MidiClip([note(72, 0, 1)], { instrument: inst }), loop: true, length: "1m" }],
+      },
+      // a host that re-fills the look-ahead when a clip takes a track over, as a DAW handing a track from its arrangement does
+      { context: ctx, onSchedule: ({ clip }) => void (clip && clock.refresh()) },
+    );
+    disposers.push(() => launcher.dispose());
+    clock.attach(launcher);
+    await driveOffline(
+      ctx,
+      ticks,
+      [
+        { at: 0.1, run: () => launcher.tracks.a!.clips[0]!.launch() },
+        {
+          at: 2.5,
+          run: () => {
+            launcher.tracks.a!.stop();
+            launcher.tracks.b!.clips[0]!.launch();
+          },
+        },
+      ],
+      () => clock.start(),
+    );
+    const held = calls.filter((call) => call.live && call.pitch === 60);
+    expect(ons(held)).toEqual([[60, 2]]);
+    expect(offs(held)[0]).toEqual([60, 4]);
+  });
+
   test("a clip is accepted as a launcher scheduler and as a clock scheduler by the type system", () => {
     const clip = new MidiClip([]);
     const clock = new Clock({ context: { currentTime: 0 }, tickSource: new ManualTickSource() });

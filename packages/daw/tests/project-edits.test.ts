@@ -1,3 +1,4 @@
+import { captureDeviceState } from "../src/model";
 import { AutomationCurve } from "@audiorective/core/automation";
 import { describe, expect, it } from "vitest";
 import { MidiClip, Project, type ProjectClip, type ProjectEditOperation, type ProjectVersion } from "../src/project";
@@ -402,7 +403,7 @@ describe("project history", () => {
       ops: [{ type: "moveClip", clip: { clipId: drumOutro.id }, position: { byBeats: 2 } }],
     });
     if (receipt.status !== "applied") throw new Error(receipt.reason);
-    project.captureDeviceState(device.id, new Uint8Array([2]));
+    captureDeviceState(project, device.id, new Uint8Array([2]));
     expect(version(project)).toBe(receipt.version);
     expect(project.undo({ expectedVersion: receipt.version }).status).toBe("applied");
     expect([...project.tracks.find(({ id }) => id === keys.id)!.devices[0].state]).toEqual([2]);

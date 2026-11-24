@@ -1293,6 +1293,8 @@ export class ClipLauncher extends EventTarget implements Scheduler {
     untracked(() => this.scheduleWindow(window, timing));
   }
   private scheduleWindow(window: TransportWindow, timing: BeatTiming): void {
+    // A window that starts before the last one ended is a refresh: the clock retracted our events, so cuts already applied must be applied again.
+    if (window.beat.start < this.lastEnd - EPS) this.forgetCuts();
     this.lastWindow = window;
     this.lastTiming = timing;
     this.lastEnd = window.beat.end;
@@ -1422,12 +1424,14 @@ export class ClipLauncher extends EventTarget implements Scheduler {
       for (const inst of t.insts) {
         if (inst.kind !== "scheduler" || inst.state === "ended" || inst.frozen != null) continue;
         const end = this.endBeatOf(inst);
-        if (end < Infinity && end <= to + EPS) this.cutOwned(inst, timing.beatToTime(end));
         const a = Math.max(from, inst.startBeat);
         const b = Math.min(to, end);
-        if (b - a <= EPS) continue;
-        const [w, tm] = this.subWindow(inst, a, b, window, timing);
-        (inst.clip._src as { sched: Scheduler }).sched.schedule(w, tm);
+        if (b - a > EPS) {
+          const [w, tm] = this.subWindow(inst, a, b, window, timing);
+          (inst.clip._src as { sched: Scheduler }).sched.schedule(w, tm);
+        }
+        // after scheduling: a refill re-registers a held note at its natural end, and the cut must still reach it
+        if (end < Infinity && end <= to + EPS) this.cutOwned(inst, timing.beatToTime(end));
       }
   }
   /**
@@ -1454,7 +1458,11 @@ export class ClipLauncher extends EventTarget implements Scheduler {
     const anySched = [...Object.values(this.tracks)].some((t) => [...t.insts].some((i) => i.kind === "scheduler"));
     if (!anySched) return;
     this.handle.cancelFrom(this.beatTime(beat));
+    this.forgetCuts();
     this.feed(beat, this.lastEnd, this.lastWindow, this.lastTiming);
+  }
+  private forgetCuts(): void {
+    for (const t of Object.values(this.tracks)) for (const inst of t.insts) inst.cutFrom = null;
   }
   /** @internal pattern edits: coalesced re-queue of the scheduler clips from now. */
   _reseedSoon(): void {
@@ -1607,6 +1615,8 @@ export class ClipLauncher extends EventTarget implements Scheduler {
       this.lastWindow = null;
       for (const t of Object.values(this.tracks)) if (t.pending && t.pending.beat == null) t.pending = { ...t.pending, beat: change.beat };
       for (const e of this.sceneTempos) if (e.beat == null) this.addSceneTempoAt(e, change);
+      // A start at "now" leaves no look-ahead: fill the first window at once, or a launch waiting on this beat would sound at the next timer tick.
+      if (change.when <= this.now() && Object.values(this.tracks).some((t) => t.pending)) void this.handle?.refresh();
     } else if (change.type === "resume") {
       this.resumeAll(change);
     }

@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const TOKEN_FIELDS = ["input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens", "reasoning_output_tokens"];
+const STDIN_PROMPT_BYTES = 100_000;
 const DISABLED_FEATURES = [
   "shell_tool",
   "apps",
@@ -86,8 +87,11 @@ export async function callCodex({
       ? `mcp_servers={eval_reader={command=${JSON.stringify(reader.command)},args=${JSON.stringify(reader.args)},enabled_tools=${JSON.stringify(reader.allowedTools)},default_tools_approval_mode="approve"}}`
       : "mcp_servers={}",
     "--",
-    ...(systemPrompt ? [`${systemPrompt}\n\n${prompt}`] : [prompt]),
   ];
+  const text = systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt;
+  // Linux caps one argv string at 128 KiB (spawn E2BIG): a large prompt goes on stdin, which `codex exec -` reads.
+  const viaStdin = Buffer.byteLength(text) > STDIN_PROMPT_BYTES;
+  args.push(viaStdin ? "-" : text);
   const childEnv = { ...env };
   delete childEnv.CLAUDECODE;
   delete childEnv.CODEX_THREAD_ID;
@@ -200,7 +204,11 @@ export async function callCodex({
     };
     try {
       // stdin must be closed: a piped inherited stdin makes `codex exec` wait for EOF.
-      child = spawn(executable, args, { cwd, env: childEnv, stdio: ["ignore", "pipe", "pipe"] });
+      child = spawn(executable, args, { cwd, env: childEnv, stdio: [viaStdin ? "pipe" : "ignore", "pipe", "pipe"] });
+      if (viaStdin) {
+        child.stdin.on("error", () => {});
+        child.stdin.end(text);
+      }
       timer = setTimeout(() => {
         timedOut = true;
         child.kill("SIGKILL");
