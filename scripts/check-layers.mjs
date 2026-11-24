@@ -45,6 +45,7 @@ const DAW_PROJECT = [
   "project-persistence.ts",
   "extensions.ts",
   "project-edits.ts",
+  "ripple-delete.ts",
   "selection.ts",
 ];
 const DAW_CODEC = ["dawproject.ts"];

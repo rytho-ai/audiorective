@@ -2,14 +2,15 @@ import { renderSnapshot } from "./model";
 import { ManualTickSource } from "@audiorective/clock";
 import type { PCMData } from "@audiorective/core";
 import { integratedLoudness, measureSeam, peakDbFS } from "./internal/mix-measure";
-import type { BeatRange, ProjectVersion } from "./project-edits";
+import type { BeatRange, ProjectVersion, TimeRange } from "./project-edits";
+import { timeRangeKind } from "./ripple-delete";
 import { Workspace } from "./runtime";
 
 export type MixRangeOptions = Readonly<{
   /** The version to hear. Another current version returns `conflict` without rendering. */
   expectedVersion: ProjectVersion;
-  /** Half-open beats of the full mix to return. */
-  range: BeatRange;
+  /** Half-open beats or seconds of the full mix to return. Seconds convert to beats through the live project's tempo map when rendering. */
+  range: TimeRange;
   /**
    * Seconds rendered before the range and discarded, so reverbs and delays are already ringing. Default: 2, or back to the first MIDI clip
    * when one starts earlier, because held notes and controllers need their history. A shorter value sets `historyTruncated`.
@@ -57,13 +58,11 @@ const SEAM_MARGIN_SECONDS = 0.06;
 
 /** Render one beat range of the full mix offline, through every device and effect, and measure it. Playback is not interrupted. */
 export async function renderMixRange(workspace: Workspace, options: MixRangeOptions): Promise<MixRangeResult> {
-  const { expectedVersion, range, prerollSeconds, seamBeats = [], signal } = options;
-  if (!range || !Number.isFinite(range.startBeat) || !Number.isFinite(range.endBeat) || range.startBeat < 0 || range.startBeat >= range.endBeat)
-    throw new RangeError("renderMixRange needs a range with 0 <= startBeat < endBeat.");
+  const { expectedVersion, prerollSeconds, seamBeats = [], signal } = options;
+  if (!timeRangeKind(options.range))
+    throw new RangeError("renderMixRange needs a range with 0 <= startBeat < endBeat or 0 <= startSeconds < endSeconds.");
   if (prerollSeconds !== undefined && (!Number.isFinite(prerollSeconds) || prerollSeconds < 0))
     throw new RangeError("renderMixRange prerollSeconds must be finite and non-negative.");
-  if (seamBeats.some((beat) => !Number.isFinite(beat) || beat < range.startBeat || beat > range.endBeat))
-    throw new RangeError("renderMixRange seamBeats must lie inside the range.");
   const checkAbort = () => {
     if (signal?.aborted) throw new DOMException("renderMixRange was cancelled.", "AbortError");
   };
@@ -75,6 +74,12 @@ export async function renderMixRange(workspace: Workspace, options: MixRangeOpti
 
   const sampleRate = workspace.context.sampleRate;
   const tempo = live.tempoMap;
+  const range: BeatRange =
+    "startSeconds" in options.range
+      ? { startBeat: tempo.secondsToBeat(options.range.startSeconds), endBeat: tempo.secondsToBeat(options.range.endSeconds) }
+      : options.range;
+  if (seamBeats.some((beat) => !Number.isFinite(beat) || beat < range.startBeat || beat > range.endBeat))
+    throw new RangeError("renderMixRange seamBeats must lie inside the range.");
   const startFrame = Math.round(tempo.beatToSeconds(range.startBeat) * sampleRate);
   const endFrame = Math.round(tempo.beatToSeconds(range.endBeat) * sampleRate);
   if (endFrame <= startFrame) throw new RangeError("renderMixRange needs a range at least one frame long.");

@@ -50,7 +50,10 @@ export type {
   ProjectOverview,
   ProjectVersion,
   RenameClipEdit,
+  RippleDeleteEdit,
+  SecondsRange,
   SetNoteVelocityEdit,
+  TimeRange,
 } from "./project-edits";
 export type { ClipTimeMap, ClipStretchAnchor } from "./clip-time-map";
 export { clipGainAt, normalizeClipEnvelope, unityClipEnvelope } from "./clip-envelope";

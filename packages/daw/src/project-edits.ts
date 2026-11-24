@@ -1,11 +1,16 @@
 import { AutomationCurve, type AutomationPoint } from "@audiorective/core/automation";
 import type { Project, ProjectClip, ProjectMarker, ProjectTrack, TrackKind } from "./model";
 import { TempoMap, type TempoChange } from "./tempo-map";
+import { timeRangeKind, crossfadeSeconds } from "./ripple-delete";
 
 /** One state of a Project. Opaque: compare it for equality and pass it back as `expectedVersion`. */
 export type ProjectVersion = string & { readonly __projectVersion: unique symbol };
 /** A half-open range of project beats: `startBeat` is inside, `endBeat` is not. */
 export type BeatRange = Readonly<{ startBeat: number; endBeat: number }>;
+/** A half-open range of project seconds: `startSeconds` is inside, `endSeconds` is not. */
+export type SecondsRange = Readonly<{ startSeconds: number; endSeconds: number }>;
+/** A half-open range in project beats or project seconds. */
+export type TimeRange = BeatRange | SecondsRange;
 
 export type ProjectClipSummary = Readonly<{
   id: string;
@@ -67,9 +72,16 @@ export type SetNoteVelocityEdit = Readonly<{
   /** 0 to 1. */
   velocity: number;
 }>;
+export type RippleDeleteEdit = Readonly<{
+  type: "rippleDelete";
+  range: TimeRange;
+  /** Seconds of overlap, centred on each audio join. Default 0. */
+  /** `true` for a short default crossfade (5 ms), `false` or omitted for none, or a length in seconds. */
+  crossfade?: boolean | number;
+}>;
 export type RenameClipEdit = Readonly<{ type: "renameClip"; clip: EditClipSelector; name: string }>;
 /** One JSON-serializable step of `project.applyEdits`. */
-export type ProjectEditOperation = CopyRangeEdit | MoveClipEdit | SetNoteVelocityEdit | RenameClipEdit;
+export type ProjectEditOperation = CopyRangeEdit | MoveClipEdit | SetNoteVelocityEdit | RenameClipEdit | RippleDeleteEdit;
 
 export type ProjectEditRequest = Readonly<{
   /** The version the caller read. A different current version returns `conflict` and changes nothing. */
@@ -361,6 +373,13 @@ function setNoteVelocity(project: Project, op: SetNoteVelocityEdit, copies: Proj
   });
 }
 
+function rippleDeleteOp(project: Project, op: RippleDeleteEdit): void {
+  if (!timeRangeKind(op.range)) fail("invalid-operation", "Project ripple delete needs 0 <= start < end.");
+  if (crossfadeSeconds(op.crossfade) === undefined)
+    fail("invalid-operation", "Project ripple delete crossfade must be true, false or a non-negative number of seconds.");
+  project.rippleDelete(op.range, op.crossfade === undefined ? undefined : { crossfade: op.crossfade });
+}
+
 /** Runs inside a Project edit, which rolls everything back when a step throws. */
 export function runProjectEdits(project: Project, ops: readonly ProjectEditOperation[]): ProjectEditCopies {
   if (!Array.isArray(ops)) throw new ProjectEditFailure("invalid-request", "applyEdits needs an ops array.");
@@ -371,6 +390,7 @@ export function runProjectEdits(project: Project, ops: readonly ProjectEditOpera
       if (op?.type === "copyRange") copyRange(project, op, copies);
       else if (op?.type === "moveClip") moveClip(project, op, copies, moved, index);
       else if (op?.type === "setNoteVelocity") setNoteVelocity(project, op, copies);
+      else if (op?.type === "rippleDelete") rippleDeleteOp(project, op);
       else if (op?.type === "renameClip") project.setClipName(resolveClip(project, op.clip, copies).clip.id, op.name);
       else fail("invalid-operation", `Unknown edit type "${String((op as { type?: unknown } | null)?.type)}".`);
     } catch (error) {

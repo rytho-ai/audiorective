@@ -33,6 +33,7 @@ import {
   type ProjectOperations,
 } from "./extensions";
 import { TempoMap } from "./tempo-map";
+import { rippleDelete as rippleDeleteRange } from "./ripple-delete";
 import type { TempoChange } from "./tempo-map";
 import { ClipTimeMap, normalizeClipAnchors, type ClipStretchAnchor } from "./clip-time-map";
 import { normalizeClipEnvelope, unityClipEnvelope, type ClipEnvelope } from "./clip-envelope";
@@ -48,6 +49,7 @@ import {
   type ProjectEditRequest,
   type ProjectOverview,
   type ProjectVersion,
+  type TimeRange,
 } from "./project-edits";
 
 export type TrackKind = "audio" | "midi" | "bus";
@@ -1813,6 +1815,18 @@ export class Project {
     );
     this.retire(clip);
     return [left, right];
+  }
+
+  /**
+   * Remove a half-open range from the whole song. Clips after it move earlier by its length (audio by seconds, MIDI by beats), clips across it
+   * are trimmed or split, and markers, tempo changes and track volume automation follow. `crossfade` (`true` for 5 ms, `false` or omitted for none, or seconds) overlaps the audio pieces that
+   * meet at the range's start, centred on the join. It is atomic: inside `project.edit` it joins that Undo step, on its own it is one Undo step
+   * labelled "Ripple delete" that a failure rolls back entirely.
+   */
+  rippleDelete(range: TimeRange, options?: { crossfade?: boolean | number }): void {
+    assertProjectActive(this);
+    // Many steps: an edit rolls all of them back if one fails, whether or not the caller opened one.
+    this.edit("Ripple delete", () => untracked(() => rippleDeleteRange(this, range, options)));
   }
 
   removeClip(clipId: string): void {

@@ -254,6 +254,7 @@ const commands: Array<{ name: string; run: (ctx: Ctx) => unknown }> = [
   { name: "splitClip (midi)", run: (c) => c.project.splitClip(c.clip.id, 0.5) },
   { name: "resizeClip (audio)", run: (c) => c.project.resizeClip(c.audioClipId, { end: 0.05 }) },
   { name: "splitClip (audio)", run: (c) => c.project.splitClip(c.audioClipId, 0.05) },
+  { name: "rippleDelete", run: (c) => c.project.rippleDelete({ startSeconds: 0.02, endSeconds: 0.04 }, { crossfade: 0.01 }) },
   { name: "MidiClip.playbackEvents", run: (c) => c.clip.playbackEvents() },
 ];
 

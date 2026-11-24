@@ -1,0 +1,46 @@
+{
+  "area": "daw-range-edits",
+  "description": "API-shape experiment for deleting a time range across a song, crossfading clips, and rendering a range in seconds. Expectations describe behaviour, not names.",
+  "tasks": [
+    {
+      "id": "R1-podcast-cut",
+      "prompt": "A browser podcast editor has an open episode as `project` and its running engine as `workspace`: tracks Host A, Host B and Music, each with one long audio clip at time 0, a chapter marker at 40 s, and a volume curve on the Music track. Write the code for the Cut button: it removes 10 s to 20 s from the whole episode, so everything after 20 s, on every track, plays 10 s earlier, the chapter marker moves to 30 s, and the Music volume curve after the cut moves with it. At the join, the audio before and after the cut overlaps by 20 milliseconds with a crossfade so there is no click. The whole cut is one Undo step. Then render 5 s to 25 s of the edited episode offline through the mix and report its peak level, so the join can be checked by ear or by measurement.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;",
+      "expectations": [
+        "Removes the 10–20 s range from every track so later material moves earlier by exactly 10 s, without hand-writing per-clip split, delete and move logic.",
+        "The chapter marker at 40 s moves to 30 s and the volume curve after the cut moves with the audio.",
+        "The audio on each side of the join overlaps by 20 ms with fades so it crossfades instead of clicking.",
+        "The whole cut is a single Undo step.",
+        "Renders 5–25 s of the edited episode offline through the mix, specifying the range in seconds.",
+        "Reports the rendered peak level."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "No hand-written split/move loop",
+          "none": ["splitClip\\([^)]*\\)[\\s\\S]{0,400}moveClip\\("]
+        }
+      ]
+    },
+    {
+      "id": "R2-delete-bars",
+      "prompt": "A browser DAW has an open song as `project` (4/4) and its running engine as `workspace`. The song has drums and bass MIDI tracks, a vocal audio track, markers named Verse at bar 1, Chorus at bar 9 and Outro at bar 17, and a tempo change from 100 to 120 BPM at bar 13. The producer wants to delete bars 9 to 12 (four bars, ending where bar 13 begins) from the whole song: everything after them, on every track, moves four bars earlier, the Chorus marker inside the deleted bars is removed, Outro moves to bar 13, and the tempo change moves with the music. Write the code for that edit as one Undo step, then render bars 7 to 10 of the result offline (in bars or beats) to check the seam, and report its loudness.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;",
+      "expectations": [
+        "Deletes bars 9–12 from every track, MIDI and audio, so later material moves four bars earlier, without hand-writing per-clip split, delete and move logic.",
+        "The marker inside the deleted range is removed and later markers move earlier.",
+        "The tempo change after the deleted bars moves with the music.",
+        "The edit is a single Undo step.",
+        "Renders bars 7–10 of the result offline through the mix.",
+        "Reports the rendered loudness."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "No hand-written split/move loop",
+          "none": ["splitClip\\([^)]*\\)[\\s\\S]{0,400}moveClip\\("]
+        }
+      ]
+    }
+  ]
+}
