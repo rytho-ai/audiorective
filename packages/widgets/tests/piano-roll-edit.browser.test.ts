@@ -359,3 +359,218 @@ test("a vertical-only move preserves an unsnapped onset and freezes the command 
   expect(Object.isFrozen(edit.previous)).toBe(true);
   expect(Object.isFrozen(edit.note)).toBe(true);
 });
+
+function adding(extra: Partial<PianoRollOptions> = {}) {
+  const m = rollModel([{ id: "n", start: 1, duration: 1, pitch: 60, velocity: 0.5 }], 8);
+  const add = vi.fn((n: { pitch: number; start: number; duration: number; velocity: number }) =>
+    m.clip.edit((draft) => void draft.push({ ...n, id: "added", channel: 0 })),
+  );
+  const remove = vi.fn((n: { id: string }) =>
+    m.clip.edit(
+      (draft) =>
+        void draft.splice(
+          draft.findIndex((x) => x.id === n.id),
+          1,
+        ),
+    ),
+  );
+  const commit = vi.fn((e: any) => m.clip.edit((draft) => void Object.assign(draft.find((n) => n.id === e.note.id)!, { velocity: e.note.velocity })));
+  const root = host();
+  const roll = mountPianoRoll(root, {
+    model: m,
+    pitches: { low: 48, high: 72 },
+    grid: { beats: [0, 1, 2, 3, 4, 5, 6, 7, 8], downbeats: [0, 4, 8] },
+    snap: "beat",
+    onNoteEdit: commit,
+    onNoteAdd: add,
+    onNoteDelete: remove,
+    velocityLane: true,
+    ...extra,
+  });
+  own(() => roll.dispose());
+  root.scrollIntoView({ block: "center" });
+  const surface = root.querySelector<HTMLElement>("[data-testid=piano-roll]")!;
+  const place = (beat: number, pitch: number) => {
+    const r = surface.getBoundingClientRect();
+    return { x: r.left + (beat / 8) * r.width, y: r.top + ((72 - pitch + 0.5) / 25) * r.height };
+  };
+  const dbl = (target: Element, at: { x: number; y: number }) =>
+    target.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: at.x, clientY: at.y }));
+  return { m, add, remove, commit, root, surface, place, dbl };
+}
+
+test("double-click on empty space adds a note in the clicked grid cell and pitch row", () => {
+  const f = adding();
+  f.dbl(f.surface, f.place(3.7, 67));
+  expect(f.add).toHaveBeenCalledTimes(1);
+  expect(f.add.mock.calls[0][0]).toMatchObject({ pitch: 67, start: 3, duration: 1 });
+  expect(f.add.mock.calls[0][0].velocity).toBeCloseTo(100 / 127, 5);
+  expect(f.m.getState().notes).toHaveLength(2);
+});
+
+test("a new note near the end stays inside the clip", () => {
+  const f = adding();
+  f.dbl(f.surface, f.place(7.9, 60));
+  const added = f.add.mock.calls[0][0];
+  expect(added.start).toBe(7);
+  expect(added.start + added.duration).toBeLessThanOrEqual(8);
+});
+
+test("double-click on a note deletes it instead of adding one", () => {
+  const f = adding();
+  const el = f.root.querySelector<HTMLElement>('[data-note-id="n"]')!;
+  const r = el.getBoundingClientRect();
+  f.dbl(el, { x: r.left + r.width / 2, y: r.top + r.height / 2 });
+  expect(f.remove).toHaveBeenCalledTimes(1);
+  expect(f.add).not.toHaveBeenCalled();
+  expect(f.m.getState().notes).toHaveLength(0);
+});
+
+test("Delete removes the focused note", async () => {
+  const f = adding();
+  const el = f.root.querySelector<HTMLElement>('[data-note-id="n"]')!;
+  el.focus();
+  await userEvent.keyboard("{Delete}");
+  expect(f.remove).toHaveBeenCalledTimes(1);
+  expect(f.m.getState().notes).toHaveLength(0);
+});
+
+test("the velocity lane previews a drag and commits once on release", async () => {
+  const f = adding();
+  const lane = f.root.querySelector<HTMLElement>("[data-testid=piano-velocity]")!;
+  lane.scrollIntoView({ block: "center" });
+  const rect = lane.getBoundingClientRect();
+  const x = f.place(1, 60).x + 1;
+  await pointer({ action: "down", x, y: rect.top + rect.height * 0.5 });
+  await pointer({ action: "move", x, y: rect.top + rect.height * 0.1 });
+  const bar = lane.querySelector<HTMLElement>('[data-velocity-note="n"]')!;
+  expect(parseFloat(bar.style.height)).toBeGreaterThan(80);
+  expect(f.commit).not.toHaveBeenCalled();
+  await pointer({ action: "up", x, y: rect.top + rect.height * 0.1 });
+  expect(f.commit).toHaveBeenCalledTimes(1);
+  expect(f.commit.mock.calls[0][0].kind).toBe("velocity");
+  expect(f.m.getState().notes[0].velocity).toBeGreaterThan(0.8);
+  expect(f.m.getState().notes[0].start).toBe(1);
+});
+
+test("Escape cancels a velocity drag", async () => {
+  const f = adding();
+  const lane = f.root.querySelector<HTMLElement>("[data-testid=piano-velocity]")!;
+  lane.scrollIntoView({ block: "center" });
+  const rect = lane.getBoundingClientRect();
+  const x = f.place(1, 60).x + 1;
+  await pointer({ action: "down", x, y: rect.top + rect.height * 0.5 });
+  await pointer({ action: "move", x, y: rect.top + 2 });
+  await userEvent.keyboard("{Escape}");
+  await pointer({ action: "up", x, y: rect.top + 2 });
+  expect(f.commit).not.toHaveBeenCalled();
+  expect(f.m.getState().notes[0].velocity).toBe(0.5);
+});
+
+test("without the new callbacks, double-click and Delete do nothing and no lane appears", async () => {
+  const f = adding({ onNoteAdd: undefined, onNoteDelete: undefined, velocityLane: false });
+  f.dbl(f.surface, f.place(3, 67));
+  expect(f.m.getState().notes).toHaveLength(1);
+  expect(f.root.querySelector("[data-testid=piano-velocity]")).toBeNull();
+});
+
+test("a real double-click on a note deletes it", async () => {
+  const f = adding();
+  const el = f.root.querySelector<HTMLElement>('[data-note-id="n"]')!;
+  await userEvent.dblClick(el);
+  expect(f.add).not.toHaveBeenCalled();
+  expect(f.remove).toHaveBeenCalledTimes(1);
+  expect(f.m.getState().notes).toHaveLength(0);
+});
+
+test("Delete after clicking empty space removes nothing", async () => {
+  const f = adding();
+  const el = f.root.querySelector<HTMLElement>('[data-note-id="n"]')!;
+  await userEvent.click(el);
+  const empty = f.place(5, 50);
+  await pointer({ action: "down", x: empty.x, y: empty.y });
+  await pointer({ action: "up", x: empty.x, y: empty.y });
+  f.root.querySelector<HTMLElement>("[data-testid=piano-viewport]")!.focus();
+  await userEvent.keyboard("{Delete}");
+  expect(f.remove).not.toHaveBeenCalled();
+});
+
+test("the velocity lane edits the clicked note of a chord and ignores hidden notes", async () => {
+  const m = rollModel(
+    [
+      { id: "low", start: 1, duration: 1, pitch: 60, velocity: 0.5 },
+      { id: "high", start: 1, duration: 1, pitch: 67, velocity: 0.5 },
+      { id: "hidden", start: 3, duration: 1, pitch: 100, velocity: 0.5 },
+    ],
+    8,
+  );
+  const commit = vi.fn();
+  const root = host();
+  const roll = mountPianoRoll(root, { model: m, pitches: { low: 48, high: 72 }, onNoteEdit: commit, velocityLane: true });
+  own(() => roll.dispose());
+  root.scrollIntoView({ block: "center" });
+  await userEvent.click(root.querySelector<HTMLElement>('[data-note-id="high"]')!);
+  const lane = root.querySelector<HTMLElement>("[data-testid=piano-velocity]")!;
+  lane.scrollIntoView({ block: "center" });
+  const rect = lane.getBoundingClientRect();
+  const at = (beat: number) => rect.left + (beat / 8) * rect.width + 1;
+  await pointer({ action: "down", x: at(1), y: rect.top + 4 });
+  await pointer({ action: "up", x: at(1), y: rect.top + 4 });
+  expect(commit.mock.calls[0][0].note.id).toBe("high");
+  commit.mockClear();
+  await pointer({ action: "down", x: at(3), y: rect.top + 4 });
+  await pointer({ action: "up", x: at(3), y: rect.top + 4 });
+  expect(commit).not.toHaveBeenCalled();
+});
+
+test("double-click deletes the note drawn on top, including a very short one", async () => {
+  const m = rollModel(
+    [
+      { id: "under", start: 1, duration: 4, pitch: 60, velocity: 0.5 },
+      { id: "top", start: 2, duration: 1, pitch: 60, velocity: 0.5 },
+      { id: "short", start: 6, duration: 1 / 64, pitch: 64, velocity: 0.5 },
+    ],
+    8,
+  );
+  const remove = vi.fn((n: { id: string }) =>
+    m.clip.edit(
+      (draft) =>
+        void draft.splice(
+          draft.findIndex((x) => x.id === n.id),
+          1,
+        ),
+    ),
+  );
+  const add = vi.fn();
+  const root = host();
+  const roll = mountPianoRoll(root, { model: m, pitches: { low: 48, high: 72 }, onNoteEdit: vi.fn(), onNoteAdd: add, onNoteDelete: remove });
+  own(() => roll.dispose());
+  root.scrollIntoView({ block: "center" });
+  await userEvent.dblClick(root.querySelector<HTMLElement>('[data-note-id="top"]')!);
+  expect(remove.mock.calls[0][0].id).toBe("top");
+  await userEvent.dblClick(root.querySelector<HTMLElement>('[data-note-id="short"]')!);
+  expect(remove.mock.calls[1][0].id).toBe("short");
+  expect(add).not.toHaveBeenCalled();
+});
+
+test("setActiveNote chooses the chord note a velocity drag edits after a remount", async () => {
+  const m = rollModel(
+    [
+      { id: "low", start: 1, duration: 1, pitch: 60, velocity: 0.5 },
+      { id: "high", start: 1, duration: 1, pitch: 67, velocity: 0.5 },
+    ],
+    8,
+  );
+  const commit = vi.fn();
+  const root = host();
+  const roll = mountPianoRoll(root, { model: m, pitches: { low: 48, high: 72 }, onNoteEdit: commit, velocityLane: true });
+  own(() => roll.dispose());
+  roll.setActiveNote("high");
+  const lane = root.querySelector<HTMLElement>("[data-testid=piano-velocity]")!;
+  lane.scrollIntoView({ block: "center" });
+  const rect = lane.getBoundingClientRect();
+  const x = rect.left + rect.width / 8 + 1;
+  await pointer({ action: "down", x, y: rect.top + 4 });
+  await pointer({ action: "up", x, y: rect.top + 4 });
+  expect(commit.mock.calls[0][0].note.id).toBe("high");
+});

@@ -13,7 +13,7 @@ import {
   type Workspace,
 } from "@audiorective/daw";
 import type { MidiNote } from "@audiorective/midi";
-import { mountPianoRoll, pianoRollModel, type ClipPianoRollModel } from "@audiorective/widgets/piano-roll";
+import { mountPianoRoll, pianoRollModel, type PianoRollHandle, type ClipPianoRollModel } from "@audiorective/widgets/piano-roll";
 import {
   attachClipGesture,
   attachTimeRangeGesture,
@@ -306,6 +306,8 @@ export class StudioView {
       }
       if (target.closest("#automation-panel")) return;
       if (event.key === "Delete" || event.key === "Backspace") {
+        // The piano roll already handled a note it had focus on.
+        if (event.defaultPrevented) return;
         if (
           this.selectedNote?.clipId === this.selectedClipId &&
           document.querySelector<HTMLElement>(".studio")?.dataset.lowerOpen === "true" &&
@@ -1208,10 +1210,21 @@ export class StudioView {
         grid,
         snap: "beat",
         pitches: { low, high: Math.min(127, low + span) },
-        onNoteEdit: ({ note }) => {
+        velocityLane: true,
+        onNoteEdit: ({ kind, note }) => {
           this.selectedNote = { clipId: clip.id, noteId: note.id };
-          this.history.record("拖曳音符", () => updateNote(clip, note.id, { start: note.start, duration: note.duration, pitch: note.pitch }));
+          if (kind === "velocity") this.history.record("修改力度", () => updateNote(clip, note.id, { velocity: note.velocity }));
+          else this.history.record("拖曳音符", () => updateNote(clip, note.id, { start: note.start, duration: note.duration, pitch: note.pitch }));
           requestAnimationFrame(() => this.render());
+        },
+        onNoteAdd: ({ start, pitch }) => {
+          this.selectedNote = { clipId: clip.id, noteId: this.history.record("新增音符", () => this.actions.addNote(clip, { start, pitch })) };
+          this.render();
+        },
+        onNoteDelete: (note) => {
+          this.history.record("刪除音符", () => clip.midi.setNotes(clip.midi.notes.value.filter((item) => item.id !== note.id)));
+          this.selectedNote = undefined;
+          this.render();
         },
         onNoteClick: (note) => {
           this.selectedNote = { clipId: clip.id, noteId: note.id };
@@ -1220,25 +1233,11 @@ export class StudioView {
           this.actions.status(`${pitchName(note.pitch)} · ${note.start.toFixed(2)} 拍 · 力度 ${Math.round(note.velocity * 127)}`);
         },
       });
+      (this.clipView as PianoRollHandle).setActiveNote(this.selectedNote?.clipId === clip.id ? this.selectedNote.noteId : null);
       const drawing = mount.querySelector<HTMLElement>(".ar-pr-notes")!;
       this.noteHighlightObserver = new MutationObserver(() => this.highlightSelectedNote(mount));
       this.noteHighlightObserver.observe(drawing, { childList: true });
       this.highlightSelectedNote(mount);
-      const surface = mount.querySelector<HTMLElement>(".ar-pr-surface")!;
-      surface.addEventListener("dblclick", (event) => {
-        if ((event.target as HTMLElement).closest(".ar-pr-note")) return;
-        const rect = surface.getBoundingClientRect();
-        const rawTime = clip.duration * Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
-        const pitch = Math.max(low, Math.min(low + span, low + span - Math.floor(((event.clientY - rect.top) / rect.height) * (span + 1))));
-        this.selectedNote = {
-          clipId: clip.id,
-          noteId: this.history.record("新增音符", () => {
-            const beat = Math.floor(clip.time + rawTime);
-            return this.actions.addNote(clip, { start: Math.max(0, beat - clip.time), pitch });
-          }),
-        };
-        this.render();
-      });
     } else {
       this.editorPitchRange = undefined;
       if (clip.media) {

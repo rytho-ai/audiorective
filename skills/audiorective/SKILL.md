@@ -102,9 +102,10 @@ When no capability package or widget matches, build on core with your own `Audio
 | Audition a clip or range already in a Project | `workspace.auditionAudioClip` / `auditionRange`; `references/daw.md` | seeking and starting the arrangement |
 | Automate a waveform selection in source seconds | `WavePlayer.attachSourceAutomation(binding)` | app-owned play token and time mapping |
 | A waveform picture from peaks, no audio | `widgets/waveform` | the complete selector |
-| MIDI file notes: parse, edit, select, piano roll | `@audiorective/midi` (`parseMidi` to `MidiClip`) + `widgets/piano-roll` (`pianoRollModel(clip)`) | a second note store beside the clip |
+| MIDI file notes: parse, edit, select, piano roll with add, delete and velocity | `@audiorective/midi` (`parseMidi` to `MidiClip`) + `widgets/piano-roll` (`pianoRollModel(clip)`, `onNoteAdd`, `onNoteDelete`, `velocityLane`) | a second note store beside the clip |
 | Play, edit and save a DAWproject with WebCLAP devices | `daw` + `host/webclap`; `workspace.player` to `mountPlayer` | separate project or player state |
 | Undoable or agent-driven arrangement edits, version conflicts, checking an edit by rendering it | `Project.applyEdits` / `edit` / `undo`, `renderMixRange`, `workspace.editStatus`; `references/daw.md` | hand-written history, `snapshot()` swaps, `batch()` as rollback |
+| Loop a bar or beat range of DAW playback | `workspace.loop` (`setRegion`, `setEnabled`); `references/daw.md` | a timer that seeks back |
 | Which clips, notes or range the user selected, shared by views and agents | `daw/selection` `selectionFor(project)`; `references/daw.md` | selection fields in app state or in the Project |
 | Read, edit or write `.dawproject` in Node (no audio) | `daw/project` + `daw/dawproject` only | `daw` root or `daw/runtime` |
 | Session view, clip launcher, scenes, follow actions, pattern clips | `clock` + `@audiorective/launcher` `ClipLauncher` (it plays the clips); `references/launcher.md`; a Project session: `workspace.session` | a hand-rolled launch scheduler or a custom driver |

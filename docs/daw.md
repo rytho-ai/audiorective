@@ -135,6 +135,20 @@ The request is plain JSON. Operations run in order and publish together. `status
 
 `project.undo()` and `project.redo()` step through one history shared by every caller, up to 50 edits; `project.cells.history` holds the next labels. Undo returns `conflict` and leaves the Project alone when a later change touched what that edit changed. An unrelated change, such as a fader move, does not block it. Passing `expectedVersion` makes any later change a conflict. `project.cells.version` covers structure and note edits; capturing live plug-in state during a save does not advance it.
 
+### Loop a region
+
+`workspace.loop` repeats a beat range on the audio clock:
+
+```typescript
+workspace.loop.setRegion({ startBeat: 16, endBeat: 32 }); // bars 5-8 in 4/4, half-open
+workspace.loop.setEnabled(true);
+workspace.loop.cells.enabled.subscribe((on) => button.setAttribute("aria-pressed", String(on)));
+```
+
+The wrap is sample-accurate and does not depend on the main thread. Audio clips and file-backed media are cut at the region's edges, tempo changes inside it repeat, volume automation restarts with it, and a MIDI note still held at the end gets its note-off, with changed controllers restored. A note that began before the region's start is not retriggered at a wrap. A controller with no value before the region keeps its last value across the wrap, except sustain and pitch bend, which reset. `setRegion` and `setEnabled` apply while playing without restarting what is sounding. Playback before the region runs into it, and a seek past its end plays on. `workspace.position` stays inside the region while it repeats. `takePosition` places a take by the loop that was playing when its anchor was captured. `workspace.transport` keeps counting continuous beats, so read `position` for the arrangement location.
+
+The loop is playback state: it is not saved, not in undo, and not in exports or `renderMixRange`.
+
 ### Share what is selected
 
 `selectionFor(project)` from `@audiorective/daw/selection` returns the one `ProjectSelection` of that Project, so separate views and agent tools share it by passing the Project. `selection.state` is a tracked cell of `{ trackId, clipIds, openClipId, noteIds, range }`, plain JSON. Change it with `selectClips`, `toggleClip`, `selectTrack`, `selectRange`, `openClip`, `selectNotes` and `clear`. It is outside the file, undo and `project.cells.version`. Deleted content leaves the selection by itself and stays out even if an undo restores it. Zoom, scroll and tools stay in the app, and the playhead stays on `Workspace`.
@@ -489,6 +503,8 @@ A small [Cubase 14 export shared on the Steinberg forum](https://forums.steinber
 | `Workspace save stopped: the project changed after expectedVersion was read.`                                                                                    | Read the project again, verify it and save with the new version.                                    |
 | `Project clip name must be a string.` / `Project clip name must not be empty.`                                                                                   | Pass non-blank text.                                                                                |
 | `Project BPM must be a finite number of at least 1.`                                                                                                             | Pass a starting tempo such as `{ beat: 0, bpm: 120 }`.                                              |
+| `Workspace loop region needs 0 <= startBeat < endBeat.` / `Workspace loop region must last at least 20 ms.`                                                      | Pass a non-empty half-open beat range long enough at the current tempo.                             |
+| `Workspace loop needs a region before it is enabled.`                                                                                                            | Call `workspace.loop.setRegion(...)` first.                                                         |
 | `ProjectSelection needs an existing track.` / `ProjectSelection needs existing clips.` / `ProjectSelection needs an existing clip.`                              | Pass IDs from the current Project.                                                                  |
 | `ProjectSelection note selection needs an open MIDI clip.` / `ProjectSelection needs existing notes of the open clip.`                                           | Call `openClip` on a MIDI clip first, then pass its note IDs.                                       |
 | `ProjectSelection range needs 0 <= startBeat < endBeat.`                                                                                                         | Pass a non-empty half-open beat range.                                                              |

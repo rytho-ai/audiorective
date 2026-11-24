@@ -13,6 +13,8 @@ export type AudioHandle = {
   clipId: string;
   setGainAutomation(automation: AudioClipGainAutomation | undefined): void;
   cancel(): void;
+  /** Move the audio-clock time this source stops, or let it play to its natural end with `null`. */
+  setStop(time: number | null): void;
   onEnded(listener: () => void): void;
 };
 

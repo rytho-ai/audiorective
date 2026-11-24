@@ -670,7 +670,7 @@ input[type="range"] {
   font-size: 10px;
 }
 .lower-panel {
-  height: 300px;
+  height: min(300px, max(180px, calc(100vh - 463px)));
   min-height: 180px;
   display: flex;
   flex-direction: column;
@@ -770,6 +770,7 @@ input[type="range"] {
 }
 .roll {
   --piano-roll-height: 165px;
+  --piano-roll-velocity-height: 30px;
   --waveform-border: #36576b;
   --ar-accent: #5bd3b6;
 }

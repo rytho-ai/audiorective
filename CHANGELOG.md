@@ -15,6 +15,8 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Added
 
+- **daw:** `workspace.loop` repeats a beat region on the audio clock with sample-accurate wraps, clip cuts, tempo and automation repeats, and MIDI note release.
+- **widgets:** The piano roll adds `onNoteAdd`, `onNoteDelete` and `velocityLane`; `onNoteEdit` also reports `kind: "velocity"`.
 - **daw:** `@audiorective/daw/selection` adds `selectionFor(project)`, one shared `ProjectSelection` per Project for views and agents, outside the file, undo and version. `setTempoChanges` accepts an entry at beat 0 to set the starting tempo.
 - **daw:** Clip names (`clipName`, `setClipName`, `renameClip`, `findClips({ name })`) round-trip through the standard DAWproject attribute, and files with named clips now open. `renderMixRange` renders and measures a beat range of the full mix, `workspace.editStatus(version)` reports playback state, and `saveWorkspace` / `saveWorkspaceTo` accept `expectedVersion`.
 - **daw:** `Project.applyEdits`, `edit`, `undo`, `redo`, `clearHistory`, `overview`, `findMarker`, `findClips`, `cells.version` and `cells.history`: atomic, versioned, JSON-serializable project edits with one shared undo history.

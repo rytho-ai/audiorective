@@ -681,6 +681,12 @@ html[data-skin] #editor-panel .ar-pr-note {
 html[data-skin="canvas"] #editor-panel .roll {
   --piano-roll-note-text: var(--ink);
 }
+/* In a short window the rows are too thin for a label; each note keeps its aria-label. */
+@media (max-height: 760px) {
+  html[data-skin] #editor-panel .ar-pr-note {
+    font-size: 0 !important;
+  }
+}
 html[data-skin] #editor-panel :is(.roll, .wave) {
   flex: 1;
   min-height: 0;
@@ -722,7 +728,7 @@ html[data-skin] #editor-panel .roll .ar-viewport {
   border-radius: 0;
 }
 html[data-skin] #editor-panel .roll .ar-pr-surface {
-  height: 100%;
+  height: calc(100% - var(--piano-roll-velocity-height, 56px) - 1px);
   min-height: 64px;
   cursor: crosshair;
 }

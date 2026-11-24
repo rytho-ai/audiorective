@@ -1,6 +1,7 @@
 import { stopSource } from "./internal/playback-gain";
 import type { TickWindow, Timeline } from "@audiorective/clock";
 import { AutomationBinding, AutomationCurve, audioParamTarget } from "@audiorective/core/automation";
+import { loopWrapMessages, type LoopFold, type LoopSegment } from "./arrangement-loop";
 import { clipGainAt } from "./clip-envelope";
 import { scheduleClipEnvelope } from "./schedule-clip-envelope";
 import { audioClipTimeMap } from "./model";
@@ -30,6 +31,7 @@ export class ClipScheduler {
   private readonly loading = new Set<Promise<void>>();
   /** Devices that were sent MIDI since the last `settled()`. */
   private readonly messaged = new Set<WebClapHost>();
+  private refolds = 0;
 
   constructor(
     private readonly context: AudioContext,
@@ -37,38 +39,54 @@ export class ClipScheduler {
     private readonly reportError: (error: Error | null) => void,
   ) {}
 
-  /** Schedule one tick window of every track's MIDI events and audio clips. */
-  scheduleArrangement(tracks: Iterable<TrackRuntime>, window: TickWindow<Record<never, never>>, map: TempoMap, timeline: Timeline): void {
+  /** Schedule one tick window of every track's MIDI events and audio clips, through the loop fold. */
+  scheduleArrangement(
+    tracks: Iterable<TrackRuntime>,
+    window: TickWindow<Record<never, never>>,
+    map: TempoMap,
+    timeline: Timeline,
+    fold: LoopFold,
+  ): void {
     tracks = [...tracks];
     this.prune(tracks);
-    const span: AudioClipWindow = {
-      start: map.beatToSeconds(window.beat.start),
-      end: map.beatToSeconds(window.beat.end),
-      stop: Infinity,
-      audioTime: (seconds) => timeline.beatToTime(map.secondsToBeat(seconds)),
-      keyPrefix: "",
-    };
+    const stop = fold.region ? map.beatToSeconds(fold.region.endBeat) : Infinity;
+    const spanOf = (segment: LoopSegment): AudioClipWindow => ({
+      start: map.beatToSeconds(segment.beatStart),
+      end: map.beatToSeconds(segment.beatEnd),
+      stop,
+      audioTime: (seconds) => timeline.beatToTime(segment.transportStart + map.secondsToBeat(seconds) - segment.beatStart),
+      keyPrefix: segment.cycle < 0 ? "" : `${segment.cycle}:`,
+    });
+    const segments = fold.segments(window.beat.start, window.beat.end);
     // Request file-backed chunks before the ordinary MIDI and PCM look-ahead.
-    const mediaSpan = { ...span, end: map.beatToSeconds(timeline.timeToBeat(window.time.lookAheadEnd + 0.35)) };
+    const mediaSegments = fold.segments(window.beat.start, timeline.timeToBeat(window.time.lookAheadEnd + 0.35));
     for (const runtime of tracks) {
       for (const clip of runtime.clips) {
-        if (clip.kind === "midi") {
-          if (!runtime.midiHost) continue;
+        if (clip.kind === "audio") {
+          const destination = runtime.session?.arrangementInput ?? runtime.input;
+          for (const segment of clip.media ? mediaSegments : segments)
+            this.scheduleAudioClipWindow(clip, destination, spanOf(segment), window, this.scheduled);
+        }
+      }
+      const host = runtime.midiHost;
+      if (!host) continue;
+      const send = (data: Uint8Array, when: number) => {
+        window.own(host.scheduleMidi(data, when), when);
+        this.messaged.add(host);
+      };
+      for (const segment of segments) {
+        // A note-off at the wrap goes first, so a note restarting on that exact time is not cut by it.
+        if (fold.region && segment.cycle >= 0 && segment.beatStart <= fold.region.startBeat + 1e-9) {
+          const when = timeline.beatToTime(segment.transportStart);
+          for (const data of loopWrapMessages(runtime.clips, fold.region)) send(data, when);
+        }
+        for (const clip of runtime.clips) {
+          if (clip.kind !== "midi") continue;
           for (const event of clip.playbackEvents()) {
             const beat = clip.time + event.beat;
-            if (beat < window.beat.start - 1e-8 || beat >= window.beat.end - 1e-8) continue;
-            const when = timeline.beatToTime(beat);
-            window.own(runtime.midiHost.scheduleMidi(event.data, when), when);
-            this.messaged.add(runtime.midiHost);
+            if (beat < segment.beatStart - 1e-8 || beat >= segment.beatEnd - 1e-8) continue;
+            send(event.data, timeline.beatToTime(segment.transportStart + beat - segment.beatStart));
           }
-        } else {
-          this.scheduleAudioClipWindow(
-            clip,
-            runtime.session?.arrangementInput ?? runtime.input,
-            clip.media ? mediaSpan : span,
-            window,
-            this.scheduled,
-          );
         }
       }
     }
@@ -166,6 +184,38 @@ export class ClipScheduler {
     }
   }
 
+  /**
+   * The loop changed: sources already sounding keep playing and take the new stop time. Their keys move to the new fold's first pass, so
+   * the refill recognises them instead of starting the same audio again.
+   */
+  refold(stopTime: number | null): void {
+    // Within one clip the newest cycle is the one sounding; an older source may have finished with its `ended` event still queued.
+    const newest = new Map<string, { key: string; cycle: number }>();
+    for (const [key, handle] of this.scheduled) {
+      handle.setStop(stopTime);
+      if (key.startsWith("old:")) continue;
+      const match = /^(\d+):/.exec(key);
+      const plain = match ? key.slice(match[0].length) : key;
+      const cycle = match ? Number(match[1]) : -1;
+      const best = newest.get(plain);
+      if (!best || cycle > best.cycle) newest.set(plain, { key, cycle });
+    }
+    const keep = new Set([...newest.values()].map(({ key }) => key));
+    let aside = 0;
+    for (const [key, handle] of [...this.scheduled]) {
+      if (key.startsWith("old:") || keep.has(key)) continue;
+      this.scheduled.delete(key);
+      this.scheduled.set(`old:${this.refolds}:${aside++}`, handle);
+    }
+    this.refolds++;
+    for (const [plain, { key }] of newest) {
+      if (key === plain) continue;
+      const handle = this.scheduled.get(key)!;
+      this.scheduled.delete(key);
+      this.scheduled.set(plain, handle);
+    }
+  }
+
   /** Forget scheduled handles without cancelling them (their tracks are being disposed). */
   forget(): void {
     this.scheduled.clear();
@@ -183,10 +233,16 @@ export class ClipScheduler {
     scheduled: Map<string, AudioHandle>,
   ): void {
     if (clip.time >= span.end || clip.time + clip.duration <= span.start) return;
+    const stopAt = Number.isFinite(span.stop) ? span.audioTime(span.stop) : null;
     const own = (key: string, handle: AudioHandle, when: number) => {
       scheduled.set(key, handle);
       handle.onEnded(() => {
-        if (scheduled.get(key) === handle) scheduled.delete(key);
+        // A loop change may have re-keyed this handle since it was scheduled.
+        for (const [current, value] of scheduled)
+          if (value === handle) {
+            scheduled.delete(current);
+            break;
+          }
       });
       window.own(handle, when);
     };
@@ -201,14 +257,14 @@ export class ClipScheduler {
         const chunkTime = clip.time + index * audioChunkSeconds;
         const from = Math.max(chunkTime, span.start);
         const when = span.audioTime(from);
-        own(key, this.scheduleMediaAudio(clip, index, destination, when, from - chunkTime, span.stop - chunkTime), when);
+        own(key, this.scheduleMediaAudio(clip, index, destination, when, from - chunkTime, stopAt), when);
       }
     } else {
       const key = `${span.keyPrefix}${clip.id}`;
       if (scheduled.has(key)) return;
       const from = Math.max(clip.time, span.start);
       const when = span.audioTime(from);
-      own(key, this.scheduleAudio(clip, destination, when, from - clip.time, span.stop - clip.time), when);
+      own(key, this.scheduleAudio(clip, destination, when, from - clip.time, stopAt), when);
     }
   }
 
@@ -301,9 +357,11 @@ export class ClipScheduler {
     destination: AudioNode,
     when: number,
     offset: number,
-    endOffset = Infinity,
+    stopAt: number | null = null,
   ): AudioHandle {
     let cancelled = false;
+    let stopTime = stopAt;
+    let naturalEnd = 0;
     let ended = false;
     let source: AudioBufferSourceNode | undefined;
     let stage: ReturnType<ClipScheduler["connectClipSource"]> | undefined;
@@ -329,11 +387,13 @@ export class ClipScheduler {
         source.onended = end;
         const start = Math.max(when, this.context.currentTime);
         const adjustedOffset = offset + Math.max(0, start - when);
-        const length = Math.min(buffer.duration, endOffset) - adjustedOffset;
-        if (length <= 0) return end();
+        const length = buffer.duration - adjustedOffset;
+        if (length <= 0 || (stopTime !== null && stopTime <= start)) return end();
         stage = this.connectClipSource(source, destination, clip, start, index * audioChunkSeconds + adjustedOffset, length);
         stage.setAutomation(automation);
         source.start(start, adjustedOffset, length);
+        naturalEnd = start + length;
+        if (stopTime !== null && stopTime < naturalEnd) source.stop(stopTime);
       })
       .catch((error: unknown) => {
         if (!cancelled) this.mediaError(clip, error);
@@ -353,6 +413,11 @@ export class ClipScheduler {
         releaseOwnership();
         if (stage) stage.stop();
         else end();
+      },
+      setStop: (time) => {
+        stopTime = time;
+        if (!source || !naturalEnd || cancelled || ended) return;
+        source.stop(Math.max(this.context.currentTime, Math.min(time ?? naturalEnd, naturalEnd)));
       },
       onEnded: (listener) => {
         if (ended || cancelled) listener();
@@ -389,12 +454,12 @@ export class ClipScheduler {
     return buffer;
   }
 
-  scheduleAudio(clip: PcmAudioClip, destination: AudioNode, when: number, offset: number, endOffset = Infinity): AudioHandle {
+  scheduleAudio(clip: PcmAudioClip, destination: AudioNode, when: number, offset: number, stopAt: number | null = null): AudioHandle {
     const source = this.context.createBufferSource();
     source.buffer = this.bufferFor(clip);
     const start = Math.max(when, this.context.currentTime);
     const adjustedOffset = Math.min(clip.duration, offset + Math.max(0, start - when));
-    const length = Math.max(0, Math.min(clip.duration, endOffset) - adjustedOffset);
+    const length = Math.max(0, clip.duration - adjustedOffset);
     const stage = this.connectClipSource(source, destination, clip, start, adjustedOffset, length);
     stage.setAutomation(clip.gainAutomation);
     let ended = false;
@@ -413,6 +478,8 @@ export class ClipScheduler {
     };
     source.onended = end;
     source.start(start, adjustedOffset, length);
+    const naturalEnd = start + length;
+    if (stopAt !== null && stopAt < naturalEnd) source.stop(Math.max(start, stopAt));
     let cancelled = false;
     return {
       clipId: clip.id,
@@ -422,6 +489,10 @@ export class ClipScheduler {
         cancelled = true;
         releaseOwnership();
         stage.stop();
+      },
+      setStop: (time) => {
+        if (ended || cancelled) return;
+        source.stop(Math.max(this.context.currentTime, Math.min(time ?? naturalEnd, naturalEnd)));
       },
       onEnded: (listener) => {
         if (ended || cancelled) listener();

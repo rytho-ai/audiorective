@@ -695,7 +695,20 @@ function renderRangeAuditionButton(active: boolean): void {
   control.setAttribute("aria-pressed", String(active));
 }
 
+/** The engine repeats the range on the audio clock; this view only decides which range. */
+function syncWorkspaceLoop(): void {
+  const range = activeLoopRange();
+  if (!range || range[1] - range[0] < 0.02) {
+    workspace.loop.setEnabled(false);
+    return;
+  }
+  const map = workspace.project.tempoMap;
+  workspace.loop.setRegion({ startBeat: map.secondsToBeat(range[0]), endBeat: map.secondsToBeat(range[1]) });
+  workspace.loop.setEnabled(true);
+}
+
 function syncLoopUi(): void {
+  syncWorkspaceLoop();
   $("loop").classList.toggle("on", looping);
   $("loop").setAttribute("aria-pressed", String(looping));
   studio.refreshLoopBand();
@@ -906,9 +919,8 @@ function animate(): void {
         loopClipId = undefined;
         syncLoopUi();
       }
-      if (range && range[1] > range[0]) {
-        if (position >= range[1]) workspace.seek(range[0]);
-      } else if (position >= workspace.duration && !rhythmView?.enabled) workspace.stop();
+      syncWorkspaceLoop();
+      if (position >= workspace.duration && !(range && position < range[1]) && !rhythmView?.enabled) workspace.stop();
     }
   }
   requestAnimationFrame(animate);

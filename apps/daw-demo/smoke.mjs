@@ -384,13 +384,18 @@ try {
     return {
       widgetBorder: getComputedStyle(widget).borderTopWidth,
       widgetPadding: getComputedStyle(widget).paddingTop,
-      surfaceHeight: surface?.getBoundingClientRect().height ?? 0,
+      // The note grid and its velocity lane together are the editing surface.
+      surfaceHeight: (surface?.getBoundingClientRect().height ?? 0) + (panel.querySelector(".ar-pr-velocity")?.getBoundingClientRect().height ?? 0),
       panelHeight: panel.getBoundingClientRect().height,
+      // The editing surface must reach the bottom of the panel and stay inside the window.
+      gapBelow: panel.getBoundingClientRect().bottom - (panel.querySelector(".ar-pr-velocity")?.getBoundingClientRect().bottom ?? 0),
+      overflow: panel.getBoundingClientRect().bottom - window.innerHeight,
     };
   });
   assert.equal(editorLayout.widgetBorder, "0px");
   assert.equal(editorLayout.widgetPadding, "0px");
-  assert.ok(editorLayout.surfaceHeight > editorLayout.panelHeight * 0.7, JSON.stringify(editorLayout));
+  assert.ok(editorLayout.surfaceHeight > editorLayout.panelHeight * 0.6, JSON.stringify(editorLayout));
+  assert.ok(Math.abs(editorLayout.gapBelow) <= 2 && editorLayout.overflow <= 0, JSON.stringify(editorLayout));
   await page.screenshot({ path: "/tmp/audiorective-editor-slate.png", fullPage: true });
   await page.locator("#skin").selectOption("midnight");
   await page.screenshot({ path: "/tmp/audiorective-editor-midnight.png", fullPage: true });

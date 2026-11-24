@@ -11,7 +11,10 @@ export interface PianoRollModel {
   subscribe(listener: () => void): () => void;
 }
 export type PianoRollEditKind = "move" | "resize-start" | "resize-end";
-export type PianoRollNoteEdit = Readonly<{ kind: PianoRollEditKind; previous: MidiNote; note: MidiNote }>;
+/** One committed gesture. `"velocity"` comes from the velocity lane and changes only `note.velocity`. */
+export type PianoRollNoteEdit = Readonly<{ kind: PianoRollEditKind | "velocity"; previous: MidiNote; note: MidiNote }>;
+/** A note drawn by the user, in beats with velocity 0..1. It has no `id` until the model adds it. */
+export type PianoRollNewNote = Readonly<{ pitch: number; start: number; duration: number; velocity: number }>;
 export type PianoRollRenderFrame = Readonly<{
   notes: readonly MidiNote[];
   width: number;
@@ -50,11 +53,19 @@ export type PianoRollOptions = {
   layout?: PianoRollLayout;
   /** Enables move/resize gestures. Commit once on release; update the borrowed model here. */
   onNoteEdit?: (edit: PianoRollNoteEdit) => void;
+  /** Enables adding: double-click empty space. Add the note to the borrowed model here. */
+  onNoteAdd?: (note: PianoRollNewNote) => void;
+  /** Enables deleting: double-click a note, or press Delete or Backspace on the note last clicked. Remove it from the borrowed model here. */
+  onNoteDelete?: (note: MidiNote) => void;
+  /** Show a lane under the notes where dragging a bar sets velocity, reported to `onNoteEdit` as kind `"velocity"`. Default false. */
+  velocityLane?: boolean;
   onNoteClick?: (note: MidiNote) => void;
   onCommit?: (commit: SelectionCommit) => void;
 };
 export interface PianoRollHandle extends PluginTarget<TimeViewPluginContext> {
   setPlayhead(time: number | null): void;
+  /** Tell the view which note the app has selected, so Delete and a chord's velocity drag act on it. */
+  setActiveNote(noteId: string | null): void;
   setZoom(factor: number): void;
   scrollTo(time: number): void;
   setPitchRange(pitches: PitchRange): void;

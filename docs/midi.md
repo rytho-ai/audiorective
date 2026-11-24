@@ -271,7 +271,21 @@ The default renderer uses the first/last up-to-6px (at most one quarter of note 
 
 Escape, pointer cancellation, lost capture, window blur/scroll, viewport/pitch geometry changes, source/note replacement and destruction cancel previews without committing. Capture belongs to the stable content surface, so SVG/Canvas/DOM redraws do not lose the gesture. Renderers forward pointerdown and may provide explicit resize modes; they do not implement delta conversion, snapping, cancellation or model mutation. For Canvas, hit-test the note and forward it to the same handler.
 
-A click without a drag and keyboard activation still inspect the note. Background range dragging and its keyboard handles remain separate. This interface does not add note insertion/deletion, multi-note editing, auto-scroll, keyboard note movement or touch navigation gestures.
+A click without a drag and keyboard activation still inspect the note. Background range dragging and its keyboard handles remain separate.
+
+Pass `onNoteAdd` to add notes by double-clicking empty space: it receives `{ pitch, start, duration, velocity }` for the clicked pitch row and grid cell, and your callback adds it to the model. Pass `onNoteDelete` to delete by double-clicking a note, or by pressing Delete or Backspace on the focused or last-clicked note. Set `velocityLane: true` for a lane under the notes: dragging near a note's start previews its velocity and commits once on release through `onNoteEdit` with `kind: "velocity"`. Each callback is a model command, so wrap it in your undo, for example `project.edit`. After remounting the view, call `handle.setActiveNote(noteId)` with the app's selected note so Delete and a chord's velocity drag act on it.
+
+```typescript
+mountPianoRoll(root, {
+  model: pianoRollModel(clip),
+  velocityLane: true,
+  onNoteAdd: (note) => clip.edit((draft) => void draft.push({ ...note, id: crypto.randomUUID(), channel: 0 })),
+  onNoteDelete: ({ id }) => clip.setNotes(clip.notes.value.filter((note) => note.id !== id)),
+  onNoteEdit: ({ note }) => clip.edit((draft) => void Object.assign(draft.find(({ id }) => id === note.id)!, note)),
+});
+```
+
+The piano roll does not provide multi-note editing, auto-scroll, keyboard note movement or touch navigation gestures.
 
 ## Add a time-based overlay or interaction
 

@@ -12,12 +12,13 @@ import type { RackEffect } from "./rack-preset";
 import { AudioTrackSession } from "./audio-track-session";
 import { Audition, type RangeAuditionState } from "./audition";
 import { ClipStretch, type PreparedClipStretch } from "./clip-stretch";
+import { createWorkspaceLoop, LoopFold, type WorkspaceLoop } from "./arrangement-loop";
 import { ClipScheduler } from "./clip-scheduler";
 import { Mixer, type MixerStrip } from "./mixer";
 import { MidiClip, Project } from "./model";
 import type { TempoMap } from "./tempo-map";
 import type { AudioClipGainAutomation, PcmAudioClip, ProjectTrack, TrackRouting, WebClapDevice } from "./model";
-import type { ProjectVersion } from "./project-edits";
+import type { BeatRange, ProjectVersion } from "./project-edits";
 
 export { scheduleClipEnvelope } from "./schedule-clip-envelope";
 export type { PreparedClipStretch } from "./clip-stretch";
@@ -119,6 +120,16 @@ export class Workspace {
   private readonly midiClipPositions = new WeakMap<MidiClip, number>();
   private readonly seekPoint = cell({ seconds: 0 });
   private activeTempoMap: TempoMap;
+  /**
+   * Repeats a beat region on the audio clock, cutting clips at its edges and releasing held MIDI notes at the wrap. Playback before the region
+   * runs into it and then repeats; a seek past its end plays on. `position` stays inside the region while it repeats.
+   */
+  readonly loop: WorkspaceLoop;
+  /** How the continuous transport maps onto the arrangement. */
+  private fold = new LoopFold(0, 0, null);
+  /** The next loop cycle whose tempo events are not on the timeline yet. */
+  private loopTempo?: { cycle: number; time: number };
+  private readonly anchorLoops = new WeakMap<TakeAnchor, Readonly<{ start: number; end: number; wrapped: boolean }>>();
   private commitTail: Promise<void> = Promise.resolve();
   private automaticApply?: Promise<void>;
   private appliedProject?: Project;
@@ -158,6 +169,14 @@ export class Workspace {
     );
     if (options.destination) this.output.connect(options.destination);
     this.timeline = new Timeline({ audioContext: context, bpm: project.bpm });
+    this.loop = createWorkspaceLoop(
+      () => untracked(() => this.applyLoop()),
+      (region) => {
+        const map = untracked(() => this.project.tempoMap);
+        if (map.beatToSeconds(region.endBeat) - map.beatToSeconds(region.startBeat) < 0.02)
+          throw new RangeError("Workspace loop region must last at least 20 ms.");
+      },
+    );
     this.clock = new Clock({
       timeline: this.timeline,
       lookAhead: 0.15,
@@ -239,20 +258,95 @@ export class Workspace {
   }
   get position(): number {
     const { seconds } = this.seekPoint.value;
-    return this.clock.state.value === "stopped" ? seconds : this.activeTempoMap.beatToSeconds(this.timeline.timeToBeat(this.context.currentTime));
+    return this.clock.state.value === "stopped"
+      ? seconds
+      : this.activeTempoMap.beatToSeconds(this.fold.toBeat(this.timeline.timeToBeat(this.context.currentTime)));
   }
 
   /** Clock tempo events are absolute AudioContext times; rebase them at each transport anchor. */
   private rebaseTempo(atBeat: number, anchorTime = this.context.currentTime): void {
+    this.fold = new LoopFold(atBeat, atBeat, this.activeLoopRegion());
+    this.programTempo(atBeat, anchorTime, false);
+  }
+
+  private activeLoopRegion(): BeatRange | null {
+    return untracked(() => (this.loop.cells.enabled.value ? this.loop.cells.region.value : null));
+  }
+
+  /** Put the tempo from `beat` on the timeline: up to the first wrap, after which `extendLoopTempo` adds each repeat. */
+  private programTempo(beat: number, anchorTime: number, keepPast: boolean): void {
     const map = this.activeTempoMap;
-    const currentBpm = map.bpmAtBeat(atBeat);
-    this.timeline.bpm.cancelScheduledValues(0);
-    this.timeline.bpm.setValueAtTime(currentBpm, 0);
+    const currentBpm = map.bpmAtBeat(beat);
+    if (keepPast) this.timeline.bpm.cancelScheduledValues(anchorTime);
+    else {
+      this.timeline.bpm.cancelScheduledValues(0);
+      this.timeline.bpm.setValueAtTime(currentBpm, 0);
+    }
     this.timeline.bpm.setValueAtTime(currentBpm, anchorTime);
-    const startSeconds = map.beatToSeconds(atBeat);
+    const startSeconds = map.beatToSeconds(beat);
+    const stopBeat = this.fold.region?.endBeat ?? Infinity;
     for (const change of map.changes) {
-      if (change.beat <= atBeat) continue;
+      if (change.beat <= beat || change.beat >= stopBeat) continue;
       this.timeline.bpm.setValueAtTime(change.bpm, anchorTime + map.beatToSeconds(change.beat) - startSeconds);
+    }
+    this.loopTempo = this.fold.region ? { cycle: 0, time: anchorTime + map.beatToSeconds(stopBeat) - startSeconds } : undefined;
+    if (this.fold.wrapTransport !== null) this.extendLoopTempo(this.fold.wrapTransport);
+  }
+
+  /** Add the tempo of every repeat that starts by `throughTransport`, plus one more so a window never reads past what is programmed. */
+  private extendLoopTempo(throughTransport: number): void {
+    const tempo = this.loopTempo;
+    const { region, wrapTransport } = this.fold;
+    if (!tempo || !region || wrapTransport === null) return;
+    const map = this.activeTempoMap;
+    const length = region.endBeat - region.startBeat;
+    const startSeconds = map.beatToSeconds(region.startBeat);
+    const seconds = map.beatToSeconds(region.endBeat) - startSeconds;
+    const startBpm = map.bpmAtBeat(region.startBeat);
+    const inside = map.changes.filter(({ beat }) => beat > region.startBeat && beat < region.endBeat);
+    const endBpm = inside.at(-1)?.bpm ?? startBpm;
+    while (wrapTransport + tempo.cycle * length <= throughTransport + length) {
+      if (startBpm !== endBpm || tempo.cycle === 0) this.timeline.bpm.setValueAtTime(startBpm, tempo.time);
+      for (const change of inside) this.timeline.bpm.setValueAtTime(change.bpm, tempo.time + map.beatToSeconds(change.beat) - startSeconds);
+      tempo.cycle++;
+      tempo.time += seconds;
+    }
+  }
+
+  /** The loop changed while playing: keep the audible position and refill from it under the new fold. */
+  private applyLoop(): void {
+    if (this.disposed || this.resumingSeek || this.clock.state.value !== "playing") return;
+    const now = this.context.currentTime;
+    const transport = this.timeline.timeToBeat(now);
+    const beat = this.fold.toBeat(transport);
+    const anchor = Math.max(now, this.timeline.beatToTime(transport));
+    this.fold = new LoopFold(transport, beat, this.activeLoopRegion());
+    this.programTempo(beat, anchor, true);
+    // The refresh revokes everything not yet sounding; what is sounding plays on under the new stop time.
+    const refilled = this.clock.refresh();
+    this.scheduler.refold(this.fold.wrapTransport === null ? null : this.timeline.beatToTime(this.fold.wrapTransport));
+    this.positionAutomation(this.activeTempoMap.beatToSeconds(beat), true, anchor);
+    void refilled;
+  }
+
+  /** Volume automation restarts from the region's start at a wrap. */
+  private programLoopAutomation(when: number): void {
+    const { region } = this.fold;
+    if (!region) return;
+    const map = this.activeTempoMap;
+    const from = map.beatToSeconds(region.startBeat);
+    const to = map.beatToSeconds(region.endBeat);
+    for (const runtime of this.tracks.values()) {
+      const curve = runtime.automationCurve;
+      if (!curve || !runtime.automationBinding) continue;
+      const points = untracked(() => curve.value);
+      const shape = points.findLast((point) => point.time <= from)?.shape ?? "hold";
+      const run = [
+        { time: 0, value: curve.valueAt(from), shape },
+        ...points.filter(({ time }) => time > from && time < to).map((point) => ({ ...point, time: point.time - from })),
+        { time: to - from, value: curve.valueAt(to), shape: "hold" as const },
+      ];
+      audioParamTarget(runtime.automationGain.gain).program(run, when);
     }
   }
 
@@ -263,6 +357,16 @@ export class Workspace {
     return untracked(() => {
       const advancing = this.clock.state.value === "playing";
       const anchor: TakeAnchor = { audioTime, projectTime: advancing ? this.projectTimeAt(audioTime) : this.position, advancing };
+      const { region, wrapTransport } = this.fold;
+      if (advancing && region && wrapTransport !== null) {
+        // A take is placed by the loop that was playing when it was armed, even if the loop has changed since.
+        const map = this.activeTempoMap;
+        this.anchorLoops.set(anchor, {
+          start: map.beatToSeconds(region.startBeat),
+          end: map.beatToSeconds(region.endBeat),
+          wrapped: this.timeline.timeToBeat(audioTime) >= wrapTransport,
+        });
+      }
       if (this.resumingSeek) this.heldAnchors.add(anchor);
       return anchor;
     });
@@ -274,7 +378,7 @@ export class Workspace {
    */
   private projectTimeAt(audioTime: number): number {
     const beat = this.timeline.timeToBeat(audioTime);
-    const seconds = this.activeTempoMap.beatToSeconds(beat);
+    const seconds = this.activeTempoMap.beatToSeconds(this.fold.toBeat(beat));
     const start = this.timeline.beatToTime(beat);
     return start > audioTime + 1e-7 ? seconds - (start - audioTime) : seconds;
   }
@@ -284,7 +388,16 @@ export class Workspace {
     if (this.disposed) throw new Error("Workspace is disposed.");
     if (this.heldAnchors.has(anchor))
       throw new RangeError("Workspace take anchor was captured while a seek waited for media; capture it after the seek has resumed.");
-    return placeTake(anchor, take, inputLatencySeconds);
+    const loop = this.anchorLoops.get(anchor);
+    if (!loop) return placeTake(anchor, take, inputLatencySeconds);
+    // Validates the inputs; a looped take is folded below, so only its own range errors matter here.
+    placeTake({ ...anchor, projectTime: Number.MAX_SAFE_INTEGER / 2 }, take, inputLatencySeconds);
+    const placed = anchor.projectTime + take.startTime - anchor.audioTime - inputLatencySeconds;
+    const length = loop.end - loop.start;
+    if (placed >= loop.end) return loop.start + ((placed - loop.end) % length);
+    // Input latency can reach back across the wrap the anchor came after.
+    if (loop.wrapped && placed < loop.start) return loop.end - ((loop.start - placed) % length || length);
+    return placeTake({ ...anchor, projectTime: placed, audioTime: take.startTime }, take, 0);
   }
 
   private serialize<T>(task: () => Promise<T>): Promise<T> {
@@ -575,7 +688,9 @@ export class Workspace {
       this.audition.stopStale();
       this.scheduler.prune(this.tracks.values());
     }
-    if (tempoChanged) this.seek(position);
+    // A loop region is in beats, so while looping the playhead keeps its beat across a tempo edit and stays in the region.
+    if (tempoChanged)
+      this.seek(this.fold.region && this.activeLoopRegion() ? project.tempoMap.beatToSeconds(this.activeTempoMap.secondsToBeat(position)) : position);
     else if (refreshClips) {
       this.scheduler.cancelAudio(invalidatedAudio);
       this.reconcileSession();
@@ -600,8 +715,14 @@ export class Workspace {
     }
     if (runtime.automationPoints === points) return;
     runtime.automationPoints = points;
-    if (runtime.automationCurve) runtime.automationCurve.value = points;
-    else {
+    if (runtime.automationCurve) {
+      runtime.automationCurve.value = points;
+      // The binding's own clock runs straight past a wrap, so re-anchor it and let the refill program the next wrap.
+      if (this.fold.region && this.clock.state.value === "playing") {
+        runtime.automationBinding?.start({ from: this.position });
+        void this.clock.refresh();
+      }
+    } else {
       runtime.automationCurve = new AutomationCurve(points);
       runtime.automationBinding = new AutomationBinding(this.context, runtime.automationCurve, audioParamTarget(runtime.automationGain.gain));
       if (this.clock.state.value === "playing") runtime.automationBinding.start({ from: this.position });
@@ -808,7 +929,7 @@ export class Workspace {
     if (runtime.kind === "midi") {
       if (runtime.midiHost && this.clock.state.value === "playing") {
         const next = new Set(clips);
-        const beat = this.timeline.timeToBeat(this.context.currentTime);
+        const beat = this.fold.toBeat(this.timeline.timeToBeat(this.context.currentTime));
         const changedPlayingClip = runtime.clips.some((clip) => {
           if (!(clip instanceof MidiClip)) return false;
           const time = this.midiClipPositions.get(clip) ?? clip.time;
@@ -833,7 +954,7 @@ export class Workspace {
         this.noteOff.push(
           clip.midi.revision.subscribe(() => {
             if (this.clock.state.value !== "playing") return;
-            const beat = this.timeline.timeToBeat(this.context.currentTime);
+            const beat = this.fold.toBeat(this.timeline.timeToBeat(this.context.currentTime));
             if (clip.time <= beat && beat <= clip.time + clip.duration) track.midiHost?.allNotesOff();
             void this.clock.refresh();
           }),
@@ -1023,7 +1144,16 @@ export class Workspace {
   }
 
   private schedule(window: TickWindow<Record<never, never>>): void {
-    this.scheduler.scheduleArrangement(this.tracks.values(), window, this.activeTempoMap, this.timeline);
+    // File-backed media is scheduled further ahead than the window, so the tempo must be on the timeline that far too.
+    let through = window.beat.end;
+    for (let pass = 0; pass < 8; pass++) {
+      this.extendLoopTempo(through);
+      const next = this.timeline.timeToBeat(window.time.lookAheadEnd + 0.35);
+      if (next <= through) break;
+      through = next;
+    }
+    this.scheduler.scheduleArrangement(this.tracks.values(), window, this.activeTempoMap, this.timeline, this.fold);
+    for (const wrap of this.fold.wraps(window.beat.start, window.beat.end)) this.programLoopAutomation(this.timeline.beatToTime(wrap));
   }
 
   private allNotesOff(): void {
