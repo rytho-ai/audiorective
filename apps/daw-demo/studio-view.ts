@@ -486,7 +486,7 @@ export class StudioView {
       const label = kind === "split" ? "分割片段" : kind === "start" ? "裁左片段" : "裁右片段";
       this.history.record(label, () => {
         if (kind === "split") this.workspace.project.splitClip(clip.id, offset);
-        else this.workspace.project.trimClip(clip.id, kind === "start" ? offset : 0, kind === "end" ? offset : clip.duration);
+        else this.workspace.project.resizeClip(clip.id, kind === "start" ? { start: clip.time + offset } : { end: clip.time + offset });
       });
       this.selectedNote = undefined;
       this.render();

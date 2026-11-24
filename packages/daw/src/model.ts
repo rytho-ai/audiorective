@@ -73,16 +73,31 @@ export type MediaAudioSource = Readonly<{
   channels?: never;
 }>;
 export type AudioClipSource = PcmAudioSource | MediaAudioSource;
-export type AudioClipStretch = Readonly<{ ratio: number; source: AudioClipSource; anchors?: readonly ClipStretchAnchor[] }>;
+/** Where an audio window sits inside its whole recording. */
+export type AudioSourceSpan = Readonly<{
+  /** Seconds into its recording where this audio begins. */
+  sourceOffset: number;
+  /** Total seconds of the recording this audio is a window of. */
+  sourceLength: number;
+}>;
+/** What a caller supplies to stretch a clip. The project describes the stored source with `sourceOffset` and `sourceLength`. */
+export type AudioClipStretchInit = Readonly<{ ratio: number; source: AudioClipSource; anchors?: readonly ClipStretchAnchor[] }>;
+export type AudioClipStretch = Readonly<{ ratio: number; source: AudioClipSource & AudioSourceSpan; anchors?: readonly ClipStretchAnchor[] }>;
 export type AudioClipGainAutomation = Readonly<{
   /** Original source seconds at the start of this clip's current window. */
   sourceStart: number;
   points: readonly AutomationPoint[];
 }>;
 
-type AudioClipOptions = { id?: string; name?: string; envelope?: ClipEnvelope; stretch?: AudioClipStretch; gainAutomation?: AudioClipGainAutomation };
+type AudioClipOptions = {
+  id?: string;
+  name?: string;
+  envelope?: ClipEnvelope;
+  stretch?: AudioClipStretchInit;
+  gainAutomation?: AudioClipGainAutomation;
+};
 
-interface AudioClipBase {
+interface AudioClipBase extends AudioSourceSpan {
   readonly kind: "audio";
   readonly id: string;
   /** Position on the project timeline, in seconds. */
@@ -121,17 +136,70 @@ export function normalizeClipGainAutomation(automation: AudioClipGainAutomation 
   return Object.freeze({ sourceStart: automation.sourceStart, points: new AutomationCurve(automation.points).value });
 }
 
-function audioSource(clip: AudioClip): AudioClipSource {
-  return clip.media
-    ? Object.freeze({ sampleRate: clip.sampleRate, media: clip.media, startFrame: clip.startFrame, frameCount: clip.frameCount })
-    : Object.freeze({ sampleRate: clip.sampleRate, channels: clip.channels });
+/** The whole recording behind a PCM window, found from the window's first channel. */
+const pcmRecordings = new WeakMap<Float32Array, { channels: readonly Float32Array[]; offset: number }>();
+/** PCM arrays a caller hands over as a window of a recording, so `addAudioClip` keeps them instead of copying. */
+const adoptedWindows = new WeakSet<Float32Array>();
+const outsideRecording = () => new RangeError("Project clip edges must stay inside its recording.");
+
+function recordingOf(source: AudioClipSource): { channels?: readonly Float32Array[]; offset: number; frames: number } {
+  if (source.media) return { offset: source.startFrame, frames: source.media.frameCount };
+  const entry = pcmRecordings.get(source.channels[0]);
+  return entry
+    ? { channels: entry.channels, offset: entry.offset, frames: entry.channels[0].length }
+    : { channels: source.channels, offset: 0, frames: source.channels[0].length };
 }
 
-function sliceAudioSource(source: AudioClipSource, from: number, to: number): AudioClipSource {
-  if (from >= to) throw new RangeError("Project audio trim needs at least one sample.");
+function recorded<S extends AudioClipSource>(source: S): S & AudioSourceSpan {
+  const { offset, frames } = recordingOf(source);
+  return Object.freeze(Object.assign({}, source, { sourceOffset: offset / source.sampleRate, sourceLength: frames / source.sampleRate }));
+}
+
+/**
+ * Codec access to the whole recording behind a clip: `source` holds all of it, `offset` and `frames` place the clip's window in frames, and `key`
+ * is the identity shared by every clip cut from that recording.
+ */
+export function audioRecording(source: AudioClipSource): { source: AudioClipSource; key: object; offset: number; frames: number } {
+  const { channels, offset, frames } = recordingOf(source);
   return source.media
-    ? Object.freeze({ sampleRate: source.sampleRate, media: source.media, startFrame: source.startFrame + from, frameCount: to - from })
-    : Object.freeze({ sampleRate: source.sampleRate, channels: Object.freeze(source.channels.map((channel) => channel.subarray(from, to))) });
+    ? {
+        source: Object.freeze({ sampleRate: source.sampleRate, media: source.media, startFrame: 0, frameCount: source.media.frameCount }),
+        key: source.media,
+        offset,
+        frames,
+      }
+    : { source: Object.freeze({ sampleRate: source.sampleRate, channels: channels! }), key: channels!, offset, frames };
+}
+
+/** Codec access: cut a window `[from, to)` frames out of a decoded recording, keeping the recording behind it, for `addAudioClip`. */
+export function windowOfRecording(recording: ProjectAudio, from: number, to: number): ProjectAudio {
+  const window = sliceAudioSource({ sampleRate: recording.sampleRate, channels: recording.channels }, from, to) as PcmAudioSource;
+  adoptedWindows.add(window.channels[0]);
+  return window;
+}
+
+function audioSource(clip: AudioClip): AudioClipSource & AudioSourceSpan {
+  return recorded(
+    clip.media
+      ? Object.freeze({ sampleRate: clip.sampleRate, media: clip.media, startFrame: clip.startFrame, frameCount: clip.frameCount })
+      : Object.freeze({ sampleRate: clip.sampleRate, channels: clip.channels }),
+  );
+}
+
+/**
+ * A window `[from, to)` in frames of this source's current audio. It may reach outside the current window while it stays inside the recording.
+ * With `own`, the window is its own recording: time-stretched audio is saved as the window alone, so it never reveals more.
+ */
+function sliceAudioSource(source: AudioClipSource, from: number, to: number, own = false): AudioClipSource & AudioSourceSpan {
+  if (from >= to) throw new RangeError("Project audio trim needs at least one sample.");
+  const recording = own && !source.media ? { channels: source.channels, offset: 0, frames: source.channels[0].length } : recordingOf(source);
+  const start = recording.offset + from;
+  const end = recording.offset + to;
+  if (start < 0 || end > recording.frames) throw outsideRecording();
+  if (source.media) return recorded(Object.freeze({ sampleRate: source.sampleRate, media: source.media, startFrame: start, frameCount: to - from }));
+  const channels = Object.freeze(recording.channels!.map((channel) => channel.subarray(start, end)));
+  if (!own) pcmRecordings.set(channels[0], { channels: recording.channels!, offset: start });
+  return recorded(Object.freeze({ sampleRate: source.sampleRate, channels }));
 }
 
 function validPcm(audio: ProjectAudio): boolean {
@@ -146,7 +214,7 @@ function validPcm(audio: ProjectAudio): boolean {
 }
 
 function normalizeClipStretch(
-  stretch: AudioClipStretch | undefined,
+  stretch: AudioClipStretchInit | undefined,
   sampleRate: number,
   channels: number,
   outputFrames: number,
@@ -170,25 +238,36 @@ function normalizeClipStretch(
   )
     throw new RangeError("Project clip stretch needs a compatible original audio window and positive ratio.");
   const anchors = normalizeClipAnchors(stretch.anchors ?? [], audioFrameCount(source), outputFrames);
-  return Object.freeze({ ratio, source: snapshotAudioSource(source), ...(anchors.length ? { anchors } : {}) });
+  return Object.freeze({ ratio, source: recorded(snapshotAudioSource(source)), ...(anchors.length ? { anchors } : {}) });
 }
 
-function snapshotAudioSource(source: AudioClipSource): AudioClipSource {
-  return source.media
-    ? Object.freeze({ sampleRate: source.sampleRate, media: source.media, startFrame: source.startFrame, frameCount: source.frameCount })
-    : Object.freeze({ sampleRate: source.sampleRate, channels: Object.freeze(source.channels.map((channel) => channel.slice())) });
+/** Copy a source. With a `recordings` cache the whole recording is copied once and the copy stays a window of it. */
+function snapshotAudioSource(source: AudioClipSource, recordings?: Map<readonly Float32Array[], readonly Float32Array[]>): AudioClipSource {
+  if (source.media)
+    return Object.freeze({ sampleRate: source.sampleRate, media: source.media, startFrame: source.startFrame, frameCount: source.frameCount });
+  if (!recordings)
+    return Object.freeze({ sampleRate: source.sampleRate, channels: Object.freeze(source.channels.map((channel) => channel.slice())) });
+  const { channels: whole, offset } = recordingOf(source);
+  let copy = recordings.get(whole!);
+  if (!copy) recordings.set(whole!, (copy = Object.freeze(whole!.map((channel) => channel.slice()))));
+  const frames = source.channels[0].length;
+  const channels = Object.freeze(copy.map((channel) => channel.subarray(offset, offset + frames)));
+  pcmRecordings.set(channels[0], { channels: copy, offset });
+  return Object.freeze({ sampleRate: source.sampleRate, channels });
 }
 
-function snapshotAudioClip(clip: AudioClip): AudioClip {
+function snapshotAudioClip(clip: AudioClip, recordings: Map<readonly Float32Array[], readonly Float32Array[]>): AudioClip {
   const stretch =
-    clip.stretch && !clip.stretch.source.media ? Object.freeze({ ...clip.stretch, source: snapshotAudioSource(clip.stretch.source) }) : clip.stretch;
+    clip.stretch && !clip.stretch.source.media
+      ? Object.freeze({ ...clip.stretch, source: recorded(snapshotAudioSource(clip.stretch.source, recordings)) })
+      : clip.stretch;
   if (clip.media && stretch === clip.stretch) return clip;
   return Object.freeze({
     kind: "audio",
     id: clip.id,
     time: clip.time,
     duration: clip.duration,
-    ...snapshotAudioSource(clip),
+    ...recorded(snapshotAudioSource(clip, recordings)),
     ...(clip.envelope ? { envelope: clip.envelope } : {}),
     ...(stretch ? { stretch } : {}),
     ...(clip.gainAutomation ? { gainAutomation: clip.gainAutomation } : {}),
@@ -210,7 +289,7 @@ export type ProjectMidiData = Readonly<{ notes: readonly NoteInit[]; duration: n
 /**
  * A MIDI clip of the project. Everything is in beats: `time` is the position in project beats, `duration` the clip length in beats, and note and
  * event times are beats from the clip's start. `midi` owns the editable notes; notes beyond `duration` are cut at playback. `duration` changes
- * only through the project's clip operations (`trimClip`, `splitClip`, ...), which replace the clip.
+ * only through the project's clip operations (`resizeClip`, `splitClip`, ...), which replace the clip.
  */
 export class MidiClip {
   readonly kind = "midi" as const;
@@ -378,12 +457,14 @@ const clipFrameTolerance = (clip: ProjectClip) => (clip.kind === "audio" ? 1 / c
 const trackShellKeys = ["id", "name", "kind", "busRole", "routing", "volume", "muted", "solo", "pan", "devices", "effects", "effectMacros"] as const;
 
 let captureDeviceHook: (project: Project, deviceId: string, bytes: Uint8Array) => void;
+let borrowSnapshotHook: (project: Project) => Project;
 let extensionRecordsHook: (project: Project, records?: ReadonlyMap<string, ExtensionRecord>) => ReadonlyMap<string, ExtensionRecord>;
 
 /** Headless project content. AudioContext and UI state are not part of the file. */
 export class Project {
   static {
     captureDeviceHook = (project, deviceId, bytes) => project.captureDevice(deviceId, bytes);
+    borrowSnapshotHook = (project) => untracked(() => project.snapshotUntracked(true));
     extensionRecordsHook = (project, records) => {
       if (records) project.commit({ extensions: records }, false);
       return project.s.extensions;
@@ -976,6 +1057,7 @@ export class Project {
     assertProjectActive(this);
     const state = this.s;
     const copy = new Project({ title: state.title, bpm: state.tempoMap.initialBpm, signature: this.signature });
+    const recordings = new Map<readonly Float32Array[], readonly Float32Array[]>();
     const tracks = Object.freeze(
       state.tracks.map((track) =>
         Object.freeze({
@@ -987,7 +1069,7 @@ export class Project {
                 ? new MidiClip(clip.id, clip.time, { notes: clip.midi.notes.value, duration: clip.duration, events: clip.events })
                 : borrowAudio
                   ? clip
-                  : snapshotAudioClip(clip),
+                  : snapshotAudioClip(clip, recordings),
             ),
           ),
         }),
@@ -1316,12 +1398,15 @@ export class Project {
     const envelope = normalizeClipEnvelope(options.envelope ?? unityClipEnvelope, duration);
     const gainAutomation = normalizeClipGainAutomation(options.gainAutomation);
     const name = normalizeClipName(options.name);
+    const adopted = adoptedWindows.has(audio.channels[0]);
+    adoptedWindows.delete(audio.channels[0]);
+    const channels = adopted ? Object.freeze([...audio.channels]) : Object.freeze(audio.channels.map((channel) => new Float32Array(channel)));
+    if (!adopted) pcmRecordings.set(channels[0], { channels, offset: 0 });
     const clip: AudioClip = Object.freeze({
       kind: "audio",
       id: this.reserve(options.id, "clip"),
       time,
-      sampleRate: audio.sampleRate,
-      channels: Object.freeze(audio.channels.map((channel) => new Float32Array(channel))),
+      ...recorded({ sampleRate: audio.sampleRate, channels }),
       duration,
       ...(stretch ? { stretch } : {}),
       ...(envelope === unityClipEnvelope ? {} : { envelope }),
@@ -1365,6 +1450,8 @@ export class Project {
       media,
       startFrame,
       frameCount,
+      sourceOffset: startFrame / media.sampleRate,
+      sourceLength: media.frameCount / media.sampleRate,
       duration,
       ...(stretch ? { stretch } : {}),
       ...(envelope === unityClipEnvelope ? {} : { envelope }),
@@ -1536,12 +1623,14 @@ export class Project {
     )
       throw new RangeError("Project clip stretch needs a positive ratio and matching rendered audio.");
     if (!usesRender && !expected.stretch) return expected;
-    const playback: AudioClipSource = !usesRender
+    const playback: AudioClipSource & AudioSourceSpan = !usesRender
       ? original
-      : Object.freeze({
-          sampleRate: rendered!.sampleRate,
-          channels: Object.freeze(rendered!.channels.map((channel) => channel.slice())),
-        });
+      : recorded(
+          Object.freeze({
+            sampleRate: rendered!.sampleRate,
+            channels: Object.freeze(rendered!.channels.map((channel) => channel.slice())),
+          }),
+        );
     const duration = audioFrameCount(playback) / playback.sampleRate;
     const prior = expected.envelope ?? unityClipEnvelope;
     const scale = duration / expected.duration;
@@ -1581,7 +1670,7 @@ export class Project {
         },
         duration,
       );
-      const playback = sliceAudioSource(clip, first, last);
+      const playback = sliceAudioSource(clip, first, last, !!clip.stretch);
       let stretch: AudioClipStretch | undefined;
       let sourceFirst = first;
       if (clip.stretch) {
@@ -1598,13 +1687,22 @@ export class Project {
         const ratio = clip.stretch.anchors?.length ? (last - first) / (sourceTo - sourceFrom) : clip.stretch.ratio;
         stretch = Object.freeze({
           ratio,
-          source: sliceAudioSource(source, sourceFrom, sourceTo),
+          source: sliceAudioSource(source, sourceFrom, sourceTo, true),
           ...(anchors?.length ? { anchors: Object.freeze(anchors) } : {}),
         });
       }
-      const gainAutomation =
-        clip.gainAutomation &&
-        Object.freeze({ sourceStart: clip.gainAutomation.sourceStart + sourceFirst / clip.sampleRate, points: clip.gainAutomation.points });
+      let gainAutomation: AudioClipGainAutomation | undefined;
+      if (clip.gainAutomation) {
+        const sourceStart = clip.gainAutomation.sourceStart + sourceFirst / clip.sampleRate;
+        // A window that reaches before the automation's origin keeps a non-negative start by moving the points instead.
+        gainAutomation =
+          sourceStart >= 0
+            ? Object.freeze({ sourceStart, points: clip.gainAutomation.points })
+            : Object.freeze({
+                sourceStart: 0,
+                points: Object.freeze(clip.gainAutomation.points.map((point) => Object.freeze({ ...point, time: point.time - sourceStart }))),
+              });
+      }
       return Object.freeze({
         kind: "audio" as const,
         id,
@@ -1645,17 +1743,49 @@ export class Project {
     return new MidiClip(id, clip.time + start, { duration: end - start, notes, events });
   }
 
-  /** Keep the clip ID while removing material outside its local interval. */
-  trimClip(clipId: string, start: number, end: number): ProjectClip {
+  /**
+   * Move a clip's edges, keeping its ID and name. Edges are absolute timeline positions in the clip's unit (seconds for audio, beats for MIDI);
+   * an omitted edge stays. Audio stays aligned in time and can reveal any part of its recording; MIDI can extend into empty space.
+   */
+  resizeClip(clipId: string, edges: { start?: number; end?: number }): ProjectClip {
     assertProjectActive(this);
     const { track, clip } = this.clipAndTrack(clipId);
-    const duration = untracked(() => clip.duration);
-    if (!validTime(start) || !Number.isFinite(end) || start >= end || end > duration)
-      throw new RangeError("Project trim needs 0 <= start < end <= clip duration.");
-    const trimmed = this.segment(clip, start, end, clip.id);
-    this.replace(track, { clips: this.sortClips(track.clips.map((item) => (item.id === clipId ? trimmed : item))) });
+    const resized = untracked(() => this.resizeUntracked(clip, edges ?? {}));
+    this.replace(track, { clips: this.sortClips(track.clips.map((item) => (item.id === clipId ? resized : item))) });
     this.retire(clip);
-    return trimmed;
+    return resized;
+  }
+
+  private resizeUntracked(clip: ProjectClip, edges: { start?: number; end?: number }): ProjectClip {
+    const { start, end } = edges;
+    if ((start !== undefined && !Number.isFinite(start)) || (end !== undefined && !Number.isFinite(end))) throw outsideRecording();
+    if (clip.kind === "audio") {
+      const rate = clip.sampleRate;
+      const frames = Math.round(clip.duration * rate);
+      let first = start === undefined ? 0 : Math.round((start - clip.time) * rate);
+      const last = end === undefined ? frames : Math.round((end - clip.time) * rate);
+      if (first >= last) throw outsideRecording();
+      if (clip.stretch) {
+        if (first < 0 || last > frames) throw new RangeError("Project cannot extend a time-stretched clip; set its ratio to 1 first.");
+      } else {
+        const recording = recordingOf(clip);
+        if (recording.offset + first < 0 || recording.offset + last > recording.frames) throw outsideRecording();
+      }
+      // An edge dragged to 0 on a clip off the sample grid rounds onto it, never before the timeline's start.
+      const timelineFirst = -Math.floor(clip.time * rate + 1e-6);
+      let snapToZero = false;
+      if (first < timelineFirst) {
+        if (start !== undefined && start >= -1e-9) [first, snapToZero] = [timelineFirst, true];
+        else throw new RangeError("Project clips cannot start before 0.");
+      }
+      const resized = this.segment(clip, first / rate, last / rate, clip.id);
+      // Less than a sample from 0: place it at 0, so an edge dragged to the start lands there.
+      return snapToZero && resized.time < 1 / rate ? Object.freeze({ ...(resized as AudioClip), time: 0 }) : resized;
+    }
+    const from = start === undefined ? 0 : start - clip.time;
+    const to = end === undefined ? clip.duration : end - clip.time;
+    if (clip.time + from < 0 || from >= to) throw new RangeError("Project MIDI clip edges need 0 <= start < end.");
+    return this.segment(clip, from, to, clip.id);
   }
 
   /** Split at a local time; the left side keeps the original ID. */
@@ -1710,6 +1840,11 @@ export class Project {
  * Runtime-only: store live plug-in state without counting it as an edit. Not exported from `@audiorective/daw`; an app without a Workspace
  * uses `project.setDeviceState`.
  */
+/** A copy for rendering that shares the audio instead of copying it: renders read audio and never write it. */
+export function renderSnapshot(project: Project): Project {
+  return borrowSnapshotHook(project);
+}
+
 /** Codec access to the extension records: read them, or replace them without an Undo step when a file is opened. */
 export function extensionRecords(project: Project, records?: ReadonlyMap<string, ExtensionRecord>): ReadonlyMap<string, ExtensionRecord> {
   return extensionRecordsHook(project, records);

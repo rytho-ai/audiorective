@@ -1,3 +1,4 @@
+import { renderSnapshot } from "./model";
 import { ManualTickSource } from "@audiorective/clock";
 import { AudioRecorder, type RecordedAudioSpan } from "@audiorective/recorder";
 import type { AudioMedia } from "./media";
@@ -62,7 +63,7 @@ export async function exportAudioFallbackTo(
   try {
     checkAbort();
     await workspace.flush();
-    const renderProject = (await workspace.checkpoint()).snapshot();
+    const renderProject = renderSnapshot(await workspace.checkpoint());
     project = renderProject;
     const sampleRate = workspace.context.sampleRate;
     const duration = Math.max(workspace.duration, 0.1) + tail;

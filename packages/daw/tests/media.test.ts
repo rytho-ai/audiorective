@@ -86,7 +86,7 @@ describe("file-backed audio", () => {
     expect([left.startFrame, left.frameCount, right.startFrame, right.frameCount]).toEqual([0, 2, 2, 2]);
     const copy = project.duplicateClip(right.id, 5);
     expect(copy.kind === "audio" && copy.media === media).toBe(true);
-    const trimmed = project.trimClip(right.id, 0.25, 0.5);
+    const trimmed = project.resizeClip(right.id, { start: right.time + 0.25, end: right.time + 0.5 });
     expect(trimmed.kind === "audio" && trimmed.media && [trimmed.startFrame, trimmed.frameCount]).toEqual([3, 1]);
     project.dispose();
   });
@@ -99,7 +99,7 @@ describe("file-backed audio", () => {
     const project = new Project();
     const track = project.addTrack("Mic", "audio");
     const clip = project.addAudioMediaClip(track.id, media, 2);
-    project.trimClip(clip.id, 0.25, 0.75);
+    project.resizeClip(clip.id, { start: clip.time + 0.25, end: clip.time + 0.75 });
     const blob = await archive(project);
     const archiveBytes = new Uint8Array(await blob.arrayBuffer());
     const view = new DataView(archiveBytes.buffer);
@@ -113,13 +113,14 @@ describe("file-backed audio", () => {
     }
     expect(localHeaders).toBe(4);
     const entries = unzipSync(archiveBytes);
-    expect(entries[`audio/${clip.id}.wav`].length).toBe(52);
+    expect(entries[`audio/${clip.id}.wav`].length).toBe(60); // the whole recording, not the trimmed window
     const opened = await openDawProjectBlob(blob);
     const result = opened.project.tracks[0].clips[0];
     if (result.kind !== "audio" || !result.media) throw new Error("Expected reopened media clip");
     expect(result.time).toBe(2.25);
     expect(result.duration).toBe(0.5);
-    expect((await result.media.readFrames(0, 2))[0]).toEqual(new Float32Array([0.2, 0.3]));
+    expect([result.sourceOffset, result.sourceLength]).toEqual([0.25, 1]);
+    expect((await result.media.readFrames(result.startFrame, 2))[0]).toEqual(new Float32Array([0.2, 0.3]));
     const bytes = new Uint8Array(await blob.arrayBuffer());
     expect(() => openDawProject(bytes)).not.toThrow();
     opened.project.dispose();

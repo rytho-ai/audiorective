@@ -22,6 +22,8 @@ export type {
   AudioClip,
   AudioClipSource,
   AudioClipStretch,
+  AudioClipStretchInit,
+  AudioSourceSpan,
   AudioClipGainAutomation,
   PcmAudioSource,
   MediaAudioSource,

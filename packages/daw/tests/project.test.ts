@@ -318,7 +318,7 @@ describe("DAWproject native slice", () => {
     if (left.kind !== "audio" || right.kind !== "audio") throw new Error("Expected audio clips");
     expect([...left.channels[0]]).toEqual([1, 2, 3, 4]);
     expect([...right.channels[0]]).toEqual([5, 6, 7, 8]);
-    const trimmed = project.trimClip(right.id, 0.25, 0.75);
+    const trimmed = project.resizeClip(right.id, { start: right.time + 0.25, end: right.time + 0.75 });
     if (trimmed.kind !== "audio") throw new Error("Expected audio clip");
     expect(trimmed.time).toBe(3.25);
     expect([...trimmed.channels[0]]).toEqual([6, 7]);
@@ -328,7 +328,9 @@ describe("DAWproject native slice", () => {
       [right.id, 3.25, 0.5],
     ]);
     expect(() => project.splitClip(left.id, 0)).toThrow("Project split needs a time inside the clip.");
-    expect(() => project.trimClip(left.id, 1, 1)).toThrow("Project trim needs 0 <= start < end <= clip duration.");
+    expect(() => project.resizeClip(left.id, { start: left.time + 1, end: left.time + 1 })).toThrow(
+      "Project clip edges must stay inside its recording.",
+    );
     expect(project.tracks[0].clips).toHaveLength(2);
     opened.project.dispose();
     project.dispose();
@@ -351,7 +353,7 @@ describe("DAWproject native slice", () => {
     expect(left.midi.notes.value[0]).toMatchObject({ start: 0.5, duration: 0.5 });
     expect(right.midi.notes.value[0]).toMatchObject({ start: 0, duration: 0.5 });
     expect(right.playbackEvents().find((event) => event.data[0] === 0xb0)?.beat).toBe(0.25);
-    const trimmed = project.trimClip(right.id, 0.25, 1);
+    const trimmed = project.resizeClip(right.id, { start: right.time + 0.25, end: right.time + 1 });
     if (trimmed.kind !== "midi") throw new Error("Expected MIDI clip");
     expect(trimmed.time).toBe(5.25);
     expect(trimmed.midi.notes.value[0]).toMatchObject({ start: 0, duration: 0.25 });

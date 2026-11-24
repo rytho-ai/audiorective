@@ -15,6 +15,7 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Added
 
+- **daw:** Audio clips are windows over their whole recording. `AudioClip.sourceOffset` and `sourceLength` (also on `clip.stretch.source`) give the seconds into the recording where the clip begins and the recording's length. `Project.resizeClip(clipId, { start?, end? })` moves edges to absolute timeline positions, can reveal trimmed audio again inside the recording, and extends MIDI clips into empty space. `.dawproject` saves write each recording once, whole, with `playStart`/`playStop` on its clips, and reopened pieces share the recording.
 - **daw:** Extensions: `defineExtension` and `project.extension(definition)` keep app data in the song (saved as `extensions/<id>/data.json`, undoable, versioned); `defineOperation` and `project.operations` register named operations an app or AI assistant can list and call as one Undo step.
 - **launcher:** `playChain(scenes)` plays scenes back to back for their lengths and then stops; `launcher.chain` reports the position.
 - **daw:** `workspace.arrangement` (and `WorkspaceOptions.arrangement`) turns timeline playback off for Session-only apps, also while playing.
@@ -45,6 +46,13 @@ predates that API. See the "Version mismatches" note in the skill.
 - **effects:** Channel mute and output gating transition smoothly during playback.
 
 ### Migration
+
+- **daw:** **Breaking.** `Project.trimClip` is removed; `resizeClip` takes absolute timeline edges instead of clip-local ones. Migration:
+
+  | Before                                            | After                                                                                  |
+  | ------------------------------------------------- | -------------------------------------------------------------------------------------- |
+  | `project.trimClip(id, localStart, localEnd)`      | `project.resizeClip(id, { start: clip.time + localStart, end: clip.time + localEnd })` |
+  | `project.trimClip(id, localStart, clip.duration)` | `project.resizeClip(id, { start: clip.time + localStart })`                            |
 
 - **daw / daw-demo:** A project file's WebCLAP URL requires app approval. Supply `resolveBundle` when opening a project. The demo approves its built-in synth and bundles that the user explicitly loads in the current session.
 

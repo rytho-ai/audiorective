@@ -1,3 +1,4 @@
+import { renderSnapshot } from "./model";
 import { ManualTickSource } from "@audiorective/clock";
 import type { PCMData } from "@audiorective/core";
 import { integratedLoudness, measureSeam, peakDbFS } from "./internal/mix-measure";
@@ -87,7 +88,7 @@ export async function renderMixRange(workspace: Workspace, options: MixRangeOpti
   // Seams are judged against the audio on both sides. Frames after the range cannot change it; earlier ones could, so they get their own render.
   const margin = seamBeats.length ? Math.ceil(SEAM_MARGIN_SECONDS * sampleRate) : 0;
   const seamFirstFrame = Math.min(firstFrame, Math.max(0, startFrame - margin));
-  const snapshot = live.snapshot();
+  const snapshot = renderSnapshot(live);
   let interrupt!: (error: unknown) => void;
   const interrupted = new Promise<never>((_, reject) => (interrupt = reject));
   interrupted.catch(() => undefined);

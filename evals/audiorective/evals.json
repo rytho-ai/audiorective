@@ -456,7 +456,7 @@
       "files": [],
       "expectations": [
         "Calls Project.splitClip with a clip-local offset (beats for the MIDI clip, seconds for the audio clip) rather than an absolute song position",
-        "Calls Project.trimClip with clip-local start/end in the clip's unit and recognizes that the left split clip keeps its ID",
+        "Calls Project.resizeClip with absolute timeline edges ({ start, end }) in the clip's unit (seconds for audio, beats for MIDI) and recognizes that the left split clip keeps its ID",
         "Re-reads Project.tracks and remounts a borrowed piano-roll (new pianoRollModel over the new clip.midi) after a split or trim because the split-off or trimmed MIDI clip's note model (clip.midi) is replaced",
         "Edits clips on Project and relies on automatic application so the live arrangement refreshes without reloading plug-in hosts; uses await workspace.flush() only when it must wait for the runtime",
         "Explains that audio cuts round to samples and crossing MIDI notes are clipped into each retained segment",

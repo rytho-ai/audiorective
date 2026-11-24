@@ -5,10 +5,20 @@ import { unzipSync, zipSync, Unzip, UnzipInflate } from "fflate";
 import { untracked } from "@audiorective/core";
 import type { NoteInit } from "@audiorective/midi";
 import type { RackEffect, RackMacroSettings } from "./rack-preset";
-import { MidiClip, Project, audioChannelCount, extensionRecords, normalizeClipGainAutomation, type ExtensionRecord } from "./model";
+import {
+  MidiClip,
+  Project,
+  audioChannelCount,
+  audioFrameCount,
+  audioRecording,
+  extensionRecords,
+  normalizeClipGainAutomation,
+  windowOfRecording,
+  type ExtensionRecord,
+} from "./model";
 import { EXTENSION_ID } from "./extensions";
 import type { ClipStretchAnchor } from "./clip-time-map";
-import type { AudioClip, AudioClipGainAutomation, AudioClipSource, AudioClipStretch, ProjectMidiEvent, ProjectTrack } from "./model";
+import type { AudioClip, AudioClipGainAutomation, AudioClipSource, AudioClipStretchInit, ProjectMidiEvent, ProjectTrack } from "./model";
 import { decodeWav, encodeWav, mediaFromWav, wavMediaEntry } from "./internal/wav";
 import { crc32, writeStoredZip } from "./internal/stored-zip";
 import type { StoredZipEntry } from "./internal/stored-zip";
@@ -203,6 +213,7 @@ function writeClip(
   clips: Element,
   entries: Record<string, Uint8Array>,
   mediaEntries: Map<string, AudioClipSource>,
+  recordingPaths: Map<object, string>,
   state: PrivateState,
   track: ProjectTrack,
   index: number,
@@ -211,7 +222,9 @@ function writeClip(
   const unit = clip.kind === "midi" ? "beats" : "seconds";
   const element = append(clips, "Clip", { ...(name === undefined ? {} : { name }), time: clip.time, duration: clip.duration, contentTimeUnit: unit });
   if (clip.kind === "audio") {
-    const path = `audio/${clip.id}.wav`;
+    // A stretched clip writes its rendered window; any other clip writes its whole recording once, named after the first clip that uses it.
+    const recording = clip.stretch ? undefined : audioRecording(clip);
+    const path = (recording && recordingPaths.get(recording.key)) ?? `audio/${clip.id}.wav`;
     const { gain = 1, fadeIn = 0, fadeOut = 0 } = clip.envelope ?? {};
     if (fadeIn || fadeOut) {
       element.setAttribute("fadeTimeUnit", "seconds");
@@ -223,10 +236,20 @@ function writeClip(
       timeUnit: "seconds",
       channels: audioChannelCount(clip),
       sampleRate: clip.sampleRate,
-      duration: clip.duration,
+      duration: recording ? recording.frames / clip.sampleRate : clip.duration,
     });
     append(audio, "File", { path });
-    writeAudioSource(path, clip, entries, mediaEntries);
+    if (recording) {
+      const frames = audioFrameCount(clip);
+      if (recording.offset !== 0 || frames !== recording.frames) {
+        element.setAttribute("playStart", String(recording.offset / clip.sampleRate));
+        element.setAttribute("playStop", String((recording.offset + frames) / clip.sampleRate));
+      }
+      if (!recordingPaths.has(recording.key)) {
+        recordingPaths.set(recording.key, path);
+        writeAudioSource(path, recording.source, entries, mediaEntries);
+      }
+    } else writeAudioSource(path, clip, entries, mediaEntries);
     if (clip.stretch) writeAudioSource(sourcePrefix + `${clip.id}.wav`, clip.stretch.source, entries, mediaEntries);
     state.clips.push({
       track: track.id,
@@ -296,6 +319,7 @@ function prepareDawProject(project: Project): {
   const structure = append(root, "Structure");
   const entries: Record<string, Uint8Array> = {};
   const mediaEntries = new Map<string, AudioClipSource>();
+  const recordingPaths = new Map<object, string>();
   const manifest: HostManifest = { version: 1, devices: {} };
   let insertIndex = 0;
   for (const track of project.tracks) {
@@ -371,6 +395,7 @@ function prepareDawProject(project: Project): {
           clips,
           entries,
           mediaEntries,
+          recordingPaths,
           state,
           track,
           index++,
@@ -756,6 +781,7 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
   }
   nextProjectId.set(project, next);
   const matchedAudio = new Set<StoredClip>();
+  const decodedFiles = new Map<string, AudioClipSource>();
   const untrusted = new Set<string>();
   importedBundles.set(project, untrusted);
   try {
@@ -951,7 +977,17 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
             if (unit === "beats") project.addMidiClip(trackId, midi, midi.time, { id: midi.id, name: midi.name });
             else secondsMidi.push({ trackId, midi });
           } else {
-            attributesOnly(clip, ["name", "time", "duration", "contentTimeUnit", "fadeTimeUnit", "fadeInTime", "fadeOutTime"]);
+            attributesOnly(clip, [
+              "name",
+              "time",
+              "duration",
+              "contentTimeUnit",
+              "fadeTimeUnit",
+              "fadeInTime",
+              "fadeOutTime",
+              "playStart",
+              "playStop",
+            ]);
             if (clip.hasAttribute("fadeTimeUnit") && attr(clip, "fadeTimeUnit") !== "seconds") throw new Error("Project audio fades need seconds.");
             if (attr(clip, "contentTimeUnit") !== "seconds" || direct(clip, "Lanes").length)
               throw new Error("Project audio clip has unsupported content.");
@@ -966,14 +1002,36 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
               asset = entries[path];
             if (!path.startsWith("audio/") || !asset) throw new Error("Project audio asset is missing.");
             usedPaths.add(path);
-            const decoded = readAudioSource(asset);
+            // Clips that name one file share one decoded recording, so a piece can be extended into audio another piece hides.
+            let decoded = decodedFiles.get(path);
+            if (!decoded) decodedFiles.set(path, (decoded = readAudioSource(asset)));
             const channels = audioChannelCount(decoded);
-            const frames = decoded.media ? decoded.frameCount : decoded.channels[0].length;
+            const frames = audioFrameCount(decoded);
+            const rate = decoded.sampleRate;
+            const windowed = clip.hasAttribute("playStart") || clip.hasAttribute("playStop");
+            let from = 0;
+            let to = frames;
+            if (windowed) {
+              if (!clip.hasAttribute("playStart") || !clip.hasAttribute("playStop"))
+                throw new Error("Project audio asset does not match its XML metadata.");
+              const playStart = numberAttr(clip, "playStart");
+              const playStop = numberAttr(clip, "playStop");
+              from = Math.round(playStart * rate);
+              to = Math.round(playStop * rate);
+              if (
+                !(playStart < playStop) ||
+                from < 0 ||
+                to > frames ||
+                from >= to ||
+                Math.abs(playStop - playStart - numberAttr(clip, "duration")) > 1e-9
+              )
+                throw new Error("Project audio asset does not match its XML metadata.");
+            }
             if (
-              decoded.sampleRate !== integerAttr(audio, "sampleRate", 1) ||
+              rate !== integerAttr(audio, "sampleRate", 1) ||
               channels !== integerAttr(audio, "channels", 1) ||
-              Math.abs(frames / decoded.sampleRate - numberAttr(audio, "duration")) > 1e-9 ||
-              Math.abs(frames / decoded.sampleRate - numberAttr(clip, "duration")) > 1e-9
+              Math.abs(frames / rate - numberAttr(audio, "duration")) > 1e-9 ||
+              (!windowed && Math.abs(frames / rate - numberAttr(clip, "duration")) > 1e-9)
             )
               throw new Error("Project audio asset does not match its XML metadata.");
             const identity = audio.getAttribute("id");
@@ -982,7 +1040,6 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
                 !matchedAudio.has(item) &&
                 item.track === trackId &&
                 identity === `${item.id}-audio` &&
-                path === `audio/${item.id}.wav` &&
                 (item.fingerprint === path || item.fingerprint === ""),
             );
             if (match) matchedAudio.add(match);
@@ -993,8 +1050,8 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
             const fadeIn = clip.hasAttribute("fadeInTime") ? numberAttr(clip, "fadeInTime") : 0;
             const fadeOut = clip.hasAttribute("fadeOutTime") ? numberAttr(clip, "fadeOutTime") : 0;
             const originalPath = sourcePrefix + path.slice("audio/".length);
-            const original = entries[originalPath];
-            let stretch: AudioClipStretch | undefined;
+            const original = windowed ? undefined : entries[originalPath];
+            let stretch: AudioClipStretchInit | undefined;
             if (aligned && match.stretchRatio !== undefined) {
               if (!original) throw new Error("Project clip stretch source is missing.");
               stretch = { ratio: match.stretchRatio, source: readAudioSource(original), anchors: match.warpAnchors };
@@ -1020,8 +1077,8 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
               gainAutomation,
             };
             const time = numberAttr(clip, "time");
-            if (decoded.media) project.addAudioMediaClip(trackId, decoded.media, time, options);
-            else project.addAudioClip(trackId, decoded, time, options);
+            if (decoded.media) project.addAudioMediaClip(trackId, decoded.media, time, { ...options, startFrame: from, frameCount: to - from });
+            else project.addAudioClip(trackId, windowOfRecording(decoded, from, to), time, options);
           }
           index++;
         }

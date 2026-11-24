@@ -265,7 +265,7 @@ function copyRange(project: Project, op: CopyRangeEdit, copies: ProjectEditCopie
     if (to - from <= (isMidi ? EPSILON : 0.5 / clip.sampleRate)) continue;
     const copy = project.duplicateClip(clip.id, clip.time);
     const whole = from <= EPSILON && to >= clip.duration - EPSILON;
-    const placed = whole ? copy : project.trimClip(copy.id, from, to);
+    const placed = whole ? copy : project.resizeClip(copy.id, { start: copy.time + from, end: copy.time + to });
     const position = isMidi ? at + clip.time + from - start : copiedSeconds(clip.time + from);
     project.moveClip(placed.id, trackId, position);
     made.push({ from: clip.id, id: placed.id, trackId });

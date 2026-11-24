@@ -521,7 +521,7 @@ describe("history under review cases", () => {
     accent(project, keyChorus.id, 0.6);
     expect(() =>
       project.edit("Bad", () => {
-        project.trimClip(keyChorus.id, 0, 4);
+        project.resizeClip(keyChorus.id, { end: keyChorus.time + 4 });
         project.clearHistory();
       }),
     ).toThrow(/during an edit/);
@@ -556,7 +556,7 @@ describe("project.edit", () => {
     let replacement: ProjectClip | undefined;
     expect(() =>
       project.edit("Fail", () => {
-        replacement = project.trimClip(keyChorus.id, 0, 4);
+        replacement = project.resizeClip(keyChorus.id, { end: keyChorus.time + 4 });
         throw new Error("stop");
       }),
     ).toThrow("stop");
@@ -752,7 +752,7 @@ describe("clip names", () => {
     expect(copy.clipName(copy.tracks[0].clips[0].id)).toBe("Lead Vocal");
     expect(project.clipName(project.duplicateClip(vocal.id, 10).id)).toBe("Lead Vocal");
     expect(project.splitClip(keys.id, 2).map((clip) => project.clipName(clip.id))).toEqual(["Chords", "Chords"]);
-    expect(project.clipName(project.trimClip(vocal.id, 1, 2).id)).toBe("Lead Vocal");
+    expect(project.clipName(project.resizeClip(vocal.id, { start: vocal.time + 1, end: vocal.time + 2 }).id)).toBe("Lead Vocal");
     project.removeClip(vocal.id);
     expect(project.clipName(vocal.id)).toBeUndefined();
   });
