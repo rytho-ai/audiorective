@@ -49,8 +49,11 @@ import {
   type ProjectEditRequest,
   type ProjectOverview,
   type ProjectVersion,
+  type BeatRange,
+  type SecondsRange,
   type TimeRange,
 } from "./project-edits";
+import { audioLoopFrames, audioLoopSourceFrame, loopedNotes, loopedTimes } from "./clip-loop";
 
 export type TrackKind = "audio" | "midi" | "bus";
 export type BusRole = "submix" | "effect";
@@ -86,7 +89,10 @@ export type AudioSourceSpan = Readonly<{
 export type AudioClipStretchInit = Readonly<{ ratio: number; source: AudioClipSource; anchors?: readonly ClipStretchAnchor[] }>;
 export type AudioClipStretch = Readonly<{ ratio: number; source: AudioClipSource & AudioSourceSpan; anchors?: readonly ClipStretchAnchor[] }>;
 export type AudioClipGainAutomation = Readonly<{
-  /** Original source seconds at the start of this clip's current window. */
+  /**
+   * Original source seconds at the start of this clip's current window. Point times are source seconds; on a looped clip they are positions
+   * in the recording, so the curve repeats with every pass of the loop.
+   */
   sourceStart: number;
   points: readonly AutomationPoint[];
 }>;
@@ -108,6 +114,8 @@ interface AudioClipBase extends AudioSourceSpan {
   readonly envelope?: ClipEnvelope;
   readonly gainAutomation?: AudioClipGainAutomation;
   readonly stretch?: AudioClipStretch;
+  /** The part of the recording that repeats, in seconds of the recording (the frame `sourceOffset` uses). Set with `Project.setClipLoop`. */
+  readonly loop?: SecondsRange;
 }
 
 export type PcmAudioClip = AudioClipBase & PcmAudioSource;
@@ -273,6 +281,7 @@ function snapshotAudioClip(clip: AudioClip, recordings: Map<readonly Float32Arra
     ...(clip.envelope ? { envelope: clip.envelope } : {}),
     ...(stretch ? { stretch } : {}),
     ...(clip.gainAutomation ? { gainAutomation: clip.gainAutomation } : {}),
+    ...(clip.loop ? { loop: clip.loop } : {}),
   });
 }
 
@@ -299,12 +308,15 @@ export class MidiClip {
   readonly midi: MidiNotes;
   /** The clip length in beats. */
   readonly duration: number;
+  /** The part of the clip's own note time that repeats until `duration`, in beats from the clip's content start. Set with `Project.setClipLoop`. */
+  readonly loop?: BeatRange;
   private readonly sourceEvents: readonly ProjectMidiEvent[];
 
   constructor(
     readonly id: string,
     time: number,
     data: ProjectMidiData,
+    loop?: BeatRange,
   ) {
     if (!Number.isFinite(data.duration) || data.duration < 0) throw new RangeError("Project MIDI duration must be finite non-negative beats.");
     midiClipTimes.set(this, new Cell(time));
@@ -316,6 +328,7 @@ export class MidiClip {
       }),
     );
     this.duration = data.duration;
+    if (loop) this.loop = loop;
     this.midi = new MidiNotes(data.notes);
   }
 
@@ -332,13 +345,25 @@ export class MidiClip {
   /** The clip's MIDI messages in order, `beat` in beats from the clip's start: notes cut at `duration`, then the non-note events inside it. */
   playbackEvents(): readonly MidiPlaybackEvent[] {
     const duration = this.duration;
-    const notes = untracked(() => this.midi.notes.value).flatMap((note) => {
-      const end = Math.min(note.start + note.duration, duration);
-      return note.start < duration && end > note.start ? [{ ...note, duration: end - note.start }] : [];
-    });
-    const events = this.sourceEvents
-      .filter((event) => event.time <= duration)
-      .map(({ time, data, noteId }) => ({ beat: time, data, ...(noteId ? { noteId } : {}) }));
+    const loop = this.loop;
+    const source = untracked(() => this.midi.notes.value);
+    const notes = loop
+      ? loopedNotes(source, loop, duration)
+      : source.flatMap((note) => {
+          const end = Math.min(note.start + note.duration, duration);
+          return note.start < duration && end > note.start ? [{ ...note, duration: end - note.start }] : [];
+        });
+    const events = loop
+      ? this.sourceEvents.flatMap(({ time, data, noteId }) =>
+          loopedTimes(time, loop, duration).flatMap((beat, pass) =>
+            pass === 0 || ((data[0] & 0xf0) !== 0x80 && (data[0] & 0xf0) !== 0x90)
+              ? [{ beat, data, ...(noteId && pass === 0 ? { noteId } : {}) }]
+              : [],
+          ),
+        )
+      : this.sourceEvents
+          .filter((event) => event.time <= duration)
+          .map(({ time, data, noteId }) => ({ beat: time, data, ...(noteId ? { noteId } : {}) }));
     return compileMidiPlaybackEvents({ events }, { notes, duration });
   }
 
@@ -1068,7 +1093,7 @@ export class Project {
           clips: Object.freeze(
             track.clips.map((clip) =>
               clip instanceof MidiClip
-                ? new MidiClip(clip.id, clip.time, { notes: clip.midi.notes.value, duration: clip.duration, events: clip.events })
+                ? new MidiClip(clip.id, clip.time, { notes: clip.midi.notes.value, duration: clip.duration, events: clip.events }, clip.loop)
                 : borrowAudio
                   ? clip
                   : snapshotAudioClip(clip, recordings),
@@ -1527,11 +1552,93 @@ export class Project {
     const name = this.s.clipNames.get(clipId);
     if (clip.kind === "audio") {
       const options = { name, envelope: clip.envelope, stretch: clip.stretch, gainAutomation: clip.gainAutomation };
-      return clip.media
+      const copy = clip.media
         ? this.addAudioMediaClip(target, clip.media, time, { ...options, startFrame: clip.startFrame, frameCount: clip.frameCount })
         : this.addAudioClip(target, clip, time, options);
+      return clip.loop ? this.looped(copy, clip.loop, clip.duration) : copy;
     }
-    return this.addMidiClip(target, { notes: untracked(() => clip.midi.notes.value), duration: clip.duration, events: clip.events }, time, { name });
+    const copy = this.addMidiClip(target, { notes: untracked(() => clip.midi.notes.value), duration: clip.duration, events: clip.events }, time, {
+      name,
+    });
+    return clip.loop ? this.looped(copy, clip.loop, clip.duration) : copy;
+  }
+
+  /** `clip` replaced by a copy with `loop` and `duration`. The copy keeps the clip's ID, position and everything but the loop. */
+  private looped(clip: ProjectClip, loop: BeatRange | SecondsRange | undefined, duration: number): ProjectClip {
+    const { track } = this.clipAndTrack(clip.id);
+    let next: ProjectClip;
+    if (clip.kind === "audio") {
+      const { loop: _previous, ...audio } = clip;
+      next = Object.freeze({ ...audio, duration, ...(loop ? { loop: Object.freeze({ ...(loop as SecondsRange) }) } : {}) });
+    } else
+      next = new MidiClip(
+        clip.id,
+        clip.time,
+        { notes: untracked(() => clip.midi.notes.value), duration, events: clip.events },
+        loop && Object.freeze({ ...(loop as BeatRange) }),
+      );
+    this.replace(track, { clips: this.sortClips(track.clips.map((item) => (item.id === clip.id ? next : item))) });
+    this.retire(clip);
+    return next;
+  }
+
+  /**
+   * Remove an audio clip's loop. The clip plays its recording straight on from `sourceOffset`, so it is cut to the audio the recording holds from
+   * there (`end <= sourceLength`) and its window is cut to the clip's length; a clip shorter than that keeps its length.
+   */
+  private unloopedAudio(clip: AudioClip): void {
+    const { track } = this.clipAndTrack(clip.id);
+    const rate = clip.sampleRate;
+    const recording = recordingOf(clip);
+    const frames = Math.min(Math.round(clip.duration * rate), recording.frames - recording.offset);
+    const duration = frames / rate;
+    const old = clip.envelope ?? unityClipEnvelope;
+    const envelope = normalizeClipEnvelope(
+      {
+        gain: old.gain,
+        fadeIn: Math.min(old.fadeIn, duration),
+        fadeOut: frames === Math.round(clip.duration * rate) ? Math.min(old.fadeOut, duration) : 0,
+      },
+      duration,
+    );
+    const next: AudioClip = Object.freeze({
+      kind: "audio" as const,
+      id: clip.id,
+      time: clip.time,
+      ...sliceAudioSource(clip, 0, frames),
+      duration,
+      ...(envelope === unityClipEnvelope ? {} : { envelope }),
+      ...(clip.gainAutomation ? { gainAutomation: clip.gainAutomation } : {}),
+    });
+    this.replace(track, { clips: this.sortClips(track.clips.map((item) => (item.id === clip.id ? next : item))) });
+  }
+
+  /**
+   * Repeat part of a clip's content until the clip ends, or stop repeating with `null`. A MIDI clip takes beats in its own note time from its
+   * content start (`{ startBeat, endBeat }`, any positive end); an audio clip takes seconds of its recording (`{ startSeconds, endSeconds }`,
+   * ending inside the recording), the frame `sourceOffset` is in. The clip plays from its start to the loop end, then repeats the loop; a
+   * `resizeClip` right edge may then reach past the content. It replaces the clip, so Undo restores it.
+   */
+  setClipLoop(clipId: string, loop: BeatRange | SecondsRange | null): void {
+    assertProjectActive(this);
+    const { clip } = this.clipAndTrack(clipId);
+    if (loop === null) {
+      if (clip.kind === "audio" && clip.loop) this.unloopedAudio(clip);
+      else if (clip.loop) this.looped(clip, undefined, clip.duration);
+      return;
+    }
+    const isMidi = clip.kind === "midi";
+    const raw = (loop ?? {}) as Partial<BeatRange & SecondsRange>;
+    const start = isMidi ? raw.startBeat : raw.startSeconds;
+    const end = isMidi ? raw.endBeat : raw.endSeconds;
+    if (typeof start !== "number" || typeof end !== "number")
+      throw new RangeError("Project clip loop needs { startBeat, endBeat } for MIDI and { startSeconds, endSeconds } for audio.");
+    if (!(start >= 0 && start < end && Number.isFinite(end)) || (clip.kind === "audio" && (end > clip.sourceLength + 1e-9 || clip.stretch)))
+      throw new RangeError("Project clip loop needs 0 <= start < end inside the clip's content.");
+    const current = clip.loop as Partial<BeatRange & SecondsRange> | undefined;
+    if (current && (isMidi ? current.startBeat === start && current.endBeat === end : current.startSeconds === start && current.endSeconds === end))
+      return;
+    this.looped(clip, isMidi ? { startBeat: start, endBeat: end } : { startSeconds: start, endSeconds: end }, clip.duration);
   }
 
   private clipAndTrack(clipId: string): { track: ProjectTrack; clip: ProjectClip } {
@@ -1651,12 +1758,70 @@ export class Project {
     return next;
   }
 
+  /**
+   * The looped audio clip's piece `[start, end)` of local seconds; `end` may pass the clip's end. The piece starts where the loop's playback
+   * is at `start`, so a trimmed clip plays what it played before, and keeps the loop.
+   */
+  private loopedAudioSegment(clip: AudioClip, loop: SecondsRange, start: number, end: number, id: string): AudioClip {
+    const rate = clip.sampleRate;
+    const first = Math.round(start * rate);
+    const last = Math.round(end * rate);
+    if (first >= last) throw new RangeError("Project audio trim needs at least one sample.");
+    const duration = (last - first) / rate;
+    const old = clip.envelope ?? unityClipEnvelope;
+    const envelope = normalizeClipEnvelope(
+      {
+        gain: old.gain,
+        fadeIn: first === 0 ? Math.min(old.fadeIn, duration) : 0,
+        fadeOut: last === Math.round(clip.duration * rate) ? Math.min(old.fadeOut, duration) : 0,
+      },
+      duration,
+    );
+    const recording = recordingOf(clip);
+    const plan = audioLoopFrames({ loop, sampleRate: rate, sourceOffset: clip.sourceOffset });
+    const own = Math.round(clip.sourceOffset * rate);
+    const from = first === 0 ? own : audioLoopSourceFrame(plan, first);
+    if (from < 0) throw outsideRecording();
+    // The window runs to the end of the recording, so the loop can play any part of it.
+    const playback = sliceAudioSource(clip, from - own, recording.frames - recording.offset);
+    let gainAutomation = clip.gainAutomation;
+    if (gainAutomation && from !== own) {
+      // Points are in recording seconds, so the window's new start moves `sourceStart` by the recording distance.
+      const sourceStart = gainAutomation.sourceStart + (from - own) / rate;
+      gainAutomation =
+        sourceStart >= 0
+          ? Object.freeze({ sourceStart, points: gainAutomation.points })
+          : Object.freeze({
+              sourceStart: 0,
+              points: Object.freeze(gainAutomation.points.map((point) => Object.freeze({ ...point, time: point.time - sourceStart }))),
+            });
+    }
+    return Object.freeze({
+      kind: "audio" as const,
+      id,
+      time: clip.time + first / rate,
+      ...playback,
+      duration,
+      loop,
+      ...(envelope === unityClipEnvelope ? {} : { envelope }),
+      ...(gainAutomation ? { gainAutomation } : {}),
+    });
+  }
+
   /** Extract a local interval without changing the source clip. */
   private segment(clip: ProjectClip, start: number, end: number, id: string): ProjectClip {
     return untracked(() => this.segmentUntracked(clip, start, end, id));
   }
 
   private segmentUntracked(clip: ProjectClip, start: number, end: number, id: string): ProjectClip {
+    if (clip.kind === "audio" && clip.loop) return this.loopedAudioSegment(clip, clip.loop, start, end, id);
+    if (clip.kind === "midi" && clip.loop && start <= 0) {
+      // The start stays or moves earlier, so the notes and the loop only shift: the repeats still come from the loop's notes.
+      const events = clip.events.map((event) => ({ ...event, time: event.time - start }));
+      const notes = untracked(() => clip.midi.notes.value).map((note) => ({ ...note, start: note.start - start }));
+      const loop = { startBeat: clip.loop.startBeat - start, endBeat: clip.loop.endBeat - start };
+      return new MidiClip(id, clip.time + start, { duration: end - start, notes, events }, loop);
+    }
     if (clip.kind === "audio") {
       const first = Math.round(start * clip.sampleRate);
       const last = Math.round(end * clip.sampleRate);
@@ -1716,7 +1881,15 @@ export class Project {
         ...(gainAutomation ? { gainAutomation } : {}),
       });
     }
-    const notes = untracked(() => clip.midi.notes.value).flatMap((note) => {
+    // A looped clip is cut from what it plays, so the pieces keep the repeats as plain notes.
+    const played = clip.loop
+      ? loopedNotes(
+          untracked(() => clip.midi.notes.value),
+          clip.loop,
+          clip.duration,
+        )
+      : untracked(() => clip.midi.notes.value);
+    const notes = played.flatMap((note) => {
       const from = Math.max(start, note.start);
       const to = Math.min(end, note.start + note.duration);
       return to > from ? [{ ...note, start: from - start, duration: to - from }] : [];
@@ -1769,7 +1942,7 @@ export class Project {
       if (first >= last) throw outsideRecording();
       if (clip.stretch) {
         if (first < 0 || last > frames) throw new RangeError("Project cannot extend a time-stretched clip; set its ratio to 1 first.");
-      } else {
+      } else if (!clip.loop) {
         const recording = recordingOf(clip);
         if (recording.offset + first < 0 || recording.offset + last > recording.frames) throw outsideRecording();
       }

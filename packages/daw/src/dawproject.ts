@@ -241,7 +241,13 @@ function writeClip(
     append(audio, "File", { path });
     if (recording) {
       const frames = audioFrameCount(clip);
-      if (recording.offset !== 0 || frames !== recording.frames) {
+      if (clip.loop) {
+        // playStart is where the clip's first pass begins in the recording. playStop is where the same audio would stop without the loop, so a
+        // reader that ignores loops still ends the clip at its length; this reader takes the window from playStart to the end of the recording.
+        const start = recording.offset / clip.sampleRate;
+        element.setAttribute("playStart", String(start));
+        element.setAttribute("playStop", String(Math.min(start + clip.duration, recording.frames / clip.sampleRate)));
+      } else if (recording.offset !== 0 || frames !== recording.frames) {
         element.setAttribute("playStart", String(recording.offset / clip.sampleRate));
         element.setAttribute("playStop", String((recording.offset + frames) / clip.sampleRate));
       }
@@ -251,6 +257,10 @@ function writeClip(
       }
     } else writeAudioSource(path, clip, entries, mediaEntries);
     if (clip.stretch) writeAudioSource(sourcePrefix + `${clip.id}.wav`, clip.stretch.source, entries, mediaEntries);
+    if (clip.loop) {
+      element.setAttribute("loopStart", String(clip.loop.startSeconds));
+      element.setAttribute("loopEnd", String(clip.loop.endSeconds));
+    }
     state.clips.push({
       track: track.id,
       index,
@@ -262,6 +272,10 @@ function writeClip(
       ...(clip.gainAutomation ? { gainAutomation: clip.gainAutomation } : {}),
     });
     return;
+  }
+  if (clip.loop) {
+    element.setAttribute("loopStart", String(clip.loop.startBeat));
+    element.setAttribute("loopEnd", String(clip.loop.endBeat));
   }
   const content = append(element, "Lanes", { id: `${clip.id}-content`, timeUnit: unit });
   const notes = untracked(() => clip.midi.notes.value);
@@ -525,8 +539,19 @@ function readHostManifest(bytes: Uint8Array | undefined, warnings: string[]): Ho
   }
 }
 
+/** The clip's loop in its content time, or undefined. `loopStart` and `loopEnd` come together and `loopStart < loopEnd`. */
+function readLoop(clip: Element): { start: number; end: number } | undefined {
+  const has = clip.hasAttribute("loopStart");
+  if (has !== clip.hasAttribute("loopEnd")) throw new Error("Project clip loop needs both loopStart and loopEnd.");
+  if (!has) return;
+  const start = numberAttr(clip, "loopStart");
+  const end = numberAttr(clip, "loopEnd");
+  if (!(start < end)) throw new Error("Project clip loop needs loopStart before loopEnd.");
+  return { start, end };
+}
+
 function readMidi(clip: Element, trackId: string, index: number, unit: "seconds" | "beats", stored: PrivateState | undefined, warnings: string[]) {
-  attributesOnly(clip, ["name", "time", "duration", "contentTimeUnit"]);
+  attributesOnly(clip, ["name", "time", "duration", "contentTimeUnit", "loopStart", "loopEnd"]);
   if (direct(clip, "Audio").length) throw new Error("Project MIDI clip has unsupported audio content.");
   const time = numberAttr(clip, "time");
   const duration = numberAttr(clip, "duration");
@@ -608,7 +633,7 @@ function readMidi(clip: Element, trackId: string, index: number, unit: "seconds"
   const events: ProjectMidiEvent[] = usable
     ? match.events!.map((event) => ({ time: event.time, data: new Uint8Array(event.data), noteId: event.noteId }))
     : controls.map(eventFromControl);
-  return { name: clip.getAttribute("name") || undefined, time, duration, notes, events, id: usable ? match.id : undefined };
+  return { name: clip.getAttribute("name") || undefined, time, duration, notes, events, id: usable ? match.id : undefined, loop: readLoop(clip) };
 }
 
 /** Open the supported slice. Unknown structural content fails instead of disappearing. */
@@ -974,8 +999,10 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
           if (track.kind === "midi") {
             const midi = readMidi(clip, trackId, index, unit, stored, warnings);
             // Seconds content converts to beats once the tempo map is known, after the arrangement is read.
-            if (unit === "beats") project.addMidiClip(trackId, midi, midi.time, { id: midi.id, name: midi.name });
-            else secondsMidi.push({ trackId, midi });
+            if (unit === "beats") {
+              const added = project.addMidiClip(trackId, midi, midi.time, { id: midi.id, name: midi.name });
+              if (midi.loop) project.setClipLoop(added.id, { startBeat: midi.loop.start, endBeat: midi.loop.end });
+            } else secondsMidi.push({ trackId, midi });
           } else {
             attributesOnly(clip, [
               "name",
@@ -987,6 +1014,8 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
               "fadeOutTime",
               "playStart",
               "playStop",
+              "loopStart",
+              "loopEnd",
             ]);
             if (clip.hasAttribute("fadeTimeUnit") && attr(clip, "fadeTimeUnit") !== "seconds") throw new Error("Project audio fades need seconds.");
             if (attr(clip, "contentTimeUnit") !== "seconds" || direct(clip, "Lanes").length)
@@ -1008,10 +1037,22 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
             const channels = audioChannelCount(decoded);
             const frames = audioFrameCount(decoded);
             const rate = decoded.sampleRate;
+            const loop = readLoop(clip);
             const windowed = clip.hasAttribute("playStart") || clip.hasAttribute("playStop");
             let from = 0;
             let to = frames;
-            if (windowed) {
+            if (loop) {
+              // A looped clip's window runs from playStart to the end of the recording and its length is `duration`; playStop is advisory (where the
+              // content would stop without the loop) and only has to lie after playStart and inside the recording.
+              const playStart = clip.hasAttribute("playStart") ? numberAttr(clip, "playStart") : 0;
+              from = Math.round(playStart * rate);
+              if (
+                from >= frames ||
+                loop.end > frames / rate + 1e-9 ||
+                (clip.hasAttribute("playStop") && (numberAttr(clip, "playStop") <= playStart || numberAttr(clip, "playStop") > frames / rate + 1e-9))
+              )
+                throw new Error("Project audio asset does not match its XML metadata.");
+            } else if (windowed) {
               if (!clip.hasAttribute("playStart") || !clip.hasAttribute("playStop"))
                 throw new Error("Project audio asset does not match its XML metadata.");
               const playStart = numberAttr(clip, "playStart");
@@ -1031,7 +1072,7 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
               rate !== integerAttr(audio, "sampleRate", 1) ||
               channels !== integerAttr(audio, "channels", 1) ||
               Math.abs(frames / rate - numberAttr(audio, "duration")) > 1e-9 ||
-              (!windowed && Math.abs(frames / rate - numberAttr(clip, "duration")) > 1e-9)
+              (!windowed && !loop && Math.abs(frames / rate - numberAttr(clip, "duration")) > 1e-9)
             )
               throw new Error("Project audio asset does not match its XML metadata.");
             const identity = audio.getAttribute("id");
@@ -1077,8 +1118,15 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
               gainAutomation,
             };
             const time = numberAttr(clip, "time");
-            if (decoded.media) project.addAudioMediaClip(trackId, decoded.media, time, { ...options, startFrame: from, frameCount: to - from });
-            else project.addAudioClip(trackId, windowOfRecording(decoded, from, to), time, options);
+            const added = decoded.media
+              ? project.addAudioMediaClip(trackId, decoded.media, time, { ...options, startFrame: from, frameCount: to - from })
+              : project.addAudioClip(trackId, windowOfRecording(decoded, from, to), time, options);
+            if (loop) {
+              project.setClipLoop(added.id, { startSeconds: loop.start, endSeconds: loop.end });
+              project.resizeClip(added.id, { end: time + numberAttr(clip, "duration") });
+              // A resize drops a fade at the edge it moves, so the saved envelope is applied last.
+              project.setAudioClipEnvelope(added.id, options.envelope);
+            }
           }
           index++;
         }
@@ -1141,7 +1189,7 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
       const map = project.tempoMap;
       const first = map.secondsToBeat(midi.time);
       const beat = (local: number) => map.secondsToBeat(midi.time + local) - first;
-      project.addMidiClip(
+      const added = project.addMidiClip(
         trackId,
         {
           duration: beat(midi.duration),
@@ -1151,6 +1199,7 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
         first,
         { id: midi.id, name: midi.name },
       );
+      if (midi.loop) project.setClipLoop(added.id, { startBeat: beat(midi.loop.start), endBeat: beat(midi.loop.end) });
     }
     // Extension data comes back as records; every other file this codec does not use is kept and written back unchanged on save.
     const records = new Map<string, ExtensionRecord>();

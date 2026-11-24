@@ -30,7 +30,8 @@ import { Mixer, type MixerStrip } from "./mixer";
 import { captureDeviceState, MidiClip, Project } from "./model";
 import type { TempoMap } from "./tempo-map";
 import type { AudioClipGainAutomation, PcmAudioClip, ProjectTrack, TrackRouting, WebClapDevice } from "./model";
-import type { BeatRange, ProjectVersion } from "./project-edits";
+import type { BeatRange, ProjectVersion, SecondsRange } from "./project-edits";
+import { audioLoopFrames } from "./clip-loop";
 
 export { scheduleClipEnvelope } from "./schedule-clip-envelope";
 export type { PreparedClipStretch } from "./clip-stretch";
@@ -850,9 +851,26 @@ export class Workspace {
       // The project's note model is itself a clock scheduler; it plays into the track's first device and loops over the clip's length.
       clip.midi.instrument = host;
       const [numerator, denominator] = this.project.signature;
-      return { scheduler: clip.midi, loop: true, length: `${clip.duration / ((numerator * 4) / denominator)}m`, name: clip.id };
+      // A looped clip repeats its notes up to the loop end. The scheduler plays from the clip's first beat, so a loop that starts later still plays the lead-in on each pass.
+      const beats = clip.loop ? Math.min(clip.loop.endBeat, clip.duration) : clip.duration;
+      return { scheduler: clip.midi, loop: true, length: `${beats / ((numerator * 4) / denominator)}m`, name: clip.id };
     }
     if (clip.kind !== "audio" || clip.media) return null;
+    if (clip.loop) {
+      // The launcher counts a buffer's material in beats at `bpm`; 60 makes a beat one second of the recording, so the loop and the entry point are the clip's seconds.
+      const plan = audioLoopFrames(clip as PcmAudioClip & { loop: SecondsRange });
+      const reach = plan.entry / clip.sampleRate + clip.duration;
+      const sessionLoopEnd = reach > clip.loop.startSeconds && reach < clip.loop.endSeconds ? reach : clip.loop.endSeconds;
+      return {
+        buffer: this.scheduler.sessionLoopBufferFor(clip as PcmAudioClip),
+        // A clip shorter than its first pass never reaches the loop end, so the Session stops the loop where the Arrangement does.
+        loop: { startBeat: clip.loop.startSeconds, endBeat: sessionLoopEnd },
+        offsetBeats: plan.entry / clip.sampleRate,
+        bpm: 60,
+        warp: false,
+        name: clip.id,
+      };
+    }
     return { buffer: this.scheduler.sessionBufferFor(clip as PcmAudioClip), loop: true, warp: false, name: clip.id };
   }
 

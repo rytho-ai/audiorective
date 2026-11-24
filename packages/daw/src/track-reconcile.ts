@@ -22,6 +22,7 @@ export function collectGainAutomationEdits(
       old.sampleRate !== clip.sampleRate ||
       old.envelope !== clip.envelope ||
       old.stretch !== clip.stretch ||
+      old.loop !== clip.loop ||
       old.channels !== clip.channels ||
       old.media !== clip.media ||
       (old.media && clip.media && old.startFrame !== clip.startFrame)

@@ -77,7 +77,7 @@ const audioEnd = (clip: ProjectClip) => clip.time + clip.duration;
 function crossfadeJoin(project: Project, left: AudioClip, right: AudioClip, crossfade: number, deleted: number): void {
   const rate = left.sampleRate;
   const available = (clip: AudioClip, side: "after" | "before") =>
-    clip.stretch ? 0 : side === "after" ? clip.sourceLength - clip.sourceOffset - clip.duration : Math.min(clip.sourceOffset, clip.time);
+    clip.stretch || clip.loop ? 0 : side === "after" ? clip.sourceLength - clip.sourceOffset - clip.duration : Math.min(clip.sourceOffset, clip.time);
   // Each side grows by at most half the deleted range (so no audio is heard twice) and by at most its own length (so the fade fits the clip).
   const half = Math.min(crossfade / 2, deleted / 2, left.duration, right.duration, available(left, "after"), available(right, "before"));
   const frames = Math.floor(half * rate + 1e-6);

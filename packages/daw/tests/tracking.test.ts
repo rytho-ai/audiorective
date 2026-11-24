@@ -69,6 +69,11 @@ const rows: Array<{ name: string; read: (ctx: Ctx) => unknown; mutate: (ctx: Ctx
     mutate: (c) => void c.project.resizeClip(c.audioClipId, { end: 0.05 }),
   },
   { name: "Project.tracks (duplicateClip)", read: (c) => c.project.tracks[1].clips, mutate: (c) => void c.project.duplicateClip(c.audioClipId, 1) },
+  {
+    name: "Project.tracks (setClipLoop)",
+    read: (c) => c.project.tracks[1].clips,
+    mutate: (c) => c.project.setClipLoop(c.audioClipId, { startSeconds: 0, endSeconds: 0.05 }),
+  },
   { name: "Project.masterVolume", read: (c) => c.project.masterVolume, mutate: (c) => c.project.setMasterVolume(0.3) },
   {
     name: "Project.hasFileBackedAudio",
@@ -253,6 +258,8 @@ const commands: Array<{ name: string; run: (ctx: Ctx) => unknown }> = [
   { name: "resizeClip (midi)", run: (c) => c.project.resizeClip(c.clip.id, { end: c.clip.time + 0.5 }) },
   { name: "splitClip (midi)", run: (c) => c.project.splitClip(c.clip.id, 0.5) },
   { name: "resizeClip (audio)", run: (c) => c.project.resizeClip(c.audioClipId, { end: 0.05 }) },
+  { name: "setClipLoop (audio)", run: (c) => c.project.setClipLoop(c.audioClipId, { startSeconds: 0, endSeconds: 0.05 }) },
+  { name: "setClipLoop (midi)", run: (c) => c.project.setClipLoop(c.clip.id, { startBeat: 0, endBeat: 0.5 }) },
   { name: "splitClip (audio)", run: (c) => c.project.splitClip(c.audioClipId, 0.05) },
   { name: "rippleDelete", run: (c) => c.project.rippleDelete({ startSeconds: 0.02, endSeconds: 0.04 }, { crossfade: 0.01 }) },
   { name: "MidiClip.playbackEvents", run: (c) => c.clip.playbackEvents() },

@@ -40,6 +40,7 @@ const DAW_PROJECT = [
   "rack-preset.ts",
   "media.ts",
   "clip-time-map.ts",
+  "clip-loop.ts",
   "tempo-map.ts",
   "clip-envelope.ts",
   "project-persistence.ts",

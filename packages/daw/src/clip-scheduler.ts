@@ -1,12 +1,14 @@
 import type { MidiSink } from "./midi-sink";
 import { stopSource } from "./internal/playback-gain";
 import type { TickWindow, Timeline } from "@audiorective/clock";
-import { AutomationBinding, AutomationCurve, audioParamTarget } from "@audiorective/core/automation";
+import { AutomationBinding, AutomationCurve, audioParamTarget, type AutomationPoint } from "@audiorective/core/automation";
 import { loopWrapMessages, type LoopFold, type LoopSegment } from "./arrangement-loop";
 import { clipGainAt } from "./clip-envelope";
 import { scheduleClipEnvelope } from "./schedule-clip-envelope";
-import { audioClipTimeMap } from "./model";
+import { audioClipTimeMap, audioRecording } from "./model";
 import type { AudioClip, AudioClipGainAutomation, PcmAudioClip } from "./model";
+import { audioLoopFrames, audioLoopSourceFrame, loopedGainPoints } from "./clip-loop";
+import type { SecondsRange } from "./project-edits";
 import type { AudioMedia } from "./media";
 import type { TempoMap } from "./tempo-map";
 import { audioChunkSeconds, type AudioClipWindow, type AudioHandle, type TrackRuntime } from "./track-runtime";
@@ -116,6 +118,17 @@ export class ClipScheduler {
       for (const clip of track.clips) {
         if (clip.kind !== "audio" || !clip.media || this.isSkipped(clip) || clip.time >= position + 0.5 || position >= clip.time + clip.duration)
           continue;
+        if (clip.loop) {
+          const plan = audioLoopFrames(clip as AudioClip & { loop: SecondsRange });
+          const from = Math.min(plan.entry, plan.loopStart);
+          reads.push(
+            this.loadMediaRange(clip.media, from, plan.loopEnd - from, clip.sampleRate).then(
+              () => this.recovered(clip),
+              (error: unknown) => this.mediaError(clip, error),
+            ),
+          );
+          continue;
+        }
         const first = Math.floor(Math.max(0, position - clip.time) / audioChunkSeconds);
         const last = Math.min(Math.ceil(clip.duration / audioChunkSeconds), Math.ceil((position + 0.5 - clip.time) / audioChunkSeconds));
         for (let index = first; index < last; index++)
@@ -248,6 +261,15 @@ export class ClipScheduler {
       });
       window.own(handle, when);
     };
+    if (clip.loop) {
+      // One source plays the whole looped clip from here on: it loops itself, so the repeats have no seams.
+      const key = `${span.keyPrefix}${clip.id}`;
+      if (scheduled.has(key) || this.isSkipped(clip)) return;
+      const from = Math.max(clip.time, span.start);
+      const when = span.audioTime(from);
+      own(key, this.scheduleLoopedAudio(clip as AudioClip & { loop: SecondsRange }, destination, when, from - clip.time, stopAt), when);
+      return;
+    }
     if (clip.media) {
       if (this.isSkipped(clip)) return;
       const framesPerChunk = clip.sampleRate * audioChunkSeconds;
@@ -275,15 +297,20 @@ export class ClipScheduler {
     const offset = index * framesPerChunk;
     const count = Math.min(framesPerChunk, clip.frameCount - offset);
     if (count < 1) return Promise.reject(new RangeError("Workspace media chunk is outside the clip."));
-    let cache = this.mediaBuffers.get(clip.media);
-    if (!cache) this.mediaBuffers.set(clip.media, (cache = new Map()));
-    const key = `${clip.startFrame + offset}:${count}`;
+    return this.loadMediaRange(clip.media, clip.startFrame + offset, count, clip.sampleRate);
+  }
+
+  /** `count` frames of a media file from `startFrame`, as one buffer. Reads are cached per file. */
+  private loadMediaRange(media: AudioMedia, startFrame: number, count: number, sampleRate: number): Promise<AudioBuffer> {
+    let cache = this.mediaBuffers.get(media);
+    if (!cache) this.mediaBuffers.set(media, (cache = new Map()));
+    const key = `${startFrame}:${count}`;
     const existing = cache.get(key);
     if (existing) return existing;
-    const pending = clip.media
-      .readFrames(clip.startFrame + offset, count)
+    const pending = media
+      .readFrames(startFrame, count)
       .then((channels) => {
-        const buffer = this.context.createBuffer(channels.length, count, clip.sampleRate);
+        const buffer = this.context.createBuffer(channels.length, count, sampleRate);
         channels.forEach((samples, channel) => buffer.copyToChannel(samples as Float32Array<ArrayBuffer>, channel));
         return buffer;
       })
@@ -325,8 +352,10 @@ export class ClipScheduler {
         return;
       }
       if (!(length > 0)) return;
-      timeMap ??= audioClipTimeMap(clip);
-      const points = timeMap.projectGain(automation.points, automation.sourceStart);
+      // A looped clip reads the curve at its place in the recording, so the curve repeats with the loop.
+      let points: readonly AutomationPoint[];
+      if (clip.loop) points = loopedGainPoints(clip as AudioClip & { loop: SecondsRange }, automation);
+      else points = (timeMap ??= audioClipTimeMap(clip)).projectGain(automation.points, automation.sourceStart);
       if (binding) {
         binding.curve.value = points;
         return;
@@ -428,12 +457,120 @@ export class ClipScheduler {
     };
   }
 
-  bufferFor(clip: PcmAudioClip): AudioBuffer {
+  /**
+   * A looped clip from `offset` seconds into it to its end, as one source that loops natively. A file-backed clip reads only the frames from
+   * its entry point to the loop end, once, and loops that buffer.
+   */
+  scheduleLoopedAudio(
+    clip: AudioClip & { loop: SecondsRange },
+    destination: AudioNode,
+    when: number,
+    offset: number,
+    stopAt: number | null = null,
+  ): AudioHandle {
+    const rate = clip.sampleRate;
+    const plan = audioLoopFrames(clip);
+    const bufferStart = clip.media ? Math.min(plan.entry, plan.loopStart) : 0;
+    let cancelled = false;
+    let stopTime = stopAt;
+    let naturalEnd = 0;
+    let ended = false;
+    let source: AudioBufferSourceNode | undefined;
+    let stage: ReturnType<ClipScheduler["connectClipSource"]> | undefined;
+    let automation = clip.gainAutomation;
+    const listeners = new Set<() => void>();
+    const releaseOwnership = () => {
+      for (const listener of listeners) listener();
+      listeners.clear();
+    };
+    const end = () => {
+      if (ended) return;
+      ended = true;
+      source?.disconnect();
+      stage?.dispose();
+      releaseOwnership();
+    };
+    const loading = (
+      clip.media
+        ? this.loadMediaRange(clip.media, bufferStart, plan.loopEnd - bufferStart, rate)
+        : Promise.resolve(this.bufferFor(audioRecording(clip).source as Pick<PcmAudioClip, "channels" | "sampleRate">))
+    )
+      .then((buffer) => {
+        if (cancelled) return end();
+        this.recovered(clip);
+        const start = Math.max(when, this.context.currentTime);
+        const localOffset = offset + Math.max(0, start - when);
+        const length = clip.duration - localOffset;
+        if (length <= 0 || (stopTime !== null && stopTime <= start)) return end();
+        source = this.context.createBufferSource();
+        source.buffer = buffer;
+        source.loop = true;
+        source.loopStart = (plan.loopStart - bufferStart) / rate;
+        source.loopEnd = (plan.loopEnd - bufferStart) / rate;
+        source.onended = end;
+        stage = this.connectClipSource(source, destination, clip, start, localOffset, length);
+        stage.setAutomation(automation);
+        source.start(start, (audioLoopSourceFrame(plan, Math.round(localOffset * rate)) - bufferStart) / rate, length);
+        naturalEnd = start + length;
+        if (stopTime !== null && stopTime < naturalEnd) source.stop(stopTime);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) this.mediaError(clip, error);
+        end();
+      });
+    this.loading.add(loading);
+    void loading.finally(() => this.loading.delete(loading));
+    return {
+      clipId: clip.id,
+      setGainAutomation: (next) => {
+        automation = next;
+        stage?.setAutomation(next);
+      },
+      cancel: () => {
+        if (cancelled || ended) return;
+        cancelled = true;
+        releaseOwnership();
+        if (stage) stage.stop();
+        else end();
+      },
+      setStop: (time) => {
+        stopTime = time;
+        if (!source || !naturalEnd || cancelled || ended) return;
+        source.stop(Math.max(this.context.currentTime, Math.min(time ?? naturalEnd, naturalEnd)));
+      },
+      onEnded: (listener) => {
+        if (ended || cancelled) listener();
+        else listeners.add(listener);
+      },
+    };
+  }
+
+  bufferFor(clip: Pick<PcmAudioClip, "channels" | "sampleRate">): AudioBuffer {
     let buffer = this.audioBuffers.get(clip.channels);
     if (!buffer) {
       buffer = this.context.createBuffer(clip.channels.length, clip.channels[0].length, clip.sampleRate);
       clip.channels.forEach((samples, index) => buffer!.getChannelData(index).set(samples));
       this.audioBuffers.set(clip.channels, buffer);
+    }
+    return buffer;
+  }
+
+  /** A looped clip's Session audio: its whole recording at the clip's gain and gain automation (read at recording seconds). Fades follow the Arrangement only. */
+  sessionLoopBufferFor(clip: PcmAudioClip): AudioBuffer {
+    const whole = audioRecording(clip).source as Pick<PcmAudioClip, "channels" | "sampleRate">;
+    const gain = clip.envelope?.gain ?? 1;
+    const automation = clip.gainAutomation;
+    if (gain === 1 && !automation) return this.bufferFor(whole);
+    const curve = automation && new AutomationCurve(automation.points);
+    const shift = automation ? automation.sourceStart - clip.sourceOffset : 0;
+    let buffer = this.sessionAudioBuffers.get(clip);
+    if (!buffer) {
+      buffer = this.context.createBuffer(whole.channels.length, whole.channels[0].length, whole.sampleRate);
+      whole.channels.forEach((samples, index) => {
+        const out = buffer!.getChannelData(index);
+        for (let frame = 0; frame < out.length; frame++) out[frame] = samples[frame] * gain * (curve?.valueAt(frame / whole.sampleRate + shift) ?? 1);
+      });
+      this.sessionAudioBuffers.set(clip, buffer);
     }
     return buffer;
   }

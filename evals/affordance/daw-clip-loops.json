@@ -1,0 +1,46 @@
+{
+  "area": "daw-clip-loops",
+  "description": "API-shape experiment for looping clips in the arrangement and the session: a clip repeats a loop region of its content for as long as the clip lasts, saved in the song. Expectations describe behaviour, not names.",
+  "tasks": [
+    {
+      "id": "L1-midi-loop",
+      "prompt": "A browser DAW has an open song as `project` (4/4, 120 BPM) and its running engine as `workspace`. Track \"Drums\" has a MIDI clip at bar 1 that is one bar long with a drum pattern. Write the code that makes this clip loop its one-bar pattern and drags its right edge so it lasts 8 bars, so the pattern plays eight times in the arrangement without copying the clip or its notes. Then the user moves one note of the pattern, and all eight repetitions change. Save the song to a `.dawproject` Blob and open it again in a new engine on a new AudioContext: the clip still loops for 8 bars. Each change is one Undo step. Show the clip's length and its loop region.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;",
+      "expectations": [
+        "Sets a loop region on the clip covering its one-bar pattern instead of copying the clip or its notes.",
+        "Extends the clip to 8 bars so the loop repeats eight times in the arrangement.",
+        "Editing one note in the pattern changes every repetition.",
+        "The loop and the 8-bar length survive saving and reopening.",
+        "Each change is a single undoable step.",
+        "Shows the clip's length and loop region read from the clip."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "No copying clips or notes to fake a loop",
+          "none": ["duplicateClip", "copyRange", "for \\([^)]*<\\s*8"]
+        }
+      ]
+    },
+    {
+      "id": "L2-audio-loop",
+      "prompt": "A browser DAW has an open song as `project` (4/4, 120 BPM) and its running engine as `workspace`. Track \"Break\" has an audio clip at time 0 holding a 4-second drum recording (two bars at 120 BPM). Write the code that loops seconds 0 to 4 of that recording and lengthens the clip to 32 seconds (16 bars) in the arrangement, so it repeats with sample-accurate seams and no clicks, without copying the clip or its audio. Render seconds 0 to 12 offline and confirm the audio at 4 s and 8 s equals the audio at 0 s. Then launch the same clip in the session view: it must loop the same region on the bar. Save the song and confirm the loop is in the saved file when it is reopened.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;",
+      "expectations": [
+        "Sets a loop region of 0–4 s on the audio clip instead of copying the clip or its audio.",
+        "Lengthens the clip to 32 s so the region repeats in the arrangement.",
+        "The offline render repeats the region sample-accurately at 4 s and 8 s.",
+        "Launching the clip in the session loops the same region on the bar.",
+        "The loop survives saving and reopening.",
+        "Does not copy audio or schedule repeats by hand."
+      ],
+      "checks": [
+        {
+          "expectation": 5,
+          "label": "No copying clips or audio to fake a loop",
+          "none": ["duplicateClip", "copyRange", "addAudioClip", "setInterval\\s*\\("]
+        }
+      ]
+    }
+  ]
+}
