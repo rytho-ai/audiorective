@@ -54,6 +54,7 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Fixed
 
+- **core:** a smoothed write to a `SchedulableParam` bound to an `AudioParam` (the default 10 ms ramp) is no longer overwritten by the rAF readback of the not-yet-ramped native value, which made displays such as the EQ curve jump back to the old value for about 100 ms.
 - **daw:** `workspace.auditionAudioClip` no longer skips the first render quanta of a clip: it starts after the clip's buffer is ready (in-memory) or from a fresh origin (file-backed) instead of a start time taken before preparation.
 - **midi, daw:** abutting notes whose `start + duration` differs from the next `start` by float round-off (triplets, 0.1-beat grids) no longer drop the next note in live playback: a `MidiClip` and the `Sampler` instrument treat times within 1 ns as one instant.
 - **midi:** a `MidiClip` in a launcher that is stopped and launched again plays its current notes in the first pass, not the notes from before an edit made since it stopped.

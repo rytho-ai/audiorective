@@ -569,7 +569,13 @@ try {
   await page.mouse.down();
   await page.mouse.move(x, y - 40, { steps: 8 });
   await page.mouse.up();
-  await page.waitForFunction(() => window.__editorReadback.readback.emitted.length > 1);
+  // The drag keeps streaming paramOut messages after mouse-up; read the result only once the stream has been quiet.
+  await page.waitForFunction(() => {
+    const { emitted } = window.__editorReadback.readback;
+    const quiet = window.__editorQuiet;
+    if (!quiet || quiet.length !== emitted.length) window.__editorQuiet = { length: emitted.length, since: performance.now() };
+    return emitted.length > 1 && performance.now() - window.__editorQuiet.since >= 300;
+  });
   const editorReadback = await page.evaluate(async () => {
     const { readback, cleanup } = window.__editorReadback;
     cleanup();

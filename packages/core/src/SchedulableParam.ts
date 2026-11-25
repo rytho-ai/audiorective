@@ -26,6 +26,8 @@ export class SchedulableParam extends Param<number> {
   private readonly _signal: SignalAccessor<number>;
   // The constructor's default write must jump, whatever `smoothing` is.
   private _ready = false;
+  // Context time before which a smoothed write is still travelling to the audio thread; ParamSync readback must not overwrite it with the stale AudioParam.value.
+  private _settleAt = 0;
 
   /** Fires on every change, including while a scheduled ramp moves the value. */
   declare readonly subscribe: Param<number>["subscribe"];
@@ -47,9 +49,13 @@ export class SchedulableParam extends Param<number> {
       if (args.length === 0) return raw();
       raw(args[0]);
       // Nothing has been heard before the clock first runs, so a write at time 0 jumps (an offline render starts at the value you set).
-      if (this.smoothing > 0 && this._ready && this._audioContext.currentTime > 0)
+      if (this.smoothing > 0 && this._ready && this._audioContext.currentTime > 0) {
         this._audioParam.setTargetAtTime(args[0], this._audioContext.currentTime + SMOOTHING_LEAD, this.smoothing / 5);
-      else this._audioParam.value = args[0];
+        this._settleAt = this._audioContext.currentTime + SMOOTHING_LEAD + this.smoothing;
+      } else {
+        this._audioParam.value = args[0];
+        this._settleAt = 0;
+      }
     }) as SignalAccessor<number>;
     (this as { $: SignalAccessor<number> }).$ = accessor;
     this._audioContext = options.audioContext;
@@ -92,35 +98,42 @@ export class SchedulableParam extends Param<number> {
    * sync current value to the audioParam value underhood
    */
   syncFromAudio(): void {
+    if (this._audioContext.currentTime < this._settleAt) return;
     this._signal(this._audioParam.value);
   }
 
   setValueAtTime(value: number, time: number): this {
+    this._settleAt = 0;
     this._audioParam.setValueAtTime(value, time);
     return this;
   }
 
   linearRampToValueAtTime(value: number, endTime: number): this {
+    this._settleAt = 0;
     this._audioParam.linearRampToValueAtTime(value, endTime);
     return this;
   }
 
   exponentialRampToValueAtTime(value: number, endTime: number): this {
+    this._settleAt = 0;
     this._audioParam.exponentialRampToValueAtTime(value, endTime);
     return this;
   }
 
   setTargetAtTime(target: number, startTime: number, timeConstant: number): this {
+    this._settleAt = 0;
     this._audioParam.setTargetAtTime(target, startTime, timeConstant);
     return this;
   }
 
   cancelScheduledValues(cancelTime: number): this {
+    this._settleAt = 0;
     this._audioParam.cancelScheduledValues(cancelTime);
     return this;
   }
 
   cancelAndHoldAtTime(cancelTime: number): this {
+    this._settleAt = 0;
     this._audioParam.cancelAndHoldAtTime(cancelTime);
     return this;
   }

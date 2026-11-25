@@ -139,3 +139,27 @@ describe("SchedulableParam — smoothing", () => {
     expect(out[2205]).toBeCloseTo(1, 3);
   });
 });
+
+describe("SchedulableParam — readback after a smoothed write", () => {
+  test("ParamSync readback does not overwrite a smoothed write with the stale AudioParam value", () => {
+    let time = 1;
+    const audioParam = { value: 0, setTargetAtTime() {} } as unknown as AudioParam;
+    const ctx = {
+      get currentTime() {
+        return time;
+      },
+    } as unknown as BaseAudioContext;
+    const p = new SchedulableParam({ default: 0, audioContext: ctx, audioParam, smoothing: 0.01 });
+    p.value = 1;
+    p.syncFromAudio(); // the audio thread has not applied the target yet: AudioParam.value is still 0
+    expect(p.value).toBe(1);
+    time = 1.03;
+    (audioParam as { value: number }).value = 1;
+    p.syncFromAudio();
+    expect(p.value).toBe(1);
+    (audioParam as { value: number }).value = 0.25; // later automation is followed again
+    p.syncFromAudio();
+    expect(p.value).toBe(0.25);
+    p.dispose();
+  });
+});
