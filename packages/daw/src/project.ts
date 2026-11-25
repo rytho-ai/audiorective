@@ -50,6 +50,7 @@ export type {
   ProjectOverview,
   ProjectSlotClipSummary,
   ProjectVersion,
+  MakeClipUniqueEdit,
   RenameClipEdit,
   RippleDeleteEdit,
   SecondsRange,

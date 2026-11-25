@@ -287,6 +287,10 @@ function snapshotAudioClip(clip: AudioClip, recordings: Map<readonly Float32Arra
 }
 
 const midiClipTimes = new WeakMap<MidiClip, Cell<number>>();
+/** How many live clips hold each note list: linked clips share one. */
+const noteOwners = new WeakMap<MidiNotes, number>();
+/** The non-note messages of a note list, shared by every clip placing it (a DAWproject `reference` points at the whole timeline). */
+const sharedEvents = new WeakMap<MidiNotes, readonly ProjectMidiEvent[]>();
 
 function normalizeClipName(name: string | undefined): string | undefined {
   if (name === undefined) return undefined;
@@ -312,25 +316,32 @@ export class MidiClip {
   /** The part of the clip's own note time that repeats until `duration`, in beats from the clip's content start. Set with `Project.setClipLoop`. */
   readonly loop?: BeatRange;
   private readonly sourceEvents: readonly ProjectMidiEvent[];
+  private released = false;
 
+  /** `shared` makes this clip another placement of that note list (`data.notes` and `data.events` are then ignored: the group shares both): edits to either clip are edits to both. */
   constructor(
     readonly id: string,
     time: number,
     data: ProjectMidiData,
     loop?: BeatRange,
+    shared?: MidiNotes,
   ) {
     if (!Number.isFinite(data.duration) || data.duration < 0) throw new RangeError("Project MIDI duration must be finite non-negative beats.");
     midiClipTimes.set(this, new Cell(time));
-    this.sourceEvents = Object.freeze(
-      (data.events ?? []).map((event) => {
-        if (!Number.isFinite(event.time) || event.time < 0 || !(event.data instanceof Uint8Array) || event.data.length === 0)
-          throw new RangeError("Project MIDI events need finite non-negative times and MIDI bytes.");
-        return Object.freeze({ time: event.time, data: new Uint8Array(event.data), ...(event.noteId ? { noteId: event.noteId } : {}) });
-      }),
-    );
+    this.sourceEvents = shared
+      ? (sharedEvents.get(shared) ?? Object.freeze([]))
+      : Object.freeze(
+          (data.events ?? []).map((event) => {
+            if (!Number.isFinite(event.time) || event.time < 0 || !(event.data instanceof Uint8Array) || event.data.length === 0)
+              throw new RangeError("Project MIDI events need finite non-negative times and MIDI bytes.");
+            return Object.freeze({ time: event.time, data: new Uint8Array(event.data), ...(event.noteId ? { noteId: event.noteId } : {}) });
+          }),
+        );
     this.duration = data.duration;
     if (loop) this.loop = loop;
-    this.midi = new MidiNotes(data.notes);
+    this.midi = shared ?? new MidiNotes(data.notes);
+    if (!shared) sharedEvents.set(this.midi, this.sourceEvents);
+    noteOwners.set(this.midi, (noteOwners.get(this.midi) ?? 0) + 1);
   }
 
   /** The position in project beats. Tracked. */
@@ -368,8 +379,13 @@ export class MidiClip {
     return compileMidiPlaybackEvents({ events }, { notes, duration });
   }
 
+  /** Releases this placement; the shared notes are disposed with the last clip that holds them. */
   dispose(): void {
-    this.midi.dispose();
+    if (this.released) return;
+    this.released = true;
+    const owners = (noteOwners.get(this.midi) ?? 1) - 1;
+    noteOwners.set(this.midi, owners);
+    if (owners <= 0) this.midi.dispose();
   }
 }
 
@@ -1081,7 +1097,7 @@ export class Project {
     if (!entry) return { status: "rejected", version, code: kind === "undo" ? "nothing-to-undo" : "nothing-to-redo", reason: `Nothing to ${kind}.` };
     const from = kind === "undo" ? "after" : "before";
     const to = kind === "undo" ? "before" : "after";
-    if (!this.sideIsCurrent(entry, entry[from]) || !this.sideCanApply(entry, entry[to]))
+    if (!this.sideIsCurrent(entry, entry[from]) || !this.sharersUnchanged(entry, entry[to]) || !this.sideCanApply(entry, entry[to]))
       return { status: "conflict", version, reason: `A later change touched what "${entry.label}" edited, so it was left in place.` };
     untracked(() =>
       batch(() => {
@@ -1093,6 +1109,32 @@ export class Project {
       }),
     );
     return this.appliedReceipt(entry, to);
+  }
+
+  /**
+   * Clips outside `entry.ids` that share a note list with a touched clip are not part of the entry, but applying `side` rewrites that list.
+   * They must still hold the notes `side` captured for them, or the step would overwrite a later edit.
+   */
+  private sharersUnchanged(entry: EditEntry, side: EditSide): boolean {
+    const touched = new Set(entry.ids);
+    const lists = new Set<MidiNotes>();
+    for (const id of touched) {
+      const clip = side.clips.get(id)?.clip;
+      if (clip instanceof MidiClip) lists.add(clip.midi);
+    }
+    if (!lists.size) return true;
+    for (const [id, placement] of side.clips) {
+      const clip = placement.clip;
+      if (touched.has(id) || !(clip instanceof MidiClip) || !lists.has(clip.midi)) continue;
+      if (
+        !sameNotes(
+          untracked(() => clip.midi.notes.value),
+          placement.notes,
+        )
+      )
+        return false;
+    }
+    return true;
   }
 
   private sideIsCurrent(entry: EditEntry, side: EditSide): boolean {
@@ -1292,33 +1334,34 @@ export class Project {
     const state = this.s;
     const copy = new Project({ title: state.title, bpm: state.tempoMap.initialBpm, signature: this.signature });
     const recordings = new Map<readonly Float32Array[], readonly Float32Array[]>();
+    // Linked clips stay linked in the copy.
+    const shares = new Map<MidiNotes, MidiNotes>();
+    const mirror = (clip: MidiClip): MidiClip => {
+      const shared = shares.get(clip.midi);
+      const next = new MidiClip(
+        clip.id,
+        clip.time,
+        { notes: clip.midi.notes.value, duration: clip.duration, events: clip.events },
+        clip.loop,
+        shared,
+      );
+      if (!shared) shares.set(clip.midi, next.midi);
+      return next;
+    };
     const tracks = Object.freeze(
       state.tracks.map((track) =>
         Object.freeze({
           ...track,
           devices: Object.freeze(track.devices.map((device) => Object.freeze({ ...device, state: new Uint8Array(device.state) }))),
           clips: Object.freeze(
-            track.clips.map((clip) =>
-              clip instanceof MidiClip
-                ? new MidiClip(clip.id, clip.time, { notes: clip.midi.notes.value, duration: clip.duration, events: clip.events }, clip.loop)
-                : borrowAudio
-                  ? clip
-                  : snapshotAudioClip(clip, recordings),
-            ),
+            track.clips.map((clip) => (clip instanceof MidiClip ? mirror(clip) : borrowAudio ? clip : snapshotAudioClip(clip, recordings))),
           ),
         }),
       ),
     );
     const slots = new Map<string, ProjectClip>();
     for (const [key, clip] of state.session.slots)
-      slots.set(
-        key,
-        clip instanceof MidiClip
-          ? new MidiClip(clip.id, clip.time, { notes: clip.midi.notes.value, duration: clip.duration, events: clip.events }, clip.loop)
-          : borrowAudio
-            ? clip
-            : snapshotAudioClip(clip, recordings),
-      );
+      slots.set(key, clip instanceof MidiClip ? mirror(clip) : borrowAudio ? clip : snapshotAudioClip(clip, recordings));
     copy.commit({
       masterVolume: state.masterVolume,
       tempoMap: state.tempoMap,
@@ -1734,7 +1777,8 @@ export class Project {
     return { clip, name };
   }
 
-  addMidiClip(trackId: string, data: ProjectMidiData, time: number, options: { id?: string; name?: string } = {}): MidiClip {
+  /** `linkedTo` is a timeline MIDI clip whose notes the new clip shares (as `duplicateClip(..., { linked: true })` does); `data.notes` is then ignored. */
+  addMidiClip(trackId: string, data: ProjectMidiData, time: number, options: { id?: string; name?: string; linkedTo?: string } = {}): MidiClip {
     assertProjectActive(this);
     const track = this.track(trackId, "midi");
     const { clip, name } = this.buildMidiClip(data, time, options);
@@ -1743,12 +1787,23 @@ export class Project {
   }
 
   /** A MIDI clip that is not placed anywhere yet; its ID is reserved. */
-  private buildMidiClip(data: ProjectMidiData, time: number, options: { id?: string; name?: string }): { clip: MidiClip; name: string | undefined } {
+  private buildMidiClip(
+    data: ProjectMidiData,
+    time: number,
+    options: { id?: string; name?: string; linkedTo?: string },
+  ): { clip: MidiClip; name: string | undefined } {
     if (!validTime(time)) throw new RangeError("Project clip time must be finite and non-negative.");
     const name = normalizeClipName(options.name);
+    let shared: MidiNotes | undefined;
+    if (options.linkedTo !== undefined) {
+      const source = this.s.tracks.flatMap((track) => track.clips).find((clip) => clip.id === options.linkedTo);
+      if (!source) throw new Error("Project clip does not exist.");
+      if (!(source instanceof MidiClip)) throw new Error("Project can link only MIDI clips; an audio clip cannot share content.");
+      shared = source.midi;
+    }
     const id = this.reserve(options.id, "clip");
     try {
-      return { clip: new MidiClip(id, time, data), name };
+      return { clip: new MidiClip(id, time, data, undefined, shared), name };
     } catch (error) {
       this.ids.delete(id);
       throw error;
@@ -1789,12 +1844,18 @@ export class Project {
     });
   }
 
-  duplicateClip(clipId: string, time: number, trackId?: string): ProjectClip {
+  /**
+   * A copy of a timeline clip at `time`, on the same track or on `trackId`. The third argument is a track ID or `{ trackId?, linked? }`.
+   * The copy is independent; with `linked: true` it shares the source's MIDI notes instead, so `clip.midi.edit` or `setNotes` on any linked clip
+   * changes all of them (one Undo step inside `project.edit`). Only MIDI clips link; `linkedClips` lists a clip's group and `makeClipUnique` leaves it.
+   */
+  duplicateClip(clipId: string, time: number, trackIdOrOptions?: string | Readonly<{ trackId?: string; linked?: boolean }>): ProjectClip {
     assertProjectActive(this);
-    return untracked(() => this.duplicateClipUntracked(clipId, time, trackId));
+    const options = typeof trackIdOrOptions === "string" ? { trackId: trackIdOrOptions } : (trackIdOrOptions ?? {});
+    return untracked(() => this.duplicateClipUntracked(clipId, time, options.trackId, options.linked === true));
   }
 
-  private duplicateClipUntracked(clipId: string, time: number, trackId?: string): ProjectClip {
+  private duplicateClipUntracked(clipId: string, time: number, trackId: string | undefined, linked: boolean): ProjectClip {
     if (!validTime(time)) throw new RangeError("Project clip time must be finite and non-negative.");
     const source = this.s.tracks.find((item) => item.clips.some((clip) => clip.id === clipId));
     const clip = source?.clips.find((item) => item.id === clipId);
@@ -1802,6 +1863,7 @@ export class Project {
     const target = trackId ?? source.id;
     const name = this.s.clipNames.get(clipId);
     if (clip.kind === "audio") {
+      if (linked) throw new Error("Project can link only MIDI clips; an audio clip cannot share content.");
       const options = { name, envelope: clip.envelope, stretch: clip.stretch, gainAutomation: clip.gainAutomation };
       const copy = clip.media
         ? this.addAudioMediaClip(target, clip.media, time, { ...options, startFrame: clip.startFrame, frameCount: clip.frameCount })
@@ -1810,8 +1872,37 @@ export class Project {
     }
     const copy = this.addMidiClip(target, { notes: untracked(() => clip.midi.notes.value), duration: clip.duration, events: clip.events }, time, {
       name,
+      ...(linked ? { linkedTo: clipId } : {}),
     });
     return clip.loop ? this.looped(copy, clip.loop, clip.duration) : copy;
+  }
+
+  /** The other timeline clips that share this clip's MIDI notes, in track and time order; empty when it is not linked. Tracked. */
+  linkedClips(clipId: string): readonly ProjectClip[] {
+    const clips = this.tracks.flatMap((track) => track.clips);
+    const clip = clips.find((item) => item.id === clipId);
+    if (!(clip instanceof MidiClip)) return Object.freeze([]);
+    return Object.freeze(clips.filter((other): other is MidiClip => other instanceof MidiClip && other !== clip && other.midi === clip.midi));
+  }
+
+  /**
+   * Give a linked clip its own copy of the notes it has now; the clips left in its group stay linked to each other. Returns the clip
+   * (replaced by a new object with the same ID, like `setClipLoop`), unchanged if it is not linked. Inside `project.edit` it is part of that Undo step.
+   */
+  makeClipUnique(clipId: string): ProjectClip {
+    assertProjectActive(this);
+    const where = this.locate(clipId);
+    const { clip } = where;
+    if (!(clip instanceof MidiClip) || !where.track || !untracked(() => this.linkedClips(clipId)).length) return clip;
+    const next = new MidiClip(
+      clip.id,
+      clip.time,
+      { notes: untracked(() => clip.midi.notes.value), duration: clip.duration, events: clip.events },
+      clip.loop,
+    );
+    this.replaceClip(where, next);
+    this.retire(clip);
+    return next;
   }
 
   /** `clip` replaced by a copy with `loop` and `duration`. The copy keeps the clip's ID, position and everything but the loop. */
@@ -1827,6 +1918,7 @@ export class Project {
         clip.time,
         { notes: untracked(() => clip.midi.notes.value), duration, events: clip.events },
         loop && Object.freeze({ ...(loop as BeatRange) }),
+        clip.midi,
       );
     this.replaceClip(where, next);
     this.retire(clip);
@@ -2238,6 +2330,9 @@ export class Project {
     const from = start === undefined ? 0 : start - clip.time;
     const to = end === undefined ? clip.duration : end - clip.time;
     if (clip.time + from < 0 || from >= to) throw new RangeError("Project MIDI clip edges need 0 <= start < end.");
+    // Moving only the end changes the clip's window, not its notes, so a linked clip stays linked; any other resize cuts its own notes.
+    if (from === 0 && this.linkedClips(clip.id).length)
+      return new MidiClip(clip.id, clip.time, { notes: [], duration: to, events: clip.events }, clip.loop, (clip as MidiClip).midi);
     return this.segment(clip, from, to, clip.id);
   }
 

@@ -77,6 +77,11 @@ const rows: Array<{ name: string; read: (ctx: Ctx) => unknown; mutate: (ctx: Ctx
   },
   { name: "Project.tracks (duplicateClip)", read: (c) => c.project.tracks[1].clips, mutate: (c) => void c.project.duplicateClip(c.audioClipId, 1) },
   {
+    name: "Project.linkedClips (duplicateClip linked)",
+    read: (c) => c.project.linkedClips(c.clip.id).map(({ id }) => id),
+    mutate: (c) => void c.project.duplicateClip(c.clip.id, 5, { linked: true }),
+  },
+  {
     name: "Project.tracks (setClipLoop)",
     read: (c) => c.project.tracks[1].clips,
     mutate: (c) => c.project.setClipLoop(c.audioClipId, { startSeconds: 0, endSeconds: 0.05 }),
@@ -298,6 +303,14 @@ describe("Project and MidiClip public readers are tracked", () => {
 const commands: Array<{ name: string; run: (ctx: Ctx) => unknown }> = [
   { name: "duplicateClip (audio)", run: (c) => c.project.duplicateClip(c.audioClipId, 2) },
   { name: "duplicateClip (midi)", run: (c) => c.project.duplicateClip(c.clip.id, 5) },
+  { name: "duplicateClip (midi, linked)", run: (c) => c.project.duplicateClip(c.clip.id, 5, { linked: true }) },
+  {
+    name: "makeClipUnique",
+    run: (c) => {
+      c.project.duplicateClip(c.clip.id, 5, { linked: true });
+      return c.project.makeClipUnique(c.clip.id);
+    },
+  },
   { name: "snapshot", run: (c) => c.project.snapshot().dispose() },
   { name: "resizeClip (midi)", run: (c) => c.project.resizeClip(c.clip.id, { end: c.clip.time + 0.5 }) },
   { name: "splitClip (midi)", run: (c) => c.project.splitClip(c.clip.id, 0.5) },

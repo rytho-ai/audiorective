@@ -23,6 +23,8 @@ export type ProjectClipSummary = Readonly<{
   durationSeconds: number;
   startBeat: number;
   durationBeats: number;
+  /** The IDs of the other timeline clips that share this clip's MIDI notes; omitted when the clip is not linked. */
+  linkedTo?: readonly string[];
 }>;
 
 export type ProjectOverview = Readonly<{
@@ -93,9 +95,13 @@ export type RippleDeleteEdit = Readonly<{
   /** `true` for a short default crossfade (5 ms), `false` or omitted for none, or a length in seconds. */
   crossfade?: boolean | number;
 }>;
+export type MakeClipUniqueEdit = Readonly<{
+  type: "makeClipUnique";
+  clip: EditClipSelector;
+}>;
 export type RenameClipEdit = Readonly<{ type: "renameClip"; clip: EditClipSelector; name: string }>;
 /** One JSON-serializable step of `project.applyEdits`. */
-export type ProjectEditOperation = CopyRangeEdit | MoveClipEdit | SetNoteVelocityEdit | RenameClipEdit | RippleDeleteEdit;
+export type ProjectEditOperation = CopyRangeEdit | MoveClipEdit | SetNoteVelocityEdit | RenameClipEdit | RippleDeleteEdit | MakeClipUniqueEdit;
 
 export type ProjectEditRequest = Readonly<{
   /** The version the caller read. A different current version returns `conflict` and changes nothing. */
@@ -157,6 +163,7 @@ function clipBeats(tempo: TempoMap, clip: ProjectClip): readonly [number, number
 }
 
 function summary(project: Project, tempo: TempoMap, track: ProjectTrack, clip: ProjectClip): ProjectClipSummary {
+  const linked = project.linkedClips(clip.id).map(({ id }) => id);
   const name = project.clipName(clip.id);
   const [startBeat, endBeat] = clipBeats(tempo, clip);
   const startSeconds = clip.kind === "midi" ? tempo.beatToSeconds(clip.time) : clip.time;
@@ -171,6 +178,7 @@ function summary(project: Project, tempo: TempoMap, track: ProjectTrack, clip: P
     durationSeconds: endSeconds - startSeconds,
     startBeat,
     durationBeats: endBeat - startBeat,
+    ...(linked.length ? { linkedTo: linked } : {}),
   };
 }
 
@@ -440,6 +448,7 @@ export function runProjectEdits(project: Project, ops: readonly ProjectEditOpera
       else if (op?.type === "moveClip") moveClip(project, op, copies, moved, index);
       else if (op?.type === "setNoteVelocity") setNoteVelocity(project, op, copies);
       else if (op?.type === "rippleDelete") rippleDeleteOp(project, op);
+      else if (op?.type === "makeClipUnique") project.makeClipUnique(resolveClip(project, op.clip, copies).clip.id);
       else if (op?.type === "renameClip") project.setClipName(resolveAnyClip(project, op.clip, copies).id, op.name);
       else fail("invalid-operation", `Unknown edit type "${String((op as { type?: unknown } | null)?.type)}".`);
     } catch (error) {

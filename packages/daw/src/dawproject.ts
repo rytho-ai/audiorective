@@ -222,6 +222,7 @@ function writeClip(
   track: ProjectTrack,
   index: number,
   name: string | undefined,
+  linkOwners: Map<object, { id: string; events: boolean }>,
 ): void {
   const unit = clip.kind === "midi" ? "beats" : "seconds";
   const element = append(clips, "Clip", { ...(name === undefined ? {} : { name }), time: clip.time, duration: clip.duration, contentTimeUnit: unit });
@@ -281,6 +282,14 @@ function writeClip(
     element.setAttribute("loopStart", String(clip.loop.startBeat));
     element.setAttribute("loopEnd", String(clip.loop.endBeat));
   }
+  // Clips that share notes write them once, with the first clip; each later one points at that timeline.
+  const owner = linkOwners.get(clip.midi);
+  if (owner) {
+    element.setAttribute("id", clip.id);
+    element.setAttribute("reference", owner.events ? `${owner.id}-content` : `${owner.id}-notes`);
+    return;
+  }
+  linkOwners.set(clip.midi, { id: clip.id, events: clip.events.length > 0 });
   const content = append(element, "Lanes", { id: `${clip.id}-content`, timeUnit: unit });
   const notes = untracked(() => clip.midi.notes.value);
   const notesNode = append(content, "Notes", { id: `${clip.id}-notes`, timeUnit: unit });
@@ -408,6 +417,7 @@ function prepareDawProject(project: Project): {
   const racks = project.tracks.filter((track) => track.effectMacros.length);
   if (racks.length) state.rackMacros = Object.fromEntries(racks.map((track) => [track.id, track.effectMacros]));
   const nextIndex = new Map<string, number>();
+  const linkOwners = new Map<object, { id: string; events: boolean }>();
   for (const track of project.tracks) {
     const lane = append(lanes, "Lanes", { id: `${track.id}-lane`, track: track.id, timeUnit: "seconds" });
     let index = 0;
@@ -426,6 +436,7 @@ function prepareDawProject(project: Project): {
           track,
           index++,
           untracked(() => project.clipName(clip.id)),
+          linkOwners,
         );
     }
     nextIndex.set(track.id, index);
@@ -467,6 +478,7 @@ function prepareDawProject(project: Project): {
           track,
           index,
           untracked(() => project.clipName(clip.id)),
+          linkOwners,
         );
       }
     }
@@ -672,7 +684,16 @@ function readMidi(clip: Element, trackId: string, index: number, unit: "seconds"
   const events: ProjectMidiEvent[] = usable
     ? match.events!.map((event) => ({ time: event.time, data: new Uint8Array(event.data), noteId: event.noteId }))
     : controls.map(eventFromControl);
-  return { name: clip.getAttribute("name") || undefined, time, duration, notes, events, id: usable ? match.id : undefined, loop: readLoop(clip) };
+  return {
+    name: clip.getAttribute("name") || undefined,
+    time,
+    duration,
+    notes,
+    events,
+    id: usable ? match.id : undefined,
+    loop: readLoop(clip),
+    timelines: [content.getAttribute("id"), notesNode.getAttribute("id")] as const,
+  };
 }
 
 /** Open the supported slice. Unknown structural content fails instead of disappearing. */
@@ -1013,15 +1034,31 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
     childrenOnly(arrangement, ["Lanes", "Markers", "TempoAutomation"]);
     const nextIndex = new Map<string, number>();
     const secondsMidi: Array<{ trackId: string; midi: ReturnType<typeof readMidi>; sceneId?: string }> = [];
+    // Clips whose content is another clip's timeline (`reference`), added once every clip with content is known.
+    const referenced: Array<{ trackId: string; clip: Element; sceneId?: string }> = [];
+    // The notes and Lanes timelines of the MIDI clips on the timeline, by XML ID: what a `reference` can point at.
+    const timelineOwners = new Map<string, { clipId: string; withEvents: boolean }>();
     const readClip = (clip: Element, trackId: string, track: ProjectTrack, unit: "seconds" | "beats", index: number, sceneId?: string): void => {
       childrenOnly(clip, ["Lanes", "Audio"]);
       if (track.kind === "midi") {
+        if (clip.hasAttribute("reference")) {
+          attributesOnly(clip, ["id", "name", "time", "duration", "contentTimeUnit", "loopStart", "loopEnd", "reference"]);
+          if (unit !== "beats" || attr(clip, "contentTimeUnit") !== unit) throw new Error("Project MIDI clip reference needs beats time.");
+          if (direct(clip, "Lanes").length || direct(clip, "Audio").length) throw new Error("Project MIDI clip reference cannot also hold content.");
+          referenced.push({ trackId, clip, sceneId });
+          return;
+        }
         const midi = readMidi(clip, trackId, index, unit, stored, warnings);
         // Seconds content converts to beats once the tempo map is known, after the arrangement is read.
         if (unit === "beats") {
           const added = project.addMidiClip(trackId, midi, midi.time, { id: midi.id, name: midi.name });
           if (midi.loop) project.setClipLoop(added.id, { startBeat: midi.loop.start, endBeat: midi.loop.end });
           if (sceneId) adoptSlotClip(project, added.id, sceneId);
+          else {
+            const [lanesId, notesId] = midi.timelines;
+            if (lanesId) timelineOwners.set(lanesId, { clipId: added.id, withEvents: true });
+            if (notesId) timelineOwners.set(notesId, { clipId: added.id, withEvents: false });
+          }
         } else secondsMidi.push({ trackId, midi, sceneId });
       } else {
         attributesOnly(clip, [
@@ -1285,6 +1322,27 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
         { id: midi.id, name: midi.name },
       );
       if (midi.loop) project.setClipLoop(added.id, { startBeat: beat(midi.loop.start), endBeat: beat(midi.loop.end) });
+      if (sceneId) adoptSlotClip(project, added.id, sceneId);
+    }
+    for (const { trackId, clip, sceneId } of referenced) {
+      const id = attr(clip, "reference");
+      const owner = timelineOwners.get(id);
+      if (!owner) throw new Error(`Project clip reference "${id}" does not match any MIDI notes on the timeline.`);
+      const source = project.tracks.flatMap((track) => track.clips).find((item) => item.id === owner.clipId) as MidiClip;
+      const time = numberAttr(clip, "time");
+      const loop = readLoop(clip);
+      const added = project.addMidiClip(
+        trackId,
+        { notes: untracked(() => source.midi.notes.value), duration: numberAttr(clip, "duration"), events: owner.withEvents ? source.events : [] },
+        time,
+        {
+          id: stored && clip.getAttribute("id") ? clip.getAttribute("id")! : undefined,
+          name: clip.getAttribute("name") || undefined,
+          // A Session slot never shares notes with the timeline.
+          ...(sceneId ? {} : { linkedTo: owner.clipId }),
+        },
+      );
+      if (loop) project.setClipLoop(added.id, { startBeat: loop.start, endBeat: loop.end });
       if (sceneId) adoptSlotClip(project, added.id, sceneId);
     }
     // Extension data comes back as records; every other file this codec does not use is kept and written back unchanged on save.
