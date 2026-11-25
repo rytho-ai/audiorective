@@ -15,6 +15,9 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Added
 
+- **midi:** a note pushed or unshifted inside `clip.edit(draft => ...)` (and `clip.midi.edit` on a DAW clip) needs only `pitch`, `velocity`, `start` and `duration`; `id` is generated and `channel` defaults to 0, as with `setNotes` and `addMidiClip`. New type `NoteDraft`.
+- **daw:** `WorkspaceOptions.instruments` also accepts a function `(track) => TrackInstrument | undefined` (the track's `id`, `name`, `kind`), run for every MIDI track without a device, including tracks added before `sync()`, so `openWorkspace(context, bytes, { instruments: (t) => sounds[t.name] })` needs no id lookup.
+- **docs:** method index for `Project` and `Workspace` in `docs/daw.md`; the clip overlap rule (direct methods allow overlaps, only the `applyEdits` `moveClip` operation rejects them); a Vite recipe for serving the WebCLAP worklet and bundles in `docs/host.md`.
 - **core:** `encodeWav(pcm, { bitDepth? })` returns a WAV `Blob` of any `PCMData` (16-bit default, 24-bit integer or 32-bit float; interleaved, any channel count), and `encodeWavBytes` the same file as a `Uint8Array`. Pure: exported from the root and `@audiorective/core/peaks`, and re-exported from the `@audiorective/daw` root.
 - **daw:** `renderSession(workspace, { scenes, expectedVersion?, tailSeconds?, signal? })` renders Session scenes (repeats allowed) back to back offline through the full mix, each on a bar line, and returns the PCM with `durationSeconds` and per-scene `starts`. Exported from the root and `daw/runtime`.
 - **daw:** `workspace.cells.levels` is the post-fader peak in dBFS of the master output and every track, refreshed each animation frame while the context runs (`-Infinity` when silent).

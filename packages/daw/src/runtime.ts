@@ -57,8 +57,10 @@ export type WorkspaceOptions = {
   /**
    * Sound for MIDI tracks without a plug-in, keyed by track id: each entry becomes a core `Sampler` playing that track's notes into its mixer channel, in Arrangement,
    * Session and offline renders. `sound` may be a buffer or a `SoundFactory` for page-made sounds. Not saved in the file: pass it again when opening. A track with a WebCLAP device ignores its entry.
+   * A function `(track) => TrackInstrument | undefined` picks by the track's `id`, `name` or `kind` instead, so a reopened file needs no id lookup; it runs for every MIDI track without a device,
+   * including tracks added before a `sync()`.
    */
-  instruments?: Readonly<Record<string, TrackInstrument>>;
+  instruments?: Readonly<Record<string, TrackInstrument>> | ((track: Pick<ProjectTrack, "id" | "name" | "kind">) => TrackInstrument | undefined);
   /** Initial value of `workspace.arrangement`. Default true; false for an app that only plays Session clips. */
   arrangement?: boolean;
   /** Messages produced before the workspace existed, such as file-open warnings; they precede the workspace's own. */
@@ -661,7 +663,13 @@ export class Workspace {
         runtime.input = [...runtime.hosts.values()][0].input;
       }
       // A track with a device plays the device; its instruments entry is ignored, so render workspaces sharing these options stay warning-free.
-      const instrument = track.kind === "midi" && !track.devices.length ? this.options.instruments?.[track.id] : undefined;
+      const instruments = this.options.instruments;
+      const instrument =
+        track.kind === "midi" && !track.devices.length
+          ? typeof instruments === "function"
+            ? instruments(track)
+            : instruments?.[track.id]
+          : undefined;
       if (instrument) {
         runtime.sampler = new Sampler(this.context, instrument);
         runtime.sampler.connect(runtime.rack.input);

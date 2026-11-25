@@ -27,6 +27,17 @@ const detach = host.hasEditor ? await host.mountEditor(iframe) : undefined;
 
 The [DAW demo](../apps/daw-demo/main.ts) uses a relative worklet asset URL. If `workletUrl` is omitted, `WebClapHost.load` resolves it beside its published JS module. Serve the worklet and bundle from the app's origin. `noteOn`, `noteOff` and `scheduleMidi` take absolute `AudioContext` seconds and return a handle for Clock's `window.own(handle, when)`. A host declares plug-in latency through `AudioProcessor.latency`, in samples (the plug-in's reported latency). Applications using raw `.connect()` own any path delay compensation.
 
+### Serve the worklet and bundles from a Vite app
+
+The host loads two things over HTTP from the app's origin: the worklet module (`workletUrl`) and a bundle directory (`url`, from which it fetches `module.wasm`, and `ui/` for the editor). The worklet has no imports, so it is a plain static file.
+
+1. Copy the worklet into `public/`: `cp node_modules/@audiorective/host/dist/webclap-worklet.js public/webclap-worklet.js`. Do not import it through Vite: the package exports only `@audiorective/host/webclap`, and Vite's dependency pre-bundling moves `webclap.js`, so the default location beside it no longer exists.
+2. Put each bundle directory in `public/`, for example `public/plugin/oxo-synth2.wclap/module.wasm` (plus its `ui/` folder when it has an editor).
+3. Pass the root-relative URLs: `workletUrl: "/webclap-worklet.js"` to `WebClapHost.load` or `WorkspaceOptions`, and `url: "/plugin/oxo-synth2.wclap"` as the bundle (`bundleUrl` on `addWebClapDevice`, and `resolveBundle` when opening a file). Under a Vite `base`, prefix both with `import.meta.env.BASE_URL`.
+4. Serve `.wasm` as `application/wasm` (Vite's dev and preview servers do). A module that declares shared memory also needs a cross-origin isolated page: send `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` (in Vite, `server.headers` and `preview.headers`).
+
+Keep the copied worklet in step with the installed package version, for example with a `predev` and `prebuild` copy script.
+
 ## Play notes
 
 `WebClapHost` has the same note methods as a core `Sampler`, so it is an `Instrument` for [`MidiClip` and `MidiKeyboard`](./midi.md) (`new MidiClip(notes, { instrument: host })`, `MidiKeyboard.open(context, { instrument: host })`) with no adapter.

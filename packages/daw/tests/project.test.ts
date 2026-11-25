@@ -336,6 +336,27 @@ describe("DAWproject native slice", () => {
     project.dispose();
   });
 
+  test("direct clip methods allow overlaps on a track; applyEdits moveClip rejects them", () => {
+    const project = new Project();
+    const track = project.addTrack("Keys", "midi");
+    const clip = project.addMidiClip(track.id, { duration: 4, notes: [{ pitch: 60, velocity: 1, start: 0, duration: 1 }] }, 0);
+    const [left, right] = project.splitClip(clip.id, 2);
+    const copy = project.duplicateClip(left.id, 2);
+    project.moveClip(right.id, track.id, 3);
+    project.resizeClip(left.id, { end: 3 });
+    const clips = project.tracks[0].clips;
+    expect(clips.map(({ id }) => id)).toContain(copy.id);
+    expect(clips.length).toBe(3);
+    const receipt = project.applyEdits({
+      expectedVersion: project.overview().version,
+      label: "Move",
+      ops: [{ type: "moveClip", clip: { clipId: copy.id }, position: { atBeat: 2 } }],
+    });
+    expect(receipt.status).toBe("rejected");
+    if (receipt.status === "rejected") expect(receipt.code).toBe("overlap");
+    project.dispose();
+  });
+
   test("splits MIDI crossing notes and keeps controller timing", () => {
     const project = new Project();
     const track = project.addTrack("Keys", "midi");

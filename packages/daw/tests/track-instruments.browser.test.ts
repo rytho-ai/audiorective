@@ -157,6 +157,48 @@ describe("instruments: page-made sound on a MIDI track without a plug-in", () =>
   }, 30_000);
 });
 
+describe("instruments: chosen by a function of the track", () => {
+  test("a reopened song and a track added before sync() get their sound by name and kind, without an id lookup", async () => {
+    const { project } = drums();
+    const context = new AudioContext({ sampleRate: RATE });
+    const workspace = await Workspace.create(context, project, { workletUrl: worklet });
+    cleanups.push(async () => {
+      workspace.dispose();
+      await context.close();
+    });
+    const bytes = await saveWorkspace(workspace);
+    const sounds: Record<string, { sound: SoundFactory }> = { Drums: { sound: click } };
+    const seen: string[] = [];
+    const second = new AudioContext({ sampleRate: RATE });
+    const reopened = await openWorkspace(second, bytes, {
+      workletUrl: worklet,
+      instruments: (track) => {
+        seen.push(`${track.name}:${track.kind}`);
+        return sounds[track.name];
+      },
+    });
+    cleanups.push(async () => {
+      reopened.dispose();
+      await second.close();
+    });
+    expect(reopened.warnings).toEqual([]);
+    expect(seen).toContain("Drums:midi");
+    const first = await renderMixRange(reopened, { expectedVersion: reopened.project.cells.version.value, range: { startBeat: 0, endBeat: 6 } });
+    if (first.status !== "rendered") throw new Error(first.status);
+    expect(onsets(Float32Array.from(first.audio.channels[0])).map((t) => Math.round(t * 1000) / 1000)).toEqual([1, 2]);
+
+    // A track added later is picked up by the same function when sync() builds it.
+    sounds.Bass = { sound: click };
+    const bass = reopened.project.addTrack("Bass", "midi");
+    reopened.project.addMidiClip(bass.id, { duration: 8, notes: [{ pitch: 60, velocity: 1, start: 5, duration: 0.25 }] }, 0);
+    await reopened.sync();
+    const second2 = await renderMixRange(reopened, { expectedVersion: reopened.project.cells.version.value, range: { startBeat: 0, endBeat: 6 } });
+    if (second2.status !== "rendered") throw new Error(second2.status);
+    expect(onsets(Float32Array.from(second2.audio.channels[0])).map((t) => Math.round(t * 1000) / 1000)).toEqual([1, 2, 2.5]);
+    expect(seen).toContain("Bass:midi");
+  }, 30_000);
+});
+
 describe("instruments: releases behave like a device queue", () => {
   const tone = (() => {
     const buffer = new AudioBuffer({ length: RATE * 8, sampleRate: RATE });

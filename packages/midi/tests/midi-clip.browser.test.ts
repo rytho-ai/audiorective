@@ -192,6 +192,21 @@ describe("MidiClip on a Clock", () => {
     expect(clip.revision.value).toBe(1);
   });
 
+  test("a note pushed in edit needs no id or channel: ids are generated, channel is 0 and existing ids stay", () => {
+    const clip = new MidiClip([{ id: "keep", pitch: 60, velocity: 1, start: 0, duration: 1, channel: 3 }]);
+    clip.edit((draft) => {
+      draft.push({ pitch: 64, velocity: 0.5, start: 1, duration: 1 });
+      draft.unshift({ pitch: 67, velocity: 0.5, start: 2, duration: 1 }, { id: "own", pitch: 69, velocity: 1, start: 3, duration: 1, channel: 2 });
+    });
+    const notes = clip.notes.value;
+    expect(notes.map((n) => n.pitch)).toEqual([60, 64, 67, 69]);
+    expect(notes[0]).toMatchObject({ id: "keep", channel: 3 });
+    expect(notes[1].channel).toBe(0);
+    expect(notes[3]).toMatchObject({ id: "own", channel: 2 });
+    expect(new Set(notes.map((n) => n.id)).size).toBe(4);
+    expect(notes.every((n) => typeof n.id === "string" && n.id.length > 0)).toBe(true);
+  });
+
   test("a refresh after a note's on time but before the next window keeps the note: it sounds once, with one note-off at its natural time", async () => {
     for (const at of [0.53, 0.535, 0.545]) {
       const { clock, run } = rig(2, 0.1);

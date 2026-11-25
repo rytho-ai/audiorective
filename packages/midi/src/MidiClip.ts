@@ -13,7 +13,7 @@ import {
   type Random,
   type ReadonlyCell,
 } from "@audiorective/core";
-import { noteBeats, normalizeNotes, type DraftNote, type Instrument, type MidiNote, type NoteInit } from "./midi-data";
+import { noteBeats, normalizeNotes, type NoteDraft, type Instrument, type MidiNote, type NoteInit } from "./midi-data";
 
 /** A clip length in beats, or a note value of the clock's meter: "2m" two bars, "4n" one beat. */
 export type ClipLength = number | `${number}m` | `${number}n`;
@@ -167,12 +167,12 @@ export class MidiClip {
   }
 
   /**
-   * Changes notes in one commit: `recipe` mutates a draft array (change fields, push, splice). A looping clip keeps the notes of the pass playing and plays the edit from the next pass;
+   * Changes notes in one commit: `recipe` mutates a draft array (change fields, push, splice). A pushed note needs only `pitch`, `velocity`, `start` and `duration`: `id` is generated and `channel` defaults to 0. A looping clip keeps the notes of the pass playing and plays the edit from the next pass;
    * a clip that does not loop, or is not playing, uses it from the next window (one already scheduled keeps its notes); a note already sounding plays to its end.
    */
-  edit(recipe: (draft: DraftNote[]) => void): void {
+  edit(recipe: (draft: NoteDraft) => void): void {
     if (this.disposed) throw new Error("MidiClip is disposed.");
-    const draft = untracked(() => this.store.value).map((note) => ({ ...note })) as DraftNote[];
+    const draft = untracked(() => this.store.value).map((note) => ({ ...note })) as NoteDraft;
     recipe(draft);
     this.commit(draft);
   }

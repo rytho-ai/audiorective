@@ -19,6 +19,11 @@ export type MidiNote = Readonly<{
 export type NoteInit = Omit<MidiNote, "id" | "channel"> & Partial<Pick<MidiNote, "id" | "channel">>;
 /** A note inside `clip.edit`: every field but `id` is writable. */
 export type DraftNote = { -readonly [K in keyof Omit<MidiNote, "id">]: MidiNote[K] } & { readonly id: string };
+/** The draft array inside `clip.edit`: existing notes keep their `id`; `push` and `unshift` also take a new note without `id` or `channel` (as `NoteInit`), which get a generated id and channel 0. */
+export type NoteDraft = DraftNote[] & {
+  push(...notes: (DraftNote | NoteInit)[]): number;
+  unshift(...notes: (DraftNote | NoteInit)[]): number;
+};
 /** A beat interval (a selection, a view window). */
 export type MidiRange = Readonly<{ start: number; end: number }>;
 /** Notes with the clip length they sit in, in beats. */
