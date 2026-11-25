@@ -361,6 +361,15 @@ test("a vertical-only move preserves an unsnapped onset and freezes the command 
   expect(Object.isFrozen(edit.note)).toBe(true);
 });
 
+// A fresh page has no focus, so CDP key events go nowhere until something has been clicked (earlier tests did this by accident).
+// The click redraws the notes, so focus the note's current element afterwards.
+async function focusNote(root: HTMLElement, id: string) {
+  await userEvent.click(root.querySelector<HTMLElement>(`[data-note-id="${id}"]`)!);
+  const el = root.querySelector<HTMLElement>(`[data-note-id="${id}"]`)!;
+  el.focus();
+  expect(document.activeElement).toBe(el);
+}
+
 function adding(extra: Partial<PianoRollOptions> = {}) {
   const m = rollModel([{ id: "n", start: 1, duration: 1, pitch: 60, velocity: 0.5 }], 8);
   const add = vi.fn((n: { pitch: number; start: number; duration: number; velocity: number }) =>
@@ -429,8 +438,7 @@ test("double-click on a note deletes it instead of adding one", () => {
 
 test("Delete removes the focused note", async () => {
   const f = adding();
-  const el = f.root.querySelector<HTMLElement>('[data-note-id="n"]')!;
-  el.focus();
+  await focusNote(f.root, "n");
   await userEvent.keyboard("{Delete}");
   expect(f.remove).toHaveBeenCalledTimes(1);
   expect(f.m.getState().notes).toHaveLength(0);
@@ -581,7 +589,7 @@ test("a handled Delete does not reach the app's own key handler", async () => {
   const seen = vi.fn();
   document.addEventListener("keydown", seen);
   own(() => document.removeEventListener("keydown", seen));
-  f.root.querySelector<HTMLElement>('[data-note-id="n"]')!.focus();
+  await focusNote(f.root, "n");
   await userEvent.keyboard("{Delete}");
   expect(f.remove).toHaveBeenCalledTimes(1);
   expect(seen).not.toHaveBeenCalled();
@@ -603,4 +611,74 @@ test("a view mounted inside an effect keeps following its model after that effec
   tick.value = 1;
   m.clip.edit((draft) => void draft.push({ id: "later", start: 3, duration: 1, pitch: 62, velocity: 0.5, channel: 0 }));
   expect(root.querySelector('[data-note-id="later"]')).not.toBeNull();
+});
+
+function lane(root: HTMLElement) {
+  const el = root.querySelector<HTMLElement>("[data-testid=piano-velocity]")!;
+  el.scrollIntoView({ block: "center" });
+  return el;
+}
+
+test("a bar at beat 0 is fully inside the lane and can be grabbed at its handle", async () => {
+  const m = rollModel([{ id: "z", start: 0, duration: 1, pitch: 60, velocity: 0.5 }], 8);
+  const commit = vi.fn();
+  const root = host();
+  const roll = mountPianoRoll(root, { model: m, pitches: { low: 48, high: 72 }, onNoteEdit: commit, velocityLane: true });
+  own(() => roll.dispose());
+  const l = lane(root);
+  const rect = l.getBoundingClientRect();
+  const bar = l.querySelector<HTMLElement>('[data-velocity-note="z"]')!;
+  const b = bar.getBoundingClientRect();
+  expect(b.left).toBeGreaterThanOrEqual(rect.left);
+  const x = b.left + b.width / 2;
+  await pointer({ action: "down", x, y: rect.top + rect.height * 0.5 });
+  await pointer({ action: "move", x, y: rect.top - 4 });
+  expect(l.querySelector("[data-testid=piano-velocity-value]")!.textContent).toBe("127");
+  await pointer({ action: "up", x, y: rect.top - 4 });
+  expect(commit).toHaveBeenCalledTimes(1);
+  expect(commit.mock.calls[0][0].kind).toBe("velocity");
+  expect(commit.mock.calls[0][0].note.velocity).toBe(1);
+  expect(l.querySelector("[data-testid=piano-velocity-value]")).toBeNull();
+});
+
+test("a chord's active note is drawn last and is the one dragged at the shared x", async () => {
+  const m = rollModel(
+    [
+      { id: "a", start: 2, duration: 1, pitch: 60, velocity: 0.5 },
+      { id: "b", start: 2, duration: 1, pitch: 64, velocity: 0.5 },
+      { id: "c", start: 2, duration: 1, pitch: 67, velocity: 0.5 },
+    ],
+    8,
+  );
+  const commit = vi.fn();
+  const root = host();
+  const roll = mountPianoRoll(root, { model: m, pitches: { low: 48, high: 72 }, onNoteEdit: commit, velocityLane: true });
+  own(() => roll.dispose());
+  root.scrollIntoView({ block: "center" });
+  roll.setActiveNote("b");
+  const l = lane(root);
+  const bars = [...l.querySelectorAll<HTMLElement>("[data-velocity-note]")];
+  expect(bars.at(-1)!.dataset.velocityNote).toBe("b");
+  expect(bars.at(-1)!.dataset.active).toBe("true");
+  const rect = l.getBoundingClientRect();
+  const x = rect.left + (2 / 8) * rect.width;
+  await pointer({ action: "down", x, y: rect.top + 4 });
+  await pointer({ action: "up", x, y: rect.top + 4 });
+  expect(commit.mock.calls[0][0].note.id).toBe("b");
+});
+
+test("ArrowUp and ArrowDown nudge the active note's velocity through onNoteEdit", async () => {
+  const f = adding();
+  const el = f.root.querySelector<HTMLElement>('[data-note-id="n"]')!;
+  await userEvent.click(el);
+  const press = (init: KeyboardEventInit) =>
+    f.root
+      .querySelector<HTMLElement>("[data-testid=piano-viewport]")!
+      .dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
+  press({ key: "ArrowUp" });
+  expect(f.commit).toHaveBeenCalledTimes(1);
+  expect(f.commit.mock.calls[0][0].kind).toBe("velocity");
+  expect(Math.round(f.m.getState().notes[0].velocity * 127)).toBe(Math.round(0.5 * 127) + 1);
+  press({ key: "ArrowDown", shiftKey: true });
+  expect(Math.round(f.m.getState().notes[0].velocity * 127)).toBe(Math.round(0.5 * 127) - 9);
 });

@@ -81,6 +81,7 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Changed
 
+- **widgets:** The piano roll velocity lane is easier to use: wider stems with round handles (fully visible at beat 0), the active note's bar on top and highlighted in a chord, a 1-127 value label while dragging, and ArrowUp/ArrowDown (Shift for 10) to nudge the active note through `onNoteEdit` `kind: "velocity"`.
 - **daw:** `exportAudioFallbackTo` renders offline on an `OfflineAudioContext` instead of capturing a live context in real time, so the result no longer depends on real-time rendering or the tab staying active. Signature, ZIP layout, manifest, stems, cancellation, progress and errors are unchanged; the render waits between steps for file-backed media chunks, WebCLAP device messages and the OPFS writer, and the same project exports the same samples. Export duration is no longer tied to the project's length. The offline context holds one channel for the whole render in memory (about 11 MB per minute at 48 kHz); Chromium refuses a render above about 3.1 hours, which fails with the export's own error.
 - **recorder:** a worklet `currentFrame` that repeats for one render quantum and then catches up no longer discards 128 captured frames or reports a false `dropouts` gap. A real forward skip is still reported and filled with silence.
 

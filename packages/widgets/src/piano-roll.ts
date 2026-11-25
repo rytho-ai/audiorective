@@ -26,6 +26,9 @@ export type {
 } from "./types";
 const clamp = (n: number, low: number, high: number) => Math.max(low, Math.min(high, n));
 const DEFAULT_VELOCITY = 100 / 127;
+/** Half the width of a velocity handle: bars never sit closer than this to the lane edge. */
+const VELOCITY_INSET = 7;
+const VELOCITY_REACH = 9;
 export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): PianoRollHandle {
   const container = document.createElement("section");
   container.className = "ar-widget ar-piano-roll";
@@ -38,7 +41,12 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
  .ar-pr-surface{position:relative;touch-action:none;height:var(--piano-roll-height,240px);min-height:64px;overflow:hidden}
  .ar-pr-notes{position:absolute;inset:0}.ar-pr-note{position:absolute!important;min-height:0!important;padding:0 3px!important;border-radius:3px!important;overflow:hidden;white-space:nowrap;text-align:left;font-size:10px!important;background:var(--ar-accent)!important;color:var(--piano-roll-note-text,#08111d)!important}
  .ar-pr-grid{position:absolute;inset:0;pointer-events:none}.ar-pr-beat{position:absolute;top:0;height:100%;border-left:1px solid var(--waveform-border,#344154)}
- .ar-pr-velocity{position:relative;height:var(--piano-roll-velocity-height,56px);border-top:1px solid var(--waveform-border,#344154);touch-action:none;cursor:ns-resize}.ar-pr-velocity-bar{position:absolute;bottom:0;width:3px;background:var(--ar-accent);pointer-events:none}
+ .ar-pr-velocity{position:relative;height:var(--piano-roll-velocity-height,56px);border-top:1px solid var(--waveform-border,#344154);touch-action:none;cursor:ns-resize;overflow:hidden}
+ .ar-pr-velocity-track{position:absolute;left:0;right:0;top:7px;bottom:7px;pointer-events:none}
+ .ar-pr-velocity-bar{position:absolute;bottom:0;width:2px;margin-left:-1px;background:color-mix(in srgb,var(--ar-accent) 55%,transparent);pointer-events:none}
+ .ar-pr-velocity-bar::after{content:'';position:absolute;top:-5px;left:50%;width:10px;height:10px;margin-left:-5px;box-sizing:border-box;border-radius:50%;background:var(--ar-accent);border:2px solid var(--waveform-background,#141b25);opacity:.75}
+ .ar-pr-velocity-bar[data-active=true]{width:3px;margin-left:-1.5px;background:var(--ar-accent);z-index:1}.ar-pr-velocity-bar[data-active=true]::after{top:-7px;width:14px;height:14px;margin-left:-7px;opacity:1;border-color:var(--piano-roll-note-text,#08111d);box-shadow:0 0 0 2px var(--ar-accent)}
+ .ar-pr-velocity-value{position:absolute;top:2px;z-index:2;padding:0 4px;border-radius:3px;font:11px system-ui;background:var(--ar-accent);color:var(--piano-roll-note-text,#08111d);pointer-events:none;transform:translateX(-50%)}
  </style><div data-piano-layout></div>`;
   root.append(container);
   const shellRoot = container.querySelector<HTMLElement>("[data-piano-layout]")!;
@@ -54,6 +62,9 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
     velocityLane.className = "ar-pr-velocity";
     velocityLane.dataset.testid = "piano-velocity";
     velocityLane.setAttribute("aria-label", "Note velocity");
+    if (options.onNoteEdit)
+      velocityLane.title =
+        "Drag a bar up or down to set velocity (1-127). Click a note first to pick one in a chord; ArrowUp/ArrowDown nudge the selected note.";
     viewport.append(velocityLane);
   }
   const surface = viewport.querySelector<HTMLElement>("[data-testid=piano-roll]")!,
@@ -117,6 +128,7 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
     inspect: (note) => {
       activeNoteId = note.id;
       options.onNoteClick?.(note);
+      drawVelocity();
     },
     commit: options.onNoteEdit,
   });
@@ -152,9 +164,12 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
     }
     return start;
   };
+  const velocityX = (note: MidiNote) => clamp(timeToX(note.start), VELOCITY_INSET, Math.max(VELOCITY_INSET, width - VELOCITY_INSET));
   const velocityAtY = (clientY: number) => {
     const rect = velocityLane!.getBoundingClientRect();
-    return clamp(Math.round((1 - (clientY - rect.top) / Math.max(1, rect.height)) * 127), 1, 127) / 127;
+    // The handle's radius is kept inside the lane, so 1 and 127 sit one radius from the lane's bottom and top.
+    const usable = Math.max(1, rect.height - 2 * VELOCITY_INSET);
+    return clamp(Math.round((1 - (clientY - rect.top - VELOCITY_INSET) / usable) * 127), 1, 127) / 127;
   };
   const cancelVelocity = () => {
     const drag = velocityDrag;
@@ -174,6 +189,37 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
   function drawPlayhead() {
     playhead.hidden = position === null || !state.duration;
     if (position !== null) playhead.style.left = `${timeToX(position)}px`;
+  }
+  /** Redraws only the velocity lane, so the note elements (and a pending double-click on one) stay put. */
+  const viewRange = () => ({ start: scale ? viewport.scrollLeft / scale : 0, end: scale ? (viewport.scrollLeft + viewport.clientWidth) / scale : 0 });
+  function drawVelocity() {
+    if (disposed || !velocityLane) return;
+    const drawn = visibleMidiNotes(drawnNotes(), viewRange(), pitches);
+    // The active note's bar is appended last so it sits on top in a chord.
+    const ordered = [...drawn.filter((note) => note.id !== activeNoteId), ...drawn.filter((note) => note.id === activeNoteId)];
+    const track = document.createElement("div");
+    track.className = "ar-pr-velocity-track";
+    const bars: HTMLElement[] = ordered.map((note) => {
+      const bar = document.createElement("div");
+      bar.className = "ar-pr-velocity-bar";
+      bar.dataset.velocityNote = note.id;
+      bar.dataset.active = String(note.id === activeNoteId);
+      bar.style.left = `${velocityX(note)}px`;
+      bar.style.height = `${note.velocity * 100}%`;
+      return bar;
+    });
+    track.append(...bars);
+    const children: HTMLElement[] = [track];
+    const drag = velocityDrag;
+    if (drag) {
+      const label = document.createElement("div");
+      label.className = "ar-pr-velocity-value";
+      label.dataset.testid = "piano-velocity-value";
+      label.textContent = String(Math.round(drag.preview.velocity * 127));
+      label.style.left = `${clamp(velocityX(drag.preview), 14, Math.max(14, width - 14))}px`;
+      children.push(label);
+    }
+    velocityLane.replaceChildren(...children);
   }
   function render() {
     if (disposed) return;
@@ -196,17 +242,7 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
     presentation?.render(
       Object.freeze({ duration: state.duration, height, pitches: Object.freeze({ ...pitches }), viewport: snapshot(), pitchToY, zoom, snap }),
     );
-    if (velocityLane)
-      velocityLane.replaceChildren(
-        ...visibleMidiNotes(drawnNotes(), range, pitches).map((note) => {
-          const bar = document.createElement("div");
-          bar.className = "ar-pr-velocity-bar";
-          bar.dataset.velocityNote = note.id;
-          bar.style.left = `${timeToX(note.start)}px`;
-          bar.style.height = `${note.velocity * 100}%`;
-          return bar;
-        }),
-      );
+    drawVelocity();
     drawPlayhead();
     for (const fn of [...viewListeners]) fn();
   }
@@ -281,6 +317,7 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
     },
     setActiveNote(noteId) {
       activeNoteId = noteId ?? undefined;
+      drawVelocity();
     },
     setZoom(factor) {
       if (!Number.isFinite(factor) || factor < 1 || factor > 64) throw new RangeError("Piano roll zoom must be between 1 and 64.");
@@ -390,7 +427,9 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
       });
     // A press on a note stops at the note; one that reaches the surface is on empty space.
     listen(surface, "pointerdown", () => {
+      if (activeNoteId === undefined) return;
       activeNoteId = undefined;
+      drawVelocity();
     });
     if (options.onNoteDelete)
       listen(viewport, "keydown", (raw) => {
@@ -410,16 +449,19 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
         const event = raw as PointerEvent;
         if (event.button !== 0 || velocityDrag || !scale) return;
         const beat = beatAtX(event.clientX);
-        const reach = 6 / scale;
+        const px = event.clientX - velocityLane.getBoundingClientRect().left;
         const visible = state.notes.filter((note) => note.pitch >= pitches.low && note.pitch <= pitches.high);
-        const candidates = visible.filter((note) => Math.abs(note.start - beat) <= reach);
-        const nearest = candidates.length ? Math.min(...candidates.map((note) => Math.abs(note.start - beat))) : undefined;
-        const closest = candidates.filter((note) => Math.abs(note.start - beat) <= (nearest ?? 0) + 1e-9);
-        // In a chord the bars overlap, so the note the user last clicked is the one being edited.
+        // Bars are matched by their drawn x (beat-0 bars are inset), so a handle is grabbed where it is seen.
+        const dist = (note: MidiNote) => Math.abs(velocityX(note) - px);
+        const candidates = visible.filter((note) => dist(note) <= VELOCITY_REACH);
+        const nearest = candidates.length ? Math.min(...candidates.map(dist)) : undefined;
+        const closest = candidates.filter((note) => dist(note) <= (nearest ?? 0) + 1e-9);
+        // In a chord the bars overlap, so the active (last clicked or selected) note is the one being edited.
         let original: MidiNote | undefined = closest.find((note) => note.id === activeNoteId) ?? closest[0];
         original ??= visible.find((note) => note.start <= beat && beat < note.start + note.duration);
         if (!original) return;
         event.preventDefault();
+        activeNoteId = original.id;
         velocityLane.setPointerCapture(event.pointerId);
         velocityDrag = { id: event.pointerId, original, preview: Object.freeze({ ...original, velocity: velocityAtY(event.clientY) }) };
         render();
@@ -452,6 +494,22 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
         }
       });
       listen(window, "blur", cancelVelocity);
+      listen(viewport, "keydown", (raw) => {
+        const event = raw as KeyboardEvent;
+        if ((event.key !== "ArrowUp" && event.key !== "ArrowDown") || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey)
+          return;
+        const focused = ((event.target as Element | null)?.closest?.("[data-note-id]") as HTMLElement | null)?.dataset.noteId;
+        const previous = state.notes.find(({ id }) => id === (focused ?? activeNoteId));
+        if (!previous) return;
+        event.preventDefault();
+        activeNoteId = previous.id;
+        const step = (event.shiftKey ? 10 : 1) * (event.key === "ArrowUp" ? 1 : -1);
+        const velocity = clamp(Math.round(previous.velocity * 127) + step, 1, 127) / 127;
+        if (velocity === previous.velocity) return;
+        const note = Object.freeze({ ...previous, velocity });
+        commitNote("edit", () => options.onNoteEdit!(Object.freeze({ kind: "velocity", previous, note })));
+        drawVelocity();
+      });
     }
     own(
       options.model.subscribe(() => {
