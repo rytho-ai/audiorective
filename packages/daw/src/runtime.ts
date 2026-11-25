@@ -27,6 +27,7 @@ import { ClipStretch, type PreparedClipStretch } from "./clip-stretch";
 import { createWorkspaceLoop, LoopFold, type WorkspaceLoop } from "./arrangement-loop";
 import { ClipScheduler } from "./clip-scheduler";
 import { Mixer, type MixerStrip } from "./mixer";
+import { LevelMeters, type WorkspaceLevels } from "./level-meters";
 import { captureDeviceState, MidiClip, Project } from "./model";
 import type { TempoMap } from "./tempo-map";
 import type { AudioClipGainAutomation, MediaAudioClip, PcmAudioClip, ProjectClip, ProjectTrack, TrackRouting, WebClapDevice } from "./model";
@@ -38,6 +39,7 @@ export { scheduleClipEnvelope } from "./schedule-clip-envelope";
 export type { PreparedClipStretch } from "./clip-stretch";
 
 export type { RangeAuditionState } from "./audition";
+export type { WorkspaceLevels } from "./level-meters";
 import { collectGainAutomationEdits, deviceKeys, updateRack } from "./track-reconcile";
 import { assertTakeAudioTime, placeTake, type TakeAnchor } from "./take-placement";
 import type { TrackRuntime } from "./track-runtime";
@@ -122,6 +124,12 @@ export class Workspace {
     session: ReadonlyCell<ClipLauncher>;
     auditioningClip: ReadonlyCell<string | null>;
     auditioningRange: ReadonlyCell<RangeAuditionState | null>;
+    /**
+     * Post-fader peak in dBFS of the master output and of each track strip, refreshed every animation frame while the context runs; -Infinity when silent
+     * (also after `stop()` and while the context is suspended). It follows track adds and removes and `sync()`. Sampling starts on the first read and ends on `dispose()`.
+     * Peak hold and ballistics belong to the view.
+     */
+    levels: ReadonlyCell<WorkspaceLevels>;
   }>;
   private readonly stretch: ClipStretch;
   /** Built on first read of `session`, so an app that never launches clips never copies their audio into buffers. */
@@ -194,6 +202,7 @@ export class Workspace {
   private readonly heldAnchors = new WeakSet<TakeAnchor>();
   private disposed = false;
   private readonly mixer: Mixer;
+  private readonly levelMeters: LevelMeters;
 
   private constructor(context: AudioContext, project: Project, options: WorkspaceOptions) {
     this.context = context;
@@ -206,6 +215,7 @@ export class Workspace {
     });
     this.output = context.createGain();
     this.mixer = new Mixer(context, this.output, this.tracks, () => this.project);
+    this.levelMeters = new LevelMeters(context, this.output, () => [...this.tracks].map(([id, runtime]) => [id, runtime.channel] as const));
     this.stretch = new ClipStretch(
       () => this.project,
       () => this.disposed,
@@ -249,6 +259,7 @@ export class Workspace {
       session: this.session,
       auditioningClip: this.auditioningClip,
       auditioningRange: this.auditioningRange,
+      levels: this.levelMeters.cell,
     });
     this.player = Object.freeze({
       isPlaying: readonlyCell(() => this.clock.state.value === "playing"),
@@ -1379,6 +1390,7 @@ export class Workspace {
     this.audition.stop();
     this.stretch.abortAll();
     this.clock.dispose();
+    this.levelMeters.dispose();
     this.disposeTracks();
     this.output.disconnect();
     this.ownedProject?.dispose();

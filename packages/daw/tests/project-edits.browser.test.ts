@@ -1,5 +1,5 @@
 import { unzipSync } from "fflate";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { AudioMedia, Project, Workspace, exportAudioFallbackTo, openWorkspace, renderMixRange, saveWorkspace, saveWorkspaceTo } from "../src";
 
 const RATE = 48_000;
@@ -313,6 +313,21 @@ describe("project edits through the audio graph", () => {
     setTimeout(() => controller.abort(), 100);
     await expect(rendering).rejects.toMatchObject({ name: "AbortError" });
   }, 5_000);
+
+  test("renderMixRange removes its abort listener when it returns a conflict", async () => {
+    const project = new Project({ bpm: 60 });
+    project.addTrack("Keys", "midi");
+    const workspace = await workspaceFor(project);
+    const stale = project.cells.version.value;
+    project.addTrack("More", "midi");
+    const controller = new AbortController();
+    const added = vi.spyOn(controller.signal, "addEventListener");
+    const removed = vi.spyOn(controller.signal, "removeEventListener");
+    const result = await renderMixRange(workspace, { expectedVersion: stale, range: { startBeat: 0, endBeat: 1 }, signal: controller.signal });
+    expect(result.status).toBe("conflict");
+    expect(added).toHaveBeenCalledTimes(1);
+    expect(removed).toHaveBeenCalledTimes(1);
+  }, 20_000);
 
   test("editStatus rejects after dispose", async () => {
     const project = new Project();

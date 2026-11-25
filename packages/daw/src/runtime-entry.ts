@@ -5,4 +5,6 @@ export type { AudioFallbackOptions } from "./audio-fallback";
 export type { WorkspaceLoop } from "./arrangement-loop";
 export { renderMixRange } from "./mix-range";
 export type { MixRangeOptions, MixRangeResult, MixSeam } from "./mix-range";
+export { renderSession } from "./render-session";
+export type { RenderSessionOptions, RenderSessionResult } from "./render-session";
 export { createOpfsAudioMediaWriter } from "./opfs-media";

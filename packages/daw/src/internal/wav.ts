@@ -1,84 +1,39 @@
+import { encodeWavBytes } from "@audiorective/core";
 import type { ProjectAudio } from "../model";
 import { AudioMedia } from "../media";
 import type { StoredZipEntry } from "./stored-zip";
 
-const ascii = (view: DataView, at: number, value: string) => {
-  for (let i = 0; i < value.length; i++) view.setUint8(at + i, value.charCodeAt(i));
-};
 const readAscii = (view: DataView, at: number, length: number) => String.fromCharCode(...new Uint8Array(view.buffer, view.byteOffset + at, length));
+
+const invalidPcm = () => new RangeError("Project WAV needs equal-length PCM channels and a valid sample rate.");
 
 /** IEEE float32 WAV preserves AudioRecorder's PCM samples without quantization. */
 export function encodeWav(audio: ProjectAudio): Uint8Array {
-  const channels = audio.channels.length;
-  const frames = audio.channels[0]?.length ?? 0;
-  const bytes = frames * channels * 4;
-  if (
-    !Number.isInteger(audio.sampleRate) ||
-    audio.sampleRate <= 0 ||
-    !Number.isInteger(channels) ||
-    channels < 1 ||
-    channels > 32 ||
-    audio.channels.some((channel) => channel.length !== frames) ||
-    bytes > 0xffffffff - 36 ||
-    audio.sampleRate * channels * 4 > 0xffffffff
-  )
-    throw new RangeError("Project WAV needs equal-length PCM channels and a valid sample rate.");
-  const output = new Uint8Array(44 + bytes);
-  const view = new DataView(output.buffer);
-  ascii(view, 0, "RIFF");
-  view.setUint32(4, 36 + bytes, true);
-  ascii(view, 8, "WAVE");
-  ascii(view, 12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 3, true); // IEEE float
-  view.setUint16(22, channels, true);
-  view.setUint32(24, audio.sampleRate, true);
-  view.setUint32(28, audio.sampleRate * channels * 4, true);
-  view.setUint16(32, channels * 4, true);
-  view.setUint16(34, 32, true);
-  ascii(view, 36, "data");
-  view.setUint32(40, bytes, true);
-  let at = 44;
-  for (let frame = 0; frame < frames; frame++) {
-    for (const channel of audio.channels) {
-      view.setFloat32(at, channel[frame], true);
-      at += 4;
-    }
+  if (!Number.isInteger(audio.sampleRate) || audio.sampleRate <= 0 || audio.channels.length > 32) throw invalidPcm();
+  try {
+    return encodeWavBytes(audio, { bitDepth: 32 });
+  } catch {
+    throw invalidPcm();
   }
-  return output;
 }
 
 /** Header for a streamed IEEE float32 WAV. RIFF limits one asset to under 4 GiB. */
 export function encodeWavHeader(sampleRate: number, channels: number, frames: number): Uint8Array {
+  if (!Number.isInteger(sampleRate) || sampleRate <= 0 || !Number.isInteger(channels) || channels > 32 || !Number.isSafeInteger(frames) || frames < 1)
+    throw invalidPcm();
   const bytes = frames * channels * 4;
-  if (
-    !Number.isInteger(sampleRate) ||
-    sampleRate <= 0 ||
-    !Number.isInteger(channels) ||
-    channels < 1 ||
-    channels > 32 ||
-    !Number.isSafeInteger(frames) ||
-    frames < 1 ||
-    bytes > 0xffffffff - 36 ||
-    sampleRate * channels * 4 > 0xffffffff
-  )
-    throw new RangeError("Project WAV needs equal-length PCM channels and a valid sample rate.");
-  const output = new Uint8Array(44);
-  const view = new DataView(output.buffer);
-  ascii(view, 0, "RIFF");
+  if (bytes > 0xffffffff - 36) throw invalidPcm();
+  // The header of an empty encode, with the sizes of the frames that are streamed after it.
+  let header: Uint8Array;
+  try {
+    header = encodeWavBytes({ sampleRate, channels: Array.from({ length: channels }, () => new Float32Array(0)) }, { bitDepth: 32 });
+  } catch {
+    throw invalidPcm();
+  }
+  const view = new DataView(header.buffer);
   view.setUint32(4, 36 + bytes, true);
-  ascii(view, 8, "WAVE");
-  ascii(view, 12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 3, true);
-  view.setUint16(22, channels, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * channels * 4, true);
-  view.setUint16(32, channels * 4, true);
-  view.setUint16(34, 32, true);
-  ascii(view, 36, "data");
   view.setUint32(40, bytes, true);
-  return output;
+  return header;
 }
 
 /** Stream a frame window of borrowed interleaved PCM as a WAV archive entry. */
