@@ -85,3 +85,6 @@ export function peakFrameRange(
     endTime: endFrame / summary.sampleRate,
   };
 }
+
+export { encodeWav, encodeWavBytes } from "./wav";
+export type { EncodeWavOptions } from "./wav";

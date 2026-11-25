@@ -8,7 +8,7 @@ Reactive primitives for Web Audio. Bridges audio parameter automation and UI fra
 
 Audio state is the single source of truth. UI frameworks observe and mutate directly. No state duplication.
 
-For data-only waveform summaries, use the [`@audiorective/core/peaks`](#pcm-peak-summaries) entry. It requires neither Web Audio nor a DOM.
+For data-only waveform summaries and WAV encoding of PCM, use the [`@audiorective/core/peaks`](#pcm-peak-summaries) entry (`summarizePeaks`, `encodeWav`). It requires neither Web Audio nor a DOM.
 
 For reactive curves, transport beat loops, native parameter scheduling and domain adapters, use the optional
 [`@audiorective/core/automation`](./automation) entry.
@@ -631,15 +631,33 @@ const tail = peakFrameRange(summary, 1);
 
 `peakFrameRange(summary, index)` returns a half-open `[startFrame, endFrame)` range and its `startTime`/`endTime` in seconds. Coordinates are local to the supplied PCM, including a channel created with `subarray`; the final range ends at `frameCount`. Indices must identify existing bins. Source offsets, source/output edit mapping, cache lifetime and rendering density belong to callers.
 
-| Error                                                           | Fix                                               |
-| --------------------------------------------------------------- | ------------------------------------------------- |
-| `summarizePeaks: sampleRate must be a finite positive number`   | Supply the PCM's positive sample rate.            |
-| `summarizePeaks: framesPerPeak must be a positive safe integer` | Use an integer of at least 1.                     |
-| `summarizePeaks: at least one channel is required`              | Supply at least one channel, which may be empty.  |
-| `summarizePeaks: every channel must be a Float32Array`          | Convert each channel to a Float32Array.           |
-| `summarizePeaks: channels must have equal frame counts`         | Supply equally sized channels.                    |
-| `summarizePeaks: samples must be finite numbers`                | Remove NaN and infinite samples.                  |
-| `peakFrameRange: index must identify an existing peak`          | Use a valid bin index; empty summaries have none. |
+### Encode WAV
+
+`encodeWav(pcm, { bitDepth? })` returns a `Blob` (`audio/wav`) of any `PCMData`. It is pure like `summarizePeaks` (browsers, Node.js, workers), exported from the root and from `@audiorective/core/peaks`. `bitDepth` is `16` (default, signed integer), `24` (signed integer) or `32` (IEEE float, format 3, every sample kept as is). Integer depths clamp to [-1, 1] and add no dither. Samples are interleaved little-endian after a 44-byte header, for any channel count; with more than two channels no speaker mask is written. A sample rate that is not an integer rounds to the nearest. `encodeWavBytes(pcm, options)` returns the same file as a `Uint8Array` for Node.js, workers and archives.
+
+```typescript
+import { encodeWav } from "@audiorective/core";
+
+const url = URL.createObjectURL(encodeWav(result.audio, { bitDepth: 24 })); // result.audio from renderMixRange or renderSession
+Object.assign(document.createElement("a"), { href: url, download: "bounce.wav" }).click();
+```
+
+A WAV file holds under 4 GiB of samples; longer audio throws and must be split.
+
+| Error                                                                        | Fix                                               |
+| ---------------------------------------------------------------------------- | ------------------------------------------------- |
+| `summarizePeaks: sampleRate must be a finite positive number`                | Supply the PCM's positive sample rate.            |
+| `summarizePeaks: framesPerPeak must be a positive safe integer`              | Use an integer of at least 1.                     |
+| `summarizePeaks: at least one channel is required`                           | Supply at least one channel, which may be empty.  |
+| `summarizePeaks: every channel must be a Float32Array`                       | Convert each channel to a Float32Array.           |
+| `summarizePeaks: channels must have equal frame counts`                      | Supply equally sized channels.                    |
+| `encodeWav: sampleRate must be a finite positive number`                     | Supply the PCM's sample rate in Hz.               |
+| `encodeWav: at least one channel is required`                                | Supply at least one channel, which may be empty.  |
+| `encodeWav: channels must have equal frame counts`                           | Supply equally sized channels.                    |
+| `encodeWav: bitDepth must be 16, 24 or 32`                                   | Use one of the three supported depths.            |
+| `encodeWav: audio is too large for a WAV file; split it into shorter pieces` | Encode shorter pieces of under 4 GiB each.        |
+| `summarizePeaks: samples must be finite numbers`                             | Remove NaN and infinite samples.                  |
+| `peakFrameRange: index must identify an existing peak`                       | Use a valid bin index; empty summaries have none. |
 
 ## Sound Playback
 
