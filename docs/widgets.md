@@ -204,6 +204,8 @@ const browser = mountSampleBrowser(browserRoot, {
 
 `mountStepGrid(root, { sequencer, formatStep?, labels?, laneLabel? })` accepts a [StepSequencer](./sequencer.md) directly, or the structural `StepGridSequencer` lane contract. It edits lane headers and per-step velocity, offset, length, repeat, pitch, chance and custom params; Fold hides inactive lanes. Define all custom parameter IDs before mounting: lane rows can change live, but the custom parameter tab set stays fixed for that view. Arrow keys navigate; Enter/Space toggle; Up/Down edit, PageUp/PageDown use coarse steps. All step indices passed to `formatStep(label, step)` and plugin helpers are **zero-based**: use `${label} step ${step + 1}` for visible numbering. Removing the view leaves its sequencer alive.
 
+To edit a MIDI clip's notes (a drum pattern saved in a project) instead of a sequencer, mount `stepGridModel(clip.midi, { lanes: { hat: 42, snare: 38, kick: 36 }, edit })`: see [Step grid over a MIDI clip](./widgets-advanced.md#step-grid-over-a-midi-clip).
+
 For a per-step helper, attach a `StepGridPlugin` with `context.onCell(cell => ...)`. Each cell supplies its tracked `step`, `laneId`, zero-based `stepIndex`, a dedicated positioned `root`, and scoped `listen`/`onCleanup`. Geometry and cleanup follow the cell automatically. Read step fields inside a core effect and register its disposer with `cell.onCleanup`; write authored changes through `cell.step`. [Step grid plugins](./widgets-advanced.md#step-grid-plugins) show the attachment and full keyboard, theme and structural contracts.
 
 `mountPadGrid(root, { pads, press })` calls `press(id)` for pointer or focused keyboard input. Return a release callback for that specific press when the sound is gated; return nothing for a one-shot. Releases run on key/pointer release, focus loss and destruction. The app owns mapping and sound.
@@ -211,6 +213,10 @@ For a per-step helper, attach a `StepGridPlugin` with `context.onCell(cell => ..
 <a id="step-grid-plugins"></a>
 
 [Per-cell and toolbar plugins](./widgets-advanced.md#step-grid-plugins) use scoped public attachment contexts.
+
+## Bar ruler
+
+`mountBarRuler(root, { tempoMap, signature?, pixelsPerSecond, duration, viewport?, playhead?, onSeek? })` (from `@audiorective/widgets/arrangement`) draws a bar line and number per bar with beat ticks when zoomed in, for a project with tempo changes. `tempoMap` is anything with `beatToSeconds` and `secondsToBeat`, or a getter for it: `tempoMap: () => project.tempoMap, signature: () => project.signature`. The ruler element is `duration() * pixelsPerSecond()` wide; put it at the top of the scrolling arrangement and pass that scroller as `viewport` so only the visible bars are drawn. Labels thin out by powers of two as you zoom out; every tracked source redraws it. `playhead: () => seconds | null` shows a line, and `onSeek(seconds)` fires for a click (not a drag), so it coexists with `attachTimeRangeGesture` on the same element. `handle.element` is what `attachTimelineZoom` takes as `ruler()`. Theme with `--ar-ruler-color`, `--ar-ruler-line`, `--ar-ruler-bar-line`, `--ar-ruler-beat-line`, `--ar-ruler-background`, `--ar-ruler-playhead`, `--ar-ruler-height`; the defaults follow the page's text colour, so light and dark themes work unchanged. Details: [Bar ruler](./widgets-advanced.md#bar-ruler).
 
 ## Clip Grid
 
@@ -269,14 +275,21 @@ Default waveform styles mount with the widget. Set `--waveform-accent` on its ho
 | `Spectrum needs a valid FFT size and a range within Nyquist.`       | Pass a power-of-two FFT size from 32 through 32768 and limit the upper frequency to half the sample rate. |
 | `EQ editor needs unique band IDs and increasing positive Q limits.` | Supply unique IDs and finite positive Q bounds in increasing order.                                       |
 
-| Control message                                                                           | Fix                                                                                                                  |
-| ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `Parameter control needs a finite increasing range and a positive minimum for log scale.` | Provide a finite increasing range, above zero for log scale.                                                         |
-| `Parameter control step must be positive.`                                                | Supply a finite positive step, or omit it.                                                                           |
-| `Automation overlay needs a positive maximum and an in-range default.`                    | Provide a positive finite maximum and a default between zero and that maximum.                                       |
-| `Warp markers need a positive sample rate and source frame count.`                        | Supply both from the clip's source.                                                                                  |
-| `Warp markers need a seconds time view.`                                                  | Mount on a seconds-based waveform.                                                                                   |
-| `Level meter sample count must be a positive integer.`                                    | Set `source.sampleCount` to the positive integer buffer length needed by a PCM reader; omit it for the 2048 default. |
+| Control message                                                                                      | Fix                                                                                                                  |
+| ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `Parameter control needs a finite increasing range and a positive minimum for log scale.`            | Provide a finite increasing range, above zero for log scale.                                                         |
+| `Parameter control step must be positive.`                                                           | Supply a finite positive step, or omit it.                                                                           |
+| `Automation overlay needs a positive maximum and an in-range default.`                               | Provide a positive finite maximum and a default between zero and that maximum.                                       |
+| `Warp markers need a positive sample rate and source frame count.`                                   | Supply both from the clip's source.                                                                                  |
+| `Warp markers need a seconds time view.`                                                             | Mount on a seconds-based waveform.                                                                                   |
+| `Level meter sample count must be a positive integer.`                                               | Set `source.sampleCount` to the positive integer buffer length needed by a PCM reader; omit it for the 2048 default. |
+| `Bar ruler needs a tempo map with beatToSeconds and secondsToBeat.`                                  | Pass `project.tempoMap` (or a getter returning it), or any object with both functions.                               |
+| `Bar ruler needs a time signature with a positive integer numerator and a power-of-two denominator.` | Pass `project.signature`, such as `[4, 4]` or `[6, 8]`.                                                              |
+| `Bar ruler needs a positive finite scale and a finite non-negative duration.`                        | Return a positive `pixelsPerSecond()` and a finite `duration()` in seconds.                                          |
+| `Step grid model needs at least one lane with a MIDI pitch from 0 to 127.`                           | Pass `lanes: { kick: 36, snare: 38 }`: lane name to integer pitch.                                                   |
+| `Step grid model needs a positive integer stepsPerBar and bars, and a positive beatsPerBar.`         | Use whole numbers such as `stepsPerBar: 16, bars: 2`, and `beatsPerBar` of `numerator * 4 / denominator`.            |
+| `Step grid model needs an edit function or a source with edit().`                                    | Pass a `MidiClip` (`clip.midi` of a DAW clip), or give `options.edit` for a source that only has `notes`.            |
+| `Step grid model pattern needs X, x, 1-9 or . characters, or velocities from 0 to 1.`                | Assign a pattern string such as `"X...x..."` or an array of velocities.                                              |
 
 Messages thrown by the plain player adapters, waveform view, its plugins and the complete selector. Waveform loading and playback messages come from the borrowed player: see [WavePlayer](./player.md#common-errors).
 

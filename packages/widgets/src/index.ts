@@ -25,6 +25,8 @@ export type {
   TimelineZoomHandle,
   TimelineZoomOptions,
 } from "./arrangement";
+export { mountBarRuler } from "./bar-ruler";
+export type { BarRulerHandle, BarRulerOptions, BarRulerTempoMap } from "./bar-ruler";
 export { attachClipWaveform, attachClipTrim } from "./clip";
 export type { ClipWaveformSource, ClipWaveformOptions, ClipWaveformHandle, ClipTrimEdge, ClipTrimOptions, ClipTrimHandle } from "./clip";
 export { mountClipGrid } from "./clip-grid";
@@ -34,6 +36,8 @@ export type { MixerMeter, MixerOptions, MixerState, MixerStrip, MixerStripSettin
 export { mountSampleBrowser } from "./sample-browser";
 export type { SampleBrowserOptions, SampleBrowserState, SampleRow } from "./sample-browser";
 export { mountStepGrid } from "./step-grid";
+export { stepGridModel } from "./step-grid-model";
+export type { StepGridModel, StepGridModelOptions, StepGridNoteSource } from "./step-grid-model";
 export type * from "./step-grid-types";
 export { mountPadGrid } from "./pad-grid";
 export type { PadControl, PadGridOptions } from "./pad-grid";

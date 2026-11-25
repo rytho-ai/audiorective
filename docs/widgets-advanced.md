@@ -408,6 +408,25 @@ const repeatLabels: StepGridPlugin = {
 
 Initial cell setup propagates the original exception after rolling back that registration; normal plugin-attach rollback also applies. Cell `onCleanup` called after removal runs its cleanup immediately, and late `listen` registrations are immediately removed. These late registrations do not throw the private host's disposed/duplicate guards; [widget Common errors](./widgets.md#common-errors) lists those invariant diagnostics separately.
 
+## Step grid over a MIDI clip
+
+```typescript
+import { mountStepGrid, stepGridModel } from "@audiorective/widgets";
+
+const model = stepGridModel(clip.midi, {
+  lanes: { hat: 42, snare: 38, kick: 36 }, // lane name to pitch, top to bottom
+  stepsPerBar: 16, // default
+  bars: () => bars.value, // number or tracked getter; default 1
+  edit: (recipe) => history.record("Edit pattern", () => clip.midi.edit(recipe)), // one Undo step per grid edit
+  position: () => (workspace.playing.value ? beatInClip() : null), // optional playhead, beats from the clip start
+});
+mountStepGrid(root, { sequencer: model });
+```
+
+Each lane is one pitch and each step one slot of `beatsPerBar / stepsPerBar` beats. A step's velocity is the velocity of the lane-pitch note nearest that slot, 0 when there is none. Writing a velocity above 0 adds a note of one step's length (`noteLength`) at the slot or updates the existing one; writing 0 removes the slot's notes. Offset and length edit that note's start (up to half a step either way) and duration (1/16 to 4 steps). Repeat, pitch and chance have no MIDI counterpart: they read 1, 0 and 1 and ignore writes, as do lane rate, swing, direction and the length box (the lane length is `stepsPerBar * bars`). `muted` and `solo` are grid-local flags the app may read. Assigning `lane.pattern` (a string such as `"X...x..."` or velocities) is one commit.
+
+Every change calls `edit(recipe)` once with a draft note array, so the wrapper decides undo and persistence; without `edit` the source's own `edit` is used (a `MidiClip` or `clip.midi`). Reads come from `source.notes`, so notes changed by anything else (a piano roll, an undo, an import) redraw the grid. Notes beyond the lane length, or between slots, are left untouched and not shown. Only a note whose pitch is a lane pitch appears. The model imports `@audiorective/midi` types and no DAW code.
+
 ## Mixer markup and extension controls
 
 `mountMixer` ships no stylesheet. Style `.mixer` (root), `.mixer-strip` (strip), `.master` (master strip), `.strip-name` (button when onSelect exists, otherwise span), `.strip-actions`, buttons `.mute`/`.solo`, active `.on`, strip `.selected`, and `.ar-level-meter`. Each track carries `data-track-id`. Style these hooks inside your own container. A master exists only when masterVolume and editMaster are both present.
@@ -515,6 +534,26 @@ Ctrl/⌘+wheel retains the project time under the pointer; slider zoom retains t
 ### Timeline range gesture
 
 `attachTimeRangeGesture(element, { timeAt, onPreview, onSelect })` borrows a dedicated time surface. `timeAt(clientX, bypassSnap)` resolves scrolling, zoom, bounds and snapping; Alt sets bypassSnap. It previews ordered `[start, end]` and calls onSelect once on release of a nonempty range. Clicks and canceled gestures clear preview. Escape, capture loss and disposal select nothing. Use `touch-action: none` on a surface supporting touch drag. The app stores/uses the result and converts seconds to beats itself when needed; dispose before replacing the element.
+
+### Bar ruler
+
+```typescript
+import { mountBarRuler, attachTimelineZoom } from "@audiorective/widgets/arrangement";
+
+const ruler = mountBarRuler(rulerRow, {
+  tempoMap: () => project.tempoMap, // re-read in an effect: a tempo edit redraws
+  signature: () => project.signature, // default [4, 4]
+  pixelsPerSecond: () => scale.value,
+  duration: () => workspace.duration,
+  viewport: scroller, // optional: draw only the visible bars; a scroll redraws
+  playhead: () => workspace.position.value, // optional line, seconds or null
+  onSeek: (seconds) => workspace.seek(seconds), // optional: a click, not a drag
+});
+attachTimelineZoom({ viewport: scroller, ruler: () => ruler.element, getScale: () => scale.value, onScale });
+// ruler.refresh() after scrolling by script; ruler.dispose() removes the element.
+```
+
+A bar is `numerator * 4 / denominator` quarter-note beats and a beat tick is one `1/denominator` note, placed through `tempoMap.beatToSeconds`, so bars after a tempo change sit at their real positions. Bar lines are drawn from 4 px per bar, beat ticks from 7 px per beat. A bar's label shows when its one-based bar number divides by the smallest power of two that keeps labels `minLabelSpacing` (56) px apart, measured at that bar, so labels stay put while scrolling. `labels: { bar(n) }` replaces the number. `signature` is one signature for the whole song; a meter change mid-song is not drawn. Invalid options throw at mount; a later invalid value (scale 0) draws nothing. The ruler never calls the Project or the Workspace: snapping a seek is the app's `onSeek`.
 
 ## Timeline clips
 

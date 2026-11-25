@@ -39,6 +39,25 @@
         "Cancel closes without changing the song.",
         "Closing disposes the views and playback it created."
       ]
+    },
+    {
+      "id": "W3-bar-ruler",
+      "prompt": "In the same browser DAW (`project`, `workspace`; the timeline scrolls horizontally inside `scroller` and is laid out at `scale.value` pixels per second), add a ruler above the tracks. It shows bar lines with bar numbers and, when zoomed in far enough, beat ticks, at the right places even after the song's tempo changes partway through or its time signature is 3/4. Labels must not overlap when the user zooms out. Clicking the ruler moves the playhead to that time (snapped to the nearest beat), and a vertical line marks the current playback position. It follows the page's light or dark theme and is removed cleanly when the view is closed.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;\ndeclare const scroller: HTMLElement;\ndeclare const rulerRow: HTMLElement;\ndeclare const scale: import(\"@audiorective/core\").Cell<number>;",
+      "expectations": [
+        "Draws the bar and beat ruler with a toolkit widget fed by the project's tempo map and time signature, not hand-computed pixel positions.",
+        "Bar and beat positions come from the tempo map, so they stay correct after a tempo change, and use the project's signature.",
+        "The ruler follows `scale` and the tempo or signature reactively, and draws only what is visible by passing the scrolling element.",
+        "A click seeks to the clicked time snapped to a beat, and the current position is shown as a line.",
+        "The widget handle is disposed when the view closes."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "No hand-drawn ruler",
+          "none": ["beatToSeconds\\([^)]*\\)[\\s\\S]{0,300}style\\.left"]
+        }
+      ]
     }
   ]
 }
