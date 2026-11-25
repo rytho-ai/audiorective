@@ -37,8 +37,12 @@ export type {
   WebClapDevice,
 } from "./model";
 export type {
+  AddNotesEdit,
   BeatRange,
   CopyRangeEdit,
+  EditNotesEdit,
+  NewNoteEdit,
+  RemoveNotesEdit,
   EditClipSelector,
   MoveClipEdit,
   ProjectClipQuery,

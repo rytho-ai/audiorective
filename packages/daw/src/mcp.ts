@@ -2,6 +2,9 @@ import { encode } from "@toon-format/toon";
 import { untracked } from "@audiorective/core";
 import { saveWorkspace } from "./compose";
 import type { ProjectEditRequest, ProjectVersion } from "./project-edits";
+import { checkArguments } from "./extensions";
+import { midiPasses } from "./clip-loop";
+import { findSlotClip } from "./session-state";
 import { renderMixRange } from "./mix-range";
 import type { Workspace } from "./runtime";
 import { selectionFor } from "./selection";
@@ -101,6 +104,9 @@ const OP_TYPES = [
   "resizeClip",
   "setClipSourceRange",
   "setNoteVelocity",
+  "addNotes",
+  "removeNotes",
+  "editNotes",
   "renameClip",
   "rippleDelete",
   "makeClipUnique",
@@ -192,7 +198,7 @@ function projectView(workspace: Workspace) {
         error: workspace.cells.error.value,
       },
       history: { undo: history.undo ?? null, redo: history.redo ?? null },
-      operations: project.operations.list().map(({ name, description }) => ({ name, description })),
+      operations: project.operations.list().map(({ name, description, input }) => ({ name, description, input })),
     };
   });
 }
@@ -254,7 +260,7 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
     {
       name: "read_project",
       description:
-        "Read the open project as TOON text: title, tempo and meter, markers, tracks, every clip with its beats and seconds, Session scenes, what the person has SELECTED (selection.clipIds, openClipId, range), the current `version`, playback state, undo labels and the app's named operations. Clips carry sourceOffset, sourceLength (audio) and loopStart/loopEnd: the window of the content that plays, in beats for MIDI clips and seconds of the recording for audio clips. Call it first and again after any conflict. Positions are in beats (quarter notes from the start) unless named seconds.",
+        "Read the open project as TOON text: title, tempo and meter, markers, tracks, every clip with its beats and seconds, Session scenes, what the person has SELECTED (selection.clipIds, openClipId, range), the current `version`, playback state, undo labels and the app's named operations (each with its `input` JSON Schema: pass exactly those fields to run_operation). Clips carry sourceOffset, sourceLength (audio) and loopStart/loopEnd: the window of the content that plays, in beats for MIDI clips and seconds of the recording for audio clips. Call it first and again after any conflict. Positions are in beats (quarter notes from the start) unless named seconds.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
       call: guard(async () => toon(projectView(workspace))),
     },
@@ -332,8 +338,84 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
       }),
     },
     {
+      name: "read_notes",
+      description:
+        "List the notes of one MIDI clip as TOON rows `id,pitch,start,duration,velocity,hidden`. Pass `range` (content beats) when you only need part of a long clip. start and duration are CONTENT beats (the beats addNotes, editNotes and setClipSourceRange use; the clip plays the window starting at `window.sourceOffset`, so a note at start 0 is not at the clip's start when sourceOffset is not 0). `hidden` is true for a note the clip's window or loop does not play. Optional `range` { startBeat, endBeat } (content beats, half-open) keeps only notes that overlap it. Works for timeline and Session clips; linked clips share notes.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          clipId: { type: "string" },
+          range: { ...BEAT_RANGE_SCHEMA, description: "Content beats; keeps notes overlapping [startBeat, endBeat)." },
+        },
+        required: ["clipId"],
+        additionalProperties: false,
+      },
+      call: guard((args) => {
+        const clipId = stringArg(args, "clipId", true);
+        if (typeof clipId !== "string") return clipId!;
+        const unknown = Object.keys(args).find((key) => key !== "clipId" && key !== "range");
+        if (unknown !== undefined) return fail(`Unknown field "${unknown}"; allowed: clipId, range.`);
+        let range: { startBeat: number; endBeat: number } | undefined;
+        if (args.range !== undefined) {
+          const checked = beatRange(args.range, "range");
+          if ("content" in checked) return checked;
+          range = checked;
+        }
+        const project = workspace.project;
+        const clip = untracked(() => timelineClip(project, clipId) ?? findSlotClip(project, clipId));
+        if (!clip) return fail(`No clip "${clipId}". Use read_project or find to get clip ids.`);
+        if (clip.kind !== "midi") return fail(`Clip "${clipId}" is an audio clip: it has no notes.`);
+        const all = untracked(() => clip.midi.notes.value);
+        const passes = midiPasses(clip.sourceOffset, clip.loop, clip.duration);
+        const plays = (note: { start: number; duration: number }) =>
+          passes.some(({ from, to }) => note.start < to && (note.start + note.duration > from || note.start >= from));
+        const shown = range
+          ? all.filter((note) => note.start < range.endBeat && (note.start + note.duration > range.startBeat || note.start >= range.startBeat))
+          : all;
+        return toon({
+          clipId,
+          version: untracked(() => project.cells.version.value),
+          window: {
+            sourceOffset: round(clip.sourceOffset),
+            durationBeats: round(clip.duration),
+            loopStart: clip.loop ? round(clip.loop.startBeat) : "",
+            loopEnd: clip.loop ? round(clip.loop.endBeat) : "",
+          },
+          count: shown.length,
+          hiddenCount: shown.filter((note) => !plays(note)).length,
+          notes: shown.map((note) => ({
+            id: note.id,
+            pitch: note.pitch,
+            start: round(note.start),
+            duration: round(note.duration),
+            velocity: round(note.velocity),
+            hidden: !plays(note),
+          })),
+        });
+      }),
+    },
+    {
       name: "apply_edits",
-      description: `Apply a list of edit operations as ONE undoable step (the person presses Undo once to remove all of it). Pass the \`version\` you last read as expectedVersion. If the person changed the project since, you get status "conflict" and nothing changes: call read_project, re-plan and send again. Operations run in order: ${OP_TYPES.join(", ")}. Units: beats are project beats; resizeClip start/end are absolute project beats for every clip; setClipSourceRange start/end are content beats for a MIDI clip and seconds of the recording for an audio clip. Shapes: { type: "copyRange", range: {startBeat,endBeat}, atBeat, placement: "insert", as: "name" } (insert opens room at atBeat on every track); { type: "moveClip", clip: {clipId} | {fromCopy: "name", trackName?}, position: {atBeat} | {byBeats} }; { type: "resizeClip", clip, start?, end? } (move one or both edges without deleting content; a MIDI clip's start edge moves its sourceOffset, an audio clip's reveals its recording); { type: "setClipSourceRange", clip, start, end } (which part of the content plays, the clip keeps its position); { type: "renameClip", clip, name }; { type: "setNoteVelocity", clip, noteId, velocity: 0..1 }; { type: "rippleDelete", range: {startBeat,endBeat} | {startSeconds,endSeconds}, crossfade? }; { type: "makeClipUnique", clip }. The receipt says whether playback already has the edit.`,
+      description: [
+        `Apply a list of edit operations as ONE undoable step (the person presses Undo once to remove all of it).`,
+        `Pass the \`version\` you last read as expectedVersion.`,
+        `If the person changed the project since, you get status "conflict" and nothing changes: call read_project, re-plan and send again.`,
+        `Operations run in order: ${OP_TYPES.join(", ")}.`,
+        `Units: beats are project beats; resizeClip start/end are absolute project beats for every clip; setClipSourceRange start/end are content beats for a MIDI clip and seconds of the recording for an audio clip.`,
+        `Shapes: { type: "copyRange", range: {startBeat,endBeat}, atBeat, placement: "insert", as: "name" } (insert opens room at atBeat on every track);`,
+        `{ type: "moveClip", clip: {clipId} | {fromCopy: "name", trackName?}, position: {atBeat} | {byBeats} };`,
+        `{ type: "resizeClip", clip, start?, end? } (move one or both edges without deleting content; a MIDI clip's start edge moves its sourceOffset, an audio clip's reveals its recording);`,
+        `{ type: "setClipSourceRange", clip, start, end } (which part of the content plays, the clip keeps its position);`,
+        `{ type: "renameClip", clip, name };`,
+        `{ type: "setNoteVelocity", clip, noteId, velocity: 0..1 };`,
+        `{ type: "addNotes", clip, notes: [{ pitch: 0..127, start, duration, velocity?: 0..1 (default 0.8) }] };`,
+        `{ type: "removeNotes", clip, noteIds: [...] };`,
+        `{ type: "editNotes", clip, notes: [{ id, pitch?, start?, duration?, velocity? }] } (note start/duration are CONTENT beats, the same beats read_notes shows; read note IDs with read_notes; an omitted field stays);`,
+        `{ type: "rippleDelete", range: {startBeat,endBeat} | {startSeconds,endSeconds}, crossfade? };`,
+        `{ type: "makeClipUnique", clip }.`,
+        `Unknown fields are rejected with the allowed list.`,
+        `The receipt says whether playback already has the edit, or status "noop" when nothing changed.`,
+      ].join(" "),
       inputSchema: {
         type: "object",
         properties: {
@@ -348,8 +430,7 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
                 type: { enum: [...OP_TYPES] },
                 clip: {
                   type: "object",
-                  description:
-                    "{ clipId } or { fromCopy, trackName? } (resizeClip, setClipSourceRange, moveClip, renameClip, setNoteVelocity, makeClipUnique).",
+                  description: "{ clipId } or { fromCopy, trackName? } (every op that takes a clip, including addNotes, removeNotes and editNotes).",
                 },
                 start: {
                   type: "number",
@@ -361,6 +442,22 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
                   description:
                     "resizeClip: absolute project beat of the end edge. setClipSourceRange: content beat (MIDI) or recording second (audio).",
                 },
+                notes: {
+                  type: "array",
+                  description:
+                    "addNotes: [{ pitch, start, duration, velocity? }]. editNotes: [{ id, pitch?, start?, duration?, velocity? }]. Content beats.",
+                  items: {
+                    type: "object",
+                    properties: {
+                      id: { type: "string" },
+                      pitch: { type: "integer", minimum: 0, maximum: 127 },
+                      start: { type: "number", minimum: 0 },
+                      duration: { type: "number", exclusiveMinimum: 0 },
+                      velocity: { type: "number", minimum: 0, maximum: 1 },
+                    },
+                  },
+                },
+                noteIds: { type: "array", items: { type: "string" }, description: "removeNotes: IDs from read_notes." },
               },
               required: ["type"],
             },
@@ -387,7 +484,7 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
               status: "conflict",
               currentVersion: receipt.version,
               reason: receipt.reason,
-              next: "Nothing was changed and the person's edit is kept. Call read_project, check the new state, and send the edit again with the new version.",
+              next: "Nothing was changed and the person's edit is kept. Call read_project, check the new state, and send the edit again with the new version. Note and clip IDs usually stay valid when the person changed other material; re-read only what they touched.",
             },
             true,
           );
@@ -403,12 +500,19 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
             },
             true,
           );
+        if (receipt.version === expectedVersion)
+          return json({
+            status: "noop",
+            version: receipt.version,
+            note: "The edits left the project exactly as it was, so there is no undo step. Check that the values differ from what the project already has.",
+          });
         const playback = await playbackState(workspace, receipt.version);
         return json({
           status: "applied",
           version: receipt.version,
           undoLabel: `${prefix}${label}`,
           created: receipt.created,
+          createdNotes: receipt.createdNotes,
           changed: receipt.changed,
           removed: receipt.removed,
           copies: receipt.copies,
@@ -419,7 +523,7 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
     {
       name: "run_operation",
       description:
-        "Call one of the app's named operations (listed under `operations` in read_project) with JSON arguments. It runs as one undoable step labelled by the operation. Pass `expectedVersion` to refuse when the person has changed the project since you read it.",
+        "Call one of the app's named operations (listed under `operations` in read_project, each with its `input` JSON Schema) with JSON `args` that use only the fields of that schema: unknown or missing fields are an error that lists the schema. It runs as one undoable step labelled by the operation. Pass `expectedVersion` to refuse when the person has changed the project since you read it.",
       inputSchema: {
         type: "object",
         properties: {
@@ -447,9 +551,28 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
           );
         const known = untracked(() => project.operations.list().map((operation) => operation.name));
         if (!known.includes(name)) return fail(`No operation named "${name}". Available: ${known.length ? known.join(", ") : "none"}.`);
+        const input = untracked(() => project.operations.list().find((operation) => operation.name === name)!.input);
+        try {
+          checkArguments(name, input, args.args ?? {});
+        } catch (error) {
+          return fail(`${error instanceof Error ? error.message : String(error)} Input schema: ${JSON.stringify(input)}`);
+        }
         const result = project.operations.call(name, args.args ?? {});
         const version = untracked(() => project.cells.version.value);
-        return json({ status: "applied", result: result ?? null, version, playback: await playbackState(workspace, version) });
+        if (version === current)
+          return json({
+            status: "noop",
+            result: result ?? null,
+            version,
+            note: "The operation ran but left the project exactly as it was, so there is no undo step.",
+          });
+        return json({
+          status: "applied",
+          result: result ?? null,
+          version,
+          undoLabel: untracked(() => project.cells.history.value.undo) ?? null,
+          playback: await playbackState(workspace, version),
+        });
       }),
     },
     {

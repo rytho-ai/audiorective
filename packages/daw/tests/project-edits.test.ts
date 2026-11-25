@@ -599,7 +599,7 @@ describe("base tempo", () => {
     expect(project.bpm).toBe(120);
     expect(project.clipTimeSeconds(keyChorus)).toBe(beforeSeconds);
     expect(() => project.setTempoChanges([{ beat: 0, bpm: 0 }])).toThrow(/at least 1/);
-    expect(() => project.setTempoChanges([{ beat: 0, bpm: 5e-324 }])).toThrow(/at least 1/);
+    expect(() => project.setTempoChanges([{ beat: 0, bpm: Number.MIN_VALUE }])).toThrow(/at least 1/);
     expect(() =>
       project.setTempoChanges([
         { beat: 0, bpm: 90 },
@@ -839,5 +839,117 @@ describe("clip names", () => {
     expect(receipt).toMatchObject({ status: "rejected", opIndex: 1 });
     expect(project.clipName(keyChorus.id)).toBeUndefined();
     expect(() => project.setClipName(keyChorus.id, "")).toThrow(/must not be empty/);
+  });
+});
+
+describe("note edits and field checks", () => {
+  describe("note edits", () => {
+    const notesOf = (clip: ProjectClip) => (clip.kind === "midi" ? clip.midi.notes.value : []);
+
+    it("adds, edits and removes notes as one undo step with the rest of the request", () => {
+      const { project, keyChorus } = song();
+      const clip = { clipId: keyChorus.id };
+      const receipt = project.applyEdits({
+        expectedVersion: version(project),
+        label: "Notes",
+        ops: [
+          {
+            type: "addNotes",
+            clip,
+            notes: [
+              { pitch: 64, start: 4, duration: 1 },
+              { pitch: 67, start: 4, duration: 1, velocity: 0.7 },
+            ],
+          },
+          { type: "editNotes", clip, notes: [{ id: "n1", pitch: 72, velocity: 0.9 }] },
+        ],
+      });
+      expect(receipt.status).toBe("applied");
+      const notes = notesOf(keyChorus);
+      if (receipt.status !== "applied") throw new Error("expected applied");
+      expect(receipt.createdNotes).toHaveLength(1);
+      expect(receipt.createdNotes[0].clipId).toBe(keyChorus.id);
+      expect(receipt.createdNotes[0].ids.map((id) => notes.find((note) => note.id === id)?.pitch)).toEqual([64, 67]);
+      expect(notes.map(({ pitch, start, velocity }) => [pitch, start, velocity])).toEqual([
+        [72, 1, 0.9],
+        [64, 4, 0.8],
+        [67, 4, 0.7],
+      ]);
+      const added = notes.find(({ pitch }) => pitch === 64)!;
+      expect(
+        project.applyEdits({
+          expectedVersion: version(project),
+          label: "Remove",
+          ops: [{ type: "removeNotes", clip, noteIds: [added.id, "n1"] }],
+        }).status,
+      ).toBe("applied");
+      expect(notesOf(keyChorus).map(({ pitch }) => pitch)).toEqual([67]);
+      expect(project.undo().status).toBe("applied");
+      expect(notesOf(keyChorus)).toHaveLength(3);
+      expect(project.undo().status).toBe("applied");
+      expect(notesOf(keyChorus).map(({ id }) => id)).toEqual(["n1"]);
+      expect(notesOf(keyChorus)[0]).toMatchObject({ pitch: 60, velocity: 0.5 });
+    });
+
+    it("rejects bad notes and leaves the project untouched", () => {
+      const { project, keyChorus, drumChorus } = song();
+      const clip = { clipId: keyChorus.id };
+      const before = fingerprint(project);
+      const bad = (op: unknown, code: string, reason: RegExp) => {
+        const receipt = project.applyEdits({ expectedVersion: version(project), label: "Bad", ops: [op as ProjectEditOperation] });
+        expect(receipt).toMatchObject({ status: "rejected", code, opIndex: 0 });
+        expect((receipt as { reason: string }).reason).toMatch(reason);
+      };
+      bad({ type: "addNotes", clip, notes: [{ pitch: 128, start: 0, duration: 1 }] }, "invalid-operation", /pitch/);
+      bad({ type: "addNotes", clip, notes: [{ pitch: 60, start: -1, duration: 1 }] }, "invalid-operation", /start/);
+      bad({ type: "addNotes", clip, notes: [{ pitch: 60, start: 0, duration: 0 }] }, "invalid-operation", /duration/);
+      bad({ type: "addNotes", clip, notes: [{ pitch: 60, start: 0 }] }, "invalid-operation", /needs duration/);
+      bad(
+        { type: "addNotes", clip, notes: [{ pitch: 60, start: 0, duration: 1, vel: 1 }] },
+        "invalid-operation",
+        /unknown field "vel"; allowed: pitch/,
+      );
+      bad({ type: "addNotes", clip, notes: [] }, "invalid-operation", /non-empty/);
+      bad({ type: "addNotes", clip: { clipId: drumChorus.id }, notes: [{ pitch: 60, start: 0, duration: 1 }] }, "invalid-operation", /MIDI clip/);
+      bad({ type: "removeNotes", clip, noteIds: ["nope"] }, "note-not-found", /nope/);
+      bad({ type: "editNotes", clip, notes: [{ id: "nope", pitch: 61 }] }, "note-not-found", /nope/);
+      bad({ type: "editNotes", clip, notes: [{ id: "n1" }] }, "invalid-operation", /changes nothing/);
+      bad({ type: "editNotes", clip, notes: [{ id: "n1", velocity: 2 }] }, "invalid-operation", /velocity/);
+      expect(fingerprint(project)).toBe(before);
+    });
+
+    it("conflicts on a stale version like any other operation", () => {
+      const { project, keyChorus } = song();
+      const stale = version(project);
+      project.setClipName(keyChorus.id, "Changed");
+      const receipt = project.applyEdits({
+        expectedVersion: stale,
+        label: "Late",
+        ops: [{ type: "addNotes", clip: { clipId: keyChorus.id }, notes: [{ pitch: 60, start: 0, duration: 1 }] }],
+      });
+      expect(receipt.status).toBe("conflict");
+      expect(notesOf(keyChorus)).toHaveLength(1);
+    });
+  });
+
+  it("rejects an unknown field on an operation, selector, range or position and names the allowed ones", () => {
+    const { project, keyChorus } = song();
+    const before = fingerprint(project);
+    const reject = (op: unknown) =>
+      project.applyEdits({ expectedVersion: version(project), label: "Bad", ops: [op as ProjectEditOperation] }) as {
+        status: string;
+        code: string;
+        reason: string;
+      };
+    expect(reject({ type: "renameClip", clip: { clipId: keyChorus.id }, name: "x", title: "y" })).toMatchObject({
+      status: "rejected",
+      code: "invalid-operation",
+      reason: 'renameClip has unknown field "title"; allowed: type, clip, name.',
+    });
+    expect(reject({ type: "moveClip", clip: { clipId: keyChorus.id }, position: { atBeat: 1, to: 2 } }).reason).toMatch(
+      /position has unknown field "to"/,
+    );
+    expect(reject({ type: "rippleDelete", range: { startBeat: 0, endBeat: 1, start: 2 } }).reason).toMatch(/range has unknown field "start"/);
+    expect(fingerprint(project)).toBe(before);
   });
 });

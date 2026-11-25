@@ -152,6 +152,28 @@ describe("operations", () => {
     project.dispose();
   });
 
+  test("unknown fields are rejected with the allowed names unless the schema allows them", () => {
+    const { project } = song();
+    project.operations.register(shift);
+    project.operations.register(
+      defineOperation({
+        name: "test.open",
+        description: "Open input",
+        input: { type: "object", properties: { a: { type: "number" } }, additionalProperties: true },
+        run: () => "ok",
+      }),
+    );
+    project.operations.register(defineOperation({ name: "test.free", description: "Free-form input", input: { type: "object" }, run: () => "free" }));
+    const version = project.cells.version.value;
+    expect(() => project.operations.call("test.shift-clips", { beats: 1, bets: 2 })).toThrow(
+      'Operation "test.shift-clips": args has unknown field "bets"; allowed: beats.',
+    );
+    expect(project.cells.version.value).toBe(version);
+    expect(project.operations.call("test.open", { a: 1, b: 2 })).toBe("ok");
+    expect(project.operations.call("test.free", { anything: 1 })).toBe("free");
+    project.dispose();
+  });
+
   test("invalid arguments and a throwing run change nothing", () => {
     const { project } = song();
     project.operations.register(shift);

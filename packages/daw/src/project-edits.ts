@@ -99,6 +99,27 @@ export type SetNoteVelocityEdit = Readonly<{
   /** 0 to 1. */
   velocity: number;
 }>;
+/** A note to add, in content beats (the clip plays the window starting at its `sourceOffset`): `start` counts from the content's first beat, not the clip's start. */
+export type NewNoteEdit = Readonly<{
+  /** MIDI note number, an integer 0 to 127 (60 is middle C). */
+  pitch: number;
+  /** Content beats, 0 or more. */
+  start: number;
+  /** Beats, more than 0. */
+  duration: number;
+  /** 0 to 1. Default 0.8. */
+  velocity?: number;
+}>;
+/** New notes in a MIDI clip's content. Read their IDs with `read_notes` or from the clip's `midi.notes`. */
+export type AddNotesEdit = Readonly<{ type: "addNotes"; clip: EditClipSelector; notes: readonly NewNoteEdit[] }>;
+/** Delete notes by ID. */
+export type RemoveNotesEdit = Readonly<{ type: "removeNotes"; clip: EditClipSelector; noteIds: readonly string[] }>;
+/** Change notes by ID; an omitted field stays. */
+export type EditNotesEdit = Readonly<{
+  type: "editNotes";
+  clip: EditClipSelector;
+  notes: readonly Readonly<{ id: string; pitch?: number; start?: number; duration?: number; velocity?: number }>[];
+}>;
 export type RippleDeleteEdit = Readonly<{
   type: "rippleDelete";
   range: TimeRange;
@@ -131,6 +152,9 @@ export type ProjectEditOperation =
   | ResizeClipEdit
   | SetClipSourceRangeEdit
   | SetNoteVelocityEdit
+  | AddNotesEdit
+  | RemoveNotesEdit
+  | EditNotesEdit
   | RenameClipEdit
   | RippleDeleteEdit
   | MakeClipUniqueEdit;
@@ -159,6 +183,8 @@ export type ProjectEditReceipt = Readonly<
       status: "applied";
       version: ProjectVersion;
       created: readonly string[];
+      /** Per `addNotes` operation, in request order: the clip and the IDs of the notes it created, in the order of the operation's `notes`. */
+      createdNotes: readonly Readonly<{ clipId: string; ids: readonly string[] }>[];
       changed: readonly string[];
       removed: readonly string[];
       /** Per `as` name: which clip each copy came from. */
@@ -169,6 +195,9 @@ export type ProjectEditReceipt = Readonly<
 >;
 
 export type ProjectEditCopies = Record<string, { from: string; id: string; trackId: string }[]>;
+export type ProjectEditCreatedNotes = { clipId: string; ids: string[] }[];
+/** What running the operations produced beyond the clip changes the history entry already lists. */
+export type ProjectEditRun = { copies: ProjectEditCopies; createdNotes: ProjectEditCreatedNotes };
 
 export class ProjectEditFailure extends Error {
   constructor(
@@ -494,6 +523,133 @@ function setNoteVelocity(project: Project, op: SetNoteVelocityEdit, copies: Proj
   });
 }
 
+const NOTE_FIELDS = ["pitch", "start", "duration", "velocity"] as const;
+
+/** Rejects a field of `value` that `allowed` does not list, naming the ones it does. */
+function onlyFields(value: unknown, allowed: readonly string[], where: string): void {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return;
+  const unknown = Object.keys(value).find((key) => !allowed.includes(key));
+  if (unknown !== undefined) fail("invalid-operation", `${where} has unknown field "${unknown}"; allowed: ${allowed.join(", ")}.`);
+}
+
+function noteFieldProblem(note: Record<string, unknown>, field: (typeof NOTE_FIELDS)[number]): string | null {
+  const value = note[field];
+  if (value === undefined) return null;
+  if (typeof value !== "number" || !Number.isFinite(value)) return `${field} must be a finite number`;
+  if (field === "pitch" && (!Number.isInteger(value) || value < 0 || value > 127)) return "pitch must be an integer 0 to 127";
+  if (field === "velocity" && (value < 0 || value > 1)) return "velocity must be 0 to 1";
+  if (field === "start" && value < 0) return "start must be 0 or more content beats";
+  if (field === "duration" && value <= 0) return "duration must be more than 0 beats";
+  return null;
+}
+
+function midiClipOf(project: Project, op: { type: string; clip: EditClipSelector }, copies: ProjectEditCopies) {
+  const clip = resolveAnyClip(project, op.clip, copies);
+  if (clip.kind !== "midi") fail("invalid-operation", `${op.type} needs a MIDI clip.`);
+  return clip as Extract<ProjectClip, { kind: "midi" }>;
+}
+
+function noteList(op: { type: string }, key: string, value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value) || value.length === 0) fail("invalid-operation", `${op.type} needs a non-empty ${key} array.`);
+  return value as Record<string, unknown>[];
+}
+
+function addNotesOp(project: Project, op: AddNotesEdit, copies: ProjectEditCopies, createdNotes: ProjectEditCreatedNotes): void {
+  const clip = midiClipOf(project, op, copies);
+  const notes = noteList(op, "notes", op.notes);
+  for (const [index, note] of notes.entries()) {
+    if (typeof note !== "object" || note === null)
+      fail("invalid-operation", `addNotes notes[${index}] must be { pitch, start, duration, velocity? }.`);
+    onlyFields(note, NOTE_FIELDS, `addNotes notes[${index}]`);
+    for (const field of ["pitch", "start", "duration"] as const)
+      if (note[field] === undefined) fail("invalid-operation", `addNotes notes[${index}] needs ${field}.`);
+    for (const field of NOTE_FIELDS) {
+      const problem = noteFieldProblem(note, field);
+      if (problem) fail("invalid-operation", `addNotes notes[${index}]: ${problem}.`);
+    }
+  }
+  const before = new Set(clip.midi.notes.value.map(({ id }) => id));
+  const velocities = notes.map((note) => (note.velocity as number | undefined) ?? 0.8);
+  clip.midi.edit((draft) => {
+    for (const [index, note] of notes.entries())
+      draft.push({ pitch: note.pitch as number, start: note.start as number, duration: note.duration as number, velocity: velocities[index] });
+  });
+  // The clip sorts its notes, so match each requested note to its new one; equal notes are interchangeable and keep push order.
+  const fresh = clip.midi.notes.value.filter(({ id }) => !before.has(id));
+  const ids = notes.map((note, index) => {
+    const at = fresh.findIndex(
+      (made) => made.pitch === note.pitch && made.start === note.start && made.duration === note.duration && made.velocity === velocities[index],
+    );
+    return fresh.splice(at, 1)[0].id;
+  });
+  createdNotes.push({ clipId: clip.id, ids });
+}
+
+function removeNotesOp(project: Project, op: RemoveNotesEdit, copies: ProjectEditCopies): void {
+  const clip = midiClipOf(project, op, copies);
+  const ids = noteList(op, "noteIds", op.noteIds) as unknown as unknown[];
+  if (!ids.every((id) => typeof id === "string" && id)) fail("invalid-operation", "removeNotes noteIds must be note ID strings.");
+  const present = new Set(clip.midi.notes.value.map(({ id }) => id));
+  for (const id of ids) if (!present.has(id as string)) fail("note-not-found", `Clip "${clip.id}" has no note "${id}".`);
+  clip.midi.edit((draft) => {
+    for (let index = draft.length - 1; index >= 0; index--) if (ids.includes(draft[index].id)) draft.splice(index, 1);
+  });
+}
+
+function editNotesOp(project: Project, op: EditNotesEdit, copies: ProjectEditCopies): void {
+  const clip = midiClipOf(project, op, copies);
+  const edits = noteList(op, "notes", op.notes);
+  const present = new Set(clip.midi.notes.value.map(({ id }) => id));
+  for (const [index, edit] of edits.entries()) {
+    if (typeof edit !== "object" || edit === null || typeof edit.id !== "string") fail("invalid-operation", `editNotes notes[${index}] needs an id.`);
+    onlyFields(edit, ["id", ...NOTE_FIELDS], `editNotes notes[${index}]`);
+    if (!present.has(edit.id as string)) fail("note-not-found", `Clip "${clip.id}" has no note "${edit.id}".`);
+    if (NOTE_FIELDS.every((field) => edit[field] === undefined))
+      fail("invalid-operation", `editNotes notes[${index}] changes nothing: give pitch, start, duration or velocity.`);
+    for (const field of NOTE_FIELDS) {
+      const problem = noteFieldProblem(edit, field);
+      if (problem) fail("invalid-operation", `editNotes notes[${index}]: ${problem}.`);
+    }
+  }
+  clip.midi.edit((draft) => {
+    for (const edit of edits) {
+      const note = draft.find(({ id }) => id === edit.id)!;
+      for (const field of NOTE_FIELDS) if (edit[field] !== undefined) note[field] = edit[field] as number;
+    }
+  });
+}
+
+/** The fields each edit type takes; anything else is rejected instead of silently ignored. */
+const EDIT_FIELDS: Record<ProjectEditOperation["type"], readonly string[]> = {
+  copyRange: ["range", "atBeat", "placement", "as"],
+  moveClip: ["clip", "position"],
+  resizeClip: ["clip", "start", "end"],
+  setClipSourceRange: ["clip", "start", "end"],
+  setNoteVelocity: ["clip", "noteId", "velocity"],
+  addNotes: ["clip", "notes"],
+  removeNotes: ["clip", "noteIds"],
+  editNotes: ["clip", "notes"],
+  renameClip: ["clip", "name"],
+  rippleDelete: ["range", "crossfade"],
+  makeClipUnique: ["clip"],
+};
+
+function checkFields(op: ProjectEditOperation): void {
+  const type = op?.type;
+  if (typeof type !== "string" || !Object.hasOwn(EDIT_FIELDS, type)) return;
+  onlyFields(op, ["type", ...EDIT_FIELDS[type]], type);
+  const nested = op as unknown as Record<string, unknown>;
+  const range = nested.range as Record<string, unknown> | undefined;
+  if (range && typeof range === "object")
+    onlyFields(
+      range,
+      type === "rippleDelete" && "startSeconds" in range ? ["startSeconds", "endSeconds"] : ["startBeat", "endBeat"],
+      `${type} range`,
+    );
+  onlyFields(nested.position, ["atBeat", "byBeats"], `${type} position`);
+  onlyFields(nested.clip, ["clipId", "fromCopy", "trackId", "trackName", "name"], `${type} clip`);
+}
+
 function rippleDeleteOp(project: Project, op: RippleDeleteEdit): void {
   if (!timeRangeKind(op.range)) fail("invalid-operation", "Project ripple delete needs 0 <= start < end.");
   if (crossfadeSeconds(op.crossfade) === undefined)
@@ -502,17 +658,22 @@ function rippleDeleteOp(project: Project, op: RippleDeleteEdit): void {
 }
 
 /** Runs inside a Project edit, which rolls everything back when a step throws. */
-export function runProjectEdits(project: Project, ops: readonly ProjectEditOperation[]): ProjectEditCopies {
+export function runProjectEdits(project: Project, ops: readonly ProjectEditOperation[]): ProjectEditRun {
   if (!Array.isArray(ops)) throw new ProjectEditFailure("invalid-request", "applyEdits needs an ops array.");
   const copies: ProjectEditCopies = {};
+  const createdNotes: ProjectEditCreatedNotes = [];
   const moved = new Map<string, number>();
   ops.forEach((op: ProjectEditOperation, index) => {
     try {
+      checkFields(op);
       if (op?.type === "copyRange") copyRange(project, op, copies);
       else if (op?.type === "moveClip") moveClip(project, op, copies, moved, index);
       else if (op?.type === "resizeClip") resizeClipOp(project, op, copies, moved, index);
       else if (op?.type === "setClipSourceRange") setClipSourceRangeOp(project, op, copies, moved, index);
       else if (op?.type === "setNoteVelocity") setNoteVelocity(project, op, copies);
+      else if (op?.type === "addNotes") addNotesOp(project, op, copies, createdNotes);
+      else if (op?.type === "removeNotes") removeNotesOp(project, op, copies);
+      else if (op?.type === "editNotes") editNotesOp(project, op, copies);
       else if (op?.type === "rippleDelete") rippleDeleteOp(project, op);
       else if (op?.type === "makeClipUnique") project.makeClipUnique(resolveClip(project, op.clip, copies).clip.id);
       else if (op?.type === "renameClip") project.setClipName(resolveAnyClip(project, op.clip, copies).id, op.name);
@@ -533,5 +694,5 @@ export function runProjectEdits(project: Project, ops: readonly ProjectEditOpera
     );
     if (blocker) throw new ProjectEditFailure("overlap", `Clip "${clipId}" would overlap clip "${blocker.id}".`, index);
   }
-  return copies;
+  return { copies, createdNotes };
 }

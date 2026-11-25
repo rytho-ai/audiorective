@@ -62,6 +62,8 @@ export type JsonSchema = Readonly<{
   type?: "object" | "array" | "string" | "number" | "integer" | "boolean" | "null";
   description?: string;
   properties?: Readonly<Record<string, JsonSchema>>;
+  /** An object with `properties` accepts only those names; `true` lets other names through. Default: unknown names are rejected. */
+  additionalProperties?: boolean;
   required?: readonly string[];
   items?: JsonSchema;
   enum?: readonly JsonValue[];
@@ -78,7 +80,7 @@ export interface ProjectOperation<Args extends object = Readonly<Record<string, 
   readonly name: string;
   /** One sentence saying what it does, for a menu or an AI assistant. */
   readonly description: string;
-  /** The arguments as a JSON Schema object; `call` checks types, required names and number ranges before `run`. */
+  /** The arguments as a JSON Schema object; `call` checks types, required names, number ranges and unknown field names before `run`. */
   readonly input: JsonSchema & { readonly type: "object" };
   /** The Undo label. Default `description`. */
   readonly label?: string;
@@ -108,7 +110,7 @@ export interface ProjectOperations {
   call<Result = unknown>(name: string, args?: object): Result;
 }
 
-/** Throws a RangeError naming the first argument that does not match `schema`. */
+/** Throws a RangeError naming the first argument that does not match `schema`, or the first field an object with `properties` does not list. */
 export function checkArguments(operation: string, schema: JsonSchema, value: unknown, path = "args"): void {
   const fail = (why: string) => {
     throw new RangeError(`Operation "${operation}": ${path} ${why}.`);
@@ -121,6 +123,11 @@ export function checkArguments(operation: string, schema: JsonSchema, value: unk
       const record = value as Record<string, unknown>;
       const own = (name: string) => (Object.hasOwn(record, name) ? record[name] : undefined);
       for (const name of schema.required ?? []) if (own(name) === undefined) fail(`needs "${name}"`);
+      if (schema.properties && schema.additionalProperties !== true) {
+        const allowed = Object.keys(schema.properties);
+        const unknown = Object.keys(record).find((name) => !allowed.includes(name));
+        if (unknown !== undefined) fail(`has unknown field "${unknown}"; allowed: ${allowed.join(", ") || "none"}`);
+      }
       for (const [name, child] of Object.entries(schema.properties ?? {}))
         if (own(name) !== undefined) checkArguments(operation, child, own(name), `${path}.${name}`);
       return;

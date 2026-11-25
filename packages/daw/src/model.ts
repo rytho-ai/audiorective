@@ -44,7 +44,7 @@ import {
   runProjectEdits,
   type ProjectClipQuery,
   type ProjectClipSummary,
-  type ProjectEditCopies,
+  type ProjectEditRun,
   type ProjectEditReceipt,
   type ProjectEditRequest,
   type ProjectOverview,
@@ -972,16 +972,16 @@ export class Project {
       } finally {
         rehearsal.dispose();
       }
-      let copies: ProjectEditCopies = {};
+      let run: ProjectEditRun = { copies: {}, createdNotes: [] };
       if (this.editing) {
         // Inside an open edit the ops join its Undo step; the rehearsal above already proved they apply.
-        copies = runProjectEdits(this, request.ops);
-        return this.appliedReceipt(undefined, "after", copies);
+        run = runProjectEdits(this, request.ops);
+        return this.appliedReceipt(undefined, "after", run);
       }
       const entry = this.runEdit(request.label, () => {
-        copies = runProjectEdits(this, request.ops);
+        run = runProjectEdits(this, request.ops);
       }).entry;
-      return this.appliedReceipt(entry, "after", copies);
+      return this.appliedReceipt(entry, "after", run);
     } catch (error) {
       if (error instanceof ProjectEditFailure)
         return {
@@ -1163,15 +1163,21 @@ export class Project {
         for (const { clip } of side.clips.values()) if (clip instanceof MidiClip && !reachable.has(clip)) clip.dispose();
   }
 
-  private appliedReceipt(entry: EditEntry | undefined, side: "before" | "after", copies: ProjectEditCopies = {}): ProjectEditReceipt {
+  private appliedReceipt(
+    entry: EditEntry | undefined,
+    side: "before" | "after",
+    run: ProjectEditRun = { copies: {}, createdNotes: [] },
+  ): ProjectEditReceipt {
+    const { copies, createdNotes } = run;
     const version = untracked(() => this.cells.version.value);
-    if (!entry) return { status: "applied", version, created: [], changed: [], removed: [], copies };
+    if (!entry) return { status: "applied", version, created: [], createdNotes, changed: [], removed: [], copies };
     const target = entry[side];
     const source = side === "after" ? entry.before : entry.after;
     return {
       status: "applied",
       version,
       created: entry.ids.filter((id) => target.clips.has(id) && !source.clips.has(id)),
+      createdNotes,
       changed: entry.ids.filter((id) => target.clips.has(id) && source.clips.has(id)),
       removed: entry.ids.filter((id) => !target.clips.has(id)),
       copies,

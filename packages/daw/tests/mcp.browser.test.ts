@@ -1,3 +1,4 @@
+import { decode } from "@toon-format/toon";
 import { afterEach, describe, expect, test } from "vitest";
 import { Project, Workspace, defineOperation, renderMixRange, selectionFor, sessionFor } from "../src";
 import { mcpTools, connectMcpBridge, type McpBridgeSocket, type McpTool, type McpToolResult } from "../src/mcp";
@@ -52,9 +53,9 @@ async function song(save?: (bytes: Uint8Array, name: string) => void) {
 const parse = (result: McpToolResult) => JSON.parse(result.content);
 
 describe("mcpTools", () => {
-  test("lists the six tools with object schemas", async () => {
+  test("lists the seven tools with object schemas", async () => {
     const { tools } = await song();
-    expect(tools.map((tool) => tool.name)).toEqual(["read_project", "find", "apply_edits", "run_operation", "listen", "save_as"]);
+    expect(tools.map((tool) => tool.name)).toEqual(["read_project", "find", "read_notes", "apply_edits", "run_operation", "listen", "save_as"]);
     for (const tool of tools) {
       expect(tool.inputSchema.type).toBe("object");
       expect(tool.description.length).toBeGreaterThan(20);
@@ -235,6 +236,173 @@ describe("mcpTools", () => {
     const result = await call("save_as", { name: "x.dawproject" });
     expect(result.isError).toBe(true);
     expect(result.content).toContain("save handler");
+  });
+});
+
+describe("mcpTools affordance", () => {
+  test("read_project shows each operation's input schema and run_operation quotes it for bad args", async () => {
+    const { call } = await song();
+    const view = decode((await call("read_project", {})).content) as {
+      operations: { name: string; input: { properties: Record<string, unknown>; required: string[] } }[];
+    };
+    expect(view.operations[0]).toMatchObject({
+      name: "add-marker",
+      input: { type: "object", properties: { name: { type: "string" } }, required: ["name"] },
+    });
+    const wrong = await call("run_operation", { name: "add-marker", args: { name: "A", label: "B" } });
+    expect(wrong.isError).toBe(true);
+    expect(wrong.content).toContain('unknown field "label"; allowed: name');
+    expect(wrong.content).toContain("Input schema:");
+    expect(wrong.content).toContain('"required":["name"]');
+    expect((await call("run_operation", { name: "add-marker", args: {} })).content).toContain("Input schema:");
+  });
+
+  test("apply_edits rejects an unknown op field with the allowed list", async () => {
+    const { call, project, drumClip } = await song();
+    const version = project.cells.version.value;
+    const result = await call("apply_edits", {
+      expectedVersion: version,
+      label: "Typo",
+      ops: [{ type: "renameClip", clip: { clipId: drumClip.id }, name: "x", newName: "y" }],
+    });
+    expect(result.isError).toBe(true);
+    expect(parse(result)).toMatchObject({ status: "rejected", code: "invalid-operation", opIndex: 0 });
+    expect(parse(result).reason).toContain('unknown field "newName"; allowed: type, clip, name');
+    expect(project.cells.version.value).toBe(version);
+  });
+
+  test("a change that leaves the project as it was is a noop, and run_operation returns the undo label", async () => {
+    const { call, project, drumClip } = await song();
+    await call("apply_edits", {
+      expectedVersion: project.cells.version.value,
+      label: "Name",
+      ops: [{ type: "renameClip", clip: { clipId: drumClip.id }, name: "Kick" }],
+    });
+    const version = project.cells.version.value;
+    const again = await call("apply_edits", {
+      expectedVersion: version,
+      label: "Name",
+      ops: [{ type: "renameClip", clip: { clipId: drumClip.id }, name: "Kick" }],
+    });
+    expect(again.isError).toBeUndefined();
+    expect(parse(again)).toMatchObject({ status: "noop", version });
+    expect(again.content).toContain("exactly as it was");
+    expect(project.cells.version.value).toBe(version);
+    expect(project.cells.history.value.undo).toBe("Agent: Name");
+
+    const done = parse(await call("run_operation", { name: "add-marker", args: { name: "Bridge" } }));
+    expect(done).toMatchObject({ status: "applied", undoLabel: "Add a marker" });
+    project.operations.register(defineOperation({ name: "nothing", description: "Does nothing", input: { type: "object" }, run: () => "idle" }));
+    const marked = project.cells.version.value;
+    const same = await call("run_operation", { name: "nothing", expectedVersion: marked });
+    expect(parse(same)).toMatchObject({ status: "noop", result: "idle", version: marked });
+    expect(same.content).toContain("exactly as it was");
+  });
+});
+
+describe("mcpTools notes", () => {
+  async function withNotes() {
+    const base = await song();
+    const keys = base.project.addTrack("Keys", "midi");
+    const clip = base.project.addMidiClip(
+      keys.id,
+      {
+        duration: 8,
+        notes: [
+          { id: "a", pitch: 60, velocity: 0.5, start: 0, duration: 1 },
+          { id: "b", pitch: 64, velocity: 0.6, start: 4, duration: 1 },
+          { id: "c", pitch: 67, velocity: 0.7, start: 9, duration: 1 },
+        ],
+      },
+      0,
+    );
+    base.project.resizeClip(clip.id, { start: 2, end: 6 });
+    return { ...base, clip };
+  }
+  type Notes = {
+    clipId: string;
+    window: Record<string, unknown>;
+    count: number;
+    hiddenCount: number;
+    notes: { id: string; pitch: number; start: number; hidden: boolean }[];
+  };
+
+  test("read_notes decodes as TOON rows with ids, content beats, the window and hidden flags", async () => {
+    const { call, clip } = await withNotes();
+    const result = await call("read_notes", { clipId: clip.id });
+    expect(result.isError).toBeUndefined();
+    expect(result.content).toContain("id,pitch,start,duration,velocity,hidden");
+    const view = decode(result.content) as Notes;
+    expect(view.window).toMatchObject({ sourceOffset: 2, durationBeats: 4 });
+    expect(view.count).toBe(3);
+    expect(view.hiddenCount).toBe(2);
+    expect(view.notes.map(({ id, hidden }) => [id, hidden])).toEqual([
+      ["a", true],
+      ["b", false],
+      ["c", true],
+    ]);
+    const ranged = decode((await call("read_notes", { clipId: clip.id, range: { startBeat: 3, endBeat: 5 } })).content) as Notes;
+    expect(ranged.notes.map(({ id }) => id)).toEqual(["b"]);
+    expect((await call("read_notes", { clipId: "nope" })).isError).toBe(true);
+    expect((await call("read_notes", {})).isError).toBe(true);
+    expect((await call("read_notes", { clipId: clip.id, rnage: {} })).content).toContain('Unknown field "rnage"');
+  });
+
+  test("read_notes refuses an audio clip", async () => {
+    const { call, drumClip } = await song();
+    expect((await call("read_notes", { clipId: drumClip.id })).content).toContain("audio clip");
+  });
+
+  test("addNotes, editNotes and removeNotes are one Agent undo step and conflict on a stale version", async () => {
+    const { call, project, clip } = await withNotes();
+    const before = project.cells.version.value;
+    const result = await call("apply_edits", {
+      expectedVersion: before,
+      label: "Chord",
+      ops: [
+        { type: "addNotes", clip: { clipId: clip.id }, notes: [{ pitch: 72, start: 3, duration: 0.5 }] },
+        { type: "editNotes", clip: { clipId: clip.id }, notes: [{ id: "b", velocity: 0.9, pitch: 65 }] },
+        { type: "removeNotes", clip: { clipId: clip.id }, noteIds: ["a"] },
+      ],
+    });
+    expect(parse(result)).toMatchObject({ status: "applied", undoLabel: "Agent: Chord" });
+    const view = decode((await call("read_notes", { clipId: clip.id })).content) as Notes;
+    const created = (parse(result) as { createdNotes: { clipId: string; ids: string[] }[] }).createdNotes;
+    expect(created).toHaveLength(1);
+    expect(created[0].clipId).toBe(clip.id);
+    expect(view.notes.find(({ id }) => id === created[0].ids[0])).toMatchObject({ pitch: 72, start: 3 });
+    expect(view.notes.map(({ id }) => id)).not.toContain("a");
+    expect(view.notes.find(({ id }) => id === "b")).toMatchObject({ pitch: 65, velocity: 0.9 });
+    expect(view.notes.find(({ pitch }) => pitch === 72)).toMatchObject({ start: 3, hidden: false });
+    expect(project.cells.history.value.undo).toBe("Agent: Chord");
+
+    const stale = await call("apply_edits", {
+      expectedVersion: before,
+      label: "Late",
+      ops: [{ type: "addNotes", clip: { clipId: clip.id }, notes: [{ pitch: 50, start: 3, duration: 1 }] }],
+    });
+    expect(parse(stale).status).toBe("conflict");
+
+    expect(project.undo().status).toBe("applied");
+    const undone = decode((await call("read_notes", { clipId: clip.id })).content) as Notes;
+    expect(undone.notes.map(({ id }) => id)).toEqual(["a", "b", "c"]);
+    expect(undone.notes.find(({ id }) => id === "b")).toMatchObject({ pitch: 64 });
+  });
+
+  test("a bad note rejects the whole request and names the field", async () => {
+    const { call, project, clip } = await withNotes();
+    const version = project.cells.version.value;
+    const result = await call("apply_edits", {
+      expectedVersion: version,
+      label: "Bad",
+      ops: [
+        { type: "addNotes", clip: { clipId: clip.id }, notes: [{ pitch: 60, start: 3, duration: 1 }] },
+        { type: "editNotes", clip: { clipId: clip.id }, notes: [{ id: "b", velocity: 3 }] },
+      ],
+    });
+    expect(parse(result)).toMatchObject({ status: "rejected", opIndex: 1 });
+    expect(project.cells.version.value).toBe(version);
+    expect((decode((await call("read_notes", { clipId: clip.id })).content) as Notes).count).toBe(3);
   });
 });
 
