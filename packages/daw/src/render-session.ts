@@ -5,6 +5,7 @@ import { renderSnapshot, type Project, type ProjectClip } from "./model";
 import type { ProjectVersion } from "./project-edits";
 import type { Workspace } from "./runtime";
 import { sessionFor } from "./session";
+import { sessionWindow } from "./session-notes";
 
 export type RenderSessionOptions = Readonly<{
   /** Project scene IDs in play order; a scene may repeat (`[b, b, b, b]`, `[a, a, b, c]`). At least one. */
@@ -82,11 +83,7 @@ export async function renderSession(workspace: Workspace, options: RenderSession
       });
       // One pass of a slot clip in beats: a MIDI loop ends its pass at the loop end; audio lasts its duration at this point of the tempo map.
       const passBeats = (clip: ProjectClip) =>
-        clip.kind === "midi"
-          ? clip.loop
-            ? Math.min(clip.loop.endBeat, clip.duration)
-            : clip.duration
-          : tempo.secondsToBeat(startSeconds + clip.duration) - cursor;
+        clip.kind === "midi" ? sessionWindow(clip).length : tempo.secondsToBeat(startSeconds + clip.duration) - cursor;
       const longest = Math.max(0, ...slots.map(({ clip }) => passBeats(clip)));
       const end = cursor + (longest > EPS ? longest : barBeats);
       const endSeconds = tempo.beatToSeconds(end);
@@ -94,7 +91,13 @@ export async function renderSession(workspace: Workspace, options: RenderSession
         if (clip.kind === "midi") {
           const pass = passBeats(clip);
           for (let at = cursor; at < end - EPS; at += pass) {
-            const copy = grid.copyToArrangement(slot, { atBeat: at });
+            let copy = grid.copyToArrangement(slot, { atBeat: at });
+            if (clip.loop) {
+              // The Session plays the loop alone, so the copy is the loop's stretch of content without the lead-in.
+              const { from, length } = sessionWindow(clip);
+              snapshot.setClipLoop(copy.id, null);
+              copy = snapshot.setClipSourceRange(copy.id, { start: from, end: from + length });
+            }
             const stop = Math.min(at + pass, end);
             if (Math.abs(copy.time + copy.duration - stop) > EPS) snapshot.resizeClip(copy.id, { end: stop });
           }

@@ -165,15 +165,16 @@ describe("resizing a looped clip", () => {
     project.dispose();
   });
 
-  test("a MIDI clip extended to the left shifts its notes and loop; a trim bakes the repeats", () => {
+  test("a MIDI clip's loop stays in content beats when its start edge moves", () => {
     const { project, pattern } = fixture();
     project.setClipLoop(pattern.id, { startBeat: 0, endBeat: 2 });
-    project.resizeClip(pattern.id, { start: 6 });
-    expect(midi(find(project, pattern.id)).loop).toEqual({ startBeat: 2, endBeat: 4 });
+    const extended = midi(project.resizeClip(pattern.id, { start: 6 }));
+    expect([extended.loop, extended.sourceOffset]).toEqual([{ startBeat: 0, endBeat: 2 }, -2]);
     project.resizeClip(pattern.id, { start: 6, end: 20 });
     project.resizeClip(pattern.id, { start: 8 });
     const trimmed = midi(find(project, pattern.id));
-    expect(trimmed.loop).toBeUndefined();
+    expect(trimmed.loop).toEqual({ startBeat: 0, endBeat: 2 });
+    expect(trimmed.sourceOffset).toBe(0);
     expect(trimmed.playbackEvents().length).toBeGreaterThan(0);
     project.dispose();
   });

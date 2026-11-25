@@ -168,7 +168,7 @@ Load a file into a clip with `new MidiClip(parseMidi(bytes).notes, { instrument 
 
 ## Piano-roll view
 
-Select and edit a clip with the piano roll. `pianoRollModel(clip)` (from `@audiorective/widgets/piano-roll`) adapts a `MidiClip` to the view's model: its notes follow the clip, and the selection is the model's own `selection` cell (a beat range, or null).
+Select and edit a clip with the piano roll. `pianoRollModel(clip)` (from `@audiorective/widgets/piano-roll`) adapts a `MidiClip` to the view's model: its notes follow the clip, and the selection is the model's own `selection` cell (a beat range, or null). `pianoRollModel(clip, { window: { start, end } })` marks the part of the notes a clip plays (beats, or a getter): notes entirely outside it are drawn dimmed and the unplayed stretches shaded, and editing is unchanged. A clip of `@audiorective/daw` plays `[clip.sourceOffset, clip.sourceOffset + clip.duration)` of its notes; see [MIDI clip windows](./daw.md#midi-clip-windows).
 
 ```typescript
 import { MidiClip, midiGrid, parseMidi } from "@audiorective/midi";

@@ -282,6 +282,11 @@ function writeClip(
     element.setAttribute("loopStart", String(clip.loop.startBeat));
     element.setAttribute("loopEnd", String(clip.loop.endBeat));
   }
+  // A window that does not start at the content's start: playStart is the content beat where the clip begins, playStop where it would end without a loop.
+  if (clip.sourceOffset !== 0) {
+    element.setAttribute("playStart", String(clip.sourceOffset));
+    element.setAttribute("playStop", String(clip.sourceOffset + clip.duration));
+  }
   // Clips that share notes write them once, with the first clip; each later one points at that timeline.
   const owner = linkOwners.get(clip.midi);
   if (owner) {
@@ -601,8 +606,16 @@ function readLoop(clip: Element): { start: number; end: number } | undefined {
   return { start, end };
 }
 
+/** A MIDI clip's `playStart`: the content position where the clip begins (0 without one). `playStop` only has to lie after it. */
+function readMidiWindow(clip: Element): number {
+  const start = clip.hasAttribute("playStart") ? numberAttr(clip, "playStart", -Infinity) : 0;
+  if (clip.hasAttribute("playStop") && !(numberAttr(clip, "playStop", -Infinity) > start))
+    throw new Error("Project MIDI clip needs playStart before playStop.");
+  return start;
+}
+
 function readMidi(clip: Element, trackId: string, index: number, unit: "seconds" | "beats", stored: PrivateState | undefined, warnings: string[]) {
-  attributesOnly(clip, ["name", "time", "duration", "contentTimeUnit", "loopStart", "loopEnd"]);
+  attributesOnly(clip, ["name", "time", "duration", "contentTimeUnit", "loopStart", "loopEnd", "playStart", "playStop"]);
   if (direct(clip, "Audio").length) throw new Error("Project MIDI clip has unsupported audio content.");
   const time = numberAttr(clip, "time");
   const duration = numberAttr(clip, "duration");
@@ -691,6 +704,7 @@ function readMidi(clip: Element, trackId: string, index: number, unit: "seconds"
     notes,
     events,
     id: usable ? match.id : undefined,
+    sourceOffset: readMidiWindow(clip),
     loop: readLoop(clip),
     timelines: [content.getAttribute("id"), notesNode.getAttribute("id")] as const,
   };
@@ -1042,7 +1056,7 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
       childrenOnly(clip, ["Lanes", "Audio"]);
       if (track.kind === "midi") {
         if (clip.hasAttribute("reference")) {
-          attributesOnly(clip, ["id", "name", "time", "duration", "contentTimeUnit", "loopStart", "loopEnd", "reference"]);
+          attributesOnly(clip, ["id", "name", "time", "duration", "contentTimeUnit", "loopStart", "loopEnd", "playStart", "playStop", "reference"]);
           if (unit !== "beats" || attr(clip, "contentTimeUnit") !== unit) throw new Error("Project MIDI clip reference needs beats time.");
           if (direct(clip, "Lanes").length || direct(clip, "Audio").length) throw new Error("Project MIDI clip reference cannot also hold content.");
           referenced.push({ trackId, clip, sceneId });
@@ -1308,13 +1322,17 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
     for (const { trackId, midi, sceneId } of secondsMidi) {
       const map = project.tempoMap;
       const first = map.secondsToBeat(midi.time);
-      const beat = (local: number) => map.secondsToBeat(midi.time + local) - first;
+      // Content before the clip's start (a negative playStart or note time) can land before project second 0, which the tempo map cannot
+      // convert; there the first tempo continues backwards.
+      const beatAt = (seconds: number) => (seconds >= 0 ? map.secondsToBeat(seconds) : (seconds * map.initialBpm) / 60);
+      const beat = (local: number) => beatAt(midi.time + local) - first;
       const added = project.addMidiClip(
         trackId,
         {
           duration: beat(midi.duration),
           notes: midi.notes.map((note) => ({ ...note, start: beat(note.start), duration: beat(note.start + note.duration) - beat(note.start) })),
           events: midi.events.map((event) => ({ ...event, time: beat(event.time) })),
+          sourceOffset: beat(midi.sourceOffset),
         },
         first,
         { id: midi.id, name: midi.name },
@@ -1333,7 +1351,12 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
       const loop = readLoop(clip);
       const added = project.addMidiClip(
         trackId,
-        { notes: untracked(() => source.midi.notes.value), duration: numberAttr(clip, "duration"), events: owner.withEvents ? source.events : [] },
+        {
+          notes: untracked(() => source.midi.notes.value),
+          duration: numberAttr(clip, "duration"),
+          events: owner.withEvents ? source.events : [],
+          sourceOffset: readMidiWindow(clip),
+        },
         time,
         {
           id: stored && clip.getAttribute("id") ? clip.getAttribute("id")! : undefined,

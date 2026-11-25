@@ -105,3 +105,17 @@ test("readers are tracked by effects", () => {
   stop();
   expect(seen.length).toBeGreaterThanOrEqual(6);
 });
+
+test("a window is reported in beats, follows a getter, and is absent by default", () => {
+  const plain = make();
+  expect(plain.model.getState()).not.toHaveProperty("window");
+  let played: { start: number; end: number } | null = { start: 4, end: 8 };
+  const { model } = make([note("a", 0, 1)], { duration: 16, window: () => played });
+  const first = model.getState();
+  expect(first.window).toEqual({ start: 4, end: 8 });
+  expect(model.getState()).toBe(first);
+  played = { start: 8, end: 12 };
+  expect(model.getState().window).toEqual({ start: 8, end: 12 });
+  played = null;
+  expect(model.getState()).not.toHaveProperty("window");
+});

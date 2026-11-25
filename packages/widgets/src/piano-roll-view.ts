@@ -56,12 +56,27 @@ export const defaultPianoRollLayout: PianoRollLayout = (root, viewport, controls
 
 export const defaultPianoRollRenderer: PianoRollRenderer = (root) => ({
   render(frame) {
+    const played = frame.window;
+    const shade = (from: number, to: number, side: string) => {
+      const el = document.createElement("div");
+      el.className = "ar-pr-window-shade";
+      el.dataset.window = side;
+      Object.assign(el.style, { left: `${frame.timeToX(from)}px`, width: `${Math.max(0, frame.timeToX(to) - frame.timeToX(from))}px` });
+      return el;
+    };
     root.replaceChildren(
+      ...(played
+        ? [
+            ...(played.start > 0 ? [shade(0, played.start, "before")] : []),
+            ...(played.end < frame.duration ? [shade(played.end, frame.duration, "after")] : []),
+          ]
+        : []),
       ...frame.notes.map((note) => {
         const el = document.createElement("button");
         el.type = "button";
         el.dataset.noteId = note.id;
         el.className = "ar-pr-note";
+        if (played && (note.start + note.duration <= played.start || note.start >= played.end)) el.dataset.outside = "true";
         const x = frame.timeToX(note.start),
           end = frame.timeToX(note.start + note.duration),
           h = frame.height / (frame.pitches.high - frame.pitches.low + 1);
@@ -70,7 +85,7 @@ export const defaultPianoRollRenderer: PianoRollRenderer = (root) => ({
           top: `${frame.pitchToY(note.pitch)}px`,
           width: `${Math.max(2, end - x)}px`,
           height: `${Math.max(2, h - 1)}px`,
-          opacity: String(0.3 + 0.7 * note.velocity),
+          ...(el.dataset.outside ? {} : { opacity: String(0.3 + 0.7 * note.velocity) }),
         });
         el.textContent = name(note.pitch);
         el.setAttribute(

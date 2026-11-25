@@ -5,7 +5,8 @@ export type PitchRange = Readonly<{ low: number; high: number }>;
 /** Piano-roll viewport; scale is in pixels per beat (`pixelsPerUnit`, also reported as `pixelsPerSecond` for plugins shared with the waveform). */
 export type PianoRollViewport = WaveformViewport & Readonly<{ pixelsPerUnit: number }>;
 export interface PianoRollModel {
-  getState(): MidiData & Readonly<{ selection: MidiRange | null }>;
+  /** `window` is the part of the content that plays, in beats; notes outside it are drawn dimmed. Omit it to draw everything alike. */
+  getState(): MidiData & Readonly<{ selection: MidiRange | null; window?: MidiRange }>;
   getSelection(): MidiRange | null;
   setSelection(range: MidiRange | null): void;
   subscribe(listener: () => void): () => void;
@@ -20,6 +21,8 @@ export type PianoRollRenderFrame = Readonly<{
   width: number;
   height: number;
   duration: number;
+  /** The part of the content that plays, in beats, when the model has one. */
+  window?: MidiRange;
   pitches: PitchRange;
   viewport: PianoRollViewport;
   timeToX(time: number): number;

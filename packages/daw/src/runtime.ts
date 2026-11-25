@@ -34,7 +34,7 @@ import type { AudioClipGainAutomation, MediaAudioClip, PcmAudioClip, ProjectClip
 import type { BeatRange, ProjectVersion, SecondsRange } from "./project-edits";
 import { audioLoopFrames } from "./clip-loop";
 import { sessionFor } from "./session";
-import { sessionNotes } from "./session-notes";
+import { sessionNotes, sessionWindow } from "./session-notes";
 import { songParser } from "./song-parser";
 
 export { scheduleClipEnvelope } from "./schedule-clip-envelope";
@@ -1003,8 +1003,8 @@ export class Workspace {
       // The project's note model is itself a clock scheduler; it plays into the track's first device and loops over the clip's length.
       const scheduler = sessionNotes(this.project, clip, trackId, host);
       const [numerator, denominator] = this.project.signature;
-      // A looped clip repeats its notes up to the loop end. The scheduler plays from the clip's first beat, so a loop that starts later still plays the lead-in on each pass.
-      const beats = clip.loop ? Math.min(clip.loop.endBeat, clip.duration) : clip.duration;
+      // Every pass plays one stretch of the content: the clip's window, or its loop (the lead-in before a loop is arrangement-only).
+      const beats = sessionWindow(clip).length;
       return { scheduler, loop: true, length: `${beats / ((numerator * 4) / denominator)}m`, name: clip.id };
     }
     if (clip.kind !== "audio") return null;

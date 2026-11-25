@@ -1,4 +1,3 @@
-import type { MidiNote } from "@audiorective/midi";
 import { AutomationCurve, type AutomationPoint } from "@audiorective/core/automation";
 import type { BeatRange, SecondsRange } from "./project-edits";
 
@@ -24,42 +23,39 @@ export function audioLoopSourceFrame(plan: AudioLoopFrames, localFrame: number):
   return plan.loopStart + ((localFrame - first) % (plan.loopEnd - plan.loopStart));
 }
 
-/**
- * A MIDI clip's notes as they play when it loops: the first pass runs from the clip's start to the loop end, then the notes that start inside the
- * loop repeat until `duration`. Every note is cut at the loop end of its pass and at `duration`; repeats get the ID `<id>@<pass>`.
- */
-export function loopedNotes(notes: readonly MidiNote[], loop: BeatRange, duration: number): MidiNote[] {
-  const out: MidiNote[] = [];
-  const first = Math.min(loop.endBeat, duration);
-  for (const note of notes) {
-    if (note.start >= first) continue;
-    const end = Math.min(note.start + note.duration, first);
-    if (end > note.start) out.push({ ...note, duration: end - note.start });
-  }
-  const region = notes.filter((note) => note.start >= loop.startBeat && note.start < loop.endBeat);
-  const length = loop.endBeat - loop.startBeat;
-  for (let pass = 1; ; pass++) {
-    const base = loop.endBeat + (pass - 1) * length;
-    if (base >= duration - 1e-9) break;
-    for (const note of region) {
-      const start = base + (note.start - loop.startBeat);
-      const end = Math.min(start + Math.min(note.duration, loop.endBeat - note.start), duration);
-      if (start < duration && end > start) out.push({ ...note, id: `${note.id}@${pass}`, start, duration: end - start });
-    }
-  }
-  return out;
+/** The content beat a MIDI clip's first pass starts from: its `sourceOffset`, or the loop start when that is at or past the loop end. */
+export function midiLoopEntry(sourceOffset: number, loop: BeatRange | undefined): number {
+  return loop && sourceOffset >= loop.endBeat ? loop.startBeat : sourceOffset;
 }
 
-/** Every time in `[0, duration]` at which a non-note message of a looped clip plays, given its time in the clip's own content. */
-export function loopedTimes(time: number, loop: BeatRange, duration: number): number[] {
-  const out: number[] = [];
-  if (time <= Math.min(loop.endBeat, duration) && (time < loop.endBeat || loop.endBeat >= duration)) out.push(time);
-  if (time < loop.startBeat || time >= loop.endBeat) return out;
-  const length = loop.endBeat - loop.startBeat;
-  for (let pass = 1; ; pass++) {
-    const at = loop.endBeat + (pass - 1) * length + (time - loop.startBeat);
-    if (loop.endBeat + (pass - 1) * length >= duration - 1e-9) break;
-    if (at <= duration) out.push(at);
+/** The content beat that plays `local` beats after a MIDI clip's start (a negative `local` reaches back before the entry). */
+export function midiContentAt(sourceOffset: number, loop: BeatRange | undefined, local: number): number {
+  if (!loop) return sourceOffset + local;
+  const entry = midiLoopEntry(sourceOffset, loop);
+  const first = loop.endBeat - entry;
+  if (local < first) return entry + local;
+  return loop.startBeat + ((local - first) % (loop.endBeat - loop.startBeat));
+}
+
+/** One stretch of a MIDI clip's content that plays: content beats `[from, to)` starting `local` beats after the clip's start. */
+export type MidiPass = Readonly<{ from: number; to: number; local: number; pass: number; first: boolean; clipped: boolean }>;
+
+/**
+ * The passes of content a MIDI clip plays: `[sourceOffset, sourceOffset + duration)`, or with a loop the first pass from the entry to the loop end and
+ * then `[start, end)` again until `duration`. Each pass is cut at `duration`; `clipped` marks the pass the clip's end cuts. `first` marks a pass that
+ * starts at the clip's window start, so notes already sounding there are played from it.
+ */
+export function midiPasses(sourceOffset: number, loop: BeatRange | undefined, duration: number): MidiPass[] {
+  if (!loop) return [{ from: sourceOffset, to: sourceOffset + duration, local: 0, pass: 0, first: true, clipped: true }];
+  const entry = midiLoopEntry(sourceOffset, loop);
+  const out: MidiPass[] = [];
+  let local = 0;
+  for (let pass = 0; local < duration - 1e-9; pass++) {
+    const from = pass === 0 ? entry : loop.startBeat;
+    const span = loop.endBeat - from;
+    const clipped = local + span >= duration - 1e-9;
+    out.push({ from, to: from + Math.min(span, duration - local), local, pass, first: pass === 0 && sourceOffset < loop.endBeat, clipped });
+    local += span;
   }
   return out;
 }

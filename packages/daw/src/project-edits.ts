@@ -23,6 +23,10 @@ export type ProjectClipSummary = Readonly<{
   durationSeconds: number;
   startBeat: number;
   durationBeats: number;
+  /** MIDI only: the content beat where the clip's start sits; the clip plays content `[sourceOffset, sourceOffset + durationBeats)` (or its loop). */
+  sourceOffset?: number;
+  /** MIDI only: the part of the content that repeats, in content beats; omitted without a loop. */
+  loop?: BeatRange;
   /** The IDs of the other clips (timeline or Session slot) that share this clip's MIDI notes; omitted when the clip is not linked. */
   linkedTo?: readonly string[];
 }>;
@@ -49,6 +53,10 @@ export type ProjectSlotClipSummary = Readonly<{
   trackName: string;
   duration: number;
   unit: "seconds" | "beats";
+  /** MIDI only: the content beat where the clip's start sits (see `ProjectClipSummary`). */
+  sourceOffset?: number;
+  /** MIDI only: the repeating part of the content, in content beats; omitted without a loop. */
+  loop?: BeatRange;
   /** The IDs of the other clips (timeline or Session slot) that share this clip's MIDI notes; omitted when the clip is not linked. */
   linkedTo?: readonly string[];
 }>;
@@ -101,9 +109,31 @@ export type MakeClipUniqueEdit = Readonly<{
   type: "makeClipUnique";
   clip: EditClipSelector;
 }>;
+export type ResizeClipEdit = Readonly<{
+  type: "resizeClip";
+  clip: EditClipSelector;
+  /** Absolute project beats. An omitted edge stays. Nothing is deleted: a MIDI clip's start edge moves its `sourceOffset` with it, an audio clip's reveals its recording. */
+  start?: number;
+  end?: number;
+}>;
+export type SetClipSourceRangeEdit = Readonly<{
+  type: "setClipSourceRange";
+  clip: EditClipSelector;
+  /** The part of the content to play, keeping the clip's position: content beats for a MIDI clip, recording seconds for an audio clip. */
+  start: number;
+  end: number;
+}>;
 export type RenameClipEdit = Readonly<{ type: "renameClip"; clip: EditClipSelector; name: string }>;
 /** One JSON-serializable step of `project.applyEdits`. */
-export type ProjectEditOperation = CopyRangeEdit | MoveClipEdit | SetNoteVelocityEdit | RenameClipEdit | RippleDeleteEdit | MakeClipUniqueEdit;
+export type ProjectEditOperation =
+  | CopyRangeEdit
+  | MoveClipEdit
+  | ResizeClipEdit
+  | SetClipSourceRangeEdit
+  | SetNoteVelocityEdit
+  | RenameClipEdit
+  | RippleDeleteEdit
+  | MakeClipUniqueEdit;
 
 export type ProjectEditRequest = Readonly<{
   /** The version the caller read. A different current version returns `conflict` and changes nothing. */
@@ -180,6 +210,7 @@ function summary(project: Project, tempo: TempoMap, track: ProjectTrack, clip: P
     durationSeconds: endSeconds - startSeconds,
     startBeat,
     durationBeats: endBeat - startBeat,
+    ...(clip.kind === "midi" ? { sourceOffset: clip.sourceOffset, ...(clip.loop ? { loop: { ...clip.loop } } : {}) } : {}),
     ...(linked.length ? { linkedTo: linked } : {}),
   };
 }
@@ -216,6 +247,7 @@ export function projectOverview(project: Project, version: ProjectVersion): Proj
             trackName: track.name,
             duration: clip.duration,
             unit: clip.kind === "midi" ? ("beats" as const) : ("seconds" as const),
+            ...(clip.kind === "midi" ? { sourceOffset: clip.sourceOffset, ...(clip.loop ? { loop: { ...clip.loop } } : {}) } : {}),
             ...(linked.length ? { linkedTo: linked } : {}),
           },
         ];
@@ -422,6 +454,34 @@ function moveClip(project: Project, op: MoveClipEdit, copies: ProjectEditCopies,
   moved.set(clip.id, index);
 }
 
+function resizeClipOp(project: Project, op: ResizeClipEdit, copies: ProjectEditCopies, moved: Map<string, number>, index: number): void {
+  const clip = resolveAnyClip(project, op.clip, copies);
+  const { start, end } = op;
+  if (
+    (start === undefined && end === undefined) ||
+    [start, end].some((edge) => edge !== undefined && (typeof edge !== "number" || !Number.isFinite(edge)))
+  )
+    fail("invalid-operation", "resizeClip needs a finite start, a finite end or both, in project beats.");
+  const tempo = project.tempoMap;
+  const unit = (beat: number | undefined) => (beat === undefined || clip.kind === "midi" ? beat : tempo.beatToSeconds(Math.max(0, beat)));
+  project.resizeClip(clip.id, { start: unit(start), end: unit(end) });
+  moved.set(clip.id, index);
+}
+
+function setClipSourceRangeOp(
+  project: Project,
+  op: SetClipSourceRangeEdit,
+  copies: ProjectEditCopies,
+  moved: Map<string, number>,
+  index: number,
+): void {
+  const clip = resolveAnyClip(project, op.clip, copies);
+  if (typeof op.start !== "number" || typeof op.end !== "number" || !Number.isFinite(op.start) || !Number.isFinite(op.end) || !(op.start < op.end))
+    fail("invalid-operation", "setClipSourceRange needs finite start < end (content beats for MIDI, recording seconds for audio).");
+  project.setClipSourceRange(clip.id, { start: op.start, end: op.end });
+  moved.set(clip.id, index);
+}
+
 function setNoteVelocity(project: Project, op: SetNoteVelocityEdit, copies: ProjectEditCopies): void {
   const clip = resolveAnyClip(project, op.clip, copies);
   if (clip.kind !== "midi") fail("invalid-operation", "setNoteVelocity needs a MIDI clip.");
@@ -450,6 +510,8 @@ export function runProjectEdits(project: Project, ops: readonly ProjectEditOpera
     try {
       if (op?.type === "copyRange") copyRange(project, op, copies);
       else if (op?.type === "moveClip") moveClip(project, op, copies, moved, index);
+      else if (op?.type === "resizeClip") resizeClipOp(project, op, copies, moved, index);
+      else if (op?.type === "setClipSourceRange") setClipSourceRangeOp(project, op, copies, moved, index);
       else if (op?.type === "setNoteVelocity") setNoteVelocity(project, op, copies);
       else if (op?.type === "rippleDelete") rippleDeleteOp(project, op);
       else if (op?.type === "makeClipUnique") project.makeClipUnique(resolveClip(project, op.clip, copies).clip.id);

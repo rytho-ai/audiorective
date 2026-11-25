@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import { unzipSync, zipSync } from "fflate";
 import type { MidiTake } from "@audiorective/midi";
 import { effect } from "@audiorective/core";
-import { Project, TempoMap, openDawProject, saveDawProject } from "../src";
+import { Project, TempoMap, openDawProject, saveDawProject, sessionFor } from "../src";
 import type { ProjectMidiData } from "../src";
 
 const text = new TextDecoder();
@@ -167,6 +167,38 @@ describe("project tempo map", () => {
     expect([a.start, a.duration]).toEqual([expect.closeTo(0, 9), expect.closeTo(4, 9)]);
     expect([b.start, b.duration, b.velocity]).toEqual([expect.closeTo(2, 9), expect.closeTo(1, 9), 0.5]);
     expect(clip.events[0].time).toBeCloseTo(2, 9);
+    opened.project.dispose();
+    project.dispose();
+  });
+
+  test("a seconds-unit MIDI clip with a negative playStart opens, on the timeline and in a Session slot", () => {
+    const project = new Project({ bpm: 120 });
+    const track = project.addTrack("Keys", "midi");
+    project.addMidiClip(track.id, { duration: 4, notes: [{ id: "a", start: 0, duration: 1, pitch: 60, velocity: 1 }] }, 0);
+    const scene = sessionFor(project).addScene();
+    sessionFor(project).setMidiClip(
+      { sceneId: scene.id, trackId: track.id },
+      { duration: 4, notes: [{ id: "b", start: 0, duration: 1, pitch: 62, velocity: 1 }] },
+    );
+    const files = unzipSync(saveDawProject(project));
+    delete files["audiorective/state.json"];
+    // Both clips start at time 0, where a negative playStart (content before the clip's start) must not need a time before 0.
+    const xml = text
+      .decode(files["project.xml"])
+      .replace(/timeUnit="beats"/g, 'timeUnit="seconds"')
+      .replace(/contentTimeUnit="beats"/g, 'contentTimeUnit="seconds"')
+      .replace(/(<TempoAutomation[^>]*?)timeUnit="seconds"/, '$1timeUnit="beats"')
+      .replace(/(<Clip [^>]*?contentTimeUnit="seconds")/g, '$1 playStart="-1" playStop="2"')
+      .replace(/ duration="4" contentTimeUnit/g, ' duration="2" contentTimeUnit');
+    files["project.xml"] = bytes.encode(xml);
+    const opened = openDawProject(zipSync(files));
+    const timeline = opened.project.tracks[0].clips[0];
+    const slot = sessionFor(opened.project).midiClipAt({ sceneId: sessionFor(opened.project).scenes[0].id, trackId: opened.project.tracks[0].id });
+    if (timeline.kind !== "midi" || !slot) throw new Error("Expected MIDI clips");
+    // 120 bpm: one second is two beats.
+    expect(timeline.sourceOffset).toBeCloseTo(-2, 9);
+    expect(timeline.duration).toBeCloseTo(4, 9);
+    expect(slot.sourceOffset).toBeCloseTo(-2, 9);
     opened.project.dispose();
     project.dispose();
   });
@@ -371,13 +403,31 @@ describe("DAWproject native slice", () => {
     );
     const [left, right] = project.splitClip(clip.id, 1);
     if (left.kind !== "midi" || right.kind !== "midi") throw new Error("Expected MIDI clips");
-    expect(left.midi.notes.value[0]).toMatchObject({ start: 0.5, duration: 0.5 });
-    expect(right.midi.notes.value[0]).toMatchObject({ start: 0, duration: 0.5 });
+    // Both pieces keep the whole note; each plays its own window of it.
+    expect(left.midi.notes.value[0]).toMatchObject({ start: 0.5, duration: 1 });
+    expect(right.midi.notes.value[0]).toMatchObject({ start: 0.5, duration: 1 });
+    const played = (clip: typeof left) =>
+      clip
+        .playbackEvents()
+        .filter((event) => (event.data[0] & 0xf0) !== 0xb0)
+        .map((event) => [event.data[0] & 0xf0, event.beat]);
+    expect(played(left)).toEqual([
+      [0x90, 0.5],
+      [0x80, 1],
+    ]);
+    expect(played(right)).toEqual([
+      [0x90, 0],
+      [0x80, 0.5],
+    ]);
     expect(right.playbackEvents().find((event) => event.data[0] === 0xb0)?.beat).toBe(0.25);
     const trimmed = project.resizeClip(right.id, { start: right.time + 0.25, end: right.time + 1 });
     if (trimmed.kind !== "midi") throw new Error("Expected MIDI clip");
     expect(trimmed.time).toBe(5.25);
-    expect(trimmed.midi.notes.value[0]).toMatchObject({ start: 0, duration: 0.25 });
+    expect(trimmed.sourceOffset).toBe(1.25);
+    expect(played(trimmed)).toEqual([
+      [0x90, 0],
+      [0x80, 0.25],
+    ]);
     expect(trimmed.playbackEvents().find((event) => event.data[0] === 0xb0)?.beat).toBe(0);
     const opened = openDawProject(saveDawProject(project));
     expect(opened.project.tracks[0].clips).toHaveLength(2);
@@ -512,6 +562,7 @@ describe("DAWproject native slice", () => {
       [0x90, 62, 90],
       [0x80, 62, 0],
       [0xb0, 64, 127],
+      [0xb0, 64, 0], // a pedal still down at the clip end is released there (playback only)
     ]);
     expect(opened.project.tracks[0].volumeAutomation).toEqual([
       { time: 0, value: 1, shape: "linear" },
@@ -553,11 +604,13 @@ describe("DAWproject native slice", () => {
       [0x90, 62, 90],
       [0x80, 62, 0],
       [0xb0, 64, 127],
+      [0xb0, 64, 0], // a pedal still down at the clip end is released there (playback only)
     ]);
     expect(orders[1]).toEqual([
       [0x90, 62, 90],
       [0xb0, 64, 127],
       [0x80, 62, 0],
+      [0xb0, 64, 0],
     ]);
   });
 
@@ -618,6 +671,7 @@ describe("DAWproject native slice", () => {
       [0x90, 65, 90],
       [0xb0, 64, 127],
       [0x80, 65, 0],
+      [0xb0, 64, 0], // a pedal still down at the clip end is released there (playback only)
     ]);
     opened.project.dispose();
     project.dispose();

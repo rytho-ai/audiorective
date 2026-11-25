@@ -199,11 +199,27 @@ describe("non-destructive audio clip windows", () => {
     const trimmed = project.resizeClip(clip.id, { start: 5 });
     if (trimmed.kind !== "midi") throw new Error("Expected MIDI");
     expect([trimmed.time, trimmed.duration]).toEqual([5, 1]);
-    expect(trimmed.midi.notes.value.map((note) => [note.pitch, note.start, note.duration])).toEqual([[62, 0, 1]]);
+    expect(trimmed.sourceOffset).toBe(1);
+    expect(trimmed.midi.notes.value).toHaveLength(2);
+    expect(
+      trimmed
+        .playbackEvents()
+        .filter((event) => event.data[0] === 0x90)
+        .map((event) => [event.data[1], event.beat]),
+    ).toEqual([[62, 0]]);
     const wide = project.resizeClip(clip.id, { start: 3, end: 9 });
     if (wide.kind !== "midi") throw new Error("Expected MIDI");
     expect([wide.time, wide.duration]).toEqual([3, 6]);
-    expect(wide.midi.notes.value.map((note) => note.start)).toEqual([2]);
+    expect(wide.sourceOffset).toBe(-1);
+    expect(
+      wide
+        .playbackEvents()
+        .filter((event) => event.data[0] === 0x90)
+        .map((event) => [event.data[1], event.beat]),
+    ).toEqual([
+      [60, 1],
+      [62, 2],
+    ]);
     expect(() => project.resizeClip(clip.id, { start: -1 })).toThrow("Project MIDI clip edges need 0 <= start < end.");
     expect(() => project.resizeClip(clip.id, { start: 9, end: 9 })).toThrow("Project MIDI clip edges need 0 <= start < end.");
     project.dispose();
@@ -356,7 +372,7 @@ describe("setClipSourceRange", () => {
       expect(() => project.setClipSourceRange(clip.id, range)).toThrow(EDGES);
     expect(() => project.setClipSourceRange("missing", { start: 0, end: 1 })).toThrow("Project clip does not exist.");
     const midi = project.addMidiClip(project.addTrack("Keys", "midi").id, { duration: 4, notes: [] }, 0);
-    expect(() => project.setClipSourceRange(midi.id, { start: 0, end: 1 })).toThrow("Project setClipSourceRange needs an audio clip.");
+    expect(() => project.setClipSourceRange(midi.id, { start: 2, end: 1 })).toThrow("Project MIDI source range needs finite start < end beats.");
     project.setClipLoop(clip.id, { startSeconds: 0, endSeconds: 1 });
     expect(() => project.setClipSourceRange(clip.id, { start: 0, end: 1 })).toThrow("without time-stretch or loop");
     expect(project.tracks).not.toBe(before);

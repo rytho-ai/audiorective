@@ -128,3 +128,26 @@ test("compressed keys label octaves without overlapping and large data avoids sp
   const keys = [...a.root.querySelectorAll<HTMLElement>(".ar-pr-key")];
   expect(keys.filter((k) => k.textContent)).toHaveLength(11);
 });
+
+test("a model window dims the notes outside it and shades the rest; without one nothing is dimmed", async () => {
+  const clip = new MidiClip([
+    { id: "before", start: 0, duration: 1, pitch: 60, velocity: 0.8 },
+    { id: "inside", start: 5, duration: 1, pitch: 62, velocity: 0.8 },
+    { id: "across", start: 7.5, duration: 1, pitch: 64, velocity: 0.8 },
+    { id: "after", start: 12, duration: 1, pitch: 65, velocity: 0.8 },
+  ]);
+  const windowed = pianoRollModel(clip, { duration: 16, window: { start: 4, end: 8 } });
+  disposers.push(() => {
+    windowed.dispose();
+    clip.dispose();
+  });
+  const { root } = view(windowed);
+  await vi.waitFor(() => expect(root.querySelectorAll(".ar-pr-note").length).toBe(4));
+  const outside = (id: string) => root.querySelector<HTMLElement>(`[data-note-id=${id}]`)!.dataset.outside;
+  expect([outside("before"), outside("inside"), outside("across"), outside("after")]).toEqual(["true", undefined, undefined, "true"]);
+  expect([...root.querySelectorAll<HTMLElement>(".ar-pr-window-shade")].map((el) => el.dataset.window)).toEqual(["before", "after"]);
+  const plain = view(Object.assign(pianoRollModel(clip, { duration: 16 }), {}));
+  await vi.waitFor(() => expect(plain.root.querySelectorAll(".ar-pr-note").length).toBe(4));
+  expect(plain.root.querySelectorAll("[data-outside]").length).toBe(0);
+  expect(plain.root.querySelectorAll(".ar-pr-window-shade").length).toBe(0);
+});

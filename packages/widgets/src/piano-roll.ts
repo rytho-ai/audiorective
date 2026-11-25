@@ -39,7 +39,7 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
  .ar-pr-key{position:absolute;left:0;width:100%;font:11px system-ui;padding-left:4px;border-bottom:1px solid var(--waveform-border,#344154)}
  .ar-pr-key[data-black=true]{background:color-mix(in srgb,currentColor 12%,transparent)}
  .ar-pr-surface{position:relative;touch-action:none;height:var(--piano-roll-height,240px);min-height:64px;overflow:hidden}
- .ar-pr-notes{position:absolute;inset:0}.ar-pr-note{position:absolute!important;min-height:0!important;padding:0 3px!important;border-radius:3px!important;overflow:hidden;white-space:nowrap;text-align:left;font-size:10px!important;background:var(--ar-accent)!important;color:var(--piano-roll-note-text,#08111d)!important}
+ .ar-pr-notes{position:absolute;inset:0}.ar-pr-window-shade{position:absolute;top:0;bottom:0;background:rgba(0,0,0,.28);pointer-events:none}.ar-pr-note[data-outside="true"]{opacity:.25!important}.ar-pr-note{position:absolute!important;min-height:0!important;padding:0 3px!important;border-radius:3px!important;overflow:hidden;white-space:nowrap;text-align:left;font-size:10px!important;background:var(--ar-accent)!important;color:var(--piano-roll-note-text,#08111d)!important}
  .ar-pr-grid{position:absolute;inset:0;pointer-events:none}.ar-pr-beat{position:absolute;top:0;height:100%;border-left:1px solid var(--waveform-border,#344154)}
  .ar-pr-velocity{position:relative;height:var(--piano-roll-velocity-height,56px);border-top:1px solid var(--waveform-border,#344154);touch-action:none;cursor:ns-resize;overflow:hidden}
  .ar-pr-velocity-track{position:absolute;left:0;right:0;top:7px;bottom:7px;pointer-events:none}
@@ -228,6 +228,7 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
       Object.freeze({
         notes: visibleMidiNotes(drawnNotes(), range, pitches),
         duration: state.duration,
+        ...(state.window ? { window: state.window } : {}),
         width,
         height,
         pitches: Object.freeze({ ...pitches }),
@@ -515,7 +516,7 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
       options.model.subscribe(() => {
         selection.value = options.model.getSelection();
         const next = options.model.getState(),
-          dataChanged = next.notes !== state.notes || next.duration !== state.duration;
+          dataChanged = next.notes !== state.notes || next.duration !== state.duration || next.window !== state.window;
         state = next;
         if (dataChanged) {
           cancelVelocity();

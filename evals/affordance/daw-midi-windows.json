@@ -1,0 +1,32 @@
+{
+  "area": "daw-midi-windows",
+  "description": "API-shape experiment for non-destructive MIDI clip windows: trimming and splitting MIDI clips hides notes instead of deleting them, and the notes can be revealed again or slid inside the clip. Expectations describe behaviour, not names.",
+  "tasks": [
+    {
+      "id": "N1-midi-trim",
+      "prompt": "A browser DAW has an open song as `project` (4/4, 120 BPM) and its running engine as `workspace`. A Drums MIDI track has one 8-bar clip at bar 1 with a different fill in bar 8. Write the code for these edits, each one Undo step: trim the clip's end back to bar 7 (so bars 7–8 no longer play), then split the clip at bar 3, then drag the second piece's end out to bar 9 again so the bar-8 fill plays again exactly as before, and drag the first piece's start later to bar 2 and back to bar 1 so its first bar plays again. Notes hidden by a trim or split must not be lost. Then list, for each clip, which notes play and which are hidden, save the song as `.dawproject` and reopen it: the hidden notes are still there and can be revealed again, and another DAW opening the file plays only the visible part.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;",
+      "expectations": [
+        "Trims and splits the MIDI clip through the song model without deleting notes outside the played window.",
+        "Extending a trimmed or split MIDI clip's edge again brings back the hidden notes unchanged (bar-8 fill, first bar).",
+        "Each edit is one Undo step.",
+        "Lists played versus hidden notes per clip by reading the song model.",
+        "Save and reopen keep the hidden notes and the played window, stored in the standard file so other DAWs play only the visible part.",
+        "Uses no hand-kept copy of the original notes to restore them."
+      ]
+    },
+    {
+      "id": "N2-midi-slip",
+      "prompt": "In a browser DAW (`project`, `workspace`, 4/4), a Bass MIDI clip at bar 5 is 2 bars long and plays the first 2 bars of a 4-bar riff stored in it. Write the code that, without moving the clip on the timeline or changing its length, makes it play bars 3–4 of the riff instead (slide the content inside the clip), as one Undo step; then makes it loop that 2-bar part across 8 bars; then renders bars 5–13 offline through the mix and checks that the first note heard is the riff's bar-3 first note. The riff's notes must not be rewritten or moved in the stored data.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;",
+      "expectations": [
+        "Slides which part of the stored notes the clip plays without moving the clip or rewriting note positions.",
+        "The slide is one Undo step.",
+        "Loops the slid part across 8 bars through the song model.",
+        "Renders bars 5–13 offline through the mix.",
+        "Checks that playback starts with the riff's bar-3 note, reading the song model or the render.",
+        "Does not hand-rewrite or shift the stored notes."
+      ]
+    }
+  ]
+}

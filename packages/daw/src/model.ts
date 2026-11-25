@@ -53,7 +53,7 @@ import {
   type SecondsRange,
   type TimeRange,
 } from "./project-edits";
-import { audioLoopFrames, audioLoopSourceFrame, loopedNotes, loopedTimes } from "./clip-loop";
+import { audioLoopFrames, audioLoopSourceFrame, midiContentAt, midiPasses } from "./clip-loop";
 import { emptySession, registerSessionReader, slotKey, splitSlotKey, type SessionScene, type SessionState } from "./session-state";
 
 export type TrackKind = "audio" | "midi" | "bus";
@@ -318,13 +318,22 @@ function normalizeClipName(name: string | undefined): string | undefined {
   return name.trim() ? name : undefined;
 }
 
-/** What a MIDI clip holds: notes, the clip length and the non-note messages, all in beats from the clip's start. */
-export type ProjectMidiData = Readonly<{ notes: readonly NoteInit[]; duration: number; events?: readonly ProjectMidiEvent[] }>;
+/**
+ * What a MIDI clip holds: notes and non-note messages in content beats, the clip length and `sourceOffset`, the content beat where the clip's start sits
+ * (default 0, may be negative: empty content before the first note).
+ */
+export type ProjectMidiData = Readonly<{
+  notes: readonly NoteInit[];
+  duration: number;
+  events?: readonly ProjectMidiEvent[];
+  sourceOffset?: number;
+}>;
 
 /**
  * A MIDI clip of the project. Everything is in beats: `time` is the position in project beats, `duration` the clip length in beats, and note and
- * event times are beats from the clip's start. `midi` owns the editable notes; notes beyond `duration` are cut at playback. `duration` changes
- * only through the project's clip operations (`resizeClip`, `splitClip`, ...), which replace the clip.
+ * event times are content beats. `midi` owns the editable content; the clip plays the window of it from `sourceOffset` to `sourceOffset + duration`
+ * (or the loop), cutting notes that cross the edges at playback only. `time`, `duration`, `sourceOffset` and `loop` change only through the project's
+ * clip operations (`resizeClip`, `splitClip`, `setClipSourceRange`, ...), which replace the clip.
  */
 export class MidiClip {
   readonly kind = "midi" as const;
@@ -332,7 +341,9 @@ export class MidiClip {
   readonly midi: MidiNotes;
   /** The clip length in beats. */
   readonly duration: number;
-  /** The part of the clip's own note time that repeats until `duration`, in beats from the clip's content start. Set with `Project.setClipLoop`. */
+  /** The content beat where the clip's start sits: the clip plays content `[sourceOffset, sourceOffset + duration)`. 0 for a new clip; may be negative. */
+  readonly sourceOffset: number;
+  /** The part of the content that repeats until `duration`, in content beats. Set with `Project.setClipLoop`. */
   readonly loop?: BeatRange;
   private readonly sourceEvents: readonly ProjectMidiEvent[];
   private released = false;
@@ -356,7 +367,10 @@ export class MidiClip {
             return Object.freeze({ time: event.time, data: new Uint8Array(event.data), ...(event.noteId ? { noteId: event.noteId } : {}) });
           }),
         );
+    const offset = data.sourceOffset ?? 0;
+    if (!Number.isFinite(offset)) throw new RangeError("Project MIDI sourceOffset must be a finite number of beats.");
     this.duration = data.duration;
+    this.sourceOffset = offset;
     if (loop) this.loop = loop;
     this.midi = shared ?? new MidiNotes(data.notes);
     if (!shared) sharedEvents.set(this.midi, this.sourceEvents);
@@ -373,29 +387,49 @@ export class MidiClip {
     return this.sourceEvents.map((event) => ({ ...event, data: new Uint8Array(event.data) }));
   }
 
-  /** The clip's MIDI messages in order, `beat` in beats from the clip's start: notes cut at `duration`, then the non-note events inside it. */
+  /**
+   * The clip's MIDI messages in order, `beat` in beats from the clip's start: the window `[sourceOffset, sourceOffset + duration)` of the content (or its
+   * loop passes). A note crossing a window edge is shortened, the latest controller values before the window are carried to its start, and a sustain
+   * pedal still down at a pass end is released there, whether or not the content goes on. The stored notes are not changed.
+   */
   playbackEvents(): readonly MidiPlaybackEvent[] {
-    const duration = this.duration;
-    const loop = this.loop;
     const source = untracked(() => this.midi.notes.value);
-    const notes = loop
-      ? loopedNotes(source, loop, duration)
-      : source.flatMap((note) => {
-          const end = Math.min(note.start + note.duration, duration);
-          return note.start < duration && end > note.start ? [{ ...note, duration: end - note.start }] : [];
-        });
-    const events = loop
-      ? this.sourceEvents.flatMap(({ time, data, noteId }) =>
-          loopedTimes(time, loop, duration).flatMap((beat, pass) =>
-            pass === 0 || ((data[0] & 0xf0) !== 0x80 && (data[0] & 0xf0) !== 0x90)
-              ? [{ beat, data, ...(noteId && pass === 0 ? { noteId } : {}) }]
-              : [],
-          ),
-        )
-      : this.sourceEvents
-          .filter((event) => event.time <= duration)
-          .map(({ time, data, noteId }) => ({ beat: time, data, ...(noteId ? { noteId } : {}) }));
-    return compileMidiPlaybackEvents({ events }, { notes, duration });
+    const notes: MidiNote[] = [];
+    const events: { beat: number; data: Uint8Array; noteId?: string }[] = [];
+    const isNote = (data: Uint8Array) => (data[0] & 0xf0) === 0x80 || (data[0] & 0xf0) === 0x90;
+    for (const pass of midiPasses(this.sourceOffset, this.loop, this.duration)) {
+      for (const note of source) {
+        if (note.start >= pass.to || (!pass.first && note.start < pass.from)) continue;
+        const start = Math.max(note.start, pass.from);
+        const end = Math.min(note.start + note.duration, pass.to);
+        if (end > start)
+          notes.push({
+            ...note,
+            ...(pass.pass ? { id: `${note.id}@${pass.pass}` } : {}),
+            start: pass.local + start - pass.from,
+            duration: end - start,
+          });
+      }
+      const priors = new Map<string, Uint8Array>();
+      const sustain = new Map<number, number>();
+      for (const { time, data, noteId } of this.sourceEvents) {
+        if ((data[0] & 0xf0) === 0xb0 && data.length >= 3 && data[1] < 120) {
+          if (time < pass.from && pass.pass === 0) priors.set(`${data[0] & 15}:${data[1]}`, data);
+          if ((time < pass.to || (pass.clipped && time <= pass.to)) && data[1] === 64) sustain.set(data[0] & 15, data[2]);
+        }
+        const inside = time >= pass.from && (time < pass.to || (pass.clipped && time <= pass.to));
+        if (!inside || (pass.pass > 0 && isNote(data))) continue;
+        events.push({ beat: pass.local + time - pass.from, data, ...(noteId && pass.pass === 0 ? { noteId } : {}) });
+      }
+      if (pass.pass === 0)
+        for (const data of priors.values()) {
+          const replaced = this.sourceEvents.some((event) => event.time === pass.from && event.data[0] === data[0] && event.data[1] === data[1]);
+          if (!replaced) events.unshift({ beat: 0, data });
+        }
+      for (const [channel, value] of sustain)
+        if (value >= 64) events.push({ beat: pass.local + pass.to - pass.from, data: new Uint8Array([0xb0 | channel, 64, 0]) });
+    }
+    return compileMidiPlaybackEvents({ events }, { notes, duration: this.duration });
   }
 
   /** Releases this placement; the shared notes are disposed with the last clip that holds them. */
@@ -475,6 +509,32 @@ const clipSeconds = (tempoMap: TempoMap, clip: ProjectClip, localTime = 0): numb
 };
 
 const validTime = (time: number) => Number.isFinite(time) && time >= 0;
+
+/** The same content (shared `midi`) under another window: a new position, `sourceOffset` or length. */
+function midiWindow(clip: MidiClip, id: string, change: Readonly<{ time?: number; sourceOffset?: number; duration?: number }>): MidiClip {
+  return new MidiClip(
+    id,
+    change.time ?? clip.time,
+    { notes: [], duration: change.duration ?? clip.duration, sourceOffset: change.sourceOffset ?? clip.sourceOffset },
+    clip.loop,
+    clip.midi,
+  );
+}
+
+/** The part `[from, to)` of a MIDI clip in local beats as a clip of its own: independent copies of the content, the loop kept, the window where it plays. */
+function midiPiece(clip: MidiClip, id: string, from: number, to: number): MidiClip {
+  return new MidiClip(
+    id,
+    clip.time + from,
+    {
+      notes: untracked(() => clip.midi.notes.value),
+      events: clip.events,
+      duration: to - from,
+      sourceOffset: from === 0 ? clip.sourceOffset : midiContentAt(clip.sourceOffset, clip.loop, from),
+    },
+    clip.loop,
+  );
+}
 
 type ClipLocation = Readonly<{ clip: ProjectClip; track: ProjectTrack }> | Readonly<{ clip: ProjectClip; key: string; track?: undefined }>;
 
@@ -866,7 +926,7 @@ export class Project {
       clip: new MidiClip(
         id,
         time,
-        { notes: clip.midi.notes.value, duration: clip.duration, events: clip.events },
+        { notes: clip.midi.notes.value, duration: clip.duration, events: clip.events, sourceOffset: clip.sourceOffset },
         loop,
         linked ? clip.midi : undefined,
       ),
@@ -1373,7 +1433,7 @@ export class Project {
       const next = new MidiClip(
         clip.id,
         clip.time,
-        { notes: clip.midi.notes.value, duration: clip.duration, events: clip.events },
+        { notes: clip.midi.notes.value, duration: clip.duration, events: clip.events, sourceOffset: clip.sourceOffset },
         clip.loop,
         shared,
       );
@@ -1902,10 +1962,15 @@ export class Project {
         : this.addAudioClip(target, clip, time, options);
       return clip.loop ? this.looped(copy, clip.loop, clip.duration) : copy;
     }
-    const copy = this.addMidiClip(target, { notes: untracked(() => clip.midi.notes.value), duration: clip.duration, events: clip.events }, time, {
-      name,
-      ...(linked ? { linkedTo: clipId } : {}),
-    });
+    const copy = this.addMidiClip(
+      target,
+      { notes: untracked(() => clip.midi.notes.value), duration: clip.duration, events: clip.events, sourceOffset: clip.sourceOffset },
+      time,
+      {
+        name,
+        ...(linked ? { linkedTo: clipId } : {}),
+      },
+    );
     return clip.loop ? this.looped(copy, clip.loop, clip.duration) : copy;
   }
 
@@ -1938,7 +2003,7 @@ export class Project {
     const next = new MidiClip(
       clip.id,
       clip.time,
-      { notes: untracked(() => clip.midi.notes.value), duration: clip.duration, events: clip.events },
+      { notes: untracked(() => clip.midi.notes.value), duration: clip.duration, events: clip.events, sourceOffset: clip.sourceOffset },
       clip.loop,
     );
     this.replaceClip(where, next);
@@ -1957,7 +2022,7 @@ export class Project {
       next = new MidiClip(
         clip.id,
         clip.time,
-        { notes: untracked(() => clip.midi.notes.value), duration, events: clip.events },
+        { notes: [], duration, sourceOffset: clip.sourceOffset },
         loop && Object.freeze({ ...(loop as BeatRange) }),
         clip.midi,
       );
@@ -2241,113 +2306,69 @@ export class Project {
   }
 
   /** Extract a local interval without changing the source clip. */
-  private segment(clip: ProjectClip, start: number, end: number, id: string): ProjectClip {
+  private segment(clip: AudioClip, start: number, end: number, id: string): AudioClip {
     return untracked(() => this.segmentUntracked(clip, start, end, id));
   }
 
-  private segmentUntracked(clip: ProjectClip, start: number, end: number, id: string): ProjectClip {
-    if (clip.kind === "audio" && clip.loop) return this.loopedAudioSegment(clip, clip.loop, start, end, id);
-    if (clip.kind === "midi" && clip.loop && start <= 0) {
-      // The start stays or moves earlier, so the notes and the loop only shift: the repeats still come from the loop's notes.
-      const events = clip.events.map((event) => ({ ...event, time: event.time - start }));
-      const notes = untracked(() => clip.midi.notes.value).map((note) => ({ ...note, start: note.start - start }));
-      const loop = { startBeat: clip.loop.startBeat - start, endBeat: clip.loop.endBeat - start };
-      return new MidiClip(id, clip.time + start, { duration: end - start, notes, events }, loop);
-    }
-    if (clip.kind === "audio") {
-      const first = Math.round(start * clip.sampleRate);
-      const last = Math.round(end * clip.sampleRate);
-      if (first >= last) throw new RangeError("Project audio trim needs at least one sample.");
-      const duration = (last - first) / clip.sampleRate;
-      const endFrame = Math.round(clip.duration * clip.sampleRate);
-      const old = clip.envelope ?? unityClipEnvelope;
-      const envelope = normalizeClipEnvelope(
-        {
-          gain: old.gain,
-          fadeIn: first === 0 ? Math.min(old.fadeIn, duration) : 0,
-          fadeOut: last === endFrame ? Math.min(old.fadeOut, duration) : 0,
-        },
-        duration,
-      );
-      const playback = sliceAudioSource(clip, first, last, !!clip.stretch);
-      let stretch: AudioClipStretch | undefined;
-      let sourceFirst = first;
-      if (clip.stretch) {
-        const source = clip.stretch.source;
-        const frames = audioFrameCount(source);
-        const map = audioClipTimeMap(clip);
-        const sr = clip.sampleRate;
-        const sourceFrom = Math.min(frames - 1, Math.round(map.outputToSource(first / sr) * sr));
-        const sourceTo = Math.min(frames, Math.max(sourceFrom + 1, Math.round(map.outputToSource(last / sr) * sr)));
-        sourceFirst = sourceFrom;
-        const anchors = clip.stretch.anchors
-          ?.filter((point) => point.sourceFrame > sourceFrom && point.sourceFrame < sourceTo && point.outputFrame > first && point.outputFrame < last)
-          .map((point) => Object.freeze({ sourceFrame: point.sourceFrame - sourceFrom, outputFrame: point.outputFrame - first }));
-        const ratio = clip.stretch.anchors?.length ? (last - first) / (sourceTo - sourceFrom) : clip.stretch.ratio;
-        stretch = Object.freeze({
-          ratio,
-          source: sliceAudioSource(source, sourceFrom, sourceTo, true),
-          ...(anchors?.length ? { anchors: Object.freeze(anchors) } : {}),
-        });
-      }
-      let gainAutomation: AudioClipGainAutomation | undefined;
-      if (clip.gainAutomation) {
-        const sourceStart = clip.gainAutomation.sourceStart + sourceFirst / clip.sampleRate;
-        // A window that reaches before the automation's origin keeps a non-negative start by moving the points instead.
-        gainAutomation =
-          sourceStart >= 0
-            ? Object.freeze({ sourceStart, points: clip.gainAutomation.points })
-            : Object.freeze({
-                sourceStart: 0,
-                points: Object.freeze(clip.gainAutomation.points.map((point) => Object.freeze({ ...point, time: point.time - sourceStart }))),
-              });
-      }
-      return Object.freeze({
-        kind: "audio" as const,
-        id,
-        time: clip.time + first / clip.sampleRate,
-        ...playback,
-        duration,
-        ...(envelope === unityClipEnvelope ? {} : { envelope }),
-        ...(stretch ? { stretch } : {}),
-        ...(gainAutomation ? { gainAutomation } : {}),
+  private segmentUntracked(clip: AudioClip, start: number, end: number, id: string): AudioClip {
+    if (clip.loop) return this.loopedAudioSegment(clip, clip.loop, start, end, id);
+    const first = Math.round(start * clip.sampleRate);
+    const last = Math.round(end * clip.sampleRate);
+    if (first >= last) throw new RangeError("Project audio trim needs at least one sample.");
+    const duration = (last - first) / clip.sampleRate;
+    const endFrame = Math.round(clip.duration * clip.sampleRate);
+    const old = clip.envelope ?? unityClipEnvelope;
+    const envelope = normalizeClipEnvelope(
+      {
+        gain: old.gain,
+        fadeIn: first === 0 ? Math.min(old.fadeIn, duration) : 0,
+        fadeOut: last === endFrame ? Math.min(old.fadeOut, duration) : 0,
+      },
+      duration,
+    );
+    const playback = sliceAudioSource(clip, first, last, !!clip.stretch);
+    let stretch: AudioClipStretch | undefined;
+    let sourceFirst = first;
+    if (clip.stretch) {
+      const source = clip.stretch.source;
+      const frames = audioFrameCount(source);
+      const map = audioClipTimeMap(clip);
+      const sr = clip.sampleRate;
+      const sourceFrom = Math.min(frames - 1, Math.round(map.outputToSource(first / sr) * sr));
+      const sourceTo = Math.min(frames, Math.max(sourceFrom + 1, Math.round(map.outputToSource(last / sr) * sr)));
+      sourceFirst = sourceFrom;
+      const anchors = clip.stretch.anchors
+        ?.filter((point) => point.sourceFrame > sourceFrom && point.sourceFrame < sourceTo && point.outputFrame > first && point.outputFrame < last)
+        .map((point) => Object.freeze({ sourceFrame: point.sourceFrame - sourceFrom, outputFrame: point.outputFrame - first }));
+      const ratio = clip.stretch.anchors?.length ? (last - first) / (sourceTo - sourceFrom) : clip.stretch.ratio;
+      stretch = Object.freeze({
+        ratio,
+        source: sliceAudioSource(source, sourceFrom, sourceTo, true),
+        ...(anchors?.length ? { anchors: Object.freeze(anchors) } : {}),
       });
     }
-    // A looped clip is cut from what it plays, so the pieces keep the repeats as plain notes.
-    const played = clip.loop
-      ? loopedNotes(
-          untracked(() => clip.midi.notes.value),
-          clip.loop,
-          clip.duration,
-        )
-      : untracked(() => clip.midi.notes.value);
-    const notes = played.flatMap((note) => {
-      const from = Math.max(start, note.start);
-      const to = Math.min(end, note.start + note.duration);
-      return to > from ? [{ ...note, start: from - start, duration: to - from }] : [];
-    });
-    const playback = clip.playbackEvents();
-    const priorControls = new Map<string, Uint8Array>();
-    const sustainAtEnd = new Map<number, number>();
-    for (const event of playback) {
-      const data = event.data;
-      if ((data[0] & 0xf0) !== 0xb0 || data.length < 3 || data[1] >= 120) continue;
-      if (event.beat < start) priorControls.set(`${data[0] & 15}:${data[1]}`, data);
-      if (event.beat < end && data[1] === 64) sustainAtEnd.set(data[0] & 15, data[2]);
+    let gainAutomation: AudioClipGainAutomation | undefined;
+    if (clip.gainAutomation) {
+      const sourceStart = clip.gainAutomation.sourceStart + sourceFirst / clip.sampleRate;
+      // A window that reaches before the automation's origin keeps a non-negative start by moving the points instead.
+      gainAutomation =
+        sourceStart >= 0
+          ? Object.freeze({ sourceStart, points: clip.gainAutomation.points })
+          : Object.freeze({
+              sourceStart: 0,
+              points: Object.freeze(clip.gainAutomation.points.map((point) => Object.freeze({ ...point, time: point.time - sourceStart }))),
+            });
     }
-    for (const event of playback)
-      if (event.beat === start && (event.data[0] & 0xf0) === 0xb0 && event.data.length >= 3)
-        priorControls.delete(`${event.data[0] & 15}:${event.data[1]}`);
-    const events: ProjectMidiEvent[] = [
-      ...[...priorControls.values()].map((data) => ({ time: 0, data })),
-      ...playback.flatMap((event) =>
-        event.beat >= start && event.beat < end
-          ? [{ time: event.beat - start, data: event.data, ...(event.noteId ? { noteId: event.noteId } : {}) }]
-          : [],
-      ),
-      ...[...sustainAtEnd].flatMap(([channel, value]) => (value >= 64 ? [{ time: end - start, data: new Uint8Array([0xb0 | channel, 64, 0]) }] : [])),
-    ];
-    return new MidiClip(id, clip.time + start, { duration: end - start, notes, events });
+    return Object.freeze({
+      kind: "audio" as const,
+      id,
+      time: clip.time + first / clip.sampleRate,
+      ...playback,
+      duration,
+      ...(envelope === unityClipEnvelope ? {} : { envelope }),
+      ...(stretch ? { stretch } : {}),
+      ...(gainAutomation ? { gainAutomation } : {}),
+    });
   }
 
   /**
@@ -2367,24 +2388,34 @@ export class Project {
   }
 
   /**
-   * Point an audio clip at recording seconds `[start, end)` while it stays where it is on the timeline: `clip.time` is kept and the duration
-   * becomes `end - start`. The range must lie inside the recording (`0 <= start < end <= clip.sourceLength`). A fade survives only at an edge whose
-   * recording position did not move, as with `resizeClip`. A MIDI, time-stretched or looped clip throws. Wrap it in `project.edit` for one Undo step, like the other clip operations.
+   * Point a clip at part of its content while it stays where it is on the timeline: `clip.time` is kept and the duration becomes `end - start`.
+   * An audio clip takes recording seconds inside the recording (`0 <= start < end <= clip.sourceLength`); a fade survives only at an edge whose recording
+   * position did not move, as with `resizeClip`. A MIDI clip takes content beats (`start` may be negative or past the last note: the window can show empty
+   * content) and keeps its notes: the window is `sourceOffset = start`, `duration = end - start`. A time-stretched or looped clip throws.
+   * Wrap it in `project.edit` for one Undo step, like the other clip operations.
    */
-  setClipSourceRange(clipId: string, range: { start: number; end: number }): AudioClip {
+  setClipSourceRange(clipId: string, range: { start: number; end: number }): ProjectClip {
     assertProjectActive(this);
     const where = this.locate(clipId);
     const { clip } = where;
-    if (clip.kind !== "audio") throw new TypeError("Project setClipSourceRange needs an audio clip.");
-    if (clip.stretch || clip.loop) throw new RangeError("Project setClipSourceRange needs a clip without time-stretch or loop.");
+    if (clip.kind === "audio" ? clip.stretch || clip.loop : clip.loop)
+      throw new RangeError("Project setClipSourceRange needs a clip without time-stretch or loop.");
     const { start, end } = range ?? ({} as { start: number; end: number });
+    if (clip.kind === "midi") {
+      if (!Number.isFinite(start) || !Number.isFinite(end) || !(start < end))
+        throw new RangeError("Project MIDI source range needs finite start < end beats.");
+      const resized = midiWindow(clip, clip.id, { sourceOffset: start, duration: end - start });
+      this.replaceClip(where, resized);
+      this.retire(clip);
+      return resized;
+    }
     if (!Number.isFinite(start) || !Number.isFinite(end)) throw outsideRecording();
     const rate = clip.sampleRate;
     const first = Math.round((start - clip.sourceOffset) * rate);
     const last = Math.round((end - clip.sourceOffset) * rate);
     if (first >= last) throw outsideRecording();
     const resized = untracked(() => {
-      const moved = this.segment(clip, first / rate, last / rate, clip.id) as AudioClip;
+      const moved = this.segment(clip, first / rate, last / rate, clip.id);
       return Object.freeze({ ...moved, time: clip.time }) as AudioClip;
     });
     this.replaceClip(where, resized);
@@ -2421,10 +2452,12 @@ export class Project {
     const from = start === undefined ? 0 : start - clip.time;
     const to = end === undefined ? clip.duration : end - clip.time;
     if (clip.time + from < 0 || from >= to) throw new RangeError("Project MIDI clip edges need 0 <= start < end.");
-    // Moving only the end changes the clip's window, not its notes, so a linked clip stays linked; any other resize cuts its own notes.
-    if (from === 0 && this.linkedClips(clip.id).length)
-      return new MidiClip(clip.id, clip.time, { notes: [], duration: to, events: clip.events }, clip.loop, (clip as MidiClip).midi);
-    return this.segment(clip, from, to, clip.id);
+    // Only the window moves: the content stays, aligned in time, so a cut-away note comes back when the edge moves out again and a linked clip stays linked.
+    return midiWindow(clip, clip.id, {
+      time: clip.time + from,
+      sourceOffset: from === 0 ? clip.sourceOffset : midiContentAt(clip.sourceOffset, clip.loop, from),
+      duration: to - from,
+    });
   }
 
   /** Split at a local time; the left side keeps the original ID. */
@@ -2437,8 +2470,13 @@ export class Project {
     let left: ProjectClip | undefined;
     let right: ProjectClip | undefined;
     try {
-      left = this.segment(clip, 0, offset, clip.id);
-      right = this.segment(clip, offset, duration, rightId);
+      if (clip.kind === "midi") {
+        left = midiPiece(clip, clip.id, 0, offset);
+        right = midiPiece(clip, rightId, offset, duration);
+      } else {
+        left = this.segment(clip, 0, offset, clip.id);
+        right = this.segment(clip, offset, duration, rightId);
+      }
     } catch (error) {
       if (left instanceof MidiClip) left.dispose();
       if (right instanceof MidiClip) right.dispose();

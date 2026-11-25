@@ -99,18 +99,21 @@ describe("linked MIDI clips", () => {
     expect(pitches(asMidi(project.tracks[0].clips.find(({ id }) => id === a.id)))).toEqual([2, 64]);
   });
 
-  it("resize of the end keeps the link; a start trim, split and range cuts make the pieces unique; remove leaves the rest linked", () => {
+  it("resize keeps the link, each member with its own window; a split makes independent pieces; remove leaves the rest linked", () => {
     const { project, source } = setup();
     const a = asMidi(project.duplicateClip(source.id, 8, { linked: true }));
     const b = asMidi(project.duplicateClip(source.id, 16, { linked: true }));
     project.resizeClip(a.id, { end: 10 });
     expect(project.linkedClips(source.id).map(({ id }) => id)).toEqual([a.id, b.id]);
     expect(project.tracks[0].clips.find(({ id }) => id === a.id)!.duration).toBe(2);
-    project.resizeClip(a.id, { start: 9 });
-    expect(project.linkedClips(a.id)).toEqual([]);
+    const trimmed = asMidi(project.resizeClip(a.id, { start: 9 }));
+    expect([trimmed.time, trimmed.sourceOffset]).toEqual([9, 1]);
+    expect(project.linkedClips(a.id).map(({ id }) => id)).toEqual([source.id, b.id]);
     const [left, right] = project.splitClip(b.id, 2);
     expect(project.linkedClips(left.id)).toEqual([]);
     expect(project.linkedClips(right.id)).toEqual([]);
+    expect(project.linkedClips(source.id).map(({ id }) => id)).toEqual([a.id]);
+    project.makeClipUnique(a.id);
     expect(project.linkedClips(source.id)).toEqual([]);
     const other = asMidi(project.duplicateClip(source.id, 24, { linked: true }));
     expect(project.linkedClips(source.id)).toHaveLength(1);

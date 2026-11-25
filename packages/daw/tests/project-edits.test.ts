@@ -561,8 +561,9 @@ describe("project.edit", () => {
       }),
     ).toThrow("stop");
     expect(clipById(project, keyChorus.id)).toBe(keyChorus);
-    expect(() => (replacement as MidiClip).midi.setNotes([])).toThrow(/disposed/);
-    keyChorus.midi.setNotes([]);
+    // A resize only moves the window over the same content, so the content outlives the discarded replacement.
+    expect((replacement as MidiClip).midi).toBe(keyChorus.midi);
+    expect(() => keyChorus.midi.setNotes([])).not.toThrow();
   });
 
   it("rejects an async action and a change outside its scope", () => {

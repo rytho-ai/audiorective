@@ -632,7 +632,7 @@ describe("overview and portability", () => {
       {
         id: a.id,
         name: "Intro",
-        clips: [{ id: hook.id, name: "Hook", kind: "midi", trackId: keys.id, trackName: "Keys", duration: 4, unit: "beats" }],
+        clips: [{ id: hook.id, name: "Hook", kind: "midi", trackId: keys.id, trackName: "Keys", duration: 4, unit: "beats", sourceOffset: 0 }],
       },
       { id: b.id, name: "Drop", clips: [{ id: take.id, kind: "audio", trackId: vocal.id, trackName: "Vocal", duration: 4, unit: "seconds" }] },
     ]);

@@ -1193,6 +1193,18 @@
         "Adds no application delay, manual frame accounting or corrected take metadata; relies on the recorder to report actual placement",
         "Preserves the borrowed recorder, Clock, input and context rather than disposing or replacing them"
       ]
+    },
+    {
+      "id": 92,
+      "prompt": "My DAW page has an eight-bar MIDI clip with a chord in every bar. Add a \"Show bars 3-4 only\" action that makes the clip play just those two bars where it sits, and a \"Restore\" action that brings back all eight bars, with nothing lost in between. Do not run anything.",
+      "expected_output": "Uses the clip window (resizeClip edges or setClipSourceRange in content beats) so the other bars stay in clip.midi and come back, inside project.edit for undo.",
+      "files": [],
+      "expectations": [
+        "Narrows the clip with project.resizeClip(id, { start, end }) or project.setClipSourceRange(id, { start, end }) (content beats), wrapped in project.edit so each action is one undo step",
+        "Restores by moving the edges or the range back out, not by re-adding notes from a saved copy of them",
+        "Does not delete notes, call setNotes or keep a hand-made backup of the clip's notes",
+        "Takes absolute beats for resizeClip and content beats (not clip-local) for setClipSourceRange"
+      ]
     }
   ]
 }
