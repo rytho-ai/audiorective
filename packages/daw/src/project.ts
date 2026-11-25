@@ -3,6 +3,7 @@ export { Project, MidiClip, audioClipSourceDuration, audioClipTimeMap } from "./
 export { defineExtension, defineOperation } from "./extensions";
 export type {
   ExtensionDefinition,
+  ExtensionSummary,
   JsonSchema,
   JsonValue,
   Mutable,

@@ -6,6 +6,7 @@ import * as modelSourceModule from "../src/model.ts?raw";
 import * as sessionSourceModule from "../src/session.ts?raw";
 import { coverageGaps, watch } from "../../../scripts/tracking-coverage.mjs";
 const trackedChain = defineExtension({ id: "tracking.chain", defaultValue: (): number[] => [] });
+const trackedSummary = defineExtension({ id: "tracking.summary", defaultValue: (): number[] => [], summary: (data) => ({ count: data.length }) });
 
 const touchedProject = new Set<string>();
 const touchedClip = new Set<string>();
@@ -229,6 +230,11 @@ const rows: Array<{ name: string; read: (ctx: Ctx) => unknown; mutate: (ctx: Ctx
     mutate: (c) => captureDeviceState(c.project, c.deviceId, new Uint8Array([4])),
   },
   { name: "Project.markers", read: (c) => c.project.markers, mutate: (c) => c.project.setMarkers([{ time: 1, name: "A" }]) },
+  {
+    name: "Project.extensionSummaries (data)",
+    read: (c) => (c.project.extension(trackedSummary), c.project.extensionSummaries()),
+    mutate: (c) => c.project.extension(trackedSummary).set([1]),
+  },
   {
     name: "Project.extension (value)",
     read: (c) => c.project.extension(trackedChain).value,

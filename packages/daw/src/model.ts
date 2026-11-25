@@ -27,6 +27,7 @@ import {
   freezeJson,
   thawJson,
   type ExtensionDefinition,
+  type ExtensionSummary,
   type JsonValue,
   type ProjectExtension,
   type ProjectOperation,
@@ -680,6 +681,8 @@ export class Project {
   private undoStack: EditEntry[] = [];
   private redoStack: EditEntry[] = [];
   private editing?: { retired: Set<MidiClip> };
+  /** The read-only operation running now; any Project change while it runs throws. */
+  private queryName: string | undefined;
   /** Note revisions spent by rolled-back edits, so a failed edit leaves the version unchanged. */
   private spentNoteRevisions = 0;
   private readonly extensionHandles = new Map<ExtensionDefinition<unknown>, ProjectExtension<unknown>>();
@@ -694,6 +697,7 @@ export class Project {
 
   /** Replace part of the snapshot and advance the revision in one write. */
   private commit(patch: Partial<Omit<ProjectState, "revision" | "edits">>, isEdit = true): void {
+    if (this.queryName !== undefined) throw new Error(`Operation "${this.queryName}" is read-only and cannot change the project.`);
     const current = this.s;
     this.store.value = Object.freeze({ ...current, ...patch, revision: current.revision + 1, edits: current.edits + (isEdit ? 1 : 0) });
   }
@@ -772,12 +776,18 @@ export class Project {
           if (table.get(operation.name) === operation) table.delete(operation.name);
         };
       },
-      list: () => Object.freeze([...table.values()].map(({ name, description, input }) => Object.freeze({ name, description, input }))),
+      list: () =>
+        Object.freeze(
+          [...table.values()].map(({ name, description, input, readOnly }) =>
+            Object.freeze({ name, description, input, readOnly: readOnly === true }),
+          ),
+        ),
       call: <Result = unknown>(name: string, args: object = {}): Result => {
         assertProjectActive(this);
         const operation = table.get(name) as ProjectOperation<object, Result> | undefined;
         if (!operation) throw new Error(`Project has no operation named "${name}".`);
         checkArguments(name, operation.input, args);
+        if (operation.readOnly === true) return this.runQuery(name, () => operation.run(this, args));
         return this.edit(operation.label ?? operation.description, () => operation.run(this, args));
       },
     });
@@ -843,6 +853,40 @@ export class Project {
     }) as ProjectExtension<T>;
     this.extensionHandles.set(definition as ExtensionDefinition<unknown>, handle as unknown as ProjectExtension<unknown>);
     return handle;
+  }
+
+  /** Run a read-only operation: every Project change inside it throws, and so does a change to the notes made outside Project methods. */
+  private runQuery<T>(name: string, action: () => T): T {
+    const outer = this.queryName;
+    if (outer === undefined) this.queryName = name;
+    try {
+      const before = untracked(() => this.cells.version.value);
+      const result = untracked(action);
+      if (typeof (result as { then?: unknown } | null | undefined)?.then === "function") {
+        (result as unknown as Promise<unknown>).then(undefined, () => undefined);
+        throw new TypeError(`Operation "${name}" must be synchronous.`);
+      }
+      if (untracked(() => this.cells.version.value) !== before)
+        throw new Error(`Operation "${name}" is read-only but changed the project (a note edit made outside Project methods).`);
+      return result;
+    } finally {
+      this.queryName = outer;
+    }
+  }
+
+  /**
+   * The agent-facing view (`summary`) of each extension this song has opened with `project.extension` and whose definition has one, in the order they were opened.
+   * It is JSON, frozen, and tracked by an effect through each extension's data; a summary that is not JSON throws. Extensions without a `summary` are left out.
+   */
+  extensionSummaries(): readonly ExtensionSummary[] {
+    assertProjectActive(this);
+    return Object.freeze(
+      [...this.extensionHandles.values()].flatMap((handle) => {
+        const { id, summary } = handle.definition;
+        if (!summary) return [];
+        return [Object.freeze({ id, summary: freezeJson(summary(handle.value), `Extension "${id}" summary`) })];
+      }),
+    );
   }
 
   private sessionBridge(): SessionBridge {

@@ -173,6 +173,13 @@ function projectView(workspace: Workspace) {
       })),
     );
     const history = project.cells.history.value;
+    let extensions: { extensions?: unknown; extensionsError?: string } = {};
+    try {
+      const summaries = project.extensionSummaries();
+      if (summaries.length) extensions = { extensions: summaries };
+    } catch (error) {
+      extensions = { extensionsError: error instanceof Error ? error.message : String(error) };
+    }
     return {
       title: overview.title,
       version: overview.version,
@@ -198,7 +205,8 @@ function projectView(workspace: Workspace) {
         error: workspace.cells.error.value,
       },
       history: { undo: history.undo ?? null, redo: history.redo ?? null },
-      operations: project.operations.list().map(({ name, description, input }) => ({ name, description, input })),
+      ...extensions,
+      operations: project.operations.list().map(({ name, description, input, readOnly }) => ({ name, description, readOnly, input })),
     };
   });
 }
@@ -260,7 +268,7 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
     {
       name: "read_project",
       description:
-        "Read the open project as TOON text: title, tempo and meter, markers, tracks, every clip with its beats and seconds, Session scenes, what the person has SELECTED (selection.clipIds, openClipId, range), the current `version`, playback state, undo labels and the app's named operations (each with its `input` JSON Schema: pass exactly those fields to run_operation). Clips carry sourceOffset, sourceLength (audio) and loopStart/loopEnd: the window of the content that plays, in beats for MIDI clips and seconds of the recording for audio clips. Call it first and again after any conflict. Positions are in beats (quarter notes from the start) unless named seconds.",
+        "Read the open project as TOON text: title, tempo and meter, markers, tracks, every clip with its beats and seconds, Session scenes, what the person has SELECTED (selection.clipIds, openClipId, range), the current `version`, playback state, undo labels, the app's own data as `extensions` (each `{ id, summary }`: what the app's data means, such as which pattern sits at which bars; only extensions that publish a summary appear) and the app's named operations (each with its `input` JSON Schema: pass exactly those fields to run_operation; `readOnly: true` ones only answer a question and change nothing). Clips carry sourceOffset, sourceLength (audio) and loopStart/loopEnd: the window of the content that plays, in beats for MIDI clips and seconds of the recording for audio clips. Call it first and again after any conflict. Positions are in beats (quarter notes from the start) unless named seconds.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
       call: guard(async () => toon(projectView(workspace))),
     },
@@ -523,7 +531,7 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
     {
       name: "run_operation",
       description:
-        "Call one of the app's named operations (listed under `operations` in read_project, each with its `input` JSON Schema) with JSON `args` that use only the fields of that schema: unknown or missing fields are an error that lists the schema. It runs as one undoable step labelled by the operation. Pass `expectedVersion` to refuse when the person has changed the project since you read it.",
+        "Call one of the app's named operations (listed under `operations` in read_project, each with its `input` JSON Schema) with JSON `args` that use only the fields of that schema: unknown or missing fields are an error that lists the schema. It runs as one undoable step labelled by the operation. A `readOnly` operation is a query: it returns status `read` and its `result`, changes nothing and makes no undo step. Pass `expectedVersion` to refuse when the person has changed the project since you read it (ignored by read-only operations).",
       inputSchema: {
         type: "object",
         properties: {
@@ -539,7 +547,11 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
         if (args.args !== undefined && !isRecord(args.args)) return fail(`"args" must be a JSON object.`);
         const project = workspace.project;
         const current = untracked(() => project.cells.version.value);
-        if (args.expectedVersion !== undefined && args.expectedVersion !== current)
+        const operations = untracked(() => project.operations.list());
+        const known = operations.map((operation) => operation.name);
+        if (!known.includes(name)) return fail(`No operation named "${name}". Available: ${known.length ? known.join(", ") : "none"}.`);
+        const { input, readOnly } = operations.find((operation) => operation.name === name)!;
+        if (!readOnly && args.expectedVersion !== undefined && args.expectedVersion !== current)
           return json(
             {
               status: "conflict",
@@ -549,15 +561,13 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
             },
             true,
           );
-        const known = untracked(() => project.operations.list().map((operation) => operation.name));
-        if (!known.includes(name)) return fail(`No operation named "${name}". Available: ${known.length ? known.join(", ") : "none"}.`);
-        const input = untracked(() => project.operations.list().find((operation) => operation.name === name)!.input);
         try {
           checkArguments(name, input, args.args ?? {});
         } catch (error) {
           return fail(`${error instanceof Error ? error.message : String(error)} Input schema: ${JSON.stringify(input)}`);
         }
         const result = project.operations.call(name, args.args ?? {});
+        if (readOnly) return json({ status: "read", result: result ?? null, version: untracked(() => project.cells.version.value) });
         const version = untracked(() => project.cells.version.value);
         if (version === current)
           return json({

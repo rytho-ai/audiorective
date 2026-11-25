@@ -46,6 +46,26 @@
           "none": ["window\\.\\w+\\s*=", "globalThis\\.\\w+\\s*="]
         }
       ]
+    },
+    {
+      "id": "E3-agent-visible-data",
+      "prompt": "A browser pattern-based drum machine built on the toolkit has an open song as `project` and its running engine as `workspace`. The app keeps its patterns as app data that belongs to the song: a list of `{ name, color, bars, clipIds }` where `bars` are the 1-based bars where the pattern is placed and `clipIds` are the clips of those placements. Write the app code so that an AI assistant working through the toolkit's MCP tools can reason about the app's patterns: (1) it sees each pattern's name, bars and clip ids when it reads the project, but never the private `color`; (2) it can call a question the app offers, \"list patterns\" (optionally only the pattern placed at one bar), that returns the answer without changing the song, without adding an Undo step and without needing the song version, and that cannot change the song even if someone later edits its code to try. Also add a normal app operation that gives one placement its own copy so it can be edited alone. Keep everything the assistant needs in the app's own code, with no changes to the toolkit.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;",
+      "expectations": [
+        "Defines the patterns as app data that belongs to the song and opens it on the song so it is saved with it.",
+        "Gives the data an agent-facing summary that lists name, bars and clip ids and leaves out the colour.",
+        "Registers the list question as an operation marked read-only rather than an ordinary edit, with an optional bar argument that filters the result.",
+        "Calling the list question returns its result without an Undo step and without changing the song version.",
+        "The separate-copy operation is a normal (undoable) operation that updates both the clip and the pattern data in one Undo step.",
+        "Does not publish the raw data to the assistant by another route (a global, window property, or a second copy of the data)."
+      ],
+      "checks": [
+        {
+          "expectation": 5,
+          "label": "No global or window registry",
+          "none": ["window\\.\\w+\\s*=", "globalThis\\.\\w+\\s*="]
+        }
+      ]
     }
   ]
 }

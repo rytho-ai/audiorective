@@ -19,6 +19,8 @@ export interface ExtensionDefinition<T> {
   defaultValue(): T;
   /** Check data read from a file and return it as `T` (migrating from `version` when older); throw to fall back to `defaultValue()`. Default: accept it as is. */
   validate?(data: unknown, version: number): T;
+  /** An optional view of the data for AI agents: plain JSON that says what the data means ("pattern A sits at bars 1, 3, 5"). `read_project` shows it; without it the data is not shown. */
+  summary?(data: T): unknown;
 }
 
 /** Define app data that belongs to a song. Read and change it with `project.extension(definition)`. */
@@ -27,13 +29,21 @@ export function defineExtension<T>(definition: {
   version?: number;
   defaultValue: () => T;
   validate?: (data: unknown, version: number) => T;
+  summary?: (data: T) => unknown;
 }): ExtensionDefinition<T> {
   if (typeof definition?.id !== "string" || !EXTENSION_ID.test(definition.id))
     throw new RangeError('Extension id must be letters, digits, dots and dashes, such as "groovebox.chain".');
   const version = definition.version ?? 1;
   if (!Number.isInteger(version) || version < 1) throw new RangeError("Extension version must be a positive integer.");
   if (typeof definition.defaultValue !== "function") throw new TypeError("Extension needs a defaultValue function.");
-  return Object.freeze({ id: definition.id, version, defaultValue: definition.defaultValue, validate: definition.validate });
+  if (definition.summary !== undefined && typeof definition.summary !== "function") throw new TypeError("Extension summary must be a function.");
+  return Object.freeze({
+    id: definition.id,
+    version,
+    defaultValue: definition.defaultValue,
+    validate: definition.validate,
+    summary: definition.summary,
+  });
 }
 
 export const EXTENSION_ID = /^[A-Za-z0-9][A-Za-z0-9.-]{0,127}$/;
@@ -74,6 +84,7 @@ export type JsonSchema = Readonly<{
 /**
  * A named edit an app adds to its songs: `project.operations.register(removeGap)`, then `project.operations.call("podcast.remove-gap", { start: 10, end: 20 })`.
  * `run` edits the song with Project methods; each call is one Undo step labelled `label` (default `description`), and if `run` throws, nothing changes.
+ * With `readOnly: true` it is a query instead: it returns its result, makes no Undo step and cannot change the song.
  */
 export interface ProjectOperation<Args extends object = Readonly<Record<string, unknown>>, Result = unknown> {
   /** Unique name callers use, such as "podcast.remove-gap". */
@@ -84,6 +95,8 @@ export interface ProjectOperation<Args extends object = Readonly<Record<string, 
   readonly input: JsonSchema & { readonly type: "object" };
   /** The Undo label. Default `description`. */
   readonly label?: string;
+  /** `true` for a query: `call` runs it without an Undo step, `run` may only read, and a call that changes the song throws. Default `false`. */
+  readonly readOnly?: boolean;
   run(project: Project, args: Args): Result;
 }
 
@@ -98,15 +111,18 @@ export function defineOperation<Args extends object, Result>(operation: ProjectO
 }
 
 /** What `project.operations.list()` reports for each operation. */
-export type OperationInfo = Readonly<{ name: string; description: string; input: JsonSchema }>;
+export type OperationInfo = Readonly<{ name: string; description: string; input: JsonSchema; readOnly: boolean }>;
+
+/** What `project.extensionSummaries()` reports: the agent-facing view of one extension's data. */
+export type ExtensionSummary = Readonly<{ id: string; summary: JsonValue }>;
 
 /** The operations registered on one song. */
 export interface ProjectOperations {
   /** Add an operation; returns a function that removes it. A name already registered throws. */
   register(operation: ProjectOperation<never, unknown>): () => void;
-  /** Every registered operation's name, description and input schema. */
+  /** Every registered operation's name, description, input schema and whether it is read-only. */
   list(): readonly OperationInfo[];
-  /** Check `args` against the operation's input, run it as one Undo step and return its result. Unknown names and invalid arguments throw. */
+  /** Check `args` against the operation's input, run it as one Undo step and return its result; a read-only operation makes no Undo step. Unknown names and invalid arguments throw. */
   call<Result = unknown>(name: string, args?: object): Result;
 }
 

@@ -1,6 +1,6 @@
 import { decode } from "@toon-format/toon";
 import { afterEach, describe, expect, test } from "vitest";
-import { Project, Workspace, defineOperation, renderMixRange, selectionFor, sessionFor } from "../src";
+import { Project, Workspace, defineExtension, defineOperation, renderMixRange, selectionFor, sessionFor } from "../src";
 import { mcpTools, connectMcpBridge, type McpBridgeSocket, type McpTool, type McpToolResult } from "../src/mcp";
 
 const RATE = 48_000;
@@ -297,6 +297,51 @@ describe("mcpTools affordance", () => {
     const same = await call("run_operation", { name: "nothing", expectedVersion: marked });
     expect(parse(same)).toMatchObject({ status: "noop", result: "idle", version: marked });
     expect(same.content).toContain("exactly as it was");
+  });
+});
+
+describe("mcpTools extensions and read-only operations", () => {
+  const patterns = defineExtension({
+    id: "patternbox.patterns",
+    defaultValue: (): { name: string; bars: number[] }[] => [],
+    summary: (list) => list.map(({ name, bars }) => ({ name, bars })),
+  });
+  const secret = defineExtension({ id: "patternbox.secret", defaultValue: () => ({ token: "do-not-leak" }) });
+
+  test("read_project shows extension summaries and read-only flags; run_operation reads without a version change", async () => {
+    const { project, call } = await song();
+    project.extension(patterns).set([{ name: "A", bars: [1, 3, 5] }]);
+    project.extension(secret);
+    project.operations.register(
+      defineOperation({
+        name: "patterns.list",
+        description: "List patterns",
+        input: { type: "object", properties: {} },
+        readOnly: true,
+        run: (target) => target.extension(patterns).value,
+      }),
+    );
+    const read = await call("read_project", {});
+    const view = decode(read.content) as { extensions: { id: string; summary: unknown }[]; operations: { name: string; readOnly: boolean }[] };
+    expect(view.extensions).toEqual([{ id: "patternbox.patterns", summary: [{ name: "A", bars: [1, 3, 5] }] }]);
+    expect(read.content).not.toContain("do-not-leak");
+    expect(view.operations.find((operation) => operation.name === "patterns.list")?.readOnly).toBe(true);
+    expect(view.operations.find((operation) => operation.name === "add-marker")?.readOnly).toBe(false);
+
+    const version = project.cells.version.value;
+    const undo = project.cells.history.value.undo;
+    const result = await call("run_operation", { name: "patterns.list", expectedVersion: "stale" });
+    expect(result.isError).toBeUndefined();
+    expect(parse(result)).toEqual({ status: "read", result: [{ name: "A", bars: [1, 3, 5] }], version });
+    expect(result.content).not.toContain("undoLabel");
+    expect(project.cells.version.value).toBe(version);
+    expect(project.cells.history.value.undo).toBe(undo);
+  });
+
+  test("read_project omits extensions when none publish a summary", async () => {
+    const { project, call } = await song();
+    project.extension(secret);
+    expect(decode((await call("read_project", {})).content)).not.toHaveProperty("extensions");
   });
 });
 

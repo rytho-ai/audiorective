@@ -178,7 +178,7 @@ encodeWav(pcm: PCMData, options?: { bitDepth?: 16 | 24 | 32 }): Blob          //
 encodeWavBytes(pcm: PCMData, options?: { bitDepth?: 16 | 24 | 32 }): Uint8Array
 sessionFor(project: Project): ProjectSession
 selectionFor(project: Project): ProjectSelection
-defineExtension<T>(definition: { id, version?, defaultValue, validate? }): ExtensionDefinition<T>   // then project.extension(def)
+defineExtension<T>(definition: { id, version?, defaultValue, validate?, summary? }): ExtensionDefinition<T>   // then project.extension(def)
 defineOperation<Args, Result>(operation: ProjectOperation<Args, Result>): ProjectOperation<Args, Result>   // then project.operations
 ```
 
@@ -638,13 +638,30 @@ const removeGap = defineOperation({
   },
 });
 project.operations.register(removeGap);
-project.operations.list(); // [{ name, description, input }] for a menu or an AI tool list
+project.operations.list(); // [{ name, description, input, readOnly }] for a menu or an AI tool list
 project.operations.call("podcast.remove-gap", { start: 10, end: 20 }); // one Undo step
+
+// Show agents what the data means, and offer a question that is not an edit:
+const patterns = defineExtension({
+  id: "patternbox.patterns",
+  defaultValue: (): { name: string; bars: number[]; clipIds: string[] }[] => [],
+  summary: (list) => list.map(({ name, bars, clipIds }) => ({ name, bars, clipIds })), // plain JSON for read_project
+});
+const listPatterns = defineOperation({
+  name: "patterns.list",
+  description: "List patterns with the bars where each is placed.",
+  input: { type: "object", properties: {} },
+  readOnly: true, // a query: no Undo step, cannot change the song
+  run: (project) => project.extension(patterns).value,
+});
+project.extension(patterns).value; // open it once so project.extensionSummaries() includes it
+project.extensionSummaries(); // [{ id: "patternbox.patterns", summary: [...] }]
 ```
 
-- **Data.** `defineExtension({ id, version?, defaultValue, validate? })` describes JSON data; `project.extension(definition)` returns the song's data for it. `value` is tracked, `subscribe` reports every change including undo, redo and opening a file. `set` and `update` change it like any Project method: inside `project.edit` they join that Undo step, on their own they change the song version without an Undo step. `update` changes a mutable copy in place or takes the value the recipe returns (`count.update((n) => n + 1)`); data left equal is no change. Values are frozen JSON (no functions, dates, `undefined`, holes or non-finite numbers). Data saved by a newer `version` of the extension reads as `defaultValue()` and `set` refuses to overwrite it, so an older app cannot damage it.
+- **Data.** `defineExtension({ id, version?, defaultValue, validate?, summary? })` describes JSON data; `project.extension(definition)` returns the song's data for it. `value` is tracked, `subscribe` reports every change including undo, redo and opening a file. `set` and `update` change it like any Project method: inside `project.edit` they join that Undo step, on their own they change the song version without an Undo step. `update` changes a mutable copy in place or takes the value the recipe returns (`count.update((n) => n + 1)`); data left equal is no change. Values are frozen JSON (no functions, dates, `undefined`, holes or non-finite numbers). Data saved by a newer `version` of the extension reads as `defaultValue()` and `set` refuses to overwrite it, so an older app cannot damage it.
+- **Summary.** `summary(data)` is an optional, agent-facing view of the data: plain JSON (same rules as the data) that says what it means, such as `[{ name: "A", bars: [1, 3, 5], clipIds: [...] }]`, in the app's own words and ids the agent can use with the Project's clip operations. `project.extensionSummaries()` returns `[{ id, summary }]` for each extension that defines one and that this song has opened with `project.extension(definition)` (open each at startup); the MCP `read_project` shows the same list as `extensions`. An extension without `summary` is never shown, so raw data does not reach an agent unless the app chooses to. Keep it small: it is read on every `read_project`. It is not part of `overview()`, which describes the music only. A summary that is not JSON throws.
 - **Files.** The data is saved as `extensions/<id>/data.json` inside the `.dawproject` archive with its `version`; other DAWs ignore it. Opening a file restores it; `validate(data, version)` checks or migrates it, and data it rejects reads as `defaultValue()` while staying in the file until the app changes it. An app that does not define an extension keeps its data unchanged when it opens, edits and saves the file. Any other archive file this codec does not use is kept and written back unchanged too; a file that this save writes itself takes precedence.
-- **Operations.** `defineOperation({ name, description, input, run, label? })` takes its arguments as a JSON Schema object (the shape AI tool calls use). `project.operations.call(name, args)` checks types, required names, number ranges and field names (an object with `properties` rejects any other field unless its schema sets `additionalProperties: true`), then runs `run(project, args)` as one Undo step labelled `label` (default `description`); if `run` throws, nothing changes. Called inside `project.edit`, it joins that step, and `run` may itself use `project.edit` and `project.applyEdits`: inside an open edit both join its Undo step (`applyEdits` still rehearses first and changes nothing when it rejects, and its receipt then lists no clips). Operations belong to one Project object: register them again on a Project opened from a file.
+- **Operations.** `defineOperation({ name, description, input, run, label?, readOnly? })` takes its arguments as a JSON Schema object (the shape AI tool calls use). `project.operations.call(name, args)` checks types, required names, number ranges and field names (an object with `properties` rejects any other field unless its schema sets `additionalProperties: true`), then runs `run(project, args)` as one Undo step labelled `label` (default `description`); if `run` throws, nothing changes. Called inside `project.edit`, it joins that step, and `run` may itself use `project.edit` and `project.applyEdits`: inside an open edit both join its Undo step (`applyEdits` still rehearses first and changes nothing when it rejects, and its receipt then lists no clips). Operations belong to one Project object: register them again on a Project opened from a file. **Queries.** `readOnly: true` makes the operation a question: `call` returns the result of `run` with no Undo step and no version change, `list()` reports `readOnly`, and any Project method that changes the song inside `run` (including `set` on an extension and `project.edit`) throws and changes nothing; a note edit made directly on `clip.midi` throws after it ran, so use a normal operation for writes. `run` must be synchronous, and its result should be JSON when an agent calls it.
 
 ### Page-made instruments
 
@@ -902,6 +919,8 @@ A small [Cubase 14 export shared on the Steinberg forum](https://forums.steinber
 | `Extension "…" data must be JSON…`                                                                                                                                                 | Extension data holds plain objects, arrays, strings, finite numbers, booleans and null. Convert dates to strings and drop functions or `undefined`.                                        |
 | `Operation needs a name.` / `Operation "…" needs a description.` / `Operation "…" input must be a JSON Schema with type "object".` / `Operation "…" needs a run function.`         | Give `defineOperation` a name, a one-sentence description, an object schema for its arguments and a `run(project, args)` function.                                                         |
 | `Project operations take an operation from defineOperation.` / `Project already has an operation named "…".`                                                                       | Register the value `defineOperation` returns, once per Project; `register` returns the function that removes it.                                                                           |
+| `Extension "…" summary must be JSON…` / `Extension summary must be a function.`                                                                                                    | Make `summary(data)` return plain objects, arrays, strings, finite numbers, booleans and null (no `undefined`, dates or functions), and pass a function.                                   |
+| `Operation "…" is read-only and cannot change the project.` / `Operation "…" is read-only but changed the project…` / `Operation "…" must be synchronous.`                         | A `readOnly: true` operation tried to change the song. Remove the write from it, or drop `readOnly` so the call is an Undo step.                                                           |
 | `Project has no operation named "…".`                                                                                                                                              | Read `project.operations.list()` for the registered names; a Project opened from a file needs its operations registered again.                                                             |
 | `Operation "…": …`                                                                                                                                                                 | The arguments do not match the operation's `input` schema (a missing required name, a wrong type or a number out of range). Fix the arguments; nothing was changed.                        |
 | `Workspace clip stretch needs an audio clip.` / `Workspace clip stretch ratio must produce at least one sample.`                                                                   | Choose a current audio clip and a positive ratio yielding at least one output sample.                                                                                                      |

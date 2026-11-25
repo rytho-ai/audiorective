@@ -136,7 +136,7 @@ describe("operations", () => {
     const { project } = song();
     const remove = project.operations.register(shift);
     expect(project.operations.list()).toEqual([
-      { name: "test.shift-clips", description: "Move every clip later by some beats.", input: shift.input },
+      { name: "test.shift-clips", description: "Move every clip later by some beats.", readOnly: false, input: shift.input },
     ]);
     expect(() => project.operations.register(shift)).toThrow('Project already has an operation named "test.shift-clips".');
     const version = project.cells.version.value;
@@ -304,5 +304,87 @@ describe("extension and operation edge cases", () => {
     expect(out["audio/extra.wav"]).toEqual(new Uint8Array(64).fill(7));
     project.dispose();
     opened.dispose();
+  });
+});
+
+describe("extension summaries and read-only operations", () => {
+  const patternDef = defineExtension({
+    id: "test.patterns",
+    defaultValue: (): { name: string; bars: number[] }[] => [],
+    summary: (list) => list.map(({ name, bars }) => ({ name, bars })),
+  });
+  const hidden = defineExtension({ id: "test.hidden", defaultValue: () => ({ secret: 1 }) });
+
+  test("summaries come only from opened extensions that define one", () => {
+    const { project } = song();
+    expect(project.extensionSummaries()).toEqual([]);
+    const patterns = project.extension(patternDef);
+    project.extension(hidden);
+    expect(project.extensionSummaries()).toEqual([{ id: "test.patterns", summary: [] }]);
+    patterns.set([{ name: "A", bars: [1, 3, 5] }]);
+    expect(project.extensionSummaries()).toEqual([{ id: "test.patterns", summary: [{ name: "A", bars: [1, 3, 5] }] }]);
+    expect(project.overview()).not.toHaveProperty("extensions");
+    project.dispose();
+  });
+
+  test("a summary that is not JSON throws, and a non-function summary is refused", () => {
+    const { project } = song();
+    project.extension(defineExtension({ id: "test.bad", defaultValue: () => 1, summary: () => ({ when: new Date() }) }));
+    expect(() => project.extensionSummaries()).toThrow('Extension "test.bad" summary must be JSON');
+    expect(() => defineExtension({ id: "test.nofn", defaultValue: () => 1, summary: 5 as never })).toThrow("Extension summary must be a function.");
+    project.dispose();
+  });
+
+  const list = defineOperation({
+    name: "test.list",
+    description: "List patterns.",
+    input: { type: "object", properties: {} },
+    readOnly: true,
+    run: (project) => project.extension(patternDef).value.map((pattern) => pattern.name),
+  });
+
+  test("a read-only operation returns its result with no Undo step or version change", () => {
+    const { project } = song();
+    project.extension(patternDef).set([{ name: "A", bars: [1] }]);
+    project.operations.register(list);
+    expect(project.operations.list().find((operation) => operation.name === "test.list")?.readOnly).toBe(true);
+    const version = project.cells.version.value;
+    const undo = project.cells.history.value.undo;
+    expect(project.operations.call("test.list")).toEqual(["A"]);
+    expect(project.cells.version.value).toBe(version);
+    expect(project.cells.history.value.undo).toBe(undo);
+    project.dispose();
+  });
+
+  test("a read-only operation that tries to change the project throws and changes nothing", () => {
+    const { project, track } = song();
+    const clipId = track.clips[0]?.id ?? project.tracks[0].clips[0].id;
+    for (const [name, write] of [
+      ["move", () => project.moveClip(clipId, project.tracks[0].id, 2)],
+      ["marker", () => project.setMarkers([{ time: 1, name: "x" }])],
+      ["extension", () => project.extension(patternDef).set([{ name: "B", bars: [] }])],
+      ["edit", () => project.edit("sneaky", () => project.setTitle("x"))],
+    ] as const) {
+      project.operations.register(
+        defineOperation({ name: `test.bad-${name}`, description: "Writes", input: { type: "object" }, readOnly: true, run: write }),
+      );
+      const version = project.cells.version.value;
+      expect(() => project.operations.call(`test.bad-${name}`)).toThrow(`Operation "test.bad-${name}" is read-only and cannot change the project.`);
+      expect(project.cells.version.value).toBe(version);
+      expect(project.cells.history.value.undo).toBeUndefined();
+    }
+    // The guard is released: a normal edit works afterwards.
+    project.moveClip(clipId, project.tracks[0].id, 2);
+    expect(project.cells.history.value.undo).toBeUndefined();
+    project.dispose();
+  });
+
+  test("a read-only operation must be synchronous", () => {
+    const { project } = song();
+    project.operations.register(
+      defineOperation({ name: "test.async", description: "Async", input: { type: "object" }, readOnly: true, run: async () => 1 }),
+    );
+    expect(() => project.operations.call("test.async")).toThrow('Operation "test.async" must be synchronous.');
+    project.dispose();
   });
 });
