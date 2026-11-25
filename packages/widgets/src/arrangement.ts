@@ -1,34 +1,10 @@
 import { untracked } from "@audiorective/core";
 import { effect } from "./detached-effect";
+import type { ClipGestureHandle } from "./clip";
+export { attachClipGesture } from "./clip";
+export type { ArrangementTimeMap, ClipGestureHandle, ClipGestureOptions, ClipMove } from "./clip";
 
-/** Reusable arrangement clip gestures over caller-owned elements and project data. */
-export type ArrangementTimeMap = Readonly<{
-  secondsToBeat(seconds: number): number;
-  beatToSeconds(beat: number): number;
-  snapSeconds(seconds: number): number;
-}>;
-
-export type ClipMove = Readonly<{ clipId: string; trackId: string; time: number; kind: "pointer" | "keyboard" }>;
-
-export type ClipGestureOptions = Readonly<{
-  clipId: string;
-  /** Tracked native origin; undefined disables/cancels. Position or track changes cancel stale previews. */
-  origin(): Readonly<{ time: number; trackId: string }> | undefined;
-  /** Unit of origin.time and onMove.time; default seconds. */
-  timeUnit?: "seconds" | "beats";
-  timeMap: ArrangementTimeMap;
-  pixelsPerSecond(): number;
-  /** Return a valid destination track at the pointer location, or undefined to keep the current track. */
-  trackAt(clientX: number, clientY: number): string | undefined;
-  onSelect(): void;
-  onOpen(): void;
-  /** Called once after a completed drag or keyboard nudge. The caller owns the edit and undo history. */
-  onMove(move: ClipMove): void;
-}>;
-
-export interface ClipGestureHandle {
-  dispose(): void;
-}
+/** Timeline zoom and range gestures. Clip gestures live in `@audiorective/widgets/clip` and are re-exported here. */
 
 export type TimelineZoomOptions = Readonly<{
   viewport: HTMLElement;
@@ -216,138 +192,6 @@ export function attachTimelineZoom(options: TimelineZoomOptions): TimelineZoomHa
       cancel();
       slider?.removeEventListener("input", onSlider);
       viewport.removeEventListener("wheel", onWheel);
-    },
-  };
-}
-
-/** Move caller-owned clip DOM; live origins and cancellation do not rebuild the caller's view. */
-export function attachClipGesture(element: HTMLElement, options: ClipGestureOptions): ClipGestureHandle {
-  type Origin = NonNullable<ReturnType<ClipGestureOptions["origin"]>>;
-  let drag: { pointerId: number; startX: number; moved: boolean; origin: Origin; seconds: number; left: string; previewLeft?: string } | undefined;
-  let disposed = false;
-  const toSeconds = (time: number) => (options.timeUnit === "beats" ? options.timeMap.beatToSeconds(time) : time);
-  const fromSeconds = (seconds: number) => (options.timeUnit === "beats" ? options.timeMap.secondsToBeat(seconds) : seconds);
-  const origin = () => {
-    const value = options.origin();
-    return value && Number.isFinite(value.time) && value.time >= 0 ? value : undefined;
-  };
-  const cleanup = (replacement?: Origin, replaced = false) => {
-    const previous = drag;
-    drag = undefined;
-    doc.removeEventListener("keydown", escape, true);
-    if (previous?.moved && element.style.left === previous.previewLeft) {
-      element.style.left = replaced && replacement ? `${toSeconds(replacement.time) * options.pixelsPerSecond()}px` : previous.left;
-    }
-    element.classList.remove("dragging");
-    if (previous && element.hasPointerCapture(previous.pointerId)) element.releasePointerCapture(previous.pointerId);
-  };
-  const stopOrigin = untracked(() =>
-    effect(() => {
-      const value = origin();
-      if (drag && (!value || value.time !== drag.origin.time || value.trackId !== drag.origin.trackId)) untracked(() => cleanup(value, true));
-    }),
-  );
-  const candidate = (x: number, alt: boolean) => {
-    const seconds = Math.max(0, drag!.seconds + (x - drag!.startX) / options.pixelsPerSecond());
-    return alt ? seconds : options.timeMap.snapSeconds(seconds);
-  };
-  const down = (event: PointerEvent) => {
-    if (disposed || event.button !== 0 || drag || !origin()) return;
-    event.preventDefault();
-    event.stopPropagation();
-    options.onSelect();
-    if (disposed || !origin()) return;
-    element.focus({ preventScroll: true });
-    const current = origin();
-    if (disposed || !current || !element.isConnected) return;
-    const seconds = toSeconds(current.time);
-    if (!Number.isFinite(seconds)) return;
-    element.setPointerCapture(event.pointerId);
-    drag = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      moved: false,
-      origin: { time: current.time, trackId: current.trackId },
-      seconds,
-      left: element.style.left,
-    };
-    doc.addEventListener("keydown", escape, true);
-  };
-  const move = (event: PointerEvent) => {
-    if (!drag || event.pointerId !== drag.pointerId) return;
-    if (Math.abs(event.clientX - drag.startX) > 3) drag.moved = true;
-    if (!drag.moved) return;
-    const seconds = candidate(event.clientX, event.altKey);
-    if (!Number.isFinite(seconds)) return;
-    drag.previewLeft = `${seconds * options.pixelsPerSecond()}px`;
-    element.classList.add("dragging");
-    element.style.left = drag.previewLeft;
-  };
-  const up = (event: PointerEvent) => {
-    if (!drag || event.pointerId !== drag.pointerId) return;
-    const previous = drag;
-    const moved = previous.moved || Math.abs(event.clientX - previous.startX) > 3;
-    const seconds = candidate(event.clientX, event.altKey);
-    const trackId = options.trackAt(event.clientX, event.clientY) ?? previous.origin.trackId;
-    cleanup();
-    if (!Number.isFinite(seconds)) return;
-    if (moved && (seconds !== previous.seconds || trackId !== previous.origin.trackId))
-      options.onMove({ clipId: options.clipId, trackId, time: fromSeconds(seconds), kind: "pointer" });
-    else options.onOpen();
-  };
-  const cancel = (event: PointerEvent) => {
-    if (drag?.pointerId === event.pointerId) cleanup();
-  };
-  const escape = (event: KeyboardEvent) => {
-    if (event.key !== "Escape" || !drag) return;
-    event.preventDefault();
-    event.stopPropagation();
-    cleanup();
-  };
-  const keydown = (event: KeyboardEvent) => {
-    if (disposed) return;
-    const current = origin();
-    if (!current) return;
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      event.stopPropagation();
-      options.onSelect();
-      if (!disposed && origin()) options.onOpen();
-      return;
-    }
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-    event.preventDefault();
-    event.stopPropagation();
-    cleanup();
-    options.onSelect();
-    const accepted = origin();
-    if (disposed || !accepted) return;
-    const delta = (event.key === "ArrowLeft" ? -1 : 1) * (event.shiftKey ? 4 : 1);
-    const beat = Math.max(0, options.timeMap.secondsToBeat(toSeconds(accepted.time)) + delta);
-    const time = fromSeconds(options.timeMap.beatToSeconds(beat));
-    if (Number.isFinite(time) && time !== accepted.time)
-      options.onMove({ clipId: options.clipId, trackId: accepted.trackId, time, kind: "keyboard" });
-  };
-  const doc = element.ownerDocument;
-  element.addEventListener("pointerdown", down);
-  element.addEventListener("pointermove", move);
-  element.addEventListener("pointerup", up);
-  element.addEventListener("pointercancel", cancel);
-  element.addEventListener("lostpointercapture", cancel);
-  element.addEventListener("keydown", keydown);
-  return {
-    dispose() {
-      if (disposed) return;
-      disposed = true;
-      stopOrigin();
-      cleanup();
-      doc.removeEventListener("keydown", escape, true);
-      element.removeEventListener("pointerdown", down);
-      element.removeEventListener("pointermove", move);
-      element.removeEventListener("pointerup", up);
-      element.removeEventListener("pointercancel", cancel);
-      element.removeEventListener("lostpointercapture", cancel);
-      element.removeEventListener("keydown", keydown);
     },
   };
 }

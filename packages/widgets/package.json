@@ -38,6 +38,10 @@
       "types": "./dist/player.d.ts",
       "import": "./dist/player.js"
     },
+    "./clip": {
+      "types": "./dist/clip.d.ts",
+      "import": "./dist/clip.js"
+    },
     "./arrangement": {
       "types": "./dist/arrangement.d.ts",
       "import": "./dist/arrangement.js"

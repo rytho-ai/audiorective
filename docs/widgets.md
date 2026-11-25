@@ -7,11 +7,12 @@ title: Widgets
 | Job                                           | View / entry                                                                                |
 | --------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | Playback bar, long track or stream            | `mountPlayer`, `@audiorective/widgets/player`                                               |
-| Load, select and audition a clip              | `mountWaveformSelector`, widgets root                                                       |
+| Load, select and audition a region of a file  | `mountWaveformSelector`, widgets root                                                       |
 | Draw existing peaks without audio             | `mountWaveform`, `@audiorective/widgets/waveform`                                           |
 | Edit MIDI notes                               | `mountPianoRoll`, `@audiorective/widgets/piano-roll`; [MIDI](./midi.md)                     |
 | Steps, pads, scenes, meters and clip controls | Widgets root                                                                                |
 | Gestures over app-rendered arrangement DOM    | `@audiorective/widgets/arrangement`; [advanced](./widgets-advanced.md#arrangement-gestures) |
+| Timeline clip waveform, edge trim and move    | `@audiorective/widgets/clip`; [advanced](./widgets-advanced.md#timeline-clips)              |
 
 Mount behind a client-only boundary in an app that also renders on the server. These views need the DOM; the audio-independent waveform and piano-roll entries create no audio context or nodes. Try the [waveform showroom](/showroom/waveform) or [piano-roll showroom](/showroom/piano-roll). See [Widgets: advanced](./widgets-advanced.md) for custom renderers, plugins, time projections and full interaction details.
 

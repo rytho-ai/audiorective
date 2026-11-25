@@ -25,6 +25,8 @@ export type {
   TimelineZoomHandle,
   TimelineZoomOptions,
 } from "./arrangement";
+export { attachClipWaveform, attachClipTrim } from "./clip";
+export type { ClipWaveformSource, ClipWaveformOptions, ClipWaveformHandle, ClipTrimEdge, ClipTrimOptions, ClipTrimHandle } from "./clip";
 export { mountClipGrid } from "./clip-grid";
 export type { ClipGridClip, ClipGridLauncher, ClipGridLayout, ClipGridOptions, ClipGridTrack } from "./clip-grid";
 export { mountMixer } from "./mixer";

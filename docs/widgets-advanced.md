@@ -448,7 +448,7 @@ Pass `renderer: PlayerRenderer` to replace the markup while keeping these intera
 `@audiorective/widgets/arrangement` borrows caller-rendered DOM. The app owns keyed clip elements, lane appearance, selection, compatible-track hit testing and history. The widget owns gesture listeners, capture, local preview and one command per finished edit; it creates no AudioContext, Project or rendering engine.
 
 ```typescript
-import { attachClipGesture } from "@audiorective/widgets/arrangement";
+import { attachClipGesture } from "@audiorective/widgets/clip"; // also exported from /arrangement
 
 const clipOrigins = new Map<string, { time: number; trackId: string }>();
 let originRevision: number | undefined;
@@ -515,6 +515,78 @@ Ctrl/⌘+wheel retains the project time under the pointer; slider zoom retains t
 ### Timeline range gesture
 
 `attachTimeRangeGesture(element, { timeAt, onPreview, onSelect })` borrows a dedicated time surface. `timeAt(clientX, bypassSnap)` resolves scrolling, zoom, bounds and snapping; Alt sets bypassSnap. It previews ordered `[start, end]` and calls onSelect once on release of a nonempty range. Clicks and canceled gestures clear preview. Escape, capture loss and disposal select nothing. Use `touch-action: none` on a surface supporting touch drag. The app stores/uses the result and converts seconds to beats itself when needed; dispose before replacing the element.
+
+## Timeline clips
+
+`@audiorective/widgets/clip` holds the three gestures and drawings an audio clip element needs on a timeline: `attachClipGesture` (move), `attachClipTrim` (edge trim) and `attachClipWaveform` (the played window as a thumbnail). It is the preferred import path for `attachClipGesture`; `@audiorective/widgets/arrangement` re-exports it. Each function borrows a caller-owned element, returns `{ dispose() }`, and stays free of any DAW import: it takes structural contracts, and your code connects them to `Project`.
+
+```typescript
+import { cell, effect } from "@audiorective/core";
+import { attachClipGesture, attachClipTrim, attachClipWaveform } from "@audiorective/widgets/clip";
+import type { AudioClip } from "@audiorective/daw";
+
+const timeMap = {
+  secondsToBeat: (seconds: number) => project.tempoMap.secondsToBeat(seconds),
+  beatToSeconds: (beat: number) => project.tempoMap.beatToSeconds(beat),
+  snapSeconds: (seconds: number) => project.tempoMap.snapSeconds(seconds),
+};
+// Tracked: reading the revision makes every getter below re-run after a Project edit.
+const audioClip = (): AudioClip | undefined => {
+  project.cells.revision.value;
+  const clip = project.tracks.flatMap((track) => track.clips).find((item) => item.id === clipId);
+  return clip?.kind === "audio" ? clip : undefined;
+};
+
+// An in-memory clip's `channels` already begin at its window, so sourceOffset is 0 and `clip` itself is the PCM.
+// A file-backed clip has no PCM in memory: ask its media for a bounded peak summary of the window.
+const peaks = cell<{ min: Float32Array; max: Float32Array; duration: number } | undefined>(undefined);
+const stopPeaks = effect(() => {
+  const clip = audioClip();
+  if (!clip?.media) return;
+  const { media, startFrame, frameCount } = clip;
+  void media.peaks(startFrame, frameCount).then((summary) => {
+    const current = audioClip();
+    if (current?.media === media && current.startFrame === startFrame && current.frameCount === frameCount) peaks.value = summary;
+  });
+});
+const waveform = attachClipWaveform(element, {
+  clip: () => {
+    const clip = audioClip();
+    if (!clip) return undefined;
+    const data = clip.media ? peaks.value : clip;
+    return data && { data, sourceOffset: 0, duration: clip.duration };
+  },
+});
+
+const trim = attachClipTrim(element, {
+  origin: () => {
+    const clip = audioClip();
+    return clip && { time: clip.time, duration: clip.duration };
+  },
+  timeMap,
+  pixelsPerSecond: () => scale.value,
+  snap: (seconds) => project.tempoMap.snapSeconds(seconds),
+  // Audio edges stay inside the recording; resizeClip would throw beyond it.
+  bounds: () => {
+    const clip = audioClip();
+    if (!clip) return {};
+    const start = clip.time - clip.sourceOffset;
+    return { start, end: start + clip.sourceLength };
+  },
+  onCommit: (edges) => {
+    project.edit("Trim clip", () => void project.resizeClip(clipId, edges));
+  },
+});
+
+const move = attachClipGesture(element, {
+  /* clipId, origin, timeMap, trackAt, onMove ... as in Arrangement gestures */
+});
+// Removing the element: dispose all three first, then stopPeaks().
+```
+
+`attachClipWaveform(element, { clip })` draws only the window `[sourceOffset, sourceOffset + duration)` of `clip().data`, which is PCM (`{ channels, sampleRate }`) or min/max peaks (the shape `mountWaveform` takes). It fills the element with no toolbar, ruler or padding, matches device pixels, redraws when the tracked source or the element's size changes, and uses `--waveform-accent` and `--waveform-border`. It treats PCM as immutable, caching its peak summary per first channel array. It makes a `static` element `position: relative`; `undefined` clears the drawing.
+
+`attachClipTrim(element, options)` appends an `ar-clip-trim ar-clip-trim-start|end` handle (6 px wide, `--ar-clip-trim-size` resizes it) to each edge in `edges` (default both). Dragging previews by changing the element's `left` and `width`, so the element must be absolutely positioned (as `attachClipGesture` also assumes) and `pixelsPerSecond()` must be the same scale that lays the clip out. Each handle is at most a third of a narrow clip's width (minimum 2 px), so both edges stay reachable. `snap(time)` and `bounds()` work in `timeUnit` (seconds by default; `"beats"` with the same `timeMap` as `attachClipGesture`); Alt bypasses snap while dragging. `onCommit({ start?, end? })` runs once per finished drag with absolute timeline positions: exactly what `project.resizeClip` takes, and only the edge that changed. Escape, pointercancel, capture loss, a changed `origin()` or dispose restore the element and commit nothing; an unchanged edge commits nothing. The handles are focusable: Left/Right move the edge to the next snap position (4 px without `snap`), Shift four steps. Edge pointers stop at the handle, so `attachClipGesture` on the same element never starts a move from an edge, and its body drags still move.
 
 ## Style
 
