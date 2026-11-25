@@ -189,6 +189,25 @@ export function windowOfRecording(recording: ProjectAudio, from: number, to: num
   return window;
 }
 
+function audioMediaSource(clip: MediaAudioClip): MediaAudioSource {
+  return Object.freeze({ sampleRate: clip.sampleRate, media: clip.media, startFrame: clip.startFrame, frameCount: clip.frameCount });
+}
+
+/**
+ * Runtime access: the part `[start, end)` seconds of the whole recording behind `clip`, as a clip that plays it from time 0 with no fades,
+ * stretch or loop. Throws a RangeError unless `0 <= start < end <= recording duration`.
+ */
+export function recordingWindow(clip: AudioClip, start: number, end: number): AudioClip {
+  const { source, frames } = audioRecording(clip.media ? audioMediaSource(clip) : { sampleRate: clip.sampleRate, channels: clip.channels });
+  const rate = clip.sampleRate;
+  const first = Math.round(start * rate);
+  const last = Math.round(end * rate);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || first < 0 || first >= last || last > frames)
+    throw new RangeError("Workspace audition range must satisfy 0 <= start < end <= the recording's duration.");
+  const window = sliceAudioSource(source, first, last, true);
+  return Object.freeze({ kind: "audio" as const, id: clip.id, time: 0, duration: (last - first) / rate, ...window }) as AudioClip;
+}
+
 function audioSource(clip: AudioClip): AudioClipSource & AudioSourceSpan {
   return recorded(
     clip.media
@@ -2013,6 +2032,20 @@ export class Project {
     return { track, clip };
   }
 
+  /**
+   * The whole recording behind an audio clip, in the audio shape clips use: in-memory `channels` or file-backed `media` (`startFrame` 0, all
+   * `frameCount` frames), plus its `duration` in seconds. The clip's own window is `sourceOffset` to `sourceOffset + duration` inside it.
+   * It shares the clip's data, so nothing is copied. For a time-stretched clip the recording is the stretched audio the clip stores.
+   * Works for timeline and Session slot clips; a MIDI clip or an unknown ID throws. Tracked, so an effect re-runs when the clip changes.
+   */
+  clipRecording(clipId: string): AudioClipSource & Readonly<{ duration: number }> {
+    void this.store.value;
+    const { clip } = this.locate(clipId);
+    if (clip.kind !== "audio") throw new TypeError("Project clipRecording needs an audio clip.");
+    const { source } = audioRecording(clip.media ? audioMediaSource(clip) : { sampleRate: clip.sampleRate, channels: clip.channels });
+    return Object.freeze({ ...source, duration: audioFrameCount(source) / source.sampleRate });
+  }
+
   /** A clip's display name. Names are not unique: several clips may share one. */
   clipName(clipId: string): string | undefined {
     return this.store.value.clipNames.get(clipId);
@@ -2296,6 +2329,32 @@ export class Project {
     let resized = untracked(() => this.resizeUntracked(clip, edges ?? {}));
     // A slot clip has no place on the timeline: trimming its start keeps it at 0.
     if (!where.track) resized = atZero(resized);
+    this.replaceClip(where, resized);
+    this.retire(clip);
+    return resized;
+  }
+
+  /**
+   * Point an audio clip at recording seconds `[start, end)` while it stays where it is on the timeline: `clip.time` is kept and the duration
+   * becomes `end - start`. The range must lie inside the recording (`0 <= start < end <= clip.sourceLength`). A fade survives only at an edge whose
+   * recording position did not move, as with `resizeClip`. A MIDI, time-stretched or looped clip throws. Wrap it in `project.edit` for one Undo step, like the other clip operations.
+   */
+  setClipSourceRange(clipId: string, range: { start: number; end: number }): AudioClip {
+    assertProjectActive(this);
+    const where = this.locate(clipId);
+    const { clip } = where;
+    if (clip.kind !== "audio") throw new TypeError("Project setClipSourceRange needs an audio clip.");
+    if (clip.stretch || clip.loop) throw new RangeError("Project setClipSourceRange needs a clip without time-stretch or loop.");
+    const { start, end } = range ?? ({} as { start: number; end: number });
+    if (!Number.isFinite(start) || !Number.isFinite(end)) throw outsideRecording();
+    const rate = clip.sampleRate;
+    const first = Math.round((start - clip.sourceOffset) * rate);
+    const last = Math.round((end - clip.sourceOffset) * rate);
+    if (first >= last) throw outsideRecording();
+    const resized = untracked(() => {
+      const moved = this.segment(clip, first / rate, last / rate, clip.id) as AudioClip;
+      return Object.freeze({ ...moved, time: clip.time }) as AudioClip;
+    });
     this.replaceClip(where, resized);
     this.retire(clip);
     return resized;

@@ -1,7 +1,7 @@
 import { renderSnapshot } from "../src/model";
 import { describe, expect, test } from "vitest";
 import { unzipSync, zipSync } from "fflate";
-import { AudioMediaWriter, Project, openDawProject, saveDawProject, saveDawProjectTo } from "../src";
+import { AudioMediaWriter, Project, openDawProject, saveDawProject, saveDawProjectTo, sessionFor } from "../src";
 import type { AudioClip, ProjectClip } from "../src";
 import { decodeWav } from "../src/internal/wav";
 
@@ -292,5 +292,148 @@ describe("foreign files that give one window edge", () => {
   test("an edge that contradicts the duration still fails", () => {
     const bytes = edit(saved(), (xml) => xml.replace(/ playStop="[^"]*"/, "").replace(/ duration="1"/, ' duration="9"'));
     expect(() => openDawProject(bytes)).toThrow();
+  });
+});
+
+describe("setClipSourceRange", () => {
+  const whole = () => {
+    const project = new Project();
+    const track = project.addTrack("Take", "audio");
+    const clip = project.addAudioClip(track.id, { sampleRate: RATE, channels: [recording()] }, 5, { name: "Vox" });
+    return { project, track, clip };
+  };
+
+  test("plays another window of the recording from the same timeline position", () => {
+    const { project, clip } = whole();
+    const moved = audio(project.setClipSourceRange(clip.id, { start: 1, end: 2.5 }));
+    expect(moved).toMatchObject({ id: clip.id, time: 5, duration: 1.5, sourceOffset: 1, sourceLength: 3 });
+    expect(samples(moved)).toEqual(slice(8, 20));
+    expect(project.clipName(clip.id)).toBe("Vox");
+    const earlier = audio(project.setClipSourceRange(clip.id, { start: 0, end: 1 }));
+    expect([earlier.time, earlier.duration, earlier.sourceOffset]).toEqual([5, 1, 0]);
+    expect(samples(earlier)).toEqual(slice(0, 8));
+    project.dispose();
+  });
+
+  test("is one undo step inside an edit", () => {
+    const { project, clip } = whole();
+    project.edit("Trim", () => void project.setClipSourceRange(clip.id, { start: 1, end: 2 }));
+    project.undo();
+    expect(project.tracks[0].clips[0]).toMatchObject({ time: 5, duration: 3, sourceOffset: 0 });
+    project.redo();
+    expect(project.tracks[0].clips[0]).toMatchObject({ time: 5, duration: 1, sourceOffset: 1 });
+    project.edit("Both", () => {
+      project.setClipSourceRange(clip.id, { start: 0, end: 2 });
+      project.moveClip(clip.id, project.tracks[0].id, 6);
+    });
+    expect(project.tracks[0].clips[0]).toMatchObject({ time: 6, duration: 2, sourceOffset: 0 });
+    project.undo();
+    expect(project.tracks[0].clips[0]).toMatchObject({ time: 5, duration: 1, sourceOffset: 1 });
+    project.dispose();
+  });
+
+  test("keeps a fade only at an edge whose recording position did not move", () => {
+    const project = new Project();
+    const track = project.addTrack("Take", "audio");
+    const clip = project.addAudioClip(track.id, { sampleRate: RATE, channels: [recording()] }, 0, {
+      envelope: { gain: 1, fadeIn: 0.25, fadeOut: 0.5 },
+    });
+    expect(audio(project.setClipSourceRange(clip.id, { start: 0, end: 2 })).envelope).toEqual({ gain: 1, fadeIn: 0.25, fadeOut: 0 });
+    expect(audio(project.setClipSourceRange(clip.id, { start: 1, end: 2 })).envelope).toBeUndefined();
+    project.dispose();
+  });
+
+  test("throws and changes nothing outside the recording or on unsupported clips", () => {
+    const { project, clip } = whole();
+    const before = project.tracks;
+    for (const range of [
+      { start: -0.5, end: 1 },
+      { start: 1, end: 3.5 },
+      { start: 2, end: 2 },
+      { start: 2, end: 1 },
+      { start: NaN, end: 1 },
+    ])
+      expect(() => project.setClipSourceRange(clip.id, range)).toThrow(EDGES);
+    expect(() => project.setClipSourceRange("missing", { start: 0, end: 1 })).toThrow("Project clip does not exist.");
+    const midi = project.addMidiClip(project.addTrack("Keys", "midi").id, { duration: 4, notes: [] }, 0);
+    expect(() => project.setClipSourceRange(midi.id, { start: 0, end: 1 })).toThrow("Project setClipSourceRange needs an audio clip.");
+    project.setClipLoop(clip.id, { startSeconds: 0, endSeconds: 1 });
+    expect(() => project.setClipSourceRange(clip.id, { start: 0, end: 1 })).toThrow("without time-stretch or loop");
+    expect(project.tracks).not.toBe(before);
+    project.dispose();
+  });
+
+  test("survives save and reopen", () => {
+    const { project, clip } = whole();
+    project.setClipSourceRange(clip.id, { start: 1, end: 2 });
+    const { project: reopened } = openDawProject(saveDawProject(project));
+    const reopenedClip = audio(reopened.tracks[0].clips[0]);
+    expect([reopenedClip.time, reopenedClip.duration, reopenedClip.sourceOffset]).toEqual([5, 1, 1]);
+    expect(samples(reopenedClip)).toEqual(slice(8, 16));
+    project.dispose();
+    reopened.dispose();
+  });
+});
+
+describe("clipRecording", () => {
+  test("an in-memory clip shows its whole recording after trim and split, sharing the data", () => {
+    const { project, first, middle, last } = threePieces();
+    const trimmed = project.resizeClip(middle.id, { start: 3.5 });
+    for (const id of [first.id, trimmed.id, last.id]) {
+      const whole = project.clipRecording(id);
+      expect(whole).toMatchObject({ sampleRate: RATE, duration: 3 });
+      expect([...whole.channels![0]]).toEqual([...recording()]);
+      expect(whole.media).toBeUndefined();
+    }
+    expect(project.clipRecording(first.id).channels![0]).toBe(project.clipRecording(last.id).channels![0]);
+    project.dispose();
+  });
+
+  test("a slot clip has a recording", () => {
+    const project = new Project();
+    const track = project.addTrack("Take", "audio");
+    const session = sessionFor(project);
+    const sceneId = session.addScene({ name: "A" }).id;
+    const slot = session.setAudioClip({ trackId: track.id, sceneId }, { sampleRate: RATE, channels: [recording()] });
+    expect(project.clipRecording(slot.id).duration).toBe(3);
+    project.dispose();
+  });
+
+  test("a file-backed clip shows all of its media", async () => {
+    const chunks: Uint8Array[] = [];
+    const writer = new AudioMediaWriter(4, 1, {
+      write: async (bytes: Uint8Array) => void chunks.push(new Uint8Array(bytes)),
+      finish: async () => new Blob(chunks as BlobPart[]),
+      abort: async () => void (chunks.length = 0),
+    });
+    await writer.writeChunk({ startFrame: 0, channels: [Float32Array.from([1, 2, 3, 4, 5, 6, 7, 8])] });
+    const media = await writer.finish({ sampleRate: 4, channelCount: 1, startFrame: 0, endFrame: 8, startTime: 0, endTime: 2 });
+    const project = new Project();
+    const track = project.addTrack("Take", "audio");
+    const clip = project.addAudioMediaClip(track.id, media, 1, { startFrame: 2, frameCount: 4 });
+    const whole = project.clipRecording(clip.id);
+    expect(whole).toMatchObject({ sampleRate: 4, startFrame: 0, frameCount: 8, duration: 2 });
+    expect(whole.media).toBe(media);
+    project.dispose();
+  });
+
+  test("a MIDI clip and an unknown ID throw", () => {
+    const project = new Project();
+    const track = project.addTrack("Keys", "midi");
+    const clip = project.addMidiClip(track.id, { duration: 1, notes: [] }, 0);
+    expect(() => project.clipRecording(clip.id)).toThrow("Project clipRecording needs an audio clip.");
+    expect(() => project.clipRecording("nope")).toThrow("Project clip does not exist.");
+    project.dispose();
+  });
+
+  test("a reopened project still shows the whole recording", () => {
+    const { project, middle } = threePieces();
+    const { project: reopened } = openDawProject(saveDawProject(project));
+    const id = reopened.tracks[0].clips.find((clip) => clip.id === middle.id)!.id;
+    const whole = reopened.clipRecording(id);
+    expect(whole.duration).toBe(3);
+    expect([...whole.channels![0]]).toEqual([...recording()]);
+    project.dispose();
+    reopened.dispose();
   });
 });

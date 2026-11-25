@@ -1266,9 +1266,14 @@ export class Workspace {
     return undefined;
   }
 
-  /** Audition the current audio clip through master output independently of Arrangement. */
-  auditionAudioClip(clipId: string): Promise<void> {
-    return this.audition.auditionClip(clipId);
+  /**
+   * Audition the current audio clip through master output independently of Arrangement, replacing any running audition.
+   * With `range` it plays that part of the clip's whole recording instead (`project.clipRecording(clipId)`), in recording seconds, raw:
+   * clip fades, gain automation, stretch and loop do not apply, and the range may reach outside the clip's window. It must satisfy
+   * `0 <= start < end <= recording duration`, else a RangeError.
+   */
+  auditionAudioClip(clipId: string, options: { range?: { start: number; end: number } } = {}): Promise<void> {
+    return this.audition.auditionClip(clipId, options);
   }
 
   stopClipAudition(): void {

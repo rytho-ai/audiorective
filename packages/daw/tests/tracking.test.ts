@@ -75,6 +75,22 @@ const rows: Array<{ name: string; read: (ctx: Ctx) => unknown; mutate: (ctx: Ctx
     read: (c) => c.project.tracks[1].clips,
     mutate: (c) => void c.project.resizeClip(c.audioClipId, { end: 0.05 }),
   },
+  {
+    name: "Project.tracks (setClipSourceRange)",
+    read: (c) => c.project.tracks[1].clips,
+    mutate: (c) => void c.project.setClipSourceRange(c.audioClipId, { start: 0, end: 0.05 }),
+  },
+  {
+    name: "Project.clipRecording (removeTrack)",
+    read: (c) => {
+      try {
+        return c.project.clipRecording(c.audioClipId);
+      } catch {
+        return "gone";
+      }
+    },
+    mutate: (c) => c.project.removeTrack(c.audioTrackId),
+  },
   { name: "Project.tracks (duplicateClip)", read: (c) => c.project.tracks[1].clips, mutate: (c) => void c.project.duplicateClip(c.audioClipId, 1) },
   {
     name: "Project.linkedClips (duplicateClip linked)",
@@ -315,6 +331,7 @@ const commands: Array<{ name: string; run: (ctx: Ctx) => unknown }> = [
   { name: "resizeClip (midi)", run: (c) => c.project.resizeClip(c.clip.id, { end: c.clip.time + 0.5 }) },
   { name: "splitClip (midi)", run: (c) => c.project.splitClip(c.clip.id, 0.5) },
   { name: "resizeClip (audio)", run: (c) => c.project.resizeClip(c.audioClipId, { end: 0.05 }) },
+  { name: "setClipSourceRange (audio)", run: (c) => c.project.setClipSourceRange(c.audioClipId, { start: 0, end: 0.05 }) },
   { name: "setClipLoop (audio)", run: (c) => c.project.setClipLoop(c.audioClipId, { startSeconds: 0, endSeconds: 0.05 }) },
   { name: "setClipLoop (midi)", run: (c) => c.project.setClipLoop(c.clip.id, { startBeat: 0, endBeat: 0.5 }) },
   { name: "splitClip (audio)", run: (c) => c.project.splitClip(c.audioClipId, 0.05) },

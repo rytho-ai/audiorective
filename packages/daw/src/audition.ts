@@ -2,11 +2,12 @@ import { Clock, RangeLoop, Timeline } from "@audiorective/clock";
 import type { LoopRange } from "@audiorective/clock";
 import { batch, cell, readonlyCell, untracked, type ReadonlyCell } from "@audiorective/core";
 import type { ClipScheduler } from "./clip-scheduler";
-import type { AudioClip, Project, ProjectTrack } from "./model";
+import { recordingWindow, type AudioClip, type Project, type ProjectTrack } from "./model";
 import { findAudioClip } from "./project-lookup";
 import { audioChunkSeconds, type AudioClipWindow, type AudioHandle } from "./track-runtime";
 
-type ClipAudition = { clip: AudioClip; cancel?: () => void };
+/** `clip` is the Project clip (its identity decides staleness); `play` is what sounds, the clip itself or a range of its recording. */
+type ClipAudition = { clip: AudioClip; play: AudioClip; cancel?: () => void };
 type RangeAudition = { range: RangeAuditionState; tracks: readonly ProjectTrack[]; clock?: Clock };
 export type RangeAuditionState = Readonly<{ start: number; end: number; trackIds: readonly string[] }>;
 
@@ -44,13 +45,15 @@ export class Audition {
     return untracked(() => this.source.value);
   }
 
-  /** Audition the current audio clip through master output independently of Arrangement. */
-  async auditionClip(clipId: string): Promise<void> {
+  /** Audition the current audio clip, or with `range` that part of its whole recording, through master output independently of Arrangement. */
+  async auditionClip(clipId: string, options: { range?: { start: number; end: number } } = {}): Promise<void> {
     if (this.isDisposed()) throw new Error("Workspace is disposed.");
-    const clip = findAudioClip(this.project(), clipId, true);
-    if (!clip) throw new Error("Workspace audition needs an audio clip.");
+    const source = findAudioClip(this.project(), clipId, true);
+    if (!source) throw new Error("Workspace audition needs an audio clip.");
+    const { range } = options ?? {};
+    const clip = range ? recordingWindow(source, range.start, range.end) : source;
 
-    const audition: ClipAudition = { clip };
+    const audition: ClipAudition = { clip: source, play: clip };
     batch(() => {
       this.stop();
       this.source.value = audition;
@@ -63,7 +66,7 @@ export class Audition {
       if (this.current !== audition) return;
       if (clip.media) await this.scheduler.loadMediaBuffer(clip, 0);
       if (this.current !== audition) return;
-      if (findAudioClip(this.project(), clipId, true) !== clip) return finish();
+      if (findAudioClip(this.project(), clipId, true) !== source) return finish();
 
       if (clip.media) {
         let nextChunk = 0;
