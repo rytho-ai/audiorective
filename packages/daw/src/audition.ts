@@ -71,15 +71,17 @@ export class Audition {
       if (clip.media) {
         let nextChunk = 0;
         const chunks = Math.ceil(clip.duration / audioChunkSeconds);
+        // A fixed origin just ahead: scheduling from the clock's own start would find it already past and skip the clip's head.
+        const origin = this.context.currentTime + 0.05;
         const clock = new Clock({
           timeline: new Timeline({ audioContext: this.context }),
           lookAhead: 0.2,
           onTick: (window) => {
-            const elapsed = window.time.current - window.time.started;
+            const elapsed = window.time.current - origin;
             if (elapsed >= clip.duration) return finish();
             nextChunk = Math.max(nextChunk, Math.floor(elapsed / audioChunkSeconds));
             while (nextChunk < chunks) {
-              const when = window.time.started + nextChunk * audioChunkSeconds;
+              const when = origin + nextChunk * audioChunkSeconds;
               if (when >= window.time.lookAheadEnd) break;
               const handle = this.scheduler.scheduleMediaAudio(clip, nextChunk++, this.output, when, 0);
               window.own(handle, when);
@@ -92,7 +94,9 @@ export class Audition {
         // The initial chunk is already preloaded. Let later ticks stream the clip.
         clock.refresh();
       } else {
-        const handle = this.scheduler.scheduleAudio(clip, this.output, this.context.currentTime, 0);
+        // Build the buffer first: scheduling would otherwise treat the time spent building as lateness and skip the clip's head.
+        this.scheduler.bufferFor(clip);
+        const handle = this.scheduler.scheduleAudio(clip, this.output, this.context.currentTime + 0.02, 0);
         audition.cancel = () => handle.cancel();
         handle.onEnded(finish);
       }

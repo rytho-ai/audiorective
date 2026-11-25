@@ -46,6 +46,7 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Fixed
 
+- **daw:** `workspace.auditionAudioClip` no longer skips the first render quanta of a clip: it starts after the clip's buffer is ready (in-memory) or from a fresh origin (file-backed) instead of a start time taken before preparation.
 - **midi, daw:** abutting notes whose `start + duration` differs from the next `start` by float round-off (triplets, 0.1-beat grids) no longer drop the next note in live playback: a `MidiClip` and the `Sampler` instrument treat times within 1 ns as one instant.
 - **midi:** a `MidiClip` in a launcher that is stopped and launched again plays its current notes in the first pass, not the notes from before an edit made since it stopped.
 - **midi, daw:** abutting same-pitch notes (each note ending exactly where the next starts) no longer go silent in live playback. A `MidiClip` on a clock or launcher now sends its messages in time order with a note-off before a note-on at the same time, and a `Sampler` instrument (`WorkspaceOptions.instruments`) ignores a note-off sent before a same-time note-on instead of cutting the new voice.

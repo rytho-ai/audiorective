@@ -61,6 +61,8 @@ test("without a range the clip's own window plays", async () => {
   const workspace = await setup(project);
   const played = recordPlayed();
   await workspace.auditionAudioClip(clip.id);
+  // The whole window plays from its first frame, however long the buffer took to build.
+  expect(played[0].length).toBe(RATE);
   expect(played[0]).toEqual(original.slice(RATE, 2 * RATE));
 });
 
