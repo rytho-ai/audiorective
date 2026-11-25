@@ -89,6 +89,7 @@ export default defineConfig({
             { label: "Widgets: advanced", slug: "docs/widgets-advanced" },
             { label: "MIDI and Piano Roll", slug: "docs/midi" },
             { label: "DAW and DAWproject", slug: "docs/daw" },
+            { label: "MCP", slug: "docs/mcp" },
             { label: "WebCLAP host", slug: "docs/host" },
             { label: "Devtools", slug: "docs/devtools" },
           ],

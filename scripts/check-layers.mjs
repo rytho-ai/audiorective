@@ -81,6 +81,13 @@ const DAW_RUNTIME = [
   "song-parser.ts",
 ];
 const DAW_ROOT = ["index.ts", "compose.ts"];
+/** The mcp entry: tools over a live Workspace. It sits beside the runtime and may also use the root's `saveWorkspace`. */
+const DAW_MCP = ["mcp.ts"];
+
+/** App-level packages that take no `@audiorective/*` package at runtime. */
+const STANDALONE = ["mcp"];
+
+const MCP_EXTERNAL = ["@audiorective/core", "@toon-format/toon"];
 
 const PROJECT_EXTERNAL = ["@audiorective/core", "@audiorective/midi", "@audiorective/effects/equalizer-bands"];
 const CODEC_EXTERNAL = [...PROJECT_EXTERNAL, "fflate", "@xmldom/xmldom"];
@@ -177,6 +184,8 @@ export function checkLayers({ files, manifests }) {
         } else if (CORE_ONLY.includes(pkg)) {
           if (isScoped(spec) && pkgOf(spec) !== pkg && !within(spec, "@audiorective/core")) v(imp, `${pkg} may import only @audiorective/core*`);
           if (CAPABILITIES[pkg]) checkCapabilityRelative(pkg, rel, imp, target, v);
+        } else if (STANDALONE.includes(pkg)) {
+          if (isScoped(spec) && pkgOf(spec) !== pkg) v(imp, `${pkg} imports no @audiorective/* package`);
         } else if (pkg === "widgets") {
           checkWidgets(imp, v);
         } else if (pkg === "daw") {
@@ -265,6 +274,7 @@ function dawGroup(rel) {
   if (inGroup(rel, DAW_INTERNAL)) return "internal";
   if (inGroup(rel, DAW_RUNTIME)) return "runtime";
   if (inGroup(rel, DAW_ROOT)) return "root";
+  if (inGroup(rel, DAW_MCP)) return "mcp";
   return null;
 }
 
@@ -302,6 +312,11 @@ function checkDaw(rel, imp, target, v) {
       if (isRelative(spec) && targetGroup === "codec") v(imp, "daw runtime files must not import the DAWproject codec");
       if (isRelative(spec) && targetGroup === "root") v(imp, "daw runtime files must not import the root composition");
       if (isScoped(spec) && within(spec, "@audiorective/daw")) v(imp, "daw runtime files must not import the daw package entries");
+      break;
+    case "mcp":
+      if (isRelative(spec) && targetGroup === "codec") v(imp, "daw mcp files must not import the DAWproject codec");
+      if (isScoped(spec) && within(spec, "@audiorective/daw")) v(imp, "daw mcp files must not import the daw package entries");
+      if (!isRelative(spec) && !matchesAny(spec, MCP_EXTERNAL)) v(imp, "daw mcp files may import only core*, @toon-format/toon and other daw files");
       break;
     case "root":
       break;

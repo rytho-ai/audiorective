@@ -141,6 +141,7 @@ Open the one page the task needs; read the section, not the whole file.
 | Stretching audio, pitch-preserving render, seamless loops                                                                           | `effects.md` → TimeStretch                             |
 | MIDI clips, files, piano roll, recording a take, a live keyboard                                                                    | `midi.md`                                              |
 | Project, takes, clips, Session, DAWproject, live edits (`sync()`)                                                                   | `daw.md`                                               |
+| Let an AI agent read, edit, listen to and save the open DAW project (MCP, `mcpTools`)                                               | `mcp.md`                                               |
 | WebCLAP device, CLAP ID, patch save                                                                                                 | `host.md` + `daw.md`                                   |
 | Player state (`cells`), loading, cancel, audition                                                                                   | `player.md` + `widgets.md`                             |
 | React, three.js, PlayCanvas, PixiJS                                                                                                 | `react.md`, `threejs.md`, `playcanvas.md`, `pixijs.md` |

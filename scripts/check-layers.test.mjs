@@ -77,6 +77,9 @@ const cases = [
   ["5 codec imports runtime", { "packages/daw/src/dawproject.ts": `import "./runtime";` }, /codec files may import only/],
   ["5 runtime imports codec", { "packages/daw/src/runtime.ts": `import "./dawproject";` }, /must not import the DAWproject codec/],
   ["5 daw imports widgets", { "packages/daw/src/runtime.ts": `import "@audiorective/widgets";` }, /never imports @audiorective\/widgets/],
+  ["5 mcp imports codec", { "packages/daw/src/mcp.ts": `import "./dawproject";` }, /mcp files must not import the DAWproject codec/],
+  ["5 mcp imports midi", { "packages/daw/src/mcp.ts": `import "@audiorective/midi";` }, /mcp files may import only/],
+  ["5 mcp imports audiorective", { "packages/mcp/src/index.ts": `import "@audiorective/core";` }, /mcp imports no @audiorective/],
   ["5 unclassified daw file", { "packages/daw/src/new-thing.ts": `` }, /unclassified daw file/],
 ];
 for (const [name, files, re] of cases) {

@@ -40,6 +40,10 @@
       "types": "./dist/runtime.d.ts",
       "import": "./dist/runtime.js"
     },
+    "./mcp": {
+      "types": "./dist/mcp.d.ts",
+      "import": "./dist/mcp.js"
+    },
     "./package.json": "./package.json"
   },
   "scripts": {
@@ -54,6 +58,7 @@
     "@audiorective/effects": "workspace:^",
     "@audiorective/host": "workspace:^",
     "@audiorective/midi": "workspace:^",
+    "@toon-format/toon": "4.4.0",
     "@xmldom/xmldom": "^0.9.8",
     "fflate": "^0.8.2",
     "@audiorective/launcher": "workspace:^",

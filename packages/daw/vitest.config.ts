@@ -13,6 +13,7 @@ export default defineConfig({
             "@audiorective/daw/project": entry("project"),
             "@audiorective/daw/dawproject": entry("dawproject"),
             "@audiorective/daw/runtime": entry("runtime-entry"),
+            "@audiorective/daw/mcp": entry("mcp"),
           },
         },
         test: { name: "node", environment: "node", include: ["tests/**/*.test.ts"], exclude: ["tests/**/*.browser.test.ts"] },

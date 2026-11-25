@@ -18,6 +18,8 @@ const WILD = new RegExp(`${W}[^${W}]*${W}`, "g");
  * Keep each reason to one line.
  */
 export const ALLOWLIST = {
+  "packages/mcp/src/index.ts::dynamic:describeError(frame.error)":
+    "relays the page's own error text to the agent as a tool error result; the page's messages are documented where they are thrown",
   "packages/daw/src/project-edits.ts::dynamic:message":
     "ProjectEditFailure is caught by applyEdits and returned as a rejected receipt with a code; callers never see it thrown",
   "packages/core/src/errors.ts::dynamic:message":
@@ -30,6 +32,9 @@ export const ALLOWLIST = {
   "packages/midi/src/MidiRecorder.ts::dynamic:message":
     "helper `invalidState(message)`; every call passes a literal, documented under MidiRecorder in docs/midi.md",
   "packages/host/src/webclap.ts::dynamic:String(message.message)": "relays the plug-in's own message; documented as `WebCLAP plug-in error: …`",
+  "packages/mcp/src/index.ts::dynamic:frame.error": "relays the page's own error text to the agent; documented in docs/mcp.md Common errors",
+  "packages/mcp/src/index.ts::dynamic:message":
+    "bridge failures (page left, no answer) built from fixed texts; documented in docs/mcp.md Common errors",
   "packages/effects/src/TimeStretch.ts::dynamic:event.data.error": "relays the worker's own message; documented under TimeStretch worker failures",
 };
 
