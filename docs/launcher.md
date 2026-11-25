@@ -66,7 +66,7 @@ launcher.cancelQueued(); // withdraw every waiting launch, stop and scene tempo
 ```
 
 - **One waiting launch per track.** Launching a track again replaces only that track's waiting launch; the playing clip is untouched until a boundary lands. A cancelled or replaced launch never sounds.
-- **A scene lands every track on one boundary, sample-aligned**, and ignores each clip's own `quantize`. Empty slots are left alone. `launchScene([clipA, clipB])` starts exactly those clips.
+- **A scene lands every track on one boundary, sample-aligned**, and ignores each clip's own `quantize`. Empty slots are left alone unless the launcher is made with `emptySlots: "stop"`, which stops those tracks on the same boundary. `launchScene([clipA, clipB])` starts exactly those clips and never stops other tracks.
 - **Stopped transport:** launches made while the clock is stopped wait, survive `clock.start(when, offsetBeats)` and start exactly at `when`. Pause freezes everything and `resume()` continues; stop, seek and detach clear it all.
 - **A one-shot ends at its exact end** (`ended` fires then, and the track is free).
 
@@ -77,7 +77,7 @@ launcher.playChain([0, 0, 1, 2]); // scene 0 twice, then 1, then 2, each for its
 effect(() => (positionEl.textContent = launcher.chain.value ? `${launcher.chain.value.index + 1} / ${launcher.chain.value.scenes.length}` : "—"));
 ```
 
-`playChain(scenes, { quantize })` starts the first scene on the next boundary (like `launchScene`), each next one on the exact beat the previous one ends, and stops every track when the last one ends. A scene lasts as long as its longest clip (`length`, or a buffer's own length; a bar when no clip has one). A track with an empty slot keeps playing what it played. `launcher.chain` holds `{ scenes, index }` while a chain plays, with `index` the entry sounding (-1 until the first starts), and null otherwise. Any other launch, stop or `cancelQueued`, and the transport stopping, pausing or seeking, ends the chain; a chain started while the clock is stopped begins with `clock.start()`.
+`playChain(scenes, { quantize })` starts the first scene on the next boundary (like `launchScene`), each next one on the exact beat the previous one ends, and stops every track when the last one ends. A scene lasts as long as its longest clip (`length`, or a buffer's own length; a bar when no clip has one). A track with an empty slot keeps playing what it played (`emptySlots: "stop"` stops it where the scene begins). `launcher.insertScene(index, spec?)` and `launcher.removeScene(index)` add or drop a scene slot on every track while the launcher plays: later scenes and their clips keep playing and `scene.index` and `clip.index` follow; a removed scene's clips stop. `launcher.chain` holds `{ scenes, index }` while a chain plays, with `index` the entry sounding (-1 until the first starts), and null otherwise. Any other launch, stop or `cancelQueued`, and the transport stopping, pausing or seeking, ends the chain; a chain started while the clock is stopped begins with `clock.start()`.
 
 ## Layer 4: state and events
 
@@ -94,7 +94,7 @@ Events are `queued`, `started`, `ended`, `cancelled` and `skipped` (a `ClipEvent
 
 ## Standalone vs the DAW
 
-`Workspace.session` is a launcher over a Project's audio and MIDI tracks: its clips play through each track's devices and mixer strip. See [the DAW Session](./daw.md#clip-launcher). A grid view over a launcher is `mountClipGrid` in [widgets](./widgets.md).
+`Workspace.session` is a launcher over the scenes and slot clips a Project saves (`sessionFor(project)`): its clips play through each track's devices and mixer strip, and it is made with `emptySlots: "stop"`, so a scene launch stops the tracks whose slot is empty. See [the DAW Session](./daw.md#session-scenes-and-clip-slots). A grid view over a launcher is `mountClipGrid` in [widgets](./widgets.md).
 
 ## When not to use it
 
@@ -111,6 +111,7 @@ See the `launch({ at })` bullet above; `ClipLauncher` events type `addEventListe
 | --- | --- |
 | `Clip Launcher requires a note value such as "4n" or "1m", got "…".` | A `quantize`, `length` or `follow.after` string is not a note value. Use `"none"`, `"4n"`, `"8n"`, `"1m"`, `"2m"` (`"1m"` is a bar of `clock.meter`). |
 | `playChain needs scene indices from 0 to ….` | The chain is empty or names a scene the launcher does not have. Pass whole indices into `launcher.scenes`. |
+| `insertScene needs an index from 0 to ….` / `removeScene needs an index from 0 to ….` | The index is not a whole number inside the scene slots (`insertScene` also accepts `scenes.length`, to append). Nothing changed. |
 | `Clip Launcher requires chance in 0..1, got ….` | `chance` is a probability. Pass a number from 0 to 1. |
 | `Clip Launcher can only replace the buffer of a buffer clip.` | `configure({ buffer })` on a `sound` factory or `scheduler` clip | Replace the clip with `track.setClip(slot, { buffer })`, or configure a buffer clip. |
 | `Clip Launcher requires a finite beat for `at`.` | `launch({ at })` got NaN or Infinity | Pass a transport beat. |

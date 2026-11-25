@@ -2,6 +2,7 @@ import { ManualTickSource } from "@audiorective/clock";
 import type { SoundFactory } from "@audiorective/core";
 import { afterEach, describe, expect, test } from "vitest";
 import { Project, Workspace, type WorkspaceOptions } from "../src";
+import { fillSession } from "./session-slots";
 
 const RATE = 48_000;
 const QUANTUM = 128;
@@ -87,14 +88,16 @@ const tone = (() => {
   return buffer;
 })();
 
-/** 120 BPM. Slot 0: one-bar clip with a hit on beat 1 at beat 0; slot 1: one-bar clip, hit on beat 2, at beat 4; slot 2: two-bar clip, hits on beats 1 and 5, at beat 8. A "Pad" track holds one long note from beat 0. */
+/**
+ * 120 BPM. Scene 0: a one-bar clip with a hit on beat 1; scene 1: a one-bar clip with a hit on beat 2; scene 2: a two-bar clip with hits on beats 1 and 5.
+ * The Arrangement plays the same three clips at beats 0, 4 and 8. The "Pad" track holds one long note from beat 0 in the Arrangement and nothing in the Session.
+ */
 function scenes() {
   const project = new Project({ bpm: 120 });
   const drums = project.addTrack("Drums", "midi");
-  project.addMidiClip(drums.id, { duration: 4, notes: [{ pitch: 60, velocity: 1, start: 0, duration: 0.25 }] }, 0);
-  project.addMidiClip(drums.id, { duration: 4, notes: [{ pitch: 60, velocity: 1, start: 1, duration: 0.25 }] }, 4);
-  project.addMidiClip(
-    drums.id,
+  const clips = [
+    { duration: 4, notes: [{ pitch: 60, velocity: 1, start: 0, duration: 0.25 }] },
+    { duration: 4, notes: [{ pitch: 60, velocity: 1, start: 1, duration: 0.25 }] },
     {
       duration: 8,
       notes: [
@@ -102,8 +105,9 @@ function scenes() {
         { pitch: 60, velocity: 1, start: 4, duration: 0.25 },
       ],
     },
-    8,
-  );
+  ];
+  clips.forEach((data, index) => project.addMidiClip(drums.id, data, index * 4));
+  fillSession(project, drums.id, clips);
   const pad = project.addTrack("Pad", "midi");
   project.addMidiClip(pad.id, { duration: 24, notes: [{ pitch: 64, velocity: 1, start: 0, duration: 24 }] }, 0);
   cleanups.push(() => project.dispose());
@@ -145,7 +149,7 @@ describe("arrangement off: a Session-only Workspace", () => {
 
   test("session.playChain plays Project clips for their lengths, back to back, then stops", async () => {
     const { project, drums } = scenes();
-    // Only the drums have a sound: the Pad track's slots stay empty, so its long clip does not set a scene's length.
+    // Only the drums have a sound, and the Pad track has no Session clips, so its long Arrangement clip does not set a scene's length.
     const x = await render(project, 13, [{ at: 0.2, run: (w) => w.session.value.playChain([0, 0, 1, 2]) }], {
       instruments: { [drums.id]: { sound: click } },
       arrangement: false,

@@ -48,6 +48,8 @@ const DAW_PROJECT = [
   "project-edits.ts",
   "ripple-delete.ts",
   "selection.ts",
+  "session.ts",
+  "session-state.ts",
 ];
 const DAW_CODEC = ["dawproject.ts"];
 const DAW_INTERNAL = ["internal/*"];

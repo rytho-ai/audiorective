@@ -29,9 +29,10 @@ import { ClipScheduler } from "./clip-scheduler";
 import { Mixer, type MixerStrip } from "./mixer";
 import { captureDeviceState, MidiClip, Project } from "./model";
 import type { TempoMap } from "./tempo-map";
-import type { AudioClipGainAutomation, PcmAudioClip, ProjectTrack, TrackRouting, WebClapDevice } from "./model";
+import type { AudioClipGainAutomation, MediaAudioClip, PcmAudioClip, ProjectClip, ProjectTrack, TrackRouting, WebClapDevice } from "./model";
 import type { BeatRange, ProjectVersion, SecondsRange } from "./project-edits";
 import { audioLoopFrames } from "./clip-loop";
+import { sessionFor } from "./session";
 
 export { scheduleClipEnvelope } from "./schedule-clip-envelope";
 export type { PreparedClipStretch } from "./clip-stretch";
@@ -96,9 +97,10 @@ export class Workspace {
   }
   readonly player: WorkspacePlayer;
   /**
-   * The Session view's launcher over this Workspace's audio and MIDI tracks (mirrors `cells.session`): `session.value.tracks[trackId].clips[i]` is
-   * the i-th clip of that Project track, `null` for a file-backed audio clip or a MIDI clip on a track without a device, so a grid reads a Project
-   * clip's state from its cells and launches it with `clip.launch()`; `launchScene(i)` launches row i on every track. A MIDI clip loops over its
+   * The Session view's launcher over this Workspace's audio and MIDI tracks (mirrors `cells.session`), built from the Project's Session grid, `sessionFor(project)`:
+   * `session.value.tracks[trackId].clips[i]` is scene i's slot clip on that track, `null` for an empty slot, a file-backed audio clip or a MIDI clip on a track without a device or instrument,
+   * so a grid reads a slot clip's state from its cells and launches it with `clip.launch()`; `launchScene(i)` launches scene i on every track and stops the tracks whose slot in it is empty.
+   * Scenes added or removed change the launcher in place; a file-backed audio slot clip has no launcher clip until its audio is read. A MIDI clip loops over its
    * length through the track's first device, and notes still sounding are released when the track changes clip, stops or returns. A launched clip plays through the track's devices, effects and mixer strip and takes the track away from Arrangement
    * until it is stopped or a one-shot ends. The launcher follows `workspace.transport` (a launch made while stopped waits for `play()`; stop and
    * seek clear it) and is replaced by `sync()`, so read `session.value` inside the effect that uses it. It is built (the clips' audio copied into buffers) the first time it is read. See `sessionClip`.
@@ -126,7 +128,12 @@ export class Workspace {
   private sessionLauncher?: ClipLauncher;
   /** Bumped when `sync()` replaces the launcher, so `session` readers re-run. */
   private readonly sessionRevision = cell(0);
-  private readonly sessionSources = new WeakMap<SessionClip, ProjectTrack["clips"][number]>();
+  /** File-backed Session clips read into memory, and the ones being read. */
+  private readonly sessionMedia = new WeakMap<MediaAudioClip, PcmAudioClip>();
+  private readonly sessionMediaLoading = new WeakSet<MediaAudioClip>();
+  /** The Project scene id of each launcher scene slot, in order. */
+  private sessionSceneIds: string[] = [];
+  private readonly sessionSources = new WeakMap<SessionClip, ProjectClip>();
   /** Bumped when `reconcileSession` replaces a session clip, so `sessionClip` readers re-run. */
   private readonly sessionClipEdits = cell(0);
 
@@ -742,12 +749,13 @@ export class Workspace {
       this.audition.stopStale();
       this.scheduler.prune(this.tracks.values());
     }
+    // Session slots change without touching the timeline.
+    this.reconcileSession();
     // A loop region is in beats, so while looping the playhead keeps its beat across a tempo edit and stays in the region.
     if (tempoChanged)
       this.seek(this.fold.region && this.activeLoopRegion() ? project.tempoMap.beatToSeconds(this.activeTempoMap.secondsToBeat(position)) : position);
     else if (refreshClips) {
       this.scheduler.cancelAudio(invalidatedAudio);
-      this.reconcileSession();
       this.bindNotes();
       void this.clock.refresh();
     }
@@ -797,24 +805,33 @@ export class Workspace {
   }
 
   /**
-   * The Session clip of a Project clip: `session.value.tracks[trackId].clips[i]` for the clip's position in its track, or null when the
-   * clip is unknown, file-backed audio, or MIDI on a track without a device. Session clips loop and keep their recorded speed; `clip.configure({ loop: false })` makes one a one-shot.
-   * A tracked reader: it re-runs when the Project's clips change and the session clips are replaced to match.
+   * The launcher clip of a Session slot clip, found by its id: `session.value.tracks[trackId].clips[i]` for the clip's scene, or null when the
+   * clip is not a slot clip of that track, file-backed audio, or MIDI on a track without a device or instrument. Session clips loop and keep their recorded speed; `clip.configure({ loop: false })` makes one a one-shot.
+   * A tracked reader: it re-runs when the Session grid changes and the launcher clips are replaced to match.
    */
   sessionClip(trackId: string, clipId: string): SessionClip | null {
     this.sessionClipEdits.$();
     this.project.cells.revision.$();
-    const index = this.project.tracks.find((track) => track.id === trackId)?.clips.findIndex((clip) => clip.id === clipId) ?? -1;
+    const grid = sessionFor(this.project);
+    const index = grid.scenes.findIndex((scene) => grid.clipAt({ trackId, sceneId: scene.id })?.id === clipId);
     return index < 0 ? null : (this.session.value.tracks[trackId]?.clips[index] ?? null);
   }
 
   /** A launcher over the audio tracks built so far; session clips play through each track's input and take it away from Arrangement while they sound. */
   private buildSession(): ClipLauncher {
+    const grid = sessionFor(this.project);
     const specs: Record<string, (ClipSpec | null)[]> = {};
     for (const track of this.project.tracks)
-      if (this.tracks.get(track.id)?.session) specs[track.id] = track.clips.map((clip) => this.sessionSpec(clip, track.id));
+      if (this.tracks.get(track.id)?.session)
+        specs[track.id] = grid.scenes.map((scene) => {
+          const clip = grid.clipAt({ trackId: track.id, sceneId: scene.id });
+          return clip ? this.sessionSpec(clip, track.id) : null;
+        });
     const launcher = new ClipLauncher(specs, {
       context: this.context,
+      scenes: grid.scenes.map(({ name }) => ({ name })),
+      // A scene launch stops the tracks whose slot in that scene is empty, as a Session view does.
+      emptySlots: "stop",
       onSchedule: ({ track, clip, when, endsAt }) => {
         const runtime = this.tracks.get(track.name);
         const handle = runtime?.session?.follow(when, clip !== null, endsAt);
@@ -841,10 +858,11 @@ export class Workspace {
     for (const id of Object.keys(specs)) launcher.tracks[id]!.connect(this.tracks.get(id)!.input);
     this.clock.attach(launcher);
     this.project.tracks.forEach((track) => this.recordSessionSources(launcher, track));
+    this.sessionSceneIds = grid.scenes.map(({ id }) => id);
     return launcher;
   }
 
-  private sessionSpec(clip: ProjectTrack["clips"][number], trackId: string): ClipSpec | null {
+  private sessionSpec(clip: ProjectClip, trackId: string): ClipSpec | null {
     if (clip instanceof MidiClip) {
       const host = this.tracks.get(trackId)?.midi;
       if (!host || !(clip.duration > 0)) return null;
@@ -855,7 +873,11 @@ export class Workspace {
       const beats = clip.loop ? Math.min(clip.loop.endBeat, clip.duration) : clip.duration;
       return { scheduler: clip.midi, loop: true, length: `${beats / ((numerator * 4) / denominator)}m`, name: clip.id };
     }
-    if (clip.kind !== "audio" || clip.media) return null;
+    if (clip.kind !== "audio") return null;
+    // A file-backed clip plays from a copy of its audio read into memory: null until it has been read, then the launcher clip arrives.
+    const pcm = clip.media ? this.sessionPcm(clip) : (clip as PcmAudioClip);
+    if (!pcm) return null;
+    clip = pcm;
     if (clip.loop) {
       // The launcher counts a buffer's material in beats at `bpm`; 60 makes a beat one second of the recording, so the loop and the entry point are the clip's seconds.
       const plan = audioLoopFrames(clip as PcmAudioClip & { loop: SecondsRange });
@@ -874,24 +896,74 @@ export class Workspace {
     return { buffer: this.scheduler.sessionBufferFor(clip as PcmAudioClip), loop: true, warp: false, name: clip.id };
   }
 
+  /**
+   * The in-memory audio of a file-backed Session clip: its window, or its whole recording when it loops (the loop can play any part of it). Reading is
+   * asynchronous; the Session clip is replaced as soon as it is done.
+   */
+  private sessionPcm(clip: MediaAudioClip): PcmAudioClip | null {
+    const ready = this.sessionMedia.get(clip);
+    if (ready || this.sessionMediaLoading.has(clip)) return ready ?? null;
+    this.sessionMediaLoading.add(clip);
+    const [first, count] = clip.loop ? [0, clip.media.frameCount] : [clip.startFrame, clip.frameCount];
+    void clip.media.readFrames(first, count).then(
+      (channels) => {
+        if (this.disposed) return;
+        const { media: _media, startFrame: _start, frameCount: _count, ...rest } = clip;
+        this.sessionMedia.set(clip, Object.freeze({ ...rest, channels }) as PcmAudioClip);
+        this.reconcileSession();
+      },
+      (error) => {
+        this.sessionMediaLoading.delete(clip);
+        if (!this.disposed) this.mediaError.value = error instanceof Error ? error.message : String(error);
+      },
+    );
+    return null;
+  }
+
   private recordSessionSources(launcher: ClipLauncher, track: ProjectTrack): void {
-    track.clips.forEach((clip, index) => {
+    const grid = sessionFor(this.project);
+    grid.scenes.forEach((scene, index) => {
+      const clip = grid.clipAt({ trackId: track.id, sceneId: scene.id });
       const sessionClip = launcher.tracks[track.id]?.clips[index];
-      if (sessionClip) this.sessionSources.set(sessionClip, clip);
+      if (clip && sessionClip) this.sessionSources.set(sessionClip, clip);
     });
   }
 
-  /** Bring the session clips in line with the Project's clips: a clip that changed or went away is replaced or removed (stopped at once if it was playing). */
+  /** Bring the session clips in line with the Project's Session grid: a clip that changed or went away is replaced or removed (stopped at once if it was playing). */
   private reconcileSession(): void {
     const launcher = this.sessionLauncher;
     if (!launcher) return;
+    const grid = sessionFor(this.project);
+    const scenes = grid.scenes;
+    const wanted = scenes.map(({ id }) => id);
+    const known = this.sessionSceneIds;
+    const kept = known.filter((id) => wanted.includes(id));
+    if (kept.some((id, index) => id !== wanted.filter((other) => kept.includes(other))[index])) {
+      // Scenes are only added and removed, never reordered; a different order means the launcher no longer matches, so build it again.
+      launcher.dispose();
+      this.sessionLauncher = undefined;
+      this.sessionRevision.value++;
+      return;
+    }
+    // Slots follow the scenes in place, so clips in later scenes keep playing: removed scenes first (last to first), then inserted ones.
+    for (let index = known.length - 1; index >= 0; index--)
+      if (!wanted.includes(known[index])) {
+        launcher.removeScene(index);
+        known.splice(index, 1);
+      }
+    wanted.forEach((id, index) => {
+      if (known[index] === id) return;
+      launcher.insertScene(index, { name: scenes[index].name });
+      known.splice(index, 0, id);
+    });
+    scenes.forEach(({ name }, index) => launcher.scenes[index]._rename(name));
     let replaced = false;
     for (const track of this.project.tracks) {
       const sessionTrack = launcher.tracks[track.id];
       if (!sessionTrack) continue;
-      const count = Math.max(track.clips.length, sessionTrack.clips.length);
+      const count = Math.max(scenes.length, sessionTrack.clips.length);
       for (let index = 0; index < count; index++) {
-        const wanted = track.clips[index];
+        const wanted = scenes[index] ? (grid.clipAt({ trackId: track.id, sceneId: scenes[index].id }) ?? undefined) : undefined;
         const spec = wanted ? this.sessionSpec(wanted, track.id) : null;
         const existing = sessionTrack.clips[index] ?? null;
         const source = existing ? this.sessionSources.get(existing) : undefined;

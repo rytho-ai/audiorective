@@ -1,7 +1,7 @@
 import { ManualTickSource } from "@audiorective/clock";
 import type { SoundFactory } from "@audiorective/core";
 import { afterEach, describe, expect, test } from "vitest";
-import { AudioMedia, Project, Workspace, renderMixRange, type MidiClip, type WorkspaceOptions } from "../src";
+import { AudioMedia, Project, Workspace, renderMixRange, sessionFor, type MidiClip, type WorkspaceOptions } from "../src";
 
 const RATE = 48_000;
 const QUANTUM = 128;
@@ -99,6 +99,20 @@ function midiLoop(notes: Array<{ start: number }>, duration = 4) {
   const clip = project.addMidiClip(track.id, { duration, notes: notes.map(({ start }) => ({ pitch: 60, velocity: 1, start, duration: 0.25 })) }, 0);
   cleanups.push(() => project.dispose());
   return { project, track, clip, instruments: { [track.id]: { sound: click } } };
+}
+
+/** Like `midiLoop`, with the clip in scene 0 of the Session instead of on the timeline. */
+function sessionMidiLoop(notes: Array<{ start: number }>, duration = 4) {
+  const project = new Project({ bpm: 120 });
+  const track = project.addTrack("Drums", "midi");
+  const session = sessionFor(project);
+  const scene = session.addScene();
+  session.setMidiClip(
+    { trackId: track.id, sceneId: scene.id },
+    { duration, notes: notes.map(({ start }) => ({ pitch: 60, velocity: 1, start, duration: 0.25 })) },
+  );
+  cleanups.push(() => project.dispose());
+  return { project, track, instruments: { [track.id]: { sound: click } } };
 }
 
 describe("looping audio clips", () => {
@@ -272,7 +286,9 @@ describe("looped clips in the Session", () => {
     const channel = new Float32Array(4 * RATE);
     for (let i = 0; i < RATE; i++) channel[i] = 0.6;
     for (let i = RATE; i < 2 * RATE; i++) channel[i] = 0.3 * Math.sin((2 * Math.PI * 220 * i) / RATE);
-    const clip = project.addAudioClip(track.id, { sampleRate: RATE, channels: [channel] }, 0);
+    const session = sessionFor(project);
+    const scene = session.addScene();
+    const clip = session.setAudioClip({ trackId: track.id, sceneId: scene.id }, { sampleRate: RATE, channels: [channel] });
     project.setClipLoop(clip.id, { startSeconds: 1, endSeconds: 2 });
     const x = await render(project, 9, [{ at: 0.2, run: (w) => w.session.value.tracks[track.id]!.clips[0]!.launch() }], { arrangement: false });
     // Launched on the bar at 2 s: the lead-in (0.6) plays once, then the sine repeats.
@@ -285,7 +301,8 @@ describe("looped clips in the Session", () => {
   }, 60_000);
 
   test("a MIDI loop that ends after the clip loops the clip's length, as the Arrangement plays it", async () => {
-    const { project, track, clip, instruments } = midiLoop([{ start: 0 }, { start: 3 }]);
+    const { project, track, instruments } = sessionMidiLoop([{ start: 0 }, { start: 3 }]);
+    const clip = sessionFor(project).clipAt({ trackId: track.id, sceneId: sessionFor(project).scenes[0].id })!;
     project.setClipLoop(clip.id, { startBeat: 0, endBeat: 8 });
     const x = await render(project, 6, [{ at: 0.2, run: (w) => w.session.value.tracks[track.id]!.clips[0]!.launch() }], {
       instruments,
@@ -296,7 +313,8 @@ describe("looped clips in the Session", () => {
   }, 30_000);
 
   test("a looped MIDI clip loops the length of its loop", async () => {
-    const { project, track, clip, instruments } = midiLoop([{ start: 0 }, { start: 3 }]);
+    const { project, track, instruments } = sessionMidiLoop([{ start: 0 }, { start: 3 }]);
+    const clip = sessionFor(project).clipAt({ trackId: track.id, sceneId: sessionFor(project).scenes[0].id })!;
     project.setClipLoop(clip.id, { startBeat: 0, endBeat: 2 });
     const x = await render(project, 6, [{ at: 0.2, run: (w) => w.session.value.tracks[track.id]!.clips[0]!.launch() }], {
       instruments,

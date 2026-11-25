@@ -10,13 +10,17 @@ import {
   Project,
   audioChannelCount,
   audioFrameCount,
+  adoptSlotClip,
   audioRecording,
   extensionRecords,
   normalizeClipGainAutomation,
+  restoreScenes,
   windowOfRecording,
   type ExtensionRecord,
 } from "./model";
 import { EXTENSION_ID } from "./extensions";
+import { sessionFor } from "./session";
+import { readSession, splitSlotKey } from "./session-state";
 import type { ClipStretchAnchor } from "./clip-time-map";
 import type { AudioClip, AudioClipGainAutomation, AudioClipSource, AudioClipStretchInit, ProjectMidiEvent, ProjectTrack } from "./model";
 import { decodeWav, encodeWav, mediaFromWav, wavMediaEntry } from "./internal/wav";
@@ -317,6 +321,11 @@ function writeClip(
   });
 }
 
+/** The clips in a track's Session slots, in no particular order. */
+function slotClipsOf(project: Project, trackId: string) {
+  return [...readSession(project).slots].filter(([key]) => splitSlotKey(key).trackId === trackId).map(([, clip]) => clip);
+}
+
 function prepareDawProject(project: Project): {
   entries: Record<string, Uint8Array>;
   mediaEntries: Map<string, AudioClipSource>;
@@ -338,12 +347,14 @@ function prepareDawProject(project: Project): {
   let insertIndex = 0;
   for (const track of project.tracks) {
     const element = append(structure, "Track", { id: track.id, name: track.name, contentType: track.kind === "midi" ? "notes" : "audio" });
+    // The channel count follows the track's first audio clip, on the timeline or else in a Session slot.
+    const firstAudio = [...track.clips, ...slotClipsOf(project, track.id)].find((clip) => clip.kind === "audio");
     const channel = append(element, "Channel", {
       id: `${track.id}-channel`,
       role: track.busRole ?? "regular",
       destination: track.routing.outputBusId === null ? "masterChannel" : `${track.routing.outputBusId}-channel`,
       solo: track.solo,
-      audioChannels: track.kind === "audio" && track.clips[0]?.kind === "audio" ? audioChannelCount(track.clips[0]) : 2,
+      audioChannels: track.kind === "audio" && firstAudio ? audioChannelCount(firstAudio) : 2,
     });
     if (track.devices.length || track.effects.length) {
       const devices = append(channel, "Devices");
@@ -396,6 +407,7 @@ function prepareDawProject(project: Project): {
   const state: PrivateState = { version: 3, nextId: nextProjectId.get(project) ?? 1, clips: [] };
   const racks = project.tracks.filter((track) => track.effectMacros.length);
   if (racks.length) state.rackMacros = Object.fromEntries(racks.map((track) => [track.id, track.effectMacros]));
+  const nextIndex = new Map<string, number>();
   for (const track of project.tracks) {
     const lane = append(lanes, "Lanes", { id: `${track.id}-lane`, track: track.id, timeUnit: "seconds" });
     let index = 0;
@@ -416,6 +428,7 @@ function prepareDawProject(project: Project): {
           untracked(() => project.clipName(clip.id)),
         );
     }
+    nextIndex.set(track.id, index);
     if (track.volumeAutomation.length) {
       const points = append(lane, "Points", { id: `${track.id}-automation`, timeUnit: "seconds" });
       append(points, "Target", { parameter: `${track.id}-volume` });
@@ -431,6 +444,32 @@ function prepareDawProject(project: Project): {
     append(points, "Target", { parameter: "transportTempo" });
     for (const step of [{ beat: 0, bpm: project.bpm }, ...project.tempoMap.changes])
       append(points, "RealPoint", { time: step.beat, value: step.bpm, interpolation: "hold" });
+  }
+  const session = sessionFor(project);
+  if (session.scenes.length) {
+    // A scene lists only the slots that hold a clip: an empty slot is the absence of a ClipSlot.
+    const scenes = append(root, "Scenes");
+    for (const scene of session.scenes) {
+      const element = append(append(scenes, "Scene", { id: scene.id, name: scene.name }), "Lanes", { timeUnit: "seconds" });
+      for (const track of project.tracks) {
+        const clip = session.clipAt({ trackId: track.id, sceneId: scene.id });
+        if (!clip) continue;
+        const slot = append(element, "ClipSlot", { track: track.id, timeUnit: clip.kind === "midi" ? "beats" : "seconds" });
+        const index = nextIndex.get(track.id) ?? 0;
+        nextIndex.set(track.id, index + 1);
+        writeClip(
+          clip,
+          slot,
+          entries,
+          mediaEntries,
+          recordingPaths,
+          state,
+          track,
+          index,
+          untracked(() => project.clipName(clip.id)),
+        );
+      }
+    }
   }
   const metadata = new DOMImplementation().createDocument(null, "MetaData", null);
   append(metadata.documentElement!, "Title").textContent = project.title;
@@ -763,7 +802,7 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
   const root = parseXml(entryBytes(entries, "project.xml")!, "Project");
   attributesOnly(root, ["version"]);
   if (attr(root, "version") !== "1.0") throw new Error("Project needs DAWproject version 1.0.");
-  childrenOnly(root, ["Application", "Transport", "Structure", "Arrangement"]);
+  childrenOnly(root, ["Application", "Transport", "Structure", "Arrangement", "Scenes"]);
   const application = one(root, "Application")!;
   attributesOnly(application, ["name", "version"]);
   childrenOnly(application, []);
@@ -800,7 +839,7 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
     ...(stored?.clips.map((clip) => clip.id) ?? []),
     ...Array.from(root.getElementsByTagName("*"), (element) => element.getAttribute("id") ?? ""),
   ]) {
-    const suffix = /^(?:track|device|clip)(\d+)(?:-|$)/.exec(id);
+    const suffix = /^(?:track|device|clip|scene)(\d+)(?:-|$)/.exec(id);
     const number = suffix && Number(suffix[1]);
     if (number && Number.isSafeInteger(number + 1)) next = Math.max(next, number + 1);
   }
@@ -972,7 +1011,144 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
     const arrangement = one(root, "Arrangement")!;
     attributesOnly(arrangement, ["id"]);
     childrenOnly(arrangement, ["Lanes", "Markers", "TempoAutomation"]);
-    const secondsMidi: Array<{ trackId: string; midi: ReturnType<typeof readMidi> }> = [];
+    const nextIndex = new Map<string, number>();
+    const secondsMidi: Array<{ trackId: string; midi: ReturnType<typeof readMidi>; sceneId?: string }> = [];
+    const readClip = (clip: Element, trackId: string, track: ProjectTrack, unit: "seconds" | "beats", index: number, sceneId?: string): void => {
+      childrenOnly(clip, ["Lanes", "Audio"]);
+      if (track.kind === "midi") {
+        const midi = readMidi(clip, trackId, index, unit, stored, warnings);
+        // Seconds content converts to beats once the tempo map is known, after the arrangement is read.
+        if (unit === "beats") {
+          const added = project.addMidiClip(trackId, midi, midi.time, { id: midi.id, name: midi.name });
+          if (midi.loop) project.setClipLoop(added.id, { startBeat: midi.loop.start, endBeat: midi.loop.end });
+          if (sceneId) adoptSlotClip(project, added.id, sceneId);
+        } else secondsMidi.push({ trackId, midi, sceneId });
+      } else {
+        attributesOnly(clip, [
+          "name",
+          "time",
+          "duration",
+          "contentTimeUnit",
+          "fadeTimeUnit",
+          "fadeInTime",
+          "fadeOutTime",
+          "playStart",
+          "playStop",
+          "loopStart",
+          "loopEnd",
+        ]);
+        if (clip.hasAttribute("fadeTimeUnit") && attr(clip, "fadeTimeUnit") !== "seconds") throw new Error("Project audio fades need seconds.");
+        if (attr(clip, "contentTimeUnit") !== "seconds" || direct(clip, "Lanes").length)
+          throw new Error("Project audio clip has unsupported content.");
+        const audio = one(clip, "Audio")!;
+        attributesOnly(audio, ["id", "timeUnit", "channels", "sampleRate", "duration"]);
+        if (attr(audio, "timeUnit") !== "seconds") throw new Error("Project audio clip has unsupported content.");
+        childrenOnly(audio, ["File"]);
+        const file = one(audio, "File")!;
+        attributesOnly(file, ["path"]);
+        childrenOnly(file, []);
+        const path = attr(file, "path"),
+          asset = entries[path];
+        if (!path.startsWith("audio/") || !asset) throw new Error("Project audio asset is missing.");
+        usedPaths.add(path);
+        // Clips that name one file share one decoded recording, so a piece can be extended into audio another piece hides.
+        let decoded = decodedFiles.get(path);
+        if (!decoded) decodedFiles.set(path, (decoded = readAudioSource(asset)));
+        const channels = audioChannelCount(decoded);
+        const frames = audioFrameCount(decoded);
+        const rate = decoded.sampleRate;
+        const loop = readLoop(clip);
+        const windowed = clip.hasAttribute("playStart") || clip.hasAttribute("playStop");
+        let from = 0;
+        let to = frames;
+        if (loop) {
+          // A looped clip's window runs from playStart to the end of the recording and its length is `duration`; playStop is advisory (where the
+          // content would stop without the loop) and only has to lie after playStart and inside the recording.
+          const playStart = clip.hasAttribute("playStart") ? numberAttr(clip, "playStart") : 0;
+          from = Math.round(playStart * rate);
+          if (
+            from >= frames ||
+            loop.end > frames / rate + 1e-9 ||
+            (clip.hasAttribute("playStop") && (numberAttr(clip, "playStop") <= playStart || numberAttr(clip, "playStop") > frames / rate + 1e-9))
+          )
+            throw new Error("Project audio asset does not match its XML metadata.");
+        } else if (windowed) {
+          // One edge alone is valid DAWproject: a missing playStart is 0, and a missing playStop is the clip's length after playStart.
+          const playStart = clip.hasAttribute("playStart") ? numberAttr(clip, "playStart") : 0;
+          const playStop = clip.hasAttribute("playStop") ? numberAttr(clip, "playStop") : playStart + numberAttr(clip, "duration");
+          from = Math.round(playStart * rate);
+          to = Math.round(playStop * rate);
+          if (
+            !(playStart < playStop) ||
+            from < 0 ||
+            to > frames ||
+            from >= to ||
+            Math.abs(playStop - playStart - numberAttr(clip, "duration")) > 1e-9
+          )
+            throw new Error("Project audio asset does not match its XML metadata.");
+        }
+        if (
+          rate !== integerAttr(audio, "sampleRate", 1) ||
+          channels !== integerAttr(audio, "channels", 1) ||
+          Math.abs(frames / rate - numberAttr(audio, "duration")) > 1e-9 ||
+          (!windowed && !loop && Math.abs(frames / rate - numberAttr(clip, "duration")) > 1e-9)
+        )
+          throw new Error("Project audio asset does not match its XML metadata.");
+        const identity = audio.getAttribute("id");
+        const match = stored?.clips.find(
+          (item) =>
+            !matchedAudio.has(item) &&
+            item.track === trackId &&
+            identity === `${item.id}-audio` &&
+            (item.fingerprint === path || item.fingerprint === ""),
+        );
+        if (match) matchedAudio.add(match);
+
+        const aligned = match !== undefined;
+        const storedGain = aligned ? match.audioGain : undefined;
+        const gain = typeof storedGain === "number" && Number.isFinite(storedGain) && storedGain >= 0 ? storedGain : 1;
+        const fadeIn = clip.hasAttribute("fadeInTime") ? numberAttr(clip, "fadeInTime") : 0;
+        const fadeOut = clip.hasAttribute("fadeOutTime") ? numberAttr(clip, "fadeOutTime") : 0;
+        const originalPath = sourcePrefix + path.slice("audio/".length);
+        const original = windowed ? undefined : entries[originalPath];
+        let stretch: AudioClipStretchInit | undefined;
+        if (aligned && match.stretchRatio !== undefined) {
+          if (!original) throw new Error("Project clip stretch source is missing.");
+          stretch = { ratio: match.stretchRatio, source: readAudioSource(original), anchors: match.warpAnchors };
+        } else if (original) {
+          warnings.push("A rendered audio clip was opened without its Audiorective stretch settings.");
+        } else if (!aligned) {
+          warnings.push(`Audio clip ${path} has no matching Audiorective details; standard project data was used.`);
+        }
+        if (original) usedPaths.add(originalPath);
+        let gainAutomation: AudioClipGainAutomation | undefined;
+        if (aligned && match.gainAutomation !== undefined) {
+          try {
+            gainAutomation = normalizeClipGainAutomation(match.gainAutomation);
+          } catch {
+            warnings.push("Invalid Audiorective clip gain automation was skipped.");
+          }
+        }
+        const options = {
+          id: match?.id,
+          name: clip.getAttribute("name") || undefined,
+          envelope: { gain, fadeIn, fadeOut },
+          stretch,
+          gainAutomation,
+        };
+        const time = numberAttr(clip, "time");
+        const added = decoded.media
+          ? project.addAudioMediaClip(trackId, decoded.media, time, { ...options, startFrame: from, frameCount: to - from })
+          : project.addAudioClip(trackId, windowOfRecording(decoded, from, to), time, options);
+        if (loop) {
+          project.setClipLoop(added.id, { startSeconds: loop.start, endSeconds: loop.end });
+          project.resizeClip(added.id, { end: time + numberAttr(clip, "duration") });
+          // A resize drops a fade at the edge it moves, so the saved envelope is applied last.
+          project.setAudioClipEnvelope(added.id, options.envelope);
+        }
+        if (sceneId) adoptSlotClip(project, added.id, sceneId);
+      }
+    };
     const lanes = one(arrangement, "Lanes")!;
     attributesOnly(lanes, ["id", "timeUnit"]);
     if (attr(lanes, "timeUnit") !== "seconds") throw new Error("Project arrangement needs seconds time.");
@@ -995,142 +1171,11 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
         if (unit === "beats" && track.kind !== "midi") throw new Error("Project audio clip has unsupported time unit.");
         childrenOnly(clips, ["Clip"]);
         for (const clip of direct(clips, "Clip")) {
-          childrenOnly(clip, ["Lanes", "Audio"]);
-          if (track.kind === "midi") {
-            const midi = readMidi(clip, trackId, index, unit, stored, warnings);
-            // Seconds content converts to beats once the tempo map is known, after the arrangement is read.
-            if (unit === "beats") {
-              const added = project.addMidiClip(trackId, midi, midi.time, { id: midi.id, name: midi.name });
-              if (midi.loop) project.setClipLoop(added.id, { startBeat: midi.loop.start, endBeat: midi.loop.end });
-            } else secondsMidi.push({ trackId, midi });
-          } else {
-            attributesOnly(clip, [
-              "name",
-              "time",
-              "duration",
-              "contentTimeUnit",
-              "fadeTimeUnit",
-              "fadeInTime",
-              "fadeOutTime",
-              "playStart",
-              "playStop",
-              "loopStart",
-              "loopEnd",
-            ]);
-            if (clip.hasAttribute("fadeTimeUnit") && attr(clip, "fadeTimeUnit") !== "seconds") throw new Error("Project audio fades need seconds.");
-            if (attr(clip, "contentTimeUnit") !== "seconds" || direct(clip, "Lanes").length)
-              throw new Error("Project audio clip has unsupported content.");
-            const audio = one(clip, "Audio")!;
-            attributesOnly(audio, ["id", "timeUnit", "channels", "sampleRate", "duration"]);
-            if (attr(audio, "timeUnit") !== "seconds") throw new Error("Project audio clip has unsupported content.");
-            childrenOnly(audio, ["File"]);
-            const file = one(audio, "File")!;
-            attributesOnly(file, ["path"]);
-            childrenOnly(file, []);
-            const path = attr(file, "path"),
-              asset = entries[path];
-            if (!path.startsWith("audio/") || !asset) throw new Error("Project audio asset is missing.");
-            usedPaths.add(path);
-            // Clips that name one file share one decoded recording, so a piece can be extended into audio another piece hides.
-            let decoded = decodedFiles.get(path);
-            if (!decoded) decodedFiles.set(path, (decoded = readAudioSource(asset)));
-            const channels = audioChannelCount(decoded);
-            const frames = audioFrameCount(decoded);
-            const rate = decoded.sampleRate;
-            const loop = readLoop(clip);
-            const windowed = clip.hasAttribute("playStart") || clip.hasAttribute("playStop");
-            let from = 0;
-            let to = frames;
-            if (loop) {
-              // A looped clip's window runs from playStart to the end of the recording and its length is `duration`; playStop is advisory (where the
-              // content would stop without the loop) and only has to lie after playStart and inside the recording.
-              const playStart = clip.hasAttribute("playStart") ? numberAttr(clip, "playStart") : 0;
-              from = Math.round(playStart * rate);
-              if (
-                from >= frames ||
-                loop.end > frames / rate + 1e-9 ||
-                (clip.hasAttribute("playStop") && (numberAttr(clip, "playStop") <= playStart || numberAttr(clip, "playStop") > frames / rate + 1e-9))
-              )
-                throw new Error("Project audio asset does not match its XML metadata.");
-            } else if (windowed) {
-              if (!clip.hasAttribute("playStart") || !clip.hasAttribute("playStop"))
-                throw new Error("Project audio asset does not match its XML metadata.");
-              const playStart = numberAttr(clip, "playStart");
-              const playStop = numberAttr(clip, "playStop");
-              from = Math.round(playStart * rate);
-              to = Math.round(playStop * rate);
-              if (
-                !(playStart < playStop) ||
-                from < 0 ||
-                to > frames ||
-                from >= to ||
-                Math.abs(playStop - playStart - numberAttr(clip, "duration")) > 1e-9
-              )
-                throw new Error("Project audio asset does not match its XML metadata.");
-            }
-            if (
-              rate !== integerAttr(audio, "sampleRate", 1) ||
-              channels !== integerAttr(audio, "channels", 1) ||
-              Math.abs(frames / rate - numberAttr(audio, "duration")) > 1e-9 ||
-              (!windowed && !loop && Math.abs(frames / rate - numberAttr(clip, "duration")) > 1e-9)
-            )
-              throw new Error("Project audio asset does not match its XML metadata.");
-            const identity = audio.getAttribute("id");
-            const match = stored?.clips.find(
-              (item) =>
-                !matchedAudio.has(item) &&
-                item.track === trackId &&
-                identity === `${item.id}-audio` &&
-                (item.fingerprint === path || item.fingerprint === ""),
-            );
-            if (match) matchedAudio.add(match);
-
-            const aligned = match !== undefined;
-            const storedGain = aligned ? match.audioGain : undefined;
-            const gain = typeof storedGain === "number" && Number.isFinite(storedGain) && storedGain >= 0 ? storedGain : 1;
-            const fadeIn = clip.hasAttribute("fadeInTime") ? numberAttr(clip, "fadeInTime") : 0;
-            const fadeOut = clip.hasAttribute("fadeOutTime") ? numberAttr(clip, "fadeOutTime") : 0;
-            const originalPath = sourcePrefix + path.slice("audio/".length);
-            const original = windowed ? undefined : entries[originalPath];
-            let stretch: AudioClipStretchInit | undefined;
-            if (aligned && match.stretchRatio !== undefined) {
-              if (!original) throw new Error("Project clip stretch source is missing.");
-              stretch = { ratio: match.stretchRatio, source: readAudioSource(original), anchors: match.warpAnchors };
-            } else if (original) {
-              warnings.push("A rendered audio clip was opened without its Audiorective stretch settings.");
-            } else if (!aligned) {
-              warnings.push(`Audio clip ${path} has no matching Audiorective details; standard project data was used.`);
-            }
-            if (original) usedPaths.add(originalPath);
-            let gainAutomation: AudioClipGainAutomation | undefined;
-            if (aligned && match.gainAutomation !== undefined) {
-              try {
-                gainAutomation = normalizeClipGainAutomation(match.gainAutomation);
-              } catch {
-                warnings.push("Invalid Audiorective clip gain automation was skipped.");
-              }
-            }
-            const options = {
-              id: match?.id,
-              name: clip.getAttribute("name") || undefined,
-              envelope: { gain, fadeIn, fadeOut },
-              stretch,
-              gainAutomation,
-            };
-            const time = numberAttr(clip, "time");
-            const added = decoded.media
-              ? project.addAudioMediaClip(trackId, decoded.media, time, { ...options, startFrame: from, frameCount: to - from })
-              : project.addAudioClip(trackId, windowOfRecording(decoded, from, to), time, options);
-            if (loop) {
-              project.setClipLoop(added.id, { startSeconds: loop.start, endSeconds: loop.end });
-              project.resizeClip(added.id, { end: time + numberAttr(clip, "duration") });
-              // A resize drops a fade at the edge it moves, so the saved envelope is applied last.
-              project.setAudioClipEnvelope(added.id, options.envelope);
-            }
-          }
+          readClip(clip, trackId, track, unit, index);
           index++;
         }
       }
+      nextIndex.set(trackId, index);
       const automation = one(lane, "Points", false);
       if (automation) {
         attributesOnly(automation, ["id", "timeUnit"]);
@@ -1185,7 +1230,47 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
       if (initial && initial.bpm !== bpm) throw new Error("Project tempo automation disagrees with transport BPM.");
       project.setTempoChanges(changes.filter((point) => point.beat !== 0));
     }
-    for (const { trackId, midi } of secondsMidi) {
+    const scenesElement = one(root, "Scenes", false);
+    if (scenesElement) {
+      attributesOnly(scenesElement, []);
+      childrenOnly(scenesElement, ["Scene"]);
+      const sceneElements = direct(scenesElement, "Scene");
+      restoreScenes(
+        project,
+        sceneElements.map((scene) => {
+          attributesOnly(scene, ["id", "name"]);
+          childrenOnly(scene, ["Lanes"]);
+          return { id: scene.getAttribute("id") ?? undefined, name: scene.getAttribute("name") ?? undefined };
+        }),
+      );
+      sceneElements.forEach((scene, sceneIndex) => {
+        const sceneId = sessionFor(project).scenes[sceneIndex].id;
+        const sceneLanes = direct(scene, "Lanes");
+        if (sceneLanes.length !== 1) throw new Error("Project scene needs one Lanes element.");
+        attributesOnly(sceneLanes[0], ["id", "timeUnit"]);
+        childrenOnly(sceneLanes[0], ["ClipSlot"]);
+        const filled = new Set<string>();
+        for (const slot of direct(sceneLanes[0], "ClipSlot")) {
+          attributesOnly(slot, ["id", "track", "timeUnit", "hasStop"]);
+          childrenOnly(slot, ["Clip"]);
+          const trackId = attr(slot, "track");
+          const track = project.tracks.find((item) => item.id === trackId);
+          if (!track) throw new Error("Project scene refers to an unknown track.");
+          if (filled.has(trackId)) throw new Error("Project scene has two clip slots for one track.");
+          filled.add(trackId);
+          const slotClips = direct(slot, "Clip");
+          if (!slotClips.length) continue;
+          const unit = attr(slot, "timeUnit");
+          if (unit !== "seconds" && unit !== "beats") throw new Error("Project clip slot needs seconds or beats time.");
+          if (track.kind === "bus") throw new Error("Project bus tracks cannot contain clips.");
+          if (unit === "beats" && track.kind !== "midi") throw new Error("Project audio clip has unsupported time unit.");
+          const index = nextIndex.get(trackId) ?? 0;
+          nextIndex.set(trackId, index + 1);
+          readClip(slotClips[0], trackId, track, unit, index, sceneId);
+        }
+      });
+    }
+    for (const { trackId, midi, sceneId } of secondsMidi) {
       const map = project.tempoMap;
       const first = map.secondsToBeat(midi.time);
       const beat = (local: number) => map.secondsToBeat(midi.time + local) - first;
@@ -1200,6 +1285,7 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
         { id: midi.id, name: midi.name },
       );
       if (midi.loop) project.setClipLoop(added.id, { startBeat: beat(midi.loop.start), endBeat: beat(midi.loop.end) });
+      if (sceneId) adoptSlotClip(project, added.id, sceneId);
     }
     // Extension data comes back as records; every other file this codec does not use is kept and written back unchanged on save.
     const records = new Map<string, ExtensionRecord>();
@@ -1232,9 +1318,10 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
 export function portabilityReport(project: Project, warnings: readonly string[] = []): PortabilityReport {
   const tracks = project.tracks;
   const devices = tracks.flatMap((track) => track.devices);
-  const clips = tracks.flatMap((track) => track.clips);
+  const clips = tracks.flatMap((track) => [...track.clips, ...slotClipsOf(project, track.id)]);
   return {
     standardContent: [
+      ...(readSession(project).scenes.length ? ["Session scenes and clip slots"] : []),
       project.tempoMap.changes.length ? "DAWproject track layout and step tempo automation" : "DAWproject track layout and fixed tempo",
       ...(clips.some((clip) => clip.kind === "audio") ? ["audio clips"] : []),
       ...(clips.some((clip) => clip.kind === "audio" && (clip.envelope?.fadeIn || clip.envelope?.fadeOut)) ? ["audio clip fades"] : []),

@@ -137,6 +137,11 @@ export interface LauncherOptions {
   seed?: number;
   /** One name and tempo per scene slot. */
   scenes?: readonly SceneSpec[];
+  /**
+   * What a scene launch (`launchScene(index)` and each entry of `playChain`) does to a track whose slot in that scene is empty: "keep" leaves whatever it plays alone, "stop" stops it on the scene's
+   * boundary, as a Session view does. Default "keep". A `launchScene` given a clip list always leaves the other tracks alone.
+   */
+  emptySlots?: "keep" | "stop";
   /** Runs on every launch and stop before it is queued, so one rule can rewrite or drop them. */
   transform?: LaunchTransform;
   /** Aborting the signal calls `dispose()`. */
@@ -204,22 +209,30 @@ type Item = { when: number; rank: number; seq: number; owner: Inst | null; run: 
 
 // ---------------------------------------------------------------- Scene / Track / Clip
 export class Scene {
-  readonly name: string;
-  /** Slot index; 0 is the first scene. */
-  readonly index: number;
+  private readonly label: Cell<string>;
+  /** Tracked. */
+  get name(): string {
+    return this.label.value;
+  }
+  /** @internal Keeps the name of a scene a host mirrors in step with its own. */
+  _rename(name: string): void {
+    this.label.value = name;
+  }
+  /** Slot index; 0 is the first scene. Follows `insertScene` and `removeScene`. */
+  index: number;
   /** BPM set at the scene's shared boundary when `launchScene(index)` lands; null leaves the tempo. Writable. It is not subject to `transform` or `chance`: it changes at that boundary even when `transform` delays or drops, or a draw skips, some or all clips of the scene. */
   readonly tempo: Cell<number | null>;
   constructor(index: number, spec: SceneSpec | undefined) {
     this.index = index;
-    this.name = spec?.name ?? `Scene ${index + 1}`;
+    this.label = cell(spec?.name ?? `Scene ${index + 1}`);
     this.tempo = cell<number | null>(spec?.tempo ?? null);
   }
 }
 
 export class Clip {
   readonly track: Track;
-  /** Slot in `track.clips`; the scene this clip belongs to. */
-  readonly index: number;
+  /** Slot in `track.clips`; the scene this clip belongs to. Follows `insertScene` and `removeScene`. */
+  index: number;
   /** Every option with its default; replaced by `configure`. */
   readonly options: ReadonlyCell<ClipSettings>;
   /** Live volume in decibels. */
@@ -470,8 +483,13 @@ export class ClipLauncher extends EventTarget implements Scheduler {
   readonly context: BaseAudioContext;
   /** One per key: `launcher.tracks.bass.clips[0]`. */
   readonly tracks: Readonly<Record<string, Track>>;
-  /** One per slot: `launcher.scenes[0]` is the first scene. */
-  readonly scenes: readonly Scene[];
+  /** One per slot: `launcher.scenes[0]` is the first scene. Grows and shrinks with `insertScene` and `removeScene`; a tracked read. */
+  get scenes(): readonly Scene[] {
+    this.sceneRevision.$();
+    return this.sceneList;
+  }
+  private readonly sceneRevision = cell(0);
+  private readonly sceneList: Scene[];
   /** Boundary used when a call and the clip give none. Writable. */
   readonly quantize: Cell<Quantize>;
   /** The playing clip of every track that has one. */
@@ -484,6 +502,7 @@ export class ClipLauncher extends EventTarget implements Scheduler {
   private readonly seed: number;
   private readonly transform?: LaunchTransform;
   private readonly onSchedule?: LauncherOptions["onSchedule"];
+  private readonly emptySlots: "keep" | "stop";
   private handle: TransportAttachment | null = null;
   private lastWindow: TransportWindow | null = null;
   private lastTiming: BeatTiming | null = null;
@@ -511,8 +530,9 @@ export class ClipLauncher extends EventTarget implements Scheduler {
     this.seed = options.seed ?? 0;
     this.transform = options.transform;
     this.onSchedule = options.onSchedule;
+    this.emptySlots = options.emptySlots ?? "keep";
     const slots = Math.max(0, ...Object.values(tracks).map((c) => c.length), options.scenes?.length ?? 0);
-    this.scenes = Array.from({ length: slots }, (_, i) => new Scene(i, options.scenes?.[i]));
+    this.sceneList = Array.from({ length: slots }, (_, i) => new Scene(i, options.scenes?.[i]));
     const made: Record<string, Track> = {};
     for (const [name, specs] of Object.entries(tracks)) {
       const t = new Track(name, this);
@@ -724,7 +744,7 @@ export class ClipLauncher extends EventTarget implements Scheduler {
   }
   /**
    * Starts `clips[scene]` of every track on one shared boundary (`options.quantize`, else `launcher.quantize`; the clips' own `quantize` is not used) and, with a scene tempo, changes the tempo there;
-   * a track whose slot is empty is left alone. A clip list starts exactly those clips, one per track. A scene launch never toggles a clip off, and a gate or repeat clip started this way has no press to release (see `ClipMode`).
+   * a track whose slot is empty is left alone, unless the launcher was made with `emptySlots: "stop"`, which stops it at the same boundary. A clip list starts exactly those clips, one per track. A scene launch never toggles a clip off, and a gate or repeat clip started this way has no press to release (see `ClipMode`).
    */
   launchScene(scene: number | readonly Clip[], options?: LaunchOptions): void {
     untracked(() => {
@@ -762,7 +782,8 @@ export class ClipLauncher extends EventTarget implements Scheduler {
   ): void {
     const base = fixed !== undefined ? fixed : this.isPlaying() ? this.boundary(q, this.nowBeat()) : null;
     this.clearSceneTempos(true);
-    const clips = typeof scene === "number" ? Object.values(this.tracks).map((t) => t._clips[scene] ?? null) : scene;
+    const tracks = Object.values(this.tracks);
+    const clips = typeof scene === "number" ? tracks.map((t) => t._clips[scene] ?? null) : scene;
     for (const clip of clips)
       if (clip)
         this.request({
@@ -774,6 +795,10 @@ export class ClipLauncher extends EventTarget implements Scheduler {
           fixedBeat: base,
           chain,
         });
+    if (typeof scene === "number" && this.emptySlots === "stop")
+      tracks.forEach((t, i) => {
+        if (!clips[i]) this.request({ track: t, clip: null, source: "stop", quantize: q, fixedBeat: base, chain });
+      });
     const tempo = typeof scene === "number" ? this.scenes[scene]?.tempo.value : null;
     if (tempo != null) this.addSceneTempo(base, tempo);
   }
@@ -839,6 +864,64 @@ export class ClipLauncher extends EventTarget implements Scheduler {
     const mine = t.pending?.clip === clip || (t.commit?.kind === "start" && t.commit.inst.clip === clip);
     return mine ? this._cancelTrackQueued(t) : false;
   }
+  /**
+   * Adds an empty scene slot at `index` (0 to `scenes.length`) on every track. Later scenes and their clips move one slot later and keep playing, queued or not; `scene.index`
+   * and `clip.index` follow. A `playChain` in progress keeps naming the same scenes.
+   */
+  insertScene(index: number, spec?: SceneSpec): Scene {
+    if (!Number.isInteger(index) || index < 0 || index > this.sceneList.length)
+      throw new RangeError(`insertScene needs an index from 0 to ${this.sceneList.length}.`);
+    return untracked(() => {
+      const scene = new Scene(index, spec);
+      this.sceneList.splice(index, 0, scene);
+      for (const t of Object.values(this.tracks)) {
+        while (t._clips.length < this.sceneList.length - 1) t._clips.push(null);
+        t._clips.splice(index, 0, null);
+      }
+      this.renumber();
+      this.sceneRevision.value++;
+      this.shiftChain((i) => (i >= index ? i + 1 : i));
+      return scene;
+    });
+  }
+
+  /**
+   * Removes the scene slot at `index` and the clips in it: a clip playing or waiting there is stopped or withdrawn at once. Later scenes and their clips move one slot earlier and
+   * keep playing. A `playChain` that includes the scene ends.
+   */
+  removeScene(index: number): void {
+    if (!Number.isInteger(index) || index < 0 || index >= this.sceneList.length)
+      throw new RangeError(`removeScene needs an index from 0 to ${this.sceneList.length - 1}.`);
+    untracked(() => {
+      if (this.chainRun?.scenes.includes(index)) this.endChain();
+      for (const t of Object.values(this.tracks)) {
+        if (t._clips[index]) this._setClip(t, index, null);
+        t._clips.splice(index, 1);
+      }
+      this.sceneList.splice(index, 1);
+      this.renumber();
+      this.sceneRevision.value++;
+      this.shiftChain((i) => (i > index ? i - 1 : i));
+    });
+  }
+  private renumber(): void {
+    this.sceneList.forEach((scene, i) => (scene.index = i));
+    for (const t of Object.values(this.tracks)) {
+      t._clips.forEach((clip, i) => {
+        if (clip) clip.index = i;
+      });
+      this.syncCells(t);
+    }
+  }
+  private shiftChain(map: (scene: number) => number): void {
+    const run = this.chainRun;
+    if (!run) return;
+    const scenes = Object.freeze(run.scenes.map(map));
+    this.chainRun = { ...run, scenes };
+    const current = this.chainCell.value;
+    if (current) this.chainCell.value = Object.freeze({ scenes, index: current.index });
+  }
+
   /** @internal */ _setClip(track: Track, index: number, spec: ClipSpec | null): Clip | null {
     const old = track._clips[index];
     if (old) {

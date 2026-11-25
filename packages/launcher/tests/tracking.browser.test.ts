@@ -5,7 +5,7 @@ import * as launcherSourceModule from "../src/ClipLauncher.ts?raw";
 import { coverageGaps, watch } from "../../../scripts/tracking-coverage.mjs";
 import { rig, tone } from "./helpers";
 
-const touched = { launcher: new Set<string>(), clip: new Set<string>(), track: new Set<string>() };
+const touched = { launcher: new Set<string>(), clip: new Set<string>(), track: new Set<string>(), scene: new Set<string>() };
 
 function make() {
   const { ctx, clock } = rig(2);
@@ -51,6 +51,8 @@ describe("commands called inside an effect do not subscribe it", () => {
       launcher.launchScene(0);
       launcher.launchScene([clip]);
       launcher.playChain([0]);
+      launcher.insertScene(1);
+      launcher.removeScene(1);
       launcher.stopAll();
       launcher.cancelQueued();
       const onStarted = () => {};
@@ -163,6 +165,15 @@ describe("public readers are tracked", () => {
       () => launcher.quantize.value,
       () => (launcher.quantize.value = "2m"),
     );
+    const scene = watch(launcher.scenes[0]!, touched.scene);
+    await expectTracked(
+      () => scene.name,
+      () => scene._rename("Renamed"),
+    );
+    await expectTracked(
+      () => launcher.scenes.length,
+      () => launcher.insertScene(1),
+    );
     await expectTracked(
       () => launcher.scenes[0]!.tempo.value,
       () => (launcher.scenes[0]!.tempo.value = 90),
@@ -184,7 +195,7 @@ describe("every public member of a tracked class is covered", () => {
     ["ClipLauncher", ClipLauncher, touched.launcher, {}],
     ["Clip", Clip, touched.clip, {}],
     ["Track", Track, touched.track, {}],
-    ["Scene", Scene, new Set<string>(), {}],
+    ["Scene", Scene, touched.scene, {}],
   ] as const)("%s", (_name, ctor, seen, excluded) => {
     expect(coverageGaps(ctor, launcherSourceModule.default, seen, excluded)).toEqual([]);
   });

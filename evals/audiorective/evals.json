@@ -609,10 +609,10 @@
       "expected_output": "Uses the existing Workspace transport and the borrowed Clip Grid widget for a live quantized audio session.",
       "files": [],
       "expectations": [
-        "Calls Workspace.play before launch and passes both clip changes in one Workspace.launchClips call with a four-beat quantum",
-        "Specifies only the Bass track when switching or returning and passes clipId null for return to Arrangement",
-        "Uses workspace.session and cancelClipLaunch to drive mountClipGrid without creating another Clock or audio graph, and cancels only Bass with cancelClipLaunch(trackId) when only that track should be withdrawn",
-        "Describes PCM audio support and keeps live overrides and grid layout out of the DAWproject save"
+        "Calls Workspace.play before launching, sets workspace.session.value.quantize to \"4n\" (or passes quantize: \"4n\"), and starts both clips together with session.value.launchScene([drumClip, bassClip]) or launchScene(index) on the Project's scene",
+        "Switches only Bass with its own slot clip's launch() (found with workspace.sessionClip) and returns it to Arrangement with session.value.tracks[bassId].stop()",
+        "Uses workspace.session.value to drive mountClipGrid without creating another Clock or audio graph, cancels everything queued with session.value.cancelQueued(), and cancels only Bass with session.value.tracks[bassId].cancelQueued()",
+        "Puts the Drum and Bass clips in scenes with sessionFor(project) (addScene, setAudioClip), not on the timeline, and says the scenes and slot clips are saved in the DAWproject while what is launched or queued is not"
       ]
     },
     {
@@ -750,8 +750,8 @@
       "expected_output": "Launches a single quantized group with a finite mode for the hit and leaves normal loops and cancellation intact.",
       "files": [],
       "expectations": [
-        "Passes mode one-shot for the hit in Workspace.launchClips while the bass uses the default loop",
-        "Uses cancelClipLaunch only for the pending replacement and describes the existing one-shot and loop continuing",
+        "Makes the hit a one-shot with sessionClip(hitTrack, hitClip).configure({ loop: false }) while the bass keeps the default loop, and launches both on one boundary with session.value.launchScene([hit, bass])",
+        "Withdraws only the pending replacement with that track's cancelQueued() and describes the playing one-shot and loop continuing",
         "Says that the one-shot track returns to Arrangement at the audio end and observes workspace.session to show remaining active clips"
       ]
     },

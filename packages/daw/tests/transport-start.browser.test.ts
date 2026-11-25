@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "vitest";
 import type { ResetReason } from "@audiorective/clock";
 import { AudioRecorder } from "@audiorective/recorder";
 import { AudioMedia, Project, Workspace } from "../src";
+import { fillSession } from "./session-slots";
 
 const RATE = 48000;
 const SCALE = 2 ** 20;
@@ -514,7 +515,7 @@ test("a launch queued during the seek wait is still audible", async () => {
   p.addAudioMediaClip(a.id, media, 0);
   const b = p.addTrack("b", "audio");
   const dc = new Float32Array(RATE * 2).fill(0.25);
-  p.addAudioClip(b.id, { sampleRate: RATE, channels: [dc, dc] }, 0);
+  fillSession(p, b.id, [{ sampleRate: RATE, channels: [dc, dc] }]);
   const { ws, cap } = await open(p);
   await ws.play();
   await sleep(300);

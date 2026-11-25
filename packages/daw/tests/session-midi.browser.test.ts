@@ -1,6 +1,7 @@
 import { ManualTickSource } from "@audiorective/clock";
 import { afterEach, describe, expect, test } from "vitest";
 import { Project, Workspace, openWorkspace, saveWorkspace } from "../src";
+import { fillSession } from "./session-slots";
 
 const RATE = 48_000;
 const QUANTUM = 128;
@@ -57,15 +58,20 @@ const rms = (x: Float32Array, from: number, to: number) => {
   return Math.sqrt(energy / Math.max(1, Math.round((to - from) * RATE)));
 };
 
-/** 120 BPM: a bar is 2 s. Slot 0 is a long Arrangement note, slot 1 an empty clip, slot 2 a one-beat note per bar, slot 3 a note held all bar. */
+/**
+ * 120 BPM: a bar is 2 s. The Arrangement holds one long note. The Session holds, in scene 0 an empty clip, in scene 1 a one-beat note per bar, and in scene 2 a note held
+ * all bar.
+ */
 function song() {
   const project = new Project({ bpm: 120 });
   const track = project.addTrack("Synth", "midi");
   project.addWebClapDevice(track.id, { pluginId, name: "Synth", vendor: "", version: "", bundleUrl: bundle });
   project.addMidiClip(track.id, { duration: 16, notes: [{ pitch: 48, velocity: 0.9, start: 0, duration: 16 }] }, 0);
-  project.addMidiClip(track.id, { duration: 4, notes: [] }, 32);
-  project.addMidiClip(track.id, { duration: 4, notes: [{ pitch: 60, velocity: 0.9, start: 0, duration: 1 }] }, 40);
-  project.addMidiClip(track.id, { duration: 4, notes: [{ pitch: 64, velocity: 0.9, start: 0, duration: 4 }] }, 48);
+  fillSession(project, track.id, [
+    { duration: 4, notes: [] },
+    { duration: 4, notes: [{ pitch: 60, velocity: 0.9, start: 0, duration: 1 }] },
+    { duration: 4, notes: [{ pitch: 64, velocity: 0.9, start: 0, duration: 4 }] },
+  ]);
   cleanups.push(() => project.dispose());
   return { project, track };
 }
@@ -76,7 +82,7 @@ describe("Session MIDI through the track's device", () => {
     const control = song();
     const held = await render(control.project, 6, []);
     const launched = song();
-    const silent = await render(launched.project, 6, [{ at: 2.5, run: (w) => slot(w, launched.track.id, 1).launch() }]);
+    const silent = await render(launched.project, 6, [{ at: 2.5, run: (w) => slot(w, launched.track.id, 0).launch() }]);
     expect(rms(held, 4.5, 5.5)).toBeGreaterThan(0.01);
     expect(rms(silent, 2.5, 3.9)).toBeGreaterThan(0.01);
     expect(rms(silent, 4.6, 5.9)).toBeLessThan(rms(held, 4.5, 5.5) / 20);
@@ -85,9 +91,9 @@ describe("Session MIDI through the track's device", () => {
   test("a MIDI clip loops on its bar, and switching clips releases a held note", async () => {
     const { project, track } = song();
     const x = await render(project, 12, [
-      { at: 0.5, run: (w) => slot(w, track.id, 2).launch() },
-      { at: 6.5, run: (w) => slot(w, track.id, 3).launch() },
-      { at: 8.5, run: (w) => slot(w, track.id, 1).launch() },
+      { at: 0.5, run: (w) => slot(w, track.id, 1).launch() },
+      { at: 6.5, run: (w) => slot(w, track.id, 2).launch() },
+      { at: 8.5, run: (w) => slot(w, track.id, 0).launch() },
     ]);
     for (const bar of [2, 4]) {
       expect(rms(x, bar + 0.05, bar + 0.4)).toBeGreaterThan(0.01);
@@ -101,7 +107,7 @@ describe("Session MIDI through the track's device", () => {
     const { project, track } = song();
     project.addMidiClip(track.id, { duration: 2, notes: [{ pitch: 55, velocity: 0.9, start: 0, duration: 2 }] }, 20);
     const x = await render(project, 12, [
-      { at: 0.5, run: (w) => slot(w, track.id, 1).launch() },
+      { at: 0.5, run: (w) => slot(w, track.id, 0).launch() },
       { at: 6.5, run: (w) => w.session.value.stopAll() },
     ]);
     // The Arrangement note is released at the 2 s bar; the synth's release tail fades by about 4 s.
@@ -118,7 +124,7 @@ describe("Session MIDI through the track's device", () => {
       await context.close();
     });
     await context.resume();
-    slot(workspace, track.id, 2).launch();
+    slot(workspace, track.id, 1).launch();
     await workspace.play();
     await new Promise((resolve) => setTimeout(resolve, 300));
     const host = workspace.host(project.tracks[0].devices[0].id)!;
@@ -138,7 +144,7 @@ describe("Session MIDI through the track's device", () => {
     });
     const again = reopened.host(reopened.project.tracks[0].devices[0].id)!;
     expect(again.params[String(param.id) as `${number}`].value).toBeCloseTo(edited, 4);
-    expect(reopened.session.value.tracks[reopened.project.tracks[0].id]!.clips[2]).toBeTruthy();
+    expect(reopened.session.value.tracks[reopened.project.tracks[0].id]!.clips[1]).toBeTruthy();
   }, 30_000);
   test("deviceOptions reopens a saved file with the plug-ins this workspace loaded, and declines other URLs", async () => {
     const { project } = song();
@@ -167,6 +173,7 @@ describe("Session MIDI through the track's device", () => {
       project.addWebClapDevice(track.id, { pluginId, name: "Synth", vendor: "", version: "", bundleUrl: bundle });
       project.addMidiClip(track.id, { duration: 4, notes: [] }, 0);
       project.addMidiClip(track.id, { duration: 1, notes: [{ pitch: 60, velocity: 0.9, start: 0, duration: 1 }] }, 8);
+      fillSession(project, track.id, [{ duration: 4, notes: [] }]);
       cleanups.push(() => project.dispose());
       return { project, track };
     };
@@ -187,8 +194,8 @@ describe("Session MIDI through the track's device", () => {
       project.addWebClapDevice(track.id, { pluginId, name, vendor: "", version: "", bundleUrl: bundle });
       return track;
     });
-    project.addMidiClip(tracks[0].id, { duration: 8, notes: [{ pitch: 48, velocity: 0.9, start: 0, duration: 8 }] }, 64);
-    project.addMidiClip(tracks[1].id, { duration: 4, notes: [] }, 64);
+    fillSession(project, tracks[0].id, [{ duration: 8, notes: [{ pitch: 48, velocity: 0.9, start: 0, duration: 8 }] }]);
+    fillSession(project, tracks[1].id, [{ duration: 4, notes: [] }]);
     cleanups.push(() => project.dispose());
     const x = await render(project, 9, [
       { at: 0.5, run: (w) => slot(w, tracks[0].id, 0).launch() },

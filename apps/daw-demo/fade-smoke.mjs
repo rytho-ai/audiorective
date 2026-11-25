@@ -17,7 +17,8 @@ const server = await createServer({
           {
             tag: "script",
             attrs: { type: "module" },
-            children: 'import { AudioMedia, Project, Workspace } from "@audiorective/daw"; window.fadeFixture = { AudioMedia, Project, Workspace };',
+            children:
+              'import { AudioMedia, Project, Workspace, sessionFor } from "@audiorective/daw"; window.fadeFixture = { AudioMedia, Project, Workspace, sessionFor };',
           },
         ],
       },
@@ -87,7 +88,7 @@ try {
   await gainPoint.waitFor({ state: "detached" });
 
   const automated = await page.evaluate(async () => {
-    const { AudioMedia, Project, Workspace } = window.fadeFixture;
+    const { AudioMedia, Project, Workspace, sessionFor } = window.fadeFixture;
     const rate = 48000;
     const points = [
       { time: 0, value: 0.25, shape: "hold" },
@@ -141,15 +142,22 @@ try {
       const frames = new Float32Array(rate * 3).fill(1);
       const source = new AudioMedia(new Blob([frames]), rate, 1, frames.length);
       const fade = { gain: 0.5, fadeIn: 0, fadeOut: 0 };
-      const gainAutomation = { sourceStart: kind === "file" ? 0 : 0.5, points };
-      const clip =
-        kind === "file"
-          ? project.addAudioMediaClip(track.id, source, 0, { envelope: fade, gainAutomation })
-          : project.addAudioClip(track.id, { sampleRate: rate, channels: [new Float32Array(rate).fill(1)] }, 2, {
-              stretch: { ratio: 2, source: { sampleRate: rate, channels: [new Float32Array(rate / 2).fill(1)] } },
-              envelope: fade,
-              gainAutomation,
-            });
+      let clip;
+      if (kind === "file") clip = project.addAudioMediaClip(track.id, source, 0, { envelope: fade, gainAutomation: { sourceStart: 0, points } });
+      else {
+        // A Session clip stretched to twice its length; the automation begins half a second into its source, so the points after that moment are what plays.
+        const grid = sessionFor(project);
+        const half = grid.setAudioClip(
+          { trackId: track.id, sceneId: grid.addScene().id },
+          { sampleRate: rate, channels: [new Float32Array(rate / 2).fill(1)] },
+        );
+        clip = project.applyAudioClipStretch(half, 2, { sampleRate: rate, channels: [new Float32Array(rate).fill(1)] });
+        project.setAudioClipEnvelope(clip.id, fade);
+        clip = project.setAudioClipGainAutomation(clip.id, [
+          { time: 0, value: 0.75, shape: "linear" },
+          { time: 0.5, value: 0.5, shape: "hold" },
+        ]);
+      }
       const workspace = await Workspace.create(context, project, { destination: context.destination });
       const create = context.createBufferSource.bind(context);
       let starts = 0;
@@ -211,7 +219,7 @@ try {
     );
 
   const audible = await page.evaluate(async () => {
-    const { AudioMedia, Project, Workspace } = window.fadeFixture;
+    const { AudioMedia, Project, Workspace, sessionFor } = window.fadeFixture;
     const rate = 48000;
     async function render(kind) {
       const context = new OfflineAudioContext(2, rate, rate);
@@ -223,9 +231,13 @@ try {
       const samples = new Float32Array(length).fill(1);
       const envelope = { gain: 0.8, fadeIn: 0.4, fadeOut: blob ? 1.2 : 0.2 };
       const source = blob ? new AudioMedia(new Blob([samples]), rate, 1, length) : { sampleRate: rate, channels: [samples] };
-      const clip = blob
-        ? project.addAudioMediaClip(track.id, source, 0, { envelope })
-        : project.addAudioClip(track.id, source, kind === "session" ? 3 : 0, { envelope });
+      let clip;
+      if (blob) clip = project.addAudioMediaClip(track.id, source, 0, { envelope });
+      else if (kind === "session") {
+        const grid = sessionFor(project);
+        clip = grid.setAudioClip({ trackId: track.id, sceneId: grid.addScene().id }, source);
+        project.setAudioClipEnvelope(clip.id, envelope);
+      } else clip = project.addAudioClip(track.id, source, 0, { envelope });
       const runtime = await Workspace.create(context, project, { destination: context.destination });
       if (kind !== "session") runtime.seek(blob ? 2.2 : 0.2);
       await runtime.play();

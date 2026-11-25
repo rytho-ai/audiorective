@@ -2,6 +2,7 @@ import { AutomationCurve, type AutomationPoint } from "@audiorective/core/automa
 import type { Project, ProjectClip, ProjectMarker, ProjectTrack, TrackKind } from "./model";
 import { TempoMap, type TempoChange } from "./tempo-map";
 import { timeRangeKind, crossfadeSeconds } from "./ripple-delete";
+import { findSlotClip, readSession, slotKey } from "./session-state";
 
 /** One state of a Project. Opaque: compare it for equality and pass it back as `expectedVersion`. */
 export type ProjectVersion = string & { readonly __projectVersion: unique symbol };
@@ -31,7 +32,21 @@ export type ProjectOverview = Readonly<{
   signature: readonly [number, number];
   tempoChanges: readonly TempoChange[];
   markers: readonly ProjectMarker[];
+  /** The timeline clips of each track. Session slot clips are in `session`, not here. */
   tracks: readonly Readonly<{ id: string; name: string; kind: TrackKind; clips: readonly ProjectClipSummary[] }>[];
+  /** The Session grid: scenes in order, each with the clips of its filled slots. */
+  session: readonly Readonly<{ id: string; name: string; clips: readonly ProjectSlotClipSummary[] }>[];
+}>;
+
+/** A clip in a Session slot. `duration` is in the clip's own unit: seconds for audio, beats for MIDI. */
+export type ProjectSlotClipSummary = Readonly<{
+  id: string;
+  name?: string;
+  kind: "audio" | "midi";
+  trackId: string;
+  trackName: string;
+  duration: number;
+  unit: "seconds" | "beats";
 }>;
 
 export type ProjectClipQuery = Readonly<{
@@ -75,7 +90,6 @@ export type SetNoteVelocityEdit = Readonly<{
 export type RippleDeleteEdit = Readonly<{
   type: "rippleDelete";
   range: TimeRange;
-  /** Seconds of overlap, centred on each audio join. Default 0. */
   /** `true` for a short default crossfade (5 ms), `false` or omitted for none, or a length in seconds. */
   crossfade?: boolean | number;
 }>;
@@ -174,6 +188,26 @@ export function projectOverview(project: Project, version: ProjectVersion): Proj
       name: track.name,
       kind: track.kind,
       clips: track.clips.map((clip) => summary(project, tempo, track, clip)),
+    })),
+    session: readSession(project).scenes.map((scene) => ({
+      id: scene.id,
+      name: scene.name,
+      clips: project.tracks.flatMap((track) => {
+        const clip = readSession(project).slots.get(slotKey(scene.id, track.id));
+        if (!clip) return [];
+        const name = project.clipName(clip.id);
+        return [
+          {
+            id: clip.id,
+            ...(name === undefined ? {} : { name }),
+            kind: clip.kind,
+            trackId: track.id,
+            trackName: track.name,
+            duration: clip.duration,
+            unit: clip.kind === "midi" ? ("beats" as const) : ("seconds" as const),
+          },
+        ];
+      }),
     })),
   };
 }
@@ -318,6 +352,25 @@ function copyRange(project: Project, op: CopyRangeEdit, copies: ProjectEditCopie
 }
 
 function resolveClip(project: Project, selector: EditClipSelector, copies: ProjectEditCopies): { track: ProjectTrack; clip: ProjectClip } {
+  const id = selectedClipId(project, selector, copies);
+  for (const track of project.tracks) {
+    const clip = track.clips.find((item) => item.id === id);
+    if (clip) return { track, clip };
+  }
+  return fail("clip-not-found", `Clip "${id}" does not exist.`);
+}
+
+/** Like `resolveClip`, for edits that work on any clip by ID: a Session slot clip counts. */
+function resolveAnyClip(project: Project, selector: EditClipSelector, copies: ProjectEditCopies): ProjectClip {
+  const id = selectedClipId(project, selector, copies);
+  for (const track of project.tracks) {
+    const clip = track.clips.find((item) => item.id === id);
+    if (clip) return clip;
+  }
+  return findSlotClip(project, id!) ?? fail("clip-not-found", `Clip "${id}" does not exist.`);
+}
+
+function selectedClipId(project: Project, selector: EditClipSelector, copies: ProjectEditCopies): string | undefined {
   if (!selector || typeof selector !== "object") fail("invalid-operation", "Edit needs a clip selector.");
   const hasId = selector.clipId !== undefined;
   const hasCopy = selector.fromCopy !== undefined;
@@ -340,11 +393,7 @@ function resolveClip(project: Project, selector: EditClipSelector, copies: Proje
       fail("ambiguous-clip", `Copy "${selector.fromCopy}" matches ${matches.length} clips: ${matches.map((m) => m.id).join(", ")}.`);
     id = matches[0].id;
   }
-  for (const track of project.tracks) {
-    const clip = track.clips.find((item) => item.id === id);
-    if (clip) return { track, clip };
-  }
-  return fail("clip-not-found", `Clip "${id}" does not exist.`);
+  return id;
 }
 
 function moveClip(project: Project, op: MoveClipEdit, copies: ProjectEditCopies, moved: Map<string, number>, index: number): void {
@@ -362,7 +411,7 @@ function moveClip(project: Project, op: MoveClipEdit, copies: ProjectEditCopies,
 }
 
 function setNoteVelocity(project: Project, op: SetNoteVelocityEdit, copies: ProjectEditCopies): void {
-  const { clip } = resolveClip(project, op.clip, copies);
+  const clip = resolveAnyClip(project, op.clip, copies);
   if (clip.kind !== "midi") fail("invalid-operation", "setNoteVelocity needs a MIDI clip.");
   if (typeof op.velocity !== "number" || !Number.isFinite(op.velocity) || op.velocity < 0 || op.velocity > 1)
     fail("invalid-operation", "setNoteVelocity needs a velocity from 0 to 1.");
@@ -391,7 +440,7 @@ export function runProjectEdits(project: Project, ops: readonly ProjectEditOpera
       else if (op?.type === "moveClip") moveClip(project, op, copies, moved, index);
       else if (op?.type === "setNoteVelocity") setNoteVelocity(project, op, copies);
       else if (op?.type === "rippleDelete") rippleDeleteOp(project, op);
-      else if (op?.type === "renameClip") project.setClipName(resolveClip(project, op.clip, copies).clip.id, op.name);
+      else if (op?.type === "renameClip") project.setClipName(resolveAnyClip(project, op.clip, copies).id, op.name);
       else fail("invalid-operation", `Unknown edit type "${String((op as { type?: unknown } | null)?.type)}".`);
     } catch (error) {
       if (error instanceof ProjectEditFailure) throw new ProjectEditFailure(error.code, error.message, index);

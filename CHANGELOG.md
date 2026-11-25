@@ -15,6 +15,11 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Added
 
+- **daw:** Session scenes and clip slots are song content. `sessionFor(project)` (from `@audiorective/daw/project` and the root) returns the Project's `ProjectSession`: `scenes`, `addScene`, `renameScene`, `removeScene`, `duplicateScene`, `clipAt`, `setMidiClip`, `setAudioClip`, `moveClip`, `clearSlot` and `copyToArrangement`. A slot holds at most one clip that is not on the timeline; slot clips work with `setClipLoop`, `resizeClip`, `setClipName`, `setAudioClipEnvelope` and `clip.midi.edit` by id. Session edits are undoable inside `project.edit`, advance `project.cells.version` and are copied by `snapshot()`. `.dawproject` saves write `<Scenes>` (a `<Scene>` of `<ClipSlot track>` per filled slot) after `<Arrangement>`; files without it open with no scenes.
+- **launcher:** `launcher.insertScene(index, spec?)` and `launcher.removeScene(index)` grow and shrink the scene slots of a running launcher without stopping later scenes' clips.
+- **widgets:** A `mountClipGrid` layout scene may carry `index`; its button then calls `launchScene(index)`, so the launcher's `emptySlots` applies.
+- **daw:** `project.overview().session` lists scenes and their slot clips. File-backed audio slot clips (after `openWorkspaceBlob`) launch once their audio is read into memory. `openDawProject` accepts a clip with only `playStart` or only `playStop`.
+- **launcher:** `LauncherOptions.emptySlots: "keep" | "stop"` (default `"keep"`) chooses what `launchScene(index)` and each `playChain` entry do to a track whose slot in that scene is empty; `"stop"` stops it on the scene's boundary. `workspace.session` uses `"stop"`.
 - **daw:** `Project.setClipLoop(clipId, loop)` and `clip.loop` repeat part of a clip until it ends: a `BeatRange` on a MIDI clip, a `SecondsRange` of the recording on an audio clip, `null` to remove. Looped clips play in the Arrangement, the Session and offline renders; `resizeClip` can extend them past their content; `.dawproject` saves keep the loop as `loopStart`/`loopEnd`.
 - **daw:** `Project.rippleDelete(range, { crossfade })` (`crossfade: true` for a 5 ms crossfade, or seconds) and the `rippleDelete` edit remove a beat or seconds range (`TimeRange`, `SecondsRange`) from the whole song: clips are trimmed, split, removed or moved earlier, and markers, tempo changes and volume automation follow, with an optional audio crossfade. `renderMixRange` accepts a `SecondsRange`.
 - **daw:** Audio clips are windows over their whole recording. `AudioClip.sourceOffset` and `sourceLength` (also on `clip.stretch.source`) give the seconds into the recording where the clip begins and the recording's length. `Project.resizeClip(clipId, { start?, end? })` moves edges to absolute timeline positions, can reveal trimmed audio again inside the recording, and extends MIDI clips into empty space. `.dawproject` saves write each recording once, whole, with `playStart`/`playStop` on its clips, and reopened pieces share the recording.
@@ -57,6 +62,17 @@ predates that API. See the "Version mismatches" note in the skill.
   | `project.trimClip(id, localStart, clip.duration)` | `project.resizeClip(id, { start: clip.time + localStart })`                            |
 
 - **daw / daw-demo:** A project file's WebCLAP URL requires app approval. Supply `resolveBundle` when opening a project. The demo approves its built-in synth and bundles that the user explicitly loads in the current session.
+
+- **daw:** **Breaking.** `workspace.session` no longer makes slot `i` of a track out of the track's `i`-th Arrangement clip; its slots are the Project's Session grid, `sessionFor(project)`. `session.value.tracks[trackId].clips[i]` is scene `i`'s slot clip (`null` when empty), `launchScene(i)` launches scene `i` and stops the tracks whose slot is empty, and `workspace.sessionClip(trackId, clipId)` finds a slot clip by its id (a timeline clip has none). Scenes added or removed change the launcher in place. Migration:
+
+  | Before                                                                               | After                                                                                                                            |
+  | ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+  | `project.addMidiClip(track.id, data, time)` placed far away to give a Session slot   | `sessionFor(project).setMidiClip({ trackId: track.id, sceneId }, data)`                                                          |
+  | `project.addAudioClip(track.id, audio, time)` placed far away to give a Session slot | `sessionFor(project).setAudioClip({ trackId: track.id, sceneId }, audio)`                                                        |
+  | scene `i` = the `i`-th clip of every track                                           | `sessionFor(project).addScene({ name })`, once per scene, in order                                                               |
+  | a clip on both the timeline and in the Session                                       | a slot clip and an Arrangement clip with the same content; `session.copyToArrangement(slot, { atBeat })` makes the timeline copy |
+  | grid layout built from `track.clips` grouped by time                                 | `sessionFor(project).scenes` and `clipAt({ trackId, sceneId })`                                                                  |
+  | a scene launch left tracks with nothing in that scene playing                        | `launchScene(i)` stops them; `launchScene([clipA, clipB])` still starts exactly those clips                                      |
 
 ### Documentation and evaluation
 

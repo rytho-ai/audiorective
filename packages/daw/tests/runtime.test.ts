@@ -119,7 +119,7 @@ vi.mock("@audiorective/launcher", () => ({
 }));
 
 import { effect } from "@audiorective/core";
-import { Project, Workspace, openWorkspace, saveWorkspace, saveWorkspaceTo } from "../src";
+import { Project, Workspace, openWorkspace, saveWorkspace, saveWorkspaceTo, sessionFor } from "../src";
 import * as projectEntry from "../src/project";
 import * as runtimeEntry from "../src/runtime-entry";
 import * as dawprojectEntry from "../src/dawproject";
@@ -548,17 +548,23 @@ describe("workspace commands do not subscribe a calling effect", () => {
 });
 
 describe("workspace.sessionClip is a tracked reader", () => {
-  test("a view effect re-runs when the Project's clips change", async () => {
+  test("a view effect re-runs when the Session grid changes", async () => {
     const { workspace, project } = await setup();
     const track = project.addTrack("Audio", "audio");
     await workspace.sync();
-    const first = project.addAudioClip(track.id, { sampleRate: 100, channels: [new Float32Array(100)] }, 0);
+    const session = sessionFor(project);
+    const scene = session.addScene();
+    const first = session.setAudioClip({ trackId: track.id, sceneId: scene.id }, { sampleRate: 100, channels: [new Float32Array(100)] });
     const seen: Array<unknown> = [];
     const stop = effect(() => void seen.push(workspace.sessionClip(track.id, first.id)));
     expect(seen).toHaveLength(1);
-    project.addAudioClip(track.id, { sampleRate: 100, channels: [new Float32Array(100)] }, 1);
+    expect(seen[0]).toBe(workspace.session.value.tracks[track.id]!.clips[0]);
+    session.setAudioClip({ trackId: track.id, sceneId: scene.id }, { sampleRate: 100, channels: [new Float32Array(100)] });
     expect(seen.length).toBeGreaterThan(1);
     expect(workspace.sessionClip(track.id, "missing")).toBeNull();
+    // A timeline clip is not a Session clip.
+    const timeline = project.addAudioClip(track.id, { sampleRate: 100, channels: [new Float32Array(100)] }, 0);
+    expect(workspace.sessionClip(track.id, timeline.id)).toBeNull();
     stop();
     workspace.dispose();
     project.dispose();

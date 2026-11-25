@@ -1,0 +1,46 @@
+{
+  "area": "daw-scenes",
+  "description": "API-shape experiment for session scenes and clip slots stored in the song separately from the arrangement. Expectations describe behaviour, not names.",
+  "tasks": [
+    {
+      "id": "C1-scene-grid",
+      "prompt": "A browser groovebox has an empty song as `project` (4/4, 120 BPM) and its running engine as `workspace`. The song has three tracks: Drums and Bass (MIDI, each with a sound already set up) and Loop (audio). Write the code that builds a session grid of four scenes named Intro, Verse, Chorus and Outro. Each scene has its own clips on each track, made in code: one-bar MIDI patterns for Drums and Bass, and for Loop an audio clip from a given 2-second AudioBuffer `loopBuffer` that loops. Leave Bass empty in Intro. These clips live only in the session grid: the arrangement timeline stays empty, and nothing plays from it. Add buttons that launch each scene on the next bar, and a Stop button. A track with an empty slot in a launched scene stops. Save the song to a `.dawproject` Blob and open it again: the four scenes, their names and every slot's clip come back.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;\ndeclare const loopBuffer: AudioBuffer;",
+      "expectations": [
+        "Creates four named scenes whose clips belong to the session grid, not to the arrangement timeline.",
+        "Puts one-bar MIDI patterns in the Drums and Bass slots and a looping audio clip in the Loop slots, leaving Bass empty in Intro.",
+        "Scene buttons launch a whole scene on the next bar through the engine, and Stop stops the session.",
+        "A track whose slot is empty in the launched scene stops instead of continuing its previous clip.",
+        "The arrangement timeline stays empty and silent.",
+        "Scenes, names and slot clips survive saving and reopening."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "No arrangement clips used as slots, no hand-rolled launcher",
+          "none": ["addMidiClip\\([^)]*,\\s*\\d+\\s*\\*", "new\\s+ClipLauncher\\b", "setInterval\\s*\\("]
+        }
+      ]
+    },
+    {
+      "id": "C2-slot-edits",
+      "prompt": "A browser DAW has an open song as `project` and its running engine as `workspace`. The song has a session grid of scenes and clip slots (separate from the arrangement). Write the code for these session edits, each one Undo step: rename scene 2 to \"Drop\"; move the clip in slot (track \"Bass\", scene 1) to (track \"Bass\", scene 3); duplicate the whole of scene 2 as a new scene right after it; delete the clip in slot (track \"Drums\", scene 4) so that slot is empty; and copy the clip in slot (track \"Keys\", scene 2) onto the arrangement timeline at bar 9. Then list the grid: for every scene, its name and, per track, the name and length of the clip in its slot or \"empty\".",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;",
+      "expectations": [
+        "Renames a scene through the song model.",
+        "Moves a slot's clip to another scene on the same track.",
+        "Duplicates a whole scene right after the original, copying its slot clips.",
+        "Empties a slot by removing its clip.",
+        "Copies a slot clip onto the arrangement timeline at bar 9 without removing it from the slot.",
+        "Each edit is one undoable step, and the listing reads scenes and slots from the song model."
+      ],
+      "checks": [
+        {
+          "expectation": 5,
+          "label": "Reads the grid from the model, not from launcher internals or DOM",
+          "none": ["querySelector", "_clips"]
+        }
+      ]
+    }
+  ]
+}

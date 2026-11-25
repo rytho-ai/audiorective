@@ -1,16 +1,20 @@
 import { captureDeviceState } from "../src/model";
 import { describe, expect, test } from "vitest";
 import { effect } from "@audiorective/core";
-import { AudioMedia, MidiClip, Project, defineExtension, type AudioClip } from "../src";
+import { AudioMedia, MidiClip, Project, ProjectSession, defineExtension, sessionFor, type AudioClip } from "../src";
 import * as modelSourceModule from "../src/model.ts?raw";
+import * as sessionSourceModule from "../src/session.ts?raw";
 import { coverageGaps, watch } from "../../../scripts/tracking-coverage.mjs";
 const trackedChain = defineExtension({ id: "tracking.chain", defaultValue: (): number[] => [] });
 
 const touchedProject = new Set<string>();
 const touchedClip = new Set<string>();
+const touchedSession = new Set<string>();
 
 type Ctx = {
   project: Project;
+  session: ProjectSession;
+  sceneId: string;
   trackId: string;
   audioTrackId: string;
   busId: string;
@@ -33,7 +37,10 @@ function fixture(): Ctx {
   const audioClipId = project.addAudioClip(audioTrackId, { sampleRate: 8000, channels: [new Float32Array(800)] }, 0).id;
   const busId = project.addTrack("Bus", "bus").id;
   const deviceId = project.addWebClapDevice(trackId, { pluginId: "q", name: "Q", vendor: "v", version: "1", bundleUrl: "/q" }).id;
-  return { project, trackId, audioTrackId, busId, deviceId, clip, beatClip, audioClipId };
+  const session = watch(sessionFor(project), touchedSession);
+  const sceneId = session.addScene({ name: "Intro" }).id;
+  session.setMidiClip({ trackId, sceneId }, { duration: 1, notes: [] });
+  return { project, session, sceneId, trackId, audioTrackId, busId, deviceId, clip, beatClip, audioClipId };
 }
 
 /** Each public stateful reader is read inside an effect, changed through the owner's public method, and must re-run with a new value. */
@@ -206,6 +213,43 @@ const rows: Array<{ name: string; read: (ctx: Ctx) => unknown; mutate: (ctx: Ctx
     read: (c) => c.project.extension(trackedChain).value,
     mutate: (c) => c.project.extension(trackedChain).set([1]),
   },
+  { name: "ProjectSession.scenes (addScene)", read: (c) => c.session.scenes, mutate: (c) => void c.session.addScene() },
+  { name: "ProjectSession.scenes (renameScene)", read: (c) => c.session.scenes, mutate: (c) => c.session.renameScene(c.sceneId, "Verse") },
+  { name: "ProjectSession.scenes (removeScene)", read: (c) => c.session.scenes, mutate: (c) => c.session.removeScene(c.sceneId) },
+  { name: "ProjectSession.scenes (duplicateScene)", read: (c) => c.session.scenes, mutate: (c) => void c.session.duplicateScene(c.sceneId) },
+  {
+    name: "ProjectSession.clipAt (setMidiClip)",
+    read: (c) => c.session.clipAt({ trackId: c.trackId, sceneId: c.sceneId }),
+    mutate: (c) => void c.session.setMidiClip({ trackId: c.trackId, sceneId: c.sceneId }, { duration: 1, notes: [] }),
+  },
+  {
+    name: "ProjectSession.clipAt (setAudioClip)",
+    read: (c) => c.session.clipAt({ trackId: c.audioTrackId, sceneId: c.sceneId }),
+    mutate: (c) =>
+      void c.session.setAudioClip({ trackId: c.audioTrackId, sceneId: c.sceneId }, { sampleRate: 8000, channels: [new Float32Array(80)] }),
+  },
+  {
+    name: "ProjectSession.clipAt (moveClip)",
+    read: (c) => c.session.clipAt({ trackId: c.trackId, sceneId: c.sceneId }),
+    mutate: (c) => {
+      const other = c.session.addScene().id;
+      c.session.setMidiClip({ trackId: c.trackId, sceneId: other }, { duration: 1, notes: [] });
+      c.session.moveClip({ trackId: c.trackId, sceneId: other }, { trackId: c.trackId, sceneId: c.sceneId });
+    },
+  },
+  {
+    name: "ProjectSession.clipAt (clearSlot)",
+    read: (c) => c.session.clipAt({ trackId: c.trackId, sceneId: c.sceneId }),
+    mutate: (c) => c.session.clearSlot({ trackId: c.trackId, sceneId: c.sceneId }),
+  },
+  {
+    name: "Project.tracks (copyToArrangement)",
+    read: (c) => c.project.tracks[0].clips,
+    mutate: (c) => {
+      c.session.setMidiClip({ trackId: c.trackId, sceneId: c.sceneId }, { duration: 1, notes: [] });
+      c.session.copyToArrangement({ trackId: c.trackId, sceneId: c.sceneId }, { atBeat: 4 });
+    },
+  },
   { name: "Project.cells.revision", read: (c) => c.project.cells.revision.value, mutate: (c) => c.project.setTitle("Revised") },
   {
     name: "Project.clipTimeSeconds (tempo change)",
@@ -263,6 +307,33 @@ const commands: Array<{ name: string; run: (ctx: Ctx) => unknown }> = [
   { name: "splitClip (audio)", run: (c) => c.project.splitClip(c.audioClipId, 0.05) },
   { name: "rippleDelete", run: (c) => c.project.rippleDelete({ startSeconds: 0.02, endSeconds: 0.04 }, { crossfade: 0.01 }) },
   { name: "MidiClip.playbackEvents", run: (c) => c.clip.playbackEvents() },
+  { name: "ProjectSession.addScene", run: (c) => c.session.addScene() },
+  {
+    name: "ProjectSession.setMidiClip",
+    run: (c) => c.session.setMidiClip({ trackId: c.trackId, sceneId: c.sceneId }, { duration: 1, notes: [] }),
+  },
+  {
+    name: "ProjectSession.duplicateScene",
+    run: (c) => {
+      c.session.setMidiClip({ trackId: c.trackId, sceneId: c.sceneId }, { duration: 1, notes: [] });
+      return c.session.duplicateScene(c.sceneId);
+    },
+  },
+  {
+    name: "ProjectSession.copyToArrangement",
+    run: (c) => {
+      c.session.setMidiClip({ trackId: c.trackId, sceneId: c.sceneId }, { duration: 1, notes: [] });
+      return c.session.copyToArrangement({ trackId: c.trackId, sceneId: c.sceneId }, { atBeat: 4 });
+    },
+  },
+  {
+    name: "setClipLoop (slot clip)",
+    run: (c) =>
+      c.project.setClipLoop(c.session.setMidiClip({ trackId: c.trackId, sceneId: c.sceneId }, { duration: 2, notes: [] }).id, {
+        startBeat: 0,
+        endBeat: 1,
+      }),
+  },
 ];
 
 describe("Project commands do not subscribe a calling effect", () => {
@@ -304,7 +375,10 @@ describe("Project has one store", () => {
   });
 });
 
-describe("every public Project and MidiClip member is covered", () => {
+describe("every public Project, ProjectSession and MidiClip member is covered", () => {
+  test("ProjectSession", () => {
+    expect(coverageGaps(ProjectSession, sessionSourceModule.default, touchedSession, {})).toEqual([]);
+  });
   test("Project", () => {
     expect(coverageGaps(Project, modelSourceModule.default, touchedProject, {})).toEqual([]);
   });

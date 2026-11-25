@@ -54,6 +54,7 @@ import {
   type TimeRange,
 } from "./project-edits";
 import { audioLoopFrames, audioLoopSourceFrame, loopedNotes, loopedTimes } from "./clip-loop";
+import { emptySession, registerSessionReader, slotKey, splitSlotKey, type SessionScene, type SessionState } from "./session-state";
 
 export type TrackKind = "audio" | "midi" | "bus";
 export type BusRole = "submix" | "effect";
@@ -426,6 +427,8 @@ type ProjectState = Readonly<{
   markers: readonly ProjectMarker[];
   /** Extension data by extension id, kept as saved even when no definition is loaded. */
   extensions: ReadonlyMap<string, ExtensionRecord>;
+  /** The Session grid: scenes and the clips in their slots. */
+  session: SessionState;
 }>;
 
 /** One extension's saved data and the format version it was written with. */
@@ -438,16 +441,38 @@ const clipSeconds = (tempoMap: TempoMap, clip: ProjectClip, localTime = 0): numb
 
 const validTime = (time: number) => Number.isFinite(time) && time >= 0;
 
+type ClipLocation = Readonly<{ clip: ProjectClip; track: ProjectTrack }> | Readonly<{ clip: ProjectClip; key: string; track?: undefined }>;
+
+/** The same clip placed at time 0, as a Session slot holds it. */
+function atZero(clip: ProjectClip): ProjectClip {
+  if (clip.kind === "midi") {
+    midiClipTimes.get(clip)!.value = 0;
+    return clip;
+  }
+  return clip.time === 0 ? clip : Object.freeze({ ...clip, time: 0 });
+}
+
 const HISTORY_LIMIT = 50;
 let nextProjectInstance = 1;
 
-type EditPlacement = Readonly<{ trackId: string; clip: ProjectClip; time: number; name: string | undefined; notes?: readonly MidiNote[] }>;
+/** A clip's place: on a track's timeline, or (with `sceneId`) in a Session slot of that track. */
+type EditPlacement = Readonly<{
+  trackId: string;
+  sceneId?: string;
+  clip: ProjectClip;
+  time: number;
+  name: string | undefined;
+  notes?: readonly MidiNote[];
+}>;
 type EditSide = Readonly<{
   clips: ReadonlyMap<string, EditPlacement>;
   tempoMap: TempoMap;
   markers: readonly ProjectMarker[];
   automation: ReadonlyMap<string, readonly AutomationPoint[]>;
   extensions: ReadonlyMap<string, ExtensionRecord>;
+  /** The Session scenes by id; slot clips are in `clips`. */
+  scenes: ReadonlyMap<string, SessionScene>;
+  session: SessionState;
 }>;
 type EditEntry = {
   readonly label: string;
@@ -456,6 +481,8 @@ type EditEntry = {
   readonly markers: boolean;
   readonly automation: readonly string[];
   readonly extensions: readonly string[];
+  /** IDs of the scenes this edit added, removed or renamed. */
+  readonly scenes: readonly string[];
   before: EditSide;
   after: EditSide;
 };
@@ -479,13 +506,48 @@ const sameNotes = (a: readonly MidiNote[] | undefined, b: readonly MidiNote[] | 
       );
     }));
 const samePlacement = (a: EditPlacement | undefined, b: EditPlacement | undefined): boolean =>
-  a === b || (!!a && !!b && a.trackId === b.trackId && a.clip === b.clip && a.time === b.time && a.name === b.name && sameNotes(a.notes, b.notes));
+  a === b ||
+  (!!a &&
+    !!b &&
+    a.trackId === b.trackId &&
+    a.sceneId === b.sceneId &&
+    a.clip === b.clip &&
+    a.time === b.time &&
+    a.name === b.name &&
+    sameNotes(a.notes, b.notes));
 const clipFrameTolerance = (clip: ProjectClip) => (clip.kind === "audio" ? 1 / clip.sampleRate : 1e-9);
 const trackShellKeys = ["id", "name", "kind", "busRole", "routing", "volume", "muted", "solo", "pan", "devices", "effects", "effectMacros"] as const;
 
 let captureDeviceHook: (project: Project, deviceId: string, bytes: Uint8Array) => void;
 let borrowSnapshotHook: (project: Project) => Project;
 let extensionRecordsHook: (project: Project, records?: ReadonlyMap<string, ExtensionRecord>) => ReadonlyMap<string, ExtensionRecord>;
+let sessionBridgeHook: (project: Project) => SessionBridge;
+let restoreScenesHook: (project: Project, scenes: readonly Readonly<{ id?: string; name?: string }>[]) => void;
+let adoptSlotHook: (project: Project, clipId: string, sceneId: string) => void;
+
+/** What `ProjectSession` needs from its Project: reads of the Session grid and the writes that keep ids, names, history and the version in step. */
+export type SessionBridge = Readonly<{
+  /** The grid, read tracked. */
+  state(): SessionState;
+  /** The grid, read untracked. */
+  peek(): SessionState;
+  trackKind(trackId: string): TrackKind | undefined;
+  newSceneId(): string;
+  /** A clip made for a slot, at time 0, with its ID reserved. */
+  midi(data: ProjectMidiData, name: string | undefined): { clip: MidiClip; name: string | undefined };
+  audio(audio: ProjectAudio, name: string | undefined): { clip: AudioClip; name: string | undefined };
+  /** A copy of a clip with its own ID, name, loop and envelope. */
+  clone(clip: ProjectClip, time: number): { clip: ProjectClip; name: string | undefined };
+  /** Replace the grid. `named` clips take their names; `dropped` clips and `droppedIds` leave the project. */
+  write(
+    next: SessionState,
+    change?: Readonly<{ named?: ReadonlyMap<string, string>; dropped?: readonly ProjectClip[]; droppedIds?: readonly string[] }>,
+  ): void;
+  /** Put a detached clip on a track of its kind. */
+  place(trackId: string, clip: ProjectClip, name: string | undefined): void;
+  clipName(clipId: string): string | undefined;
+  tempoMap(): TempoMap;
+}>;
 
 /** Headless project content. AudioContext and UI state are not part of the file. */
 export class Project {
@@ -496,6 +558,9 @@ export class Project {
       if (records) project.commit({ extensions: records }, false);
       return project.s.extensions;
     };
+    sessionBridgeHook = (project) => project.sessionBridge();
+    restoreScenesHook = (project, scenes) => project.restoreScenes(scenes);
+    adoptSlotHook = (project, clipId, sceneId) => project.adoptSlot(clipId, sceneId);
   }
 
   readonly signature: readonly [number, number];
@@ -539,6 +604,7 @@ export class Project {
   private noteRevisions(state: ProjectState): number {
     let total = 0;
     for (const track of state.tracks) for (const clip of track.clips) if (clip instanceof MidiClip) total += clip.midi.revision.value;
+    for (const clip of state.session.slots.values()) if (clip instanceof MidiClip) total += clip.midi.revision.value;
     return total;
   }
 
@@ -574,9 +640,11 @@ export class Project {
         tracks: Object.freeze([]),
         markers: Object.freeze([]),
         extensions: new Map(),
+        session: emptySession,
       }),
     );
     const store = this.store;
+    registerSessionReader(this, () => untracked(() => store.value.session));
     const instance = `${(nextProjectInstance++).toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     this.cells = Object.freeze({
       revision: readonlyCell(() => store.value.revision),
@@ -590,6 +658,8 @@ export class Project {
         const midi = new Map<string, { notes: readonly MidiNote[]; duration: number }>();
         for (const track of state.tracks)
           for (const clip of track.clips) if (clip instanceof MidiClip) midi.set(clip.id, { notes: clip.midi.notes.value, duration: clip.duration });
+        for (const clip of state.session.slots.values())
+          if (clip instanceof MidiClip) midi.set(clip.id, { notes: clip.midi.notes.value, duration: clip.duration });
         return Object.freeze({ revision: state.revision, midi });
       }),
     });
@@ -676,6 +746,84 @@ export class Project {
     }) as ProjectExtension<T>;
     this.extensionHandles.set(definition as ExtensionDefinition<unknown>, handle as unknown as ProjectExtension<unknown>);
     return handle;
+  }
+
+  private sessionBridge(): SessionBridge {
+    return Object.freeze({
+      state: () => this.store.value.session,
+      peek: () => this.s.session,
+      trackKind: (trackId: string) => this.s.tracks.find((track) => track.id === trackId)?.kind,
+      newSceneId: () => this.reserve(undefined, "scene"),
+      midi: (data: ProjectMidiData, name: string | undefined) => this.buildMidiClip(data, 0, { name }),
+      audio: (audio: ProjectAudio, name: string | undefined) => this.buildAudioClip(audio, 0, { name }),
+      clone: (clip: ProjectClip, time: number) => untracked(() => this.cloneClip(clip, time)),
+      write: (
+        next: SessionState,
+        change: Readonly<{ named?: ReadonlyMap<string, string>; dropped?: readonly ProjectClip[]; droppedIds?: readonly string[] }> = {},
+      ) => {
+        const dropped = change.dropped ?? [];
+        for (const clip of dropped) {
+          this.ids.delete(clip.id);
+          this.retire(clip);
+        }
+        for (const id of change.droppedIds ?? []) this.ids.delete(id);
+        const names = new Map(this.s.clipNames);
+        for (const clip of dropped) names.delete(clip.id);
+        for (const [id, name] of change.named ?? []) names.set(id, name);
+        this.commit({ session: next, clipNames: names });
+      },
+      place: (trackId: string, clip: ProjectClip, name: string | undefined) => {
+        const track = this.s.tracks.find((item) => item.id === trackId)!;
+        this.replace(track, { clips: this.sortClips([...track.clips, clip]) }, this.namedClip(clip.id, name));
+      },
+      clipName: (clipId: string) => this.s.clipNames.get(clipId),
+      tempoMap: () => this.s.tempoMap,
+    });
+  }
+
+  /** Opening a file: the saved scenes, empty, with their IDs reserved. Not an Undo step. */
+  private restoreScenes(scenes: readonly Readonly<{ id?: string; name?: string }>[]): void {
+    const made: SessionScene[] = [];
+    for (const [index, scene] of scenes.entries()) {
+      const id = this.reserve(scene.id, "scene");
+      const name = scene.name ?? `Scene ${index + 1}`;
+      validateXmlText(name);
+      made.push(Object.freeze({ id, name }));
+    }
+    this.commit({ session: Object.freeze({ scenes: Object.freeze(made), slots: new Map() }) }, false);
+  }
+
+  /** Opening a file: a clip read onto the timeline moves into a slot of its track. Not an Undo step. */
+  private adoptSlot(clipId: string, sceneId: string): void {
+    const { track, clip } = this.clipAndTrack(clipId);
+    const session = this.s.session;
+    this.commit(
+      {
+        tracks: Object.freeze(
+          this.s.tracks.map((item) =>
+            item.id === track.id ? Object.freeze({ ...item, clips: Object.freeze(item.clips.filter((c) => c !== clip)) }) : item,
+          ),
+        ),
+        session: Object.freeze({ scenes: session.scenes, slots: new Map(session.slots).set(slotKey(sceneId, track.id), atZero(clip)) }),
+      },
+      false,
+    );
+  }
+
+  /** A copy of `clip` at `time` with its own ID, name, loop and envelope, not placed anywhere. */
+  private cloneClip(clip: ProjectClip, time: number): { clip: ProjectClip; name: string | undefined } {
+    const name = this.s.clipNames.get(clip.id);
+    if (clip.kind === "audio") {
+      const options = { name, envelope: clip.envelope, stretch: clip.stretch, gainAutomation: clip.gainAutomation };
+      const built = clip.media
+        ? this.buildMediaClip(clip.media, time, { ...options, startFrame: clip.startFrame, frameCount: clip.frameCount })
+        : this.buildAudioClip(clip, time, options);
+      if (!clip.loop) return built;
+      return { clip: Object.freeze({ ...built.clip, duration: clip.duration, loop: Object.freeze({ ...clip.loop }) }), name };
+    }
+    const id = this.reserve(undefined, "clip");
+    const loop = clip.loop && Object.freeze({ ...clip.loop });
+    return { clip: new MidiClip(id, time, { notes: clip.midi.notes.value, duration: clip.duration, events: clip.events }, loop), name };
   }
 
   /** Read a compact, JSON-serializable view and the version it describes. */
@@ -802,7 +950,19 @@ export class Project {
           ...(clip instanceof MidiClip ? { notes: clip.midi.notes.value } : {}),
         });
     }
-    return { clips, tempoMap: state.tempoMap, markers: state.markers, automation, extensions: state.extensions };
+    for (const [key, clip] of state.session.slots) {
+      const { sceneId, trackId } = splitSlotKey(key);
+      clips.set(clip.id, {
+        trackId,
+        sceneId,
+        clip,
+        time: clip.time,
+        name: state.clipNames.get(clip.id),
+        ...(clip instanceof MidiClip ? { notes: clip.midi.notes.value } : {}),
+      });
+    }
+    const scenes = new Map(state.session.scenes.map((scene) => [scene.id, scene] as const));
+    return { clips, tempoMap: state.tempoMap, markers: state.markers, automation, extensions: state.extensions, scenes, session: state.session };
   }
 
   private runEdit<T>(label: string, action: () => T): { result: T; entry: EditEntry | undefined } {
@@ -836,14 +996,18 @@ export class Project {
           const extensions = [...new Set([...before.extensions.keys(), ...after.extensions.keys()])].filter(
             (id) => before.extensions.get(id) !== after.extensions.get(id),
           );
-          if (!ids.length && !automation.length && !tempo && !markers && !extensions.length) return { result, entry: undefined };
-          const entry: EditEntry = { label: label.trim(), ids, tempo, markers, automation, extensions, before, after };
+          const scenes = [...new Set([...before.scenes.keys(), ...after.scenes.keys()])].filter(
+            (id) => before.scenes.get(id) !== after.scenes.get(id),
+          );
+          if (!ids.length && !automation.length && !tempo && !markers && !extensions.length && !scenes.length) return { result, entry: undefined };
+          const entry: EditEntry = { label: label.trim(), ids, tempo, markers, automation, extensions, scenes, before, after };
           this.pushHistory(entry);
           return { result, entry };
         } catch (error) {
           this.editing = undefined;
           for (const track of this.s.tracks)
             for (const clip of track.clips) if (clip instanceof MidiClip && before.clips.get(clip.id)?.clip !== clip) clip.dispose();
+          for (const clip of this.s.session.slots.values()) if (clip instanceof MidiClip && before.clips.get(clip.id)?.clip !== clip) clip.dispose();
           for (const clip of editing.retired) if (!before.clips.has(clip.id) || before.clips.get(clip.id)!.clip !== clip) clip.dispose();
           for (const { clip, time, notes } of before.clips.values()) {
             if (!(clip instanceof MidiClip)) continue;
@@ -883,7 +1047,7 @@ export class Project {
 
   /** Dispose MIDI clips held only by history entries that were just dropped. */
   private releaseClips(dropped: readonly EditEntry[]): void {
-    const reachable = new Set<ProjectClip>(this.s.tracks.flatMap((track) => track.clips));
+    const reachable = new Set<ProjectClip>([...this.s.tracks.flatMap((track) => track.clips), ...this.s.session.slots.values()]);
     for (const entry of [...this.undoStack, ...this.redoStack])
       for (const side of [entry.before, entry.after]) for (const { clip } of side.clips.values()) reachable.add(clip);
     for (const entry of dropped)
@@ -938,7 +1102,8 @@ export class Project {
       (!entry.tempo || current.tempoMap === side.tempoMap) &&
       (!entry.markers || current.markers === side.markers) &&
       entry.automation.every((id) => current.automation.get(id) === side.automation.get(id)) &&
-      entry.extensions.every((id) => current.extensions.get(id) === side.extensions.get(id))
+      entry.extensions.every((id) => current.extensions.get(id) === side.extensions.get(id)) &&
+      entry.scenes.every((id) => current.scenes.get(id) === side.scenes.get(id))
     );
   }
 
@@ -946,11 +1111,22 @@ export class Project {
   private sideCanApply(entry: EditEntry, side: EditSide): boolean {
     const touched = new Set(entry.ids);
     const tracks = new Map(this.s.tracks.map((track) => [track.id, track]));
+    const current = this.s.session.scenes;
+    // A scene or clip coming back keeps its ID only if nothing else has taken it since.
+    const here = new Set(current.map((scene) => scene.id));
+    if (entry.scenes.some((id) => side.scenes.has(id) && !here.has(id) && this.ids.has(id))) return false;
+    const live = new Set(this.s.session.slots.values());
+    const present = new Set([...live].map((clip) => clip.id));
+    for (const track of this.s.tracks) for (const clip of track.clips) present.add(clip.id);
     return entry.ids.every((id) => {
       const placement = side.clips.get(id);
       if (!placement) return true;
+      if (!present.has(id) && this.ids.has(id)) return false;
       const track = tracks.get(placement.trackId);
       if (track?.kind !== placement.clip.kind) return false;
+      // A slot clip has no neighbours: the Session grid holds one clip per slot, and its scene must be there or come back with this step.
+      if (placement.sceneId !== undefined)
+        return here.has(placement.sceneId) ? true : entry.scenes.includes(placement.sceneId) && side.scenes.has(placement.sceneId);
       const { clip, time } = placement;
       const tolerance = clipFrameTolerance(clip);
       return track.clips.every(
@@ -983,7 +1159,10 @@ export class Project {
     }
     const tracks = this.s.tracks.map((track) => {
       const touchesAutomation = entry.automation.includes(track.id);
-      const incoming = entry.ids.flatMap((id) => (side.clips.get(id)?.trackId === track.id ? [side.clips.get(id)!.clip] : []));
+      const incoming = entry.ids.flatMap((id) => {
+        const placement = side.clips.get(id);
+        return placement?.trackId === track.id && placement.sceneId === undefined ? [placement.clip] : [];
+      });
       const outgoing = track.clips.filter((clip) => ids.has(clip.id));
       const sameClips = outgoing.length === incoming.length && outgoing.every((clip) => incoming.includes(clip) && !moved.has(clip.id));
       if (!touchesAutomation && sameClips) return track;
@@ -999,9 +1178,35 @@ export class Project {
       if (name === undefined) clipNames.delete(id);
       else clipNames.set(id, name);
     }
+    let session: SessionState | undefined;
+    const slotted = [...ids].some((id) => entry.before.clips.get(id)?.sceneId !== undefined || entry.after.clips.get(id)?.sceneId !== undefined);
+    if (entry.scenes.length || slotted) {
+      const now = this.s.session;
+      const touchedScenes = new Set(entry.scenes);
+      // Scenes this step did not touch stay as they are; the ones it did come from `side`, each after the scene that precedes it there.
+      const scenes = now.scenes.filter((scene) => !touchedScenes.has(scene.id));
+      for (const [index, scene] of side.session.scenes.entries()) {
+        if (!touchedScenes.has(scene.id)) continue;
+        const before = side.session.scenes[index - 1];
+        scenes.splice(before ? scenes.findIndex((other) => other.id === before.id) + 1 : 0, 0, scene);
+      }
+      const slots = new Map([...now.slots].filter(([, clip]) => !ids.has(clip.id)));
+      for (const id of ids) {
+        const placement = side.clips.get(id);
+        if (placement?.sceneId !== undefined) slots.set(slotKey(placement.sceneId, placement.trackId), placement.clip);
+      }
+      for (const id of entry.scenes) {
+        if (touchedScenes.has(id) && !side.scenes.has(id)) this.ids.delete(id);
+        else if (side.scenes.has(id)) this.ids.add(id);
+      }
+      const dropped = new Set(scenes.map(({ id }) => id));
+      for (const key of [...slots.keys()]) if (!dropped.has(splitSlotKey(key).sceneId)) slots.delete(key);
+      session = Object.freeze({ scenes: Object.freeze(scenes), slots });
+    }
     this.commit({
       clipNames,
       tracks: Object.freeze(tracks),
+      ...(session ? { session } : {}),
       ...(entry.tempo ? { tempoMap: side.tempoMap } : {}),
       ...(entry.markers ? { markers: side.markers } : {}),
       ...(entry.extensions.length ? { extensions: this.withExtensions(entry.extensions, side.extensions) } : {}),
@@ -1019,7 +1224,9 @@ export class Project {
   }
 
   get hasFileBackedAudio(): boolean {
-    return this.store.value.tracks.some(({ clips }) => clips.some((clip) => clip.kind === "audio" && !!(clip.media || clip.stretch?.source.media)));
+    const fileBacked = (clip: ProjectClip) => clip.kind === "audio" && !!(clip.media || clip.stretch?.source.media);
+    const state = this.store.value;
+    return state.tracks.some(({ clips }) => clips.some(fileBacked)) || [...state.session.slots.values()].some(fileBacked);
   }
 
   get tracks(): readonly ProjectTrack[] {
@@ -1102,6 +1309,16 @@ export class Project {
         }),
       ),
     );
+    const slots = new Map<string, ProjectClip>();
+    for (const [key, clip] of state.session.slots)
+      slots.set(
+        key,
+        clip instanceof MidiClip
+          ? new MidiClip(clip.id, clip.time, { notes: clip.midi.notes.value, duration: clip.duration, events: clip.events }, clip.loop)
+          : borrowAudio
+            ? clip
+            : snapshotAudioClip(clip, recordings),
+      );
     copy.commit({
       masterVolume: state.masterVolume,
       tempoMap: state.tempoMap,
@@ -1109,7 +1326,10 @@ export class Project {
       clipNames: state.clipNames,
       tracks,
       extensions: state.extensions,
+      session: slots.size || state.session.scenes.length ? Object.freeze({ scenes: state.session.scenes, slots }) : emptySession,
     });
+    for (const scene of state.session.scenes) copy.ids.add(scene.id);
+    for (const clip of slots.values()) copy.ids.add(clip.id);
     for (const track of tracks) {
       copy.ids.add(track.id);
       for (const device of track.devices) copy.ids.add(device.id);
@@ -1156,7 +1376,7 @@ export class Project {
         return candidate;
       })();
     if (!validProjectId(chosen) || collidesWithProjectId(chosen, this.ids)) throw new Error("Project IDs must be unique XML IDs.");
-    const suffix = /^(?:clip|device|track)(\d+)$/.exec(chosen);
+    const suffix = /^(?:clip|device|track|scene)(\d+)$/.exec(chosen);
     const number = suffix && Number(suffix[1]);
     if (number && Number.isSafeInteger(number + 1)) nextProjectId.set(this, Math.max(number + 1, nextProjectId.get(this) ?? 1));
     this.ids.add(chosen);
@@ -1322,6 +1542,11 @@ export class Project {
       this.ids.delete(clip.id);
       this.retire(clip);
     }
+    const slotted = [...this.s.session.slots].filter(([key]) => splitSlotKey(key).trackId === trackId);
+    for (const [, clip] of slotted) {
+      this.ids.delete(clip.id);
+      this.retire(clip);
+    }
     for (const device of track.devices) {
       this.ids.delete(device.id);
       importedBundles.get(this)?.delete(device.id);
@@ -1342,7 +1567,13 @@ export class Project {
           });
         }),
     );
-    this.commit({ tracks, ...this.unnamedClips(track.clips.map(({ id }) => id)) });
+    const session = this.s.session;
+    const slots = slotted.length ? new Map([...session.slots].filter(([key]) => splitSlotKey(key).trackId !== trackId)) : session.slots;
+    this.commit({
+      tracks,
+      ...(slotted.length ? { session: Object.freeze({ scenes: session.scenes, slots }) } : {}),
+      ...this.unnamedClips([...track.clips, ...slotted.map(([, clip]) => clip)].map(({ id }) => id)),
+    });
   }
 
   addWebClapDevice(trackId: string, details: Omit<WebClapDevice, "kind" | "id" | "state"> & { id?: string; state?: Uint8Array }): WebClapDevice {
@@ -1419,6 +1650,13 @@ export class Project {
   addAudioClip(trackId: string, audio: ProjectAudio, time: number, options: AudioClipOptions = {}): AudioClip {
     assertProjectActive(this);
     const track = this.track(trackId, "audio");
+    const { clip, name } = this.buildAudioClip(audio, time, options);
+    this.replace(track, { clips: this.sortClips([...track.clips, clip]) }, this.namedClip(clip.id, name));
+    return clip;
+  }
+
+  /** An audio clip that is not placed anywhere yet; its ID is reserved. */
+  private buildAudioClip(audio: ProjectAudio, time: number, options: AudioClipOptions): { clip: AudioClip; name: string | undefined } {
     if (!validTime(time) || !validPcm(audio)) throw new RangeError("Project audio clips need a time, sample rate and equal-length PCM channels.");
     const stretch = normalizeClipStretch(options.stretch, audio.sampleRate, audio.channels.length, audio.channels[0].length);
     const duration = audio.channels[0].length / audio.sampleRate;
@@ -1439,8 +1677,7 @@ export class Project {
       ...(envelope === unityClipEnvelope ? {} : { envelope }),
       ...(gainAutomation ? { gainAutomation } : {}),
     });
-    this.replace(track, { clips: this.sortClips([...track.clips, clip]) }, this.namedClip(clip.id, name));
-    return clip;
+    return { clip, name };
   }
 
   /** Add file-backed PCM without copying the full take into the project model. */
@@ -1452,6 +1689,16 @@ export class Project {
   ): MediaAudioClip {
     assertProjectActive(this);
     const track = this.track(trackId, "audio");
+    const { clip, name } = this.buildMediaClip(media, time, options);
+    this.replace(track, { clips: this.sortClips([...track.clips, clip]) }, this.namedClip(clip.id, name));
+    return clip;
+  }
+
+  private buildMediaClip(
+    media: AudioMedia,
+    time: number,
+    options: AudioClipOptions & { startFrame?: number; frameCount?: number },
+  ): { clip: MediaAudioClip; name: string | undefined } {
     if (!(media instanceof AudioMedia)) throw new TypeError("Project media clip needs an AudioMedia asset.");
     const startFrame = options.startFrame ?? 0;
     const frameCount = options.frameCount ?? media.frameCount - startFrame;
@@ -1484,20 +1731,24 @@ export class Project {
       ...(envelope === unityClipEnvelope ? {} : { envelope }),
       ...(gainAutomation ? { gainAutomation } : {}),
     });
-    this.replace(track, { clips: this.sortClips([...track.clips, clip]) }, this.namedClip(clip.id, name));
-    return clip;
+    return { clip, name };
   }
 
   addMidiClip(trackId: string, data: ProjectMidiData, time: number, options: { id?: string; name?: string } = {}): MidiClip {
     assertProjectActive(this);
     const track = this.track(trackId, "midi");
+    const { clip, name } = this.buildMidiClip(data, time, options);
+    this.replace(track, { clips: this.sortClips([...track.clips, clip]) }, this.namedClip(clip.id, name));
+    return clip;
+  }
+
+  /** A MIDI clip that is not placed anywhere yet; its ID is reserved. */
+  private buildMidiClip(data: ProjectMidiData, time: number, options: { id?: string; name?: string }): { clip: MidiClip; name: string | undefined } {
     if (!validTime(time)) throw new RangeError("Project clip time must be finite and non-negative.");
     const name = normalizeClipName(options.name);
     const id = this.reserve(options.id, "clip");
     try {
-      const clip = new MidiClip(id, time, data);
-      this.replace(track, { clips: this.sortClips([...track.clips, clip]) }, this.namedClip(id, name));
-      return clip;
+      return { clip: new MidiClip(id, time, data), name };
     } catch (error) {
       this.ids.delete(id);
       throw error;
@@ -1565,7 +1816,7 @@ export class Project {
 
   /** `clip` replaced by a copy with `loop` and `duration`. The copy keeps the clip's ID, position and everything but the loop. */
   private looped(clip: ProjectClip, loop: BeatRange | SecondsRange | undefined, duration: number): ProjectClip {
-    const { track } = this.clipAndTrack(clip.id);
+    const where = this.locate(clip.id);
     let next: ProjectClip;
     if (clip.kind === "audio") {
       const { loop: _previous, ...audio } = clip;
@@ -1577,7 +1828,7 @@ export class Project {
         { notes: untracked(() => clip.midi.notes.value), duration, events: clip.events },
         loop && Object.freeze({ ...(loop as BeatRange) }),
       );
-    this.replace(track, { clips: this.sortClips(track.clips.map((item) => (item.id === clip.id ? next : item))) });
+    this.replaceClip(where, next);
     this.retire(clip);
     return next;
   }
@@ -1587,7 +1838,7 @@ export class Project {
    * there (`end <= sourceLength`) and its window is cut to the clip's length; a clip shorter than that keeps its length.
    */
   private unloopedAudio(clip: AudioClip): void {
-    const { track } = this.clipAndTrack(clip.id);
+    const where = this.locate(clip.id);
     const rate = clip.sampleRate;
     const recording = recordingOf(clip);
     const frames = Math.min(Math.round(clip.duration * rate), recording.frames - recording.offset);
@@ -1610,7 +1861,7 @@ export class Project {
       ...(envelope === unityClipEnvelope ? {} : { envelope }),
       ...(clip.gainAutomation ? { gainAutomation: clip.gainAutomation } : {}),
     });
-    this.replace(track, { clips: this.sortClips(track.clips.map((item) => (item.id === clip.id ? next : item))) });
+    this.replaceClip(where, next);
   }
 
   /**
@@ -1621,7 +1872,7 @@ export class Project {
    */
   setClipLoop(clipId: string, loop: BeatRange | SecondsRange | null): void {
     assertProjectActive(this);
-    const { clip } = this.clipAndTrack(clipId);
+    const { clip } = this.locate(clipId);
     if (loop === null) {
       if (clip.kind === "audio" && clip.loop) this.unloopedAudio(clip);
       else if (clip.loop) this.looped(clip, undefined, clip.duration);
@@ -1641,6 +1892,28 @@ export class Project {
     this.looped(clip, isMidi ? { startBeat: start, endBeat: end } : { startSeconds: start, endSeconds: end }, clip.duration);
   }
 
+  /** A clip on the timeline or in a Session slot, by ID. */
+  private locate(clipId: string): ClipLocation {
+    const track = this.s.tracks.find((item) => item.clips.some((clip) => clip.id === clipId));
+    const clip = track?.clips.find((item) => item.id === clipId);
+    if (track && clip) return { track, clip };
+    for (const [key, slotClip] of this.s.session.slots) if (slotClip.id === clipId) return { clip: slotClip, key };
+    throw new Error("Project clip does not exist.");
+  }
+
+  /** Swap `where`'s clip for `next` in place, on the timeline (kept in time order) or in its slot. */
+  private replaceClip(where: ClipLocation, next: ProjectClip, order = true): void {
+    if (where.track) {
+      const { track, clip } = where;
+      const swapped = track.clips.map((item) => (item === clip ? next : item));
+      this.replace(track, { clips: order ? this.sortClips(swapped) : Object.freeze(swapped) });
+      return;
+    }
+    const session = this.s.session;
+    this.commit({ session: Object.freeze({ scenes: session.scenes, slots: new Map(session.slots).set(where.key, next) }) });
+  }
+
+  /** Timeline clips only. */
   private clipAndTrack(clipId: string): { track: ProjectTrack; clip: ProjectClip } {
     const track = this.s.tracks.find((item) => item.clips.some((clip) => clip.id === clipId));
     const clip = track?.clips.find((item) => item.id === clipId);
@@ -1658,7 +1931,7 @@ export class Project {
     assertProjectActive(this);
     const normalized = normalizeClipName(name);
     if (normalized === undefined) throw new RangeError("Project clip name must not be empty.");
-    this.clipAndTrack(clipId);
+    this.locate(clipId);
     if (this.s.clipNames.get(clipId) === normalized) return;
     this.commit(this.namedClip(clipId, normalized));
   }
@@ -1679,21 +1952,23 @@ export class Project {
   /** Replace the clip's playback gain and fades while borrowing the same source PCM. */
   setAudioClipEnvelope(clipId: string, settings: ClipEnvelope): AudioClip {
     assertProjectActive(this);
-    const { track, clip } = this.clipAndTrack(clipId);
+    const where = this.locate(clipId);
+    const { clip } = where;
     if (clip.kind !== "audio") throw new Error("Project clip envelope needs an audio clip.");
     const envelope = normalizeClipEnvelope(settings, clip.duration);
     const { envelope: previous, ...audio } = clip;
     const old = previous ?? unityClipEnvelope;
     if (envelope.gain === old.gain && envelope.fadeIn === old.fadeIn && envelope.fadeOut === old.fadeOut) return clip;
     const next = Object.freeze({ ...audio, ...(envelope === unityClipEnvelope ? {} : { envelope }) });
-    this.replace(track, { clips: Object.freeze(track.clips.map((item) => (item === clip ? next : item))) });
+    this.replaceClip(where, next, false);
     return next;
   }
 
   /** Set gain automation in original source seconds. An empty curve clears it. */
   setAudioClipGainAutomation(clipId: string, points: readonly AutomationPoint[]): AudioClip {
     assertProjectActive(this);
-    const { track, clip } = this.clipAndTrack(clipId);
+    const where = this.locate(clipId);
+    const { clip } = where;
     if (clip.kind !== "audio") throw new Error("Project clip gain automation needs an audio clip.");
     const { gainAutomation: previous, ...audio } = clip;
     const gainAutomation = normalizeClipGainAutomation({ sourceStart: previous?.sourceStart ?? 0, points });
@@ -1706,15 +1981,15 @@ export class Project {
       if (unchanged) return clip;
     }
     const next = Object.freeze({ ...audio, ...(gainAutomation ? { gainAutomation } : {}) });
-    this.replace(track, { clips: Object.freeze(track.clips.map((item) => (item === clip ? next : item))) });
+    this.replaceClip(where, next, false);
     return next;
   }
 
   /** Apply a prepared render only to the exact clip revision the processor borrowed. */
   applyAudioClipStretch(expected: AudioClip, ratio: number, rendered?: ProjectAudio, warp: readonly ClipStretchAnchor[] = []): AudioClip {
     assertProjectActive(this);
-    const { track, clip } = this.clipAndTrack(expected.id);
-    if (clip !== expected) throw new Error("Audio clip changed while rendering stretch.");
+    const where = this.locate(expected.id);
+    if (where.clip !== expected) throw new Error("Audio clip changed while rendering stretch.");
     const original = expected.stretch?.source ?? audioSource(expected);
     const outputFrames = Math.round(audioFrameCount(original) * ratio);
     const anchors = normalizeClipAnchors(warp, audioFrameCount(original), outputFrames);
@@ -1754,7 +2029,7 @@ export class Project {
       ...(usesRender ? { stretch: Object.freeze({ ratio, source: original, ...(anchors.length ? { anchors } : {}) }) } : {}),
       ...(expected.gainAutomation ? { gainAutomation: expected.gainAutomation } : {}),
     });
-    this.replace(track, { clips: this.sortClips(track.clips.map((item) => (item === expected ? next : item))) });
+    this.replaceClip(where, next);
     return next;
   }
 
@@ -1924,9 +2199,12 @@ export class Project {
    */
   resizeClip(clipId: string, edges: { start?: number; end?: number }): ProjectClip {
     assertProjectActive(this);
-    const { track, clip } = this.clipAndTrack(clipId);
-    const resized = untracked(() => this.resizeUntracked(clip, edges ?? {}));
-    this.replace(track, { clips: this.sortClips(track.clips.map((item) => (item.id === clipId ? resized : item))) });
+    const where = this.locate(clipId);
+    const { clip } = where;
+    let resized = untracked(() => this.resizeUntracked(clip, edges ?? {}));
+    // A slot clip has no place on the timeline: trimming its start keeps it at 0.
+    if (!where.track) resized = atZero(resized);
+    this.replaceClip(where, resized);
     this.retire(clip);
     return resized;
   }
@@ -2015,6 +2293,7 @@ export class Project {
   dispose(): void {
     if (!markProjectDisposed(this)) return;
     for (const track of this.s.tracks) for (const clip of track.clips) if (clip instanceof MidiClip) clip.dispose();
+    for (const clip of this.s.session.slots.values()) if (clip instanceof MidiClip) clip.dispose();
     const history = [...this.undoStack, ...this.redoStack];
     this.undoStack = [];
     this.redoStack = [];
@@ -2035,6 +2314,19 @@ export function renderSnapshot(project: Project): Project {
 /** Codec access to the extension records: read them, or replace them without an Undo step when a file is opened. */
 export function extensionRecords(project: Project, records?: ReadonlyMap<string, ExtensionRecord>): ReadonlyMap<string, ExtensionRecord> {
   return extensionRecordsHook(project, records);
+}
+
+/** `ProjectSession`'s access to its Project. */
+export function sessionBridge(project: Project): SessionBridge {
+  return sessionBridgeHook(project);
+}
+
+/** Codec access to the Session: restore the scenes of a file, then move each read clip into its slot. */
+export function restoreScenes(project: Project, scenes: readonly Readonly<{ id?: string; name?: string }>[]): void {
+  restoreScenesHook(project, scenes);
+}
+export function adoptSlotClip(project: Project, clipId: string, sceneId: string): void {
+  adoptSlotHook(project, clipId, sceneId);
 }
 
 export function captureDeviceState(project: Project, deviceId: string, bytes: Uint8Array): void {

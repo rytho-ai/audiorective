@@ -1,7 +1,7 @@
 import { effect, untracked } from "@audiorective/core";
 import type { Clip, ClipLauncher, Quantize } from "@audiorective/launcher";
 import { mountClipGrid, type ClipGridLayout } from "@audiorective/widgets";
-import type { Workspace } from "@audiorective/daw";
+import { sessionFor, type Workspace } from "@audiorective/daw";
 
 export function mountStudioSession(
   root: HTMLElement,
@@ -62,38 +62,27 @@ export function mountStudioSession(
   };
   const stopLayout = effect(() => {
     const launcher = workspace.session.value;
-    workspace.project.cells.revision.$();
-    const { tracks, markers } = workspace.project;
-    const sceneTracks: ClipGridLayout["tracks"][number][] = [];
+    const song = sessionFor(workspace.project);
     type SceneSlots = ClipGridLayout["scenes"][number]["clips"][number][];
-    const clipsByTime = new Map<number, SceneSlots[]>();
-    for (const track of tracks) {
+    const scenes = song.scenes.map(({ name }, index) => ({ label: name, index, clips: [] as SceneSlots }));
+    const sceneTracks: ClipGridLayout["tracks"][number][] = [];
+    for (const track of workspace.project.tracks) {
       const sessionTrack = launcher.tracks[track.id];
       if (track.kind !== "audio" || !sessionTrack) continue;
-      const launchable = track.clips.filter((clip) => clip.kind === "audio" && !clip.media);
-      if (!launchable.length) continue;
+      const slots = song.scenes.map((scene) => song.clipAt({ trackId: track.id, sceneId: scene.id }));
+      if (!slots.some((clip) => clip?.kind === "audio" && !clip.media)) continue;
       sceneTracks.push({ track: sessionTrack, label: track.name });
-      for (const clip of launchable) {
+      slots.forEach((clip, index) => {
+        if (clip?.kind !== "audio" || clip.media) return;
         const sessionClip: Clip | null = workspace.sessionClip(track.id, clip.id);
-        if (!sessionClip) continue;
-        let groups = clipsByTime.get(clip.time);
-        if (!groups) clipsByTime.set(clip.time, (groups = []));
-        let group = groups.find((slots) => slots.every((slot) => slot.track !== sessionTrack));
-        if (!group) groups.push((group = []));
-        group.push({ track: sessionTrack, clip: sessionClip, label: `▶ ${clip.duration.toFixed(2)} s` });
-      }
-    }
-    const scenes = [...clipsByTime.entries()]
-      .sort(([left], [right]) => left - right)
-      .flatMap(([time, groups]) => {
-        const label = markers.find((marker) => marker.time === time)?.name || `${time.toFixed(2)} s`;
-        return groups.map((clips, index) => ({ label: index ? `${label} · ${index + 1}` : label, clips }));
+        if (sessionClip) scenes[index].clips.push({ track: sessionTrack, clip: sessionClip, label: `▶ ${clip.duration.toFixed(2)} s` });
       });
+    }
     const layout = { tracks: sceneTracks, scenes };
     const key = JSON.stringify([
       identity(launcher),
       sceneTracks.map(({ track, label }) => [identity(track), label]),
-      scenes.map((scene) => [scene.label, scene.clips.map((slot) => [identity(slot.track), identity(slot.clip), slot.label])]),
+      scenes.map((scene) => [scene.label, scene.index, scene.clips.map((slot) => [identity(slot.track), identity(slot.clip), slot.label])]),
     ]);
     untracked(() => {
       if (launcher !== mounted) mount(launcher);

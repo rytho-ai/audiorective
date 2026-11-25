@@ -48,6 +48,7 @@ export type {
   ProjectEditRejection,
   ProjectEditRequest,
   ProjectOverview,
+  ProjectSlotClipSummary,
   ProjectVersion,
   RenameClipEdit,
   RippleDeleteEdit,
@@ -64,3 +65,5 @@ export { TempoMap } from "./tempo-map";
 export type { TempoChange } from "./tempo-map";
 export { AudioMedia, AudioMediaWriter } from "./media";
 export type { AudioMediaStorage, AudioMediaChunk, AudioMediaSpan } from "./media";
+export { ProjectSession, sessionFor } from "./session";
+export type { SessionScene, SessionSlot } from "./session";

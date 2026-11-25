@@ -29,6 +29,29 @@ function fake() {
 }
 
 describe("mountClipGrid", () => {
+  test("a scene row with an index launches the launcher's scene, so its empty-slot rule applies", () => {
+    const { clip, track, launcher } = fake();
+    const drums = track();
+    const bass = track();
+    const [d1, d2] = [clip(), clip()];
+    const grid = mountClipGrid(host(), { launcher });
+    grid.setLayout({
+      tracks: [
+        { track: drums, label: "Drums" },
+        { track: bass, label: "Bass" },
+      ],
+      scenes: [
+        { label: "Intro", index: 0, clips: [{ track: drums, clip: d1, label: "beat" }] },
+        { label: "Drop", clips: [{ track: drums, clip: d2, label: "beat" }] },
+      ],
+    });
+    const scene = (name: string) => [...document.querySelectorAll("button")].find((item) => item.getAttribute("aria-label") === name)!;
+    scene("Scene Intro").click();
+    expect(launcher.launchScene).toHaveBeenLastCalledWith(0);
+    scene("Scene Drop").click();
+    expect(launcher.launchScene).toHaveBeenLastCalledWith([d2]);
+  });
+
   test("buttons call the launcher's commands and cells drive the markers", () => {
     const { clip, track, queued, playing, launcher } = fake();
     const drums = track();

@@ -17,7 +17,8 @@ const server = await createServer({
           {
             tag: "script",
             attrs: { type: "module" },
-            children: 'import { Workspace, Project } from "@audiorective/daw"; window.sessionFixture = { Workspace, Project };',
+            children:
+              'import { Workspace, Project, sessionFor } from "@audiorective/daw"; window.sessionFixture = { Workspace, Project, sessionFor };',
           },
         ],
       },
@@ -64,7 +65,7 @@ try {
   });
 
   const verification = await page.evaluate(async () => {
-    const { Workspace, Project } = window.sessionFixture;
+    const { Workspace, Project, sessionFor } = window.sessionFixture;
     const sampleRate = 48_000;
     const context = new OfflineAudioContext(2, sampleRate * 4, sampleRate);
     // Workspace's realtime resume is a no-op before starting an offline render.
@@ -77,11 +78,20 @@ try {
     function clip(track, time, duration, amplitude) {
       return project.addAudioClip(track.id, { sampleRate, channels: [new Float32Array(Math.round(sampleRate * duration)).fill(amplitude)] }, time);
     }
+    // The arrangement plays the long clips; the Session holds the loops: scene 0 has both tracks, scene 1 only the bass.
     clip(drums, 0, 6, 0.18);
     clip(bass, 0, 6, 0.2);
-    const drumsLoop = clip(drums, 8, 0.21, 0.35);
-    const bassA = clip(bass, 8, 0.17, 0.3);
-    const bassB = clip(bass, 9, 0.13, 0.45);
+    const grid = sessionFor(project);
+    const [first, second] = [grid.addScene(), grid.addScene()];
+    function slot(track, scene, duration, amplitude) {
+      return grid.setAudioClip(
+        { trackId: track.id, sceneId: scene.id },
+        { sampleRate, channels: [new Float32Array(Math.round(sampleRate * duration)).fill(amplitude)] },
+      );
+    }
+    const drumsLoop = slot(drums, first, 0.21, 0.35);
+    const bassA = slot(bass, first, 0.17, 0.3);
+    const bassB = slot(bass, second, 0.13, 0.45);
     const workspace = await Workspace.create(context, project, { destination: context.destination });
     const session = () => workspace.session.value;
     const clipOf = (track, slot) => workspace.sessionClip(track.id, slot.id);
@@ -177,7 +187,7 @@ try {
     }
   }
   const oneShot = await page.evaluate(async () => {
-    const { Workspace, Project } = window.sessionFixture;
+    const { Workspace, Project, sessionFor } = window.sessionFixture;
     const rate = 48000;
     const context = new OfflineAudioContext(2, rate * 2, rate);
     const resume = context.resume.bind(context);
@@ -189,8 +199,15 @@ try {
       project.addAudioClip(track.id, { sampleRate: rate, channels: [new Float32Array(Math.round(rate * duration)).fill(value)] }, time);
     clip(left, 0, 3, 0.2);
     clip(right, 0, 3, 0.1);
-    const finite = clip(left, 5, 0.625, 0.6);
-    const loop = clip(right, 6, 0.33, 0.3);
+    const grid = sessionFor(project);
+    const scene = grid.addScene();
+    const slot = (track, duration, value) =>
+      grid.setAudioClip(
+        { trackId: track.id, sceneId: scene.id },
+        { sampleRate: rate, channels: [new Float32Array(Math.round(rate * duration)).fill(value)] },
+      );
+    const finite = slot(left, 0.625, 0.6);
+    const loop = slot(right, 0.33, 0.3);
     const workspace = await Workspace.create(context, project, { destination: context.destination });
     await workspace.play();
     const session = () => workspace.session.value;
@@ -245,7 +262,7 @@ try {
     }),
   );
   const perTrack = await page.evaluate(async () => {
-    const { Workspace, Project } = window.sessionFixture;
+    const { Workspace, Project, sessionFor } = window.sessionFixture;
     const rate = 48000;
     const context = new OfflineAudioContext(2, rate * 2, rate);
     const resume = context.resume.bind(context);
@@ -253,7 +270,10 @@ try {
     const project = new Project({ bpm: 120 });
     const left = project.addTrack("Left", "audio", { pan: -1 });
     const right = project.addTrack("Right", "audio", { pan: 1 });
-    const clip = (track, value) => project.addAudioClip(track.id, { sampleRate: rate, channels: [new Float32Array(rate * 3).fill(value)] }, 10);
+    const grid = sessionFor(project);
+    const scene = grid.addScene();
+    const clip = (track, value) =>
+      grid.setAudioClip({ trackId: track.id, sceneId: scene.id }, { sampleRate: rate, channels: [new Float32Array(rate * 3).fill(value)] });
     const a = clip(left, 0.4);
     const b = clip(right, 0.3);
     const workspace = await Workspace.create(context, project, { destination: context.destination });

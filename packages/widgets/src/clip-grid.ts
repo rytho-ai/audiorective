@@ -17,8 +17,11 @@ export interface ClipGridTrack {
 export interface ClipGridLauncher {
   readonly playing: Readable<readonly unknown[]>;
   readonly queued: Readable<readonly Readonly<{ beat: number | null }>[]>;
-  /** Receives the scene's `ClipGridClip` objects: typed `never[]` so a launcher that takes its own clip type (`Clip[]`) satisfies this. */
-  launchScene(clips: readonly never[]): void;
+  /**
+   * Receives a scene's slot index (a layout scene with `index`) or its `ClipGridClip` objects: typed `never[]` so a launcher that takes its own clip type (`Clip[]`) satisfies this.
+   * The index form lets the launcher apply its own rules for the scene's empty slots.
+   */
+  launchScene(scene: number | readonly never[]): void;
   stopAll(): void;
   cancelQueued(): boolean;
 }
@@ -27,6 +30,8 @@ export type ClipGridLayout = Readonly<{
   tracks: readonly Readonly<{ track: ClipGridTrack; label: string }>[];
   scenes: readonly Readonly<{
     label: string;
+    /** The launcher's scene slot this row stands for. Give it when the row is the launcher's whole scene: its button then calls `launchScene(index)`, so `emptySlots` applies; without it the row launches exactly its `clips`. */
+    index?: number;
     clips: readonly Readonly<{ track: ClipGridTrack; clip: ClipGridClip; label: string }>[];
   }>[];
 }>;
@@ -148,7 +153,7 @@ export function mountClipGrid(root: HTMLElement, options: ClipGridOptions) {
     const rows = table.createTBody();
     for (const scene of layout.scenes) {
       const row = rows.insertRow();
-      const action = button(scene.label, () => run(() => launcher.launchScene(scene.clips.map(({ clip }) => clip) as never[])));
+      const action = button(scene.label, () => run(() => launcher.launchScene(scene.index ?? (scene.clips.map(({ clip }) => clip) as never[]))));
       action.setAttribute("aria-label", `${labels.scene} ${scene.label}`);
       scenes.push({ button: action, clips: scene.clips.map(({ clip }) => clip) });
       heading(row, action, "row");

@@ -255,3 +255,42 @@ describe("review regressions", () => {
     project.dispose();
   });
 });
+
+describe("foreign files that give one window edge", () => {
+  const edit = (bytes: Uint8Array, change: (xml: string) => string) => {
+    const files = unzipSync(bytes);
+    files["project.xml"] = new TextEncoder().encode(change(new TextDecoder().decode(files["project.xml"])));
+    return zipSync(files);
+  };
+  const saved = () => {
+    const project = new Project();
+    const track = project.addTrack("Take", "audio");
+    const clip = project.addAudioClip(track.id, { sampleRate: RATE, channels: [recording()] }, 1);
+    project.resizeClip(clip.id, { start: 1, end: 2 });
+    return saveDawProject(project);
+  };
+
+  test("playStart alone ends the clip after its duration", () => {
+    const bytes = edit(saved(), (xml) => xml.replace(/ playStop="[^"]*"/, ""));
+    const { project, warnings } = openDawProject(bytes);
+    const clip = audio(project.tracks[0].clips[0]);
+    expect(warnings.join()).not.toContain("does not match");
+    expect([clip.sourceOffset, clip.duration, clip.channels[0].length]).toEqual([0, 1, 8]);
+    expect(clip.time).toBe(1);
+  });
+
+  test("playStop alone starts at the beginning of the recording", () => {
+    const project = new Project();
+    const track = project.addTrack("Take", "audio");
+    const clip = project.addAudioClip(track.id, { sampleRate: RATE, channels: [recording()] }, 0);
+    project.resizeClip(clip.id, { end: 2 });
+    const bytes = edit(saveDawProject(project), (xml) => xml.replace(/ playStart="[^"]*"/, ""));
+    const reopened = audio(openDawProject(bytes).project.tracks[0].clips[0]);
+    expect([reopened.sourceOffset, reopened.duration]).toEqual([0, 2]);
+  });
+
+  test("an edge that contradicts the duration still fails", () => {
+    const bytes = edit(saved(), (xml) => xml.replace(/ playStop="[^"]*"/, "").replace(/ duration="1"/, ' duration="9"'));
+    expect(() => openDawProject(bytes)).toThrow();
+  });
+});

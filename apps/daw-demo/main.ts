@@ -8,6 +8,7 @@ import {
   openWorkspace,
   saveWorkspace,
   saveWorkspaceTo,
+  sessionFor,
   type AudioMedia,
   type AudioMediaWriter,
   type MidiClip,
@@ -204,8 +205,13 @@ function demoProject(): Project {
   ]);
   const sections = [0, 4, 8, 12];
   const instrument = (trackId: string) => addDefaultSynth(project, trackId);
-  const audioClips = (trackId: string, samples: Float32Array, times: readonly number[]) =>
+  // The arrangement plays the clips in time; the Session holds the same audio in one scene per song section.
+  const grid = sessionFor(project);
+  const scenes = sections.map((time) => grid.addScene({ name: project.markers.find((marker) => marker.time === time)?.name }));
+  const audioClips = (trackId: string, samples: Float32Array, times: readonly number[], sceneIndexes: readonly number[] = []) => {
     times.forEach((time) => project.addAudioClip(trackId, { sampleRate: 48_000, channels: [samples] }, time));
+    sceneIndexes.forEach((index) => grid.setAudioClip({ trackId, sceneId: scenes[index].id }, { sampleRate: 48_000, channels: [samples] }));
+  };
 
   // MIDI is placed in beats; the demo song is written in seconds at 120 BPM.
   const beatsPerSecond = project.bpm / 60;
@@ -231,11 +237,11 @@ function demoProject(): Project {
   instrument(keys.id);
 
   const drums = project.addTrack("Drums", "audio", { volume: 0.52 });
-  audioClips(drums.id, rhythm(), sections);
+  audioClips(drums.id, rhythm(), sections, [0, 1, 2, 3]);
   const hatTrack = project.addTrack("Hats", "audio", { volume: 0.43 });
-  audioClips(hatTrack.id, hats(), [4, 8, 12]);
+  audioClips(hatTrack.id, hats(), [4, 8, 12], [1, 2, 3]);
   const percTrack = project.addTrack("Percussion", "audio", { volume: 0.38 });
-  audioClips(percTrack.id, percussion(), [4, 8, 12]);
+  audioClips(percTrack.id, percussion(), [4, 8, 12], [1, 2, 3]);
 
   const bass = project.addTrack("Bass", "midi", { volume: 0.35 });
   [4, 8, 12].forEach((time, section) => {
@@ -259,7 +265,7 @@ function demoProject(): Project {
   instrument(bass.id);
 
   const padTrack = project.addTrack("Atmosphere", "audio", { volume: 0.26 });
-  sections.forEach((time, index) => audioClips(padTrack.id, pad([48, 50, 53, 55][index]), [time]));
+  sections.forEach((time, index) => audioClips(padTrack.id, pad([48, 50, 53, 55][index]), [time], [index]));
 
   const lead = project.addTrack("Lead", "midi", { volume: 0.32 });
   [8, 12].forEach((time, section) =>
@@ -282,7 +288,7 @@ function demoProject(): Project {
   instrument(lead.id);
 
   const fx = project.addTrack("Transitions", "audio", { volume: 0.45 });
-  audioClips(fx.id, transition(), [3.2, 7.2, 11.2]);
+  audioClips(fx.id, transition(), [3.2, 7.2, 11.2], [1, 2, 3]);
   return project;
 }
 

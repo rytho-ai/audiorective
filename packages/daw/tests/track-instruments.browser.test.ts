@@ -2,6 +2,7 @@ import { ManualTickSource } from "@audiorective/clock";
 import type { SoundFactory } from "@audiorective/core";
 import { afterEach, describe, expect, test } from "vitest";
 import { Project, Workspace, openWorkspace, renderMixRange, saveWorkspace, type WorkspaceOptions } from "../src";
+import { fillSession } from "./session-slots";
 
 const RATE = 48_000;
 const QUANTUM = 128;
@@ -82,7 +83,7 @@ const peak = (x: Float32Array, from: number, to: number) => {
   return max;
 };
 
-/** 120 BPM: a beat is 0.5 s. A drum track with no plug-in: hits at beats 2 and 4, the second at half velocity; clip 1 is a one-hit Session loop at beat 32. */
+/** 120 BPM: a beat is 0.5 s. A drum track with no plug-in: hits at beats 2 and 4, the second at half velocity; scene 0 of the Session holds a one-hit loop. */
 function drums() {
   const project = new Project({ bpm: 120 });
   const track = project.addTrack("Drums", "midi");
@@ -97,7 +98,7 @@ function drums() {
     },
     0,
   );
-  project.addMidiClip(track.id, { duration: 4, notes: [{ pitch: 60, velocity: 1, start: 1, duration: 0.25 }] }, 32);
+  fillSession(project, track.id, [{ duration: 4, notes: [{ pitch: 60, velocity: 1, start: 1, duration: 0.25 }] }]);
   cleanups.push(() => project.dispose());
   return { project, track, instruments: { [track.id]: { sound: click } } };
 }
@@ -119,7 +120,7 @@ describe("instruments: page-made sound on a MIDI track without a plug-in", () =>
 
   test("Session launches the track's clip and loops it on the bar", async () => {
     const { project, track, instruments } = drums();
-    const x = await render(project, 7, [{ at: 0.5, run: (w) => w.session.value.tracks[track.id]!.clips[1]!.launch() }], { instruments });
+    const x = await render(project, 7, [{ at: 0.5, run: (w) => w.session.value.tracks[track.id]!.clips[0]!.launch() }], { instruments });
     // Arrangement hit at 1 s is held back from bar 1 (2 s); Session hits at beat 1 of each bar: 2.5, 4.5, 6.5 s.
     const hits = onsets(x).filter((t) => t >= 2);
     expect(hits.map((t) => Math.round(t * 1000) / 1000)).toEqual([2.5, 4.5, 6.5]);
@@ -168,19 +169,19 @@ describe("instruments: releases behave like a device queue", () => {
     for (let i = Math.round(from * RATE); i < Math.round(to * RATE); i++) energy += x[i] * x[i];
     return Math.sqrt(energy / Math.max(1, Math.round((to - from) * RATE)));
   };
-  /** One held note (beats) in Arrangement and an empty Session clip at slot 1. */
+  /** One held note (beats) in Arrangement and an empty Session clip in scene 0. */
   function held(start: number, duration: number) {
     const project = new Project({ bpm: 120 });
     const track = project.addTrack("Keys", "midi");
     project.addMidiClip(track.id, { duration: 16, notes: [{ pitch: 64, velocity: 1, start, duration }] }, 0);
-    project.addMidiClip(track.id, { duration: 4, notes: [] }, 32);
+    fillSession(project, track.id, [{ duration: 4, notes: [] }]);
     cleanups.push(() => project.dispose());
     return { project, track, instruments: { [track.id]: { sound: tone, rootNote: 64 } } };
   }
 
   test("a note starting inside the look-ahead before a Session handover is released at the handover", async () => {
     const { project, track, instruments } = held(3.9, 1.1);
-    const x = await render(project, 4, [{ at: 0.5, run: (w) => w.session.value.tracks[track.id]!.clips[1]!.launch() }], { instruments });
+    const x = await render(project, 4, [{ at: 0.5, run: (w) => w.session.value.tracks[track.id]!.clips[0]!.launch() }], { instruments });
     expect(rms(x, 1.96, 1.99)).toBeGreaterThan(0.05);
     expect(rms(x, 2.1, 4)).toBe(0);
   }, 30_000);
@@ -191,7 +192,7 @@ describe("instruments: releases behave like a device queue", () => {
       project,
       4,
       [
-        { at: 0.75, run: (w) => w.session.value.tracks[track.id]!.clips[1]!.launch() },
+        { at: 0.75, run: (w) => w.session.value.tracks[track.id]!.clips[0]!.launch() },
         { at: 1.9, run: (w) => w.session.value.tracks[track.id]!.cancelQueued() },
       ],
       { instruments },
@@ -201,7 +202,7 @@ describe("instruments: releases behave like a device queue", () => {
 
   test("a handover never makes an earlier note-off later", async () => {
     const { project, track, instruments } = held(1, 2.9);
-    const x = await render(project, 3, [{ at: 1.9, run: (w) => w.session.value.tracks[track.id]!.clips[1]!.launch() }], { instruments });
+    const x = await render(project, 3, [{ at: 1.9, run: (w) => w.session.value.tracks[track.id]!.clips[0]!.launch() }], { instruments });
     expect(rms(x, 1.0, 1.9)).toBeGreaterThan(0.05);
     expect(rms(x, 1.96, 1.995)).toBe(0);
   }, 30_000);

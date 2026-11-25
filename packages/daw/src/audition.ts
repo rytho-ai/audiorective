@@ -47,7 +47,7 @@ export class Audition {
   /** Audition the current audio clip through master output independently of Arrangement. */
   async auditionClip(clipId: string): Promise<void> {
     if (this.isDisposed()) throw new Error("Workspace is disposed.");
-    const clip = findAudioClip(this.project(), clipId);
+    const clip = findAudioClip(this.project(), clipId, true);
     if (!clip) throw new Error("Workspace audition needs an audio clip.");
 
     const audition: ClipAudition = { clip };
@@ -63,7 +63,7 @@ export class Audition {
       if (this.current !== audition) return;
       if (clip.media) await this.scheduler.loadMediaBuffer(clip, 0);
       if (this.current !== audition) return;
-      if (findAudioClip(this.project(), clipId) !== clip) return finish();
+      if (findAudioClip(this.project(), clipId, true) !== clip) return finish();
 
       if (clip.media) {
         let nextChunk = 0;
@@ -109,7 +109,7 @@ export class Audition {
     if (!audition) return;
     const stale =
       "clip" in audition
-        ? findAudioClip(this.project(), audition.clip.id) !== audition.clip
+        ? findAudioClip(this.project(), audition.clip.id, true) !== audition.clip
         : audition.tracks.some((track) => this.project().tracks.find(({ id }) => id === track.id)?.clips !== track.clips);
     if (stale) this.stop();
   }
