@@ -218,7 +218,7 @@ export class Scene {
   _rename(name: string): void {
     this.label.value = name;
   }
-  /** Slot index; 0 is the first scene. Follows `insertScene` and `removeScene`. */
+  /** Slot index; 0 is the first scene. Follows `insertScene`, `removeScene` and `moveScene`. */
   index: number;
   /** BPM set at the scene's shared boundary when `launchScene(index)` lands; null leaves the tempo. Writable. It is not subject to `transform` or `chance`: it changes at that boundary even when `transform` delays or drops, or a draw skips, some or all clips of the scene. */
   readonly tempo: Cell<number | null>;
@@ -231,7 +231,7 @@ export class Scene {
 
 export class Clip {
   readonly track: Track;
-  /** Slot in `track.clips`; the scene this clip belongs to. Follows `insertScene` and `removeScene`. */
+  /** Slot in `track.clips`; the scene this clip belongs to. Follows `insertScene`, `removeScene` and `moveScene`. */
   index: number;
   /** Every option with its default; replaced by `configure`. */
   readonly options: ReadonlyCell<ClipSettings>;
@@ -902,6 +902,28 @@ export class ClipLauncher extends EventTarget implements Scheduler {
       this.renumber();
       this.sceneRevision.value++;
       this.shiftChain((i) => (i > index ? i - 1 : i));
+    });
+  }
+  /**
+   * Moves the scene slot at `from` to `to` (both 0 to `scenes.length - 1`) on every track: the scenes between shift one slot toward `from`. Nothing stops or restarts: clips playing or waiting keep their state
+   * (a waiting `launchScene` still starts the same clips), `scene.index` and `clip.index` follow, and a `playChain` in progress keeps naming the same scenes.
+   */
+  moveScene(from: number, to: number): void {
+    const last = this.sceneList.length - 1;
+    if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < 0 || from > last || to > last)
+      throw new RangeError(`moveScene needs indices from 0 to ${last}.`);
+    if (from === to) return;
+    untracked(() => {
+      const [scene] = this.sceneList.splice(from, 1);
+      this.sceneList.splice(to, 0, scene);
+      for (const t of Object.values(this.tracks)) {
+        while (t._clips.length <= last) t._clips.push(null);
+        const [clip] = t._clips.splice(from, 1);
+        t._clips.splice(to, 0, clip);
+      }
+      this.renumber();
+      this.sceneRevision.value++;
+      this.shiftChain((i) => (i === from ? to : from < to ? (i > from && i <= to ? i - 1 : i) : i >= to && i < from ? i + 1 : i));
     });
   }
   private renumber(): void {

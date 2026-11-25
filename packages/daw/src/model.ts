@@ -569,6 +569,8 @@ type EditSide = Readonly<{
   /** The Session scenes by id; slot clips are in `clips`. */
   scenes: ReadonlyMap<string, SessionScene>;
   session: SessionState;
+  /** Each track's device list, by track ID. */
+  devices: ReadonlyMap<string, readonly ProjectDevice[]>;
 }>;
 type EditEntry = {
   readonly label: string;
@@ -579,9 +581,56 @@ type EditEntry = {
   readonly extensions: readonly string[];
   /** IDs of the scenes this edit added, removed or renamed. */
   readonly scenes: readonly string[];
+  /** IDs of the tracks whose device list (devices added, removed, moved or given another state) this edit changed. */
+  readonly devices: readonly string[];
+  /** IDs of the devices this edit gave another state; every other device keeps the state it has now when the step is applied. */
+  readonly deviceStates: ReadonlySet<string>;
   before: EditSide;
   after: EditSide;
 };
+
+/**
+ * The scenes a reorder moved: among the scenes both sides have, those whose predecessor differs (the moved scene and the two that now follow its old and new gaps),
+ * so undo puts each back after its own neighbour and leaves scenes it did not touch alone. Empty when the shared scenes keep their order.
+ */
+function movedScenes(before: readonly SessionScene[], after: readonly SessionScene[]): string[] {
+  const inAfter = new Set(after.map((scene) => scene.id));
+  const inBefore = new Set(before.map((scene) => scene.id));
+  const was = before.filter((scene) => inAfter.has(scene.id)).map((scene) => scene.id);
+  const now = after.filter((scene) => inBefore.has(scene.id)).map((scene) => scene.id);
+  if (was.every((id, index) => id === now[index])) return [];
+  return now.filter((id, index) => was[was.indexOf(id) - 1] !== now[index - 1]);
+}
+
+/** Whether the scenes present in both lists come in the same order. */
+function sameSceneOrder(a: readonly SessionScene[], b: readonly SessionScene[]): boolean {
+  const inB = new Set(b.map((scene) => scene.id));
+  const inA = new Set(a.map((scene) => scene.id));
+  const left = a.filter((scene) => inB.has(scene.id));
+  const right = b.filter((scene) => inA.has(scene.id));
+  return left.every((scene, index) => scene.id === right[index].id);
+}
+
+/** Whether two device lists hold the same devices in the same order; `withState` also compares each device's saved state bytes. */
+function sameDevices(a: readonly ProjectDevice[], b: readonly ProjectDevice[], withState: boolean): boolean {
+  return (
+    a === b ||
+    (a.length === b.length &&
+      a.every((device, index) => {
+        const other = b[index];
+        return (
+          device === other ||
+          (device.id === other.id &&
+            device.pluginId === other.pluginId &&
+            device.bundleUrl === other.bundleUrl &&
+            device.name === other.name &&
+            device.vendor === other.vendor &&
+            device.version === other.version &&
+            (!withState || (device.state.length === other.state.length && device.state.every((byte, i) => byte === other.state[i]))))
+        );
+      }))
+  );
+}
 
 /** `MidiClip.setNotes` makes a new array, so history compares notes by content. */
 const sameNotes = (a: readonly MidiNote[] | undefined, b: readonly MidiNote[] | undefined): boolean =>
@@ -612,7 +661,7 @@ const samePlacement = (a: EditPlacement | undefined, b: EditPlacement | undefine
     a.name === b.name &&
     sameNotes(a.notes, b.notes));
 const clipFrameTolerance = (clip: ProjectClip) => (clip.kind === "audio" ? 1 / clip.sampleRate : 1e-9);
-const trackShellKeys = ["id", "name", "kind", "busRole", "routing", "volume", "muted", "solo", "pan", "devices", "effects", "effectMacros"] as const;
+const trackShellKeys = ["id", "name", "kind", "busRole", "routing", "volume", "muted", "solo", "pan", "effects", "effectMacros"] as const;
 
 let captureDeviceHook: (project: Project, deviceId: string, bytes: Uint8Array) => void;
 let borrowSnapshotHook: (project: Project) => Project;
@@ -855,10 +904,20 @@ export class Project {
     return handle;
   }
 
-  /** Run a read-only operation: every Project change inside it throws, and so does a change to the notes made outside Project methods. */
+  /** Run a read-only operation: every Project change inside it throws, and so does a write through `clip.midi` (refused before it changes anything). */
   private runQuery<T>(name: string, action: () => T): T {
     const outer = this.queryName;
     if (outer === undefined) this.queryName = name;
+    // Direct writes through `clip.midi` throw before they change anything; the version check below stays as the backstop.
+    const guard = () => {
+      throw new Error(`Operation "${this.queryName ?? name}" is read-only and cannot change the project.`);
+    };
+    const guarded = new Map<MidiNotes, (() => void) | null>();
+    const watchNotes = (clip: ProjectClip) => {
+      if (clip instanceof MidiClip && !guarded.has(clip.midi)) guarded.set(clip.midi, clip.midi.setWriteGuard(guard));
+    };
+    for (const track of this.s.tracks) for (const clip of track.clips) watchNotes(clip);
+    for (const clip of this.s.session.slots.values()) watchNotes(clip);
     try {
       const before = untracked(() => this.cells.version.value);
       const result = untracked(action);
@@ -871,6 +930,7 @@ export class Project {
       return result;
     } finally {
       this.queryName = outer;
+      for (const [notes, previous] of guarded) notes.setWriteGuard(previous);
     }
   }
 
@@ -1114,7 +1174,17 @@ export class Project {
       });
     }
     const scenes = new Map(state.session.scenes.map((scene) => [scene.id, scene] as const));
-    return { clips, tempoMap: state.tempoMap, markers: state.markers, automation, extensions: state.extensions, scenes, session: state.session };
+    const devices = new Map(state.tracks.map((track) => [track.id, track.devices] as const));
+    return {
+      clips,
+      tempoMap: state.tempoMap,
+      markers: state.markers,
+      automation,
+      extensions: state.extensions,
+      scenes,
+      session: state.session,
+      devices,
+    };
   }
 
   private runEdit<T>(label: string, action: () => T): { result: T; entry: EditEntry | undefined } {
@@ -1148,11 +1218,27 @@ export class Project {
           const extensions = [...new Set([...before.extensions.keys(), ...after.extensions.keys()])].filter(
             (id) => before.extensions.get(id) !== after.extensions.get(id),
           );
-          const scenes = [...new Set([...before.scenes.keys(), ...after.scenes.keys()])].filter(
-            (id) => before.scenes.get(id) !== after.scenes.get(id),
-          );
-          if (!ids.length && !automation.length && !tempo && !markers && !extensions.length && !scenes.length) return { result, entry: undefined };
-          const entry: EditEntry = { label: label.trim(), ids, tempo, markers, automation, extensions, scenes, before, after };
+          const scenes = [
+            ...new Set([
+              ...[...before.scenes.keys(), ...after.scenes.keys()].filter((id) => before.scenes.get(id) !== after.scenes.get(id)),
+              ...movedScenes(before.session.scenes, after.session.scenes),
+            ]),
+          ];
+          const devices = [...before.devices.keys()].filter((id) => {
+            const now = after.devices.get(id);
+            return now !== undefined && !sameDevices(before.devices.get(id)!, now, true);
+          });
+          if (!ids.length && !automation.length && !tempo && !markers && !extensions.length && !scenes.length && !devices.length)
+            return { result, entry: undefined };
+          const deviceStates = new Set<string>();
+          for (const [trackId, list] of before.devices) {
+            const next = after.devices.get(trackId) ?? [];
+            for (const device of list) {
+              const other = next.find((item) => item.id === device.id);
+              if (other && !sameDevices([device], [other], true)) deviceStates.add(device.id);
+            }
+          }
+          const entry: EditEntry = { label: label.trim(), ids, tempo, markers, automation, extensions, scenes, devices, deviceStates, before, after };
           this.pushHistory(entry);
           return { result, entry };
         } catch (error) {
@@ -1185,7 +1271,7 @@ export class Project {
       state.masterVolume === previous.masterVolume &&
       state.tracks.length === previous.tracks.length &&
       state.tracks.every((track, index) => trackShellKeys.every((key) => track[key] === previous.tracks[index][key]));
-    if (!unchanged) throw new Error("Project edit covers clips, notes, tempo, markers and volume automation only.");
+    if (!unchanged) throw new Error("Project edit covers clips, notes, tempo, markers, scenes, devices and volume automation only.");
   }
 
   private pushHistory(entry: EditEntry): void {
@@ -1287,7 +1373,15 @@ export class Project {
       (!entry.markers || current.markers === side.markers) &&
       entry.automation.every((id) => current.automation.get(id) === side.automation.get(id)) &&
       entry.extensions.every((id) => current.extensions.get(id) === side.extensions.get(id)) &&
-      entry.scenes.every((id) => current.scenes.get(id) === side.scenes.get(id))
+      entry.scenes.every((id) => current.scenes.get(id) === side.scenes.get(id)) &&
+      // A scene moved outside history leaves the order this step captured; undoing would put it back over that move.
+      (!entry.scenes.length || sameSceneOrder(current.session.scenes, side.session.scenes)) &&
+      // A plug-in's saved state refreshes while it runs, so only the list of devices must match.
+      entry.devices.every((id) => {
+        const now = current.devices.get(id);
+        const there = side.devices.get(id);
+        return now !== undefined && there !== undefined && sameDevices(now, there, false);
+      })
     );
   }
 
@@ -1299,6 +1393,13 @@ export class Project {
     // A scene or clip coming back keeps its ID only if nothing else has taken it since.
     const here = new Set(current.map((scene) => scene.id));
     if (entry.scenes.some((id) => side.scenes.has(id) && !here.has(id) && this.ids.has(id))) return false;
+    // A device coming back needs its track, and keeps its ID only if no other device took it since.
+    for (const id of entry.devices) {
+      const track = tracks.get(id);
+      if (!track) return false;
+      const keep = new Set(track.devices.map((device) => device.id));
+      if ((side.devices.get(id) ?? []).some((device) => !keep.has(device.id) && this.ids.has(device.id))) return false;
+    }
     const live = new Set(this.s.session.slots.values());
     const present = new Set([...live].map((clip) => clip.id));
     for (const track of this.s.tracks) for (const clip of track.clips) present.add(clip.id);
@@ -1343,15 +1444,28 @@ export class Project {
     }
     const tracks = this.s.tracks.map((track) => {
       const touchesAutomation = entry.automation.includes(track.id);
+      const incomingDevices = entry.devices.includes(track.id) ? side.devices.get(track.id) : undefined;
+      // A plug-in's saved state keeps refreshing while it runs: only a device this step added, removed or gave another state takes the side's bytes.
+      const devices = incomingDevices?.map((device) => {
+        const now = track.devices.find((other) => other.id === device.id);
+        if (!now || now.state === device.state) return device;
+        if (entry.deviceStates.has(device.id) || !entry.before.devices.get(track.id)?.some((other) => other.id === device.id)) return device;
+        return Object.freeze({ ...device, state: now.state });
+      });
+      if (devices) {
+        for (const device of track.devices) this.ids.delete(device.id);
+        for (const device of devices) this.ids.add(device.id);
+      }
       const incoming = entry.ids.flatMap((id) => {
         const placement = side.clips.get(id);
         return placement?.trackId === track.id && placement.sceneId === undefined ? [placement.clip] : [];
       });
       const outgoing = track.clips.filter((clip) => ids.has(clip.id));
       const sameClips = outgoing.length === incoming.length && outgoing.every((clip) => incoming.includes(clip) && !moved.has(clip.id));
-      if (!touchesAutomation && sameClips) return track;
+      if (!touchesAutomation && sameClips && !devices) return track;
       return Object.freeze({
         ...track,
+        ...(devices ? { devices } : {}),
         clips: sameClips ? track.clips : this.sortClips([...track.clips.filter((clip) => !ids.has(clip.id)), ...incoming]),
         ...(touchesAutomation ? { volumeAutomation: side.automation.get(track.id) ?? track.volumeAutomation } : {}),
       });
@@ -1769,6 +1883,7 @@ export class Project {
       throw new Error("Project WebCLAP device needs an ID, name, bundle URL and byte state.");
     for (const value of [details.pluginId, details.name, details.vendor ?? "", details.version ?? ""]) validateXmlText(value);
     const id = this.reserve(details.id, "device");
+    importedBundles.get(this)?.delete(id);
     const device: WebClapDevice = Object.freeze({
       kind: "webclap",
       id,
@@ -1796,7 +1911,19 @@ export class Project {
   private captureDevice(deviceId: string, bytes: Uint8Array): void {
     assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.devices.some((device) => device.id === deviceId));
-    if (!track) throw new Error("Project device needs an existing track.");
+    if (!track) {
+      // A device Undo or an edit just took away: its last state goes into the history steps that bring it back.
+      const state = new Uint8Array(bytes);
+      for (const entry of [...this.undoStack, ...this.redoStack])
+        for (const side of [entry.before, entry.after])
+          for (const [trackId, list] of side.devices)
+            if (list.some((device) => device.id === deviceId))
+              (side.devices as Map<string, readonly ProjectDevice[]>).set(
+                trackId,
+                Object.freeze(list.map((device) => (device.id === deviceId ? Object.freeze({ ...device, state }) : device))),
+              );
+      return;
+    }
     const devices = track.devices.map((device) => (device.id === deviceId ? Object.freeze({ ...device, state: new Uint8Array(bytes) }) : device));
     this.commit(
       { tracks: Object.freeze(this.s.tracks.map((item) => (item === track ? Object.freeze({ ...item, devices: Object.freeze(devices) }) : item))) },
@@ -1809,8 +1936,23 @@ export class Project {
     const track = this.s.tracks.find((item) => item.devices.some((device) => device.id === deviceId));
     if (!track) throw new Error("Project device needs an existing track.");
     this.ids.delete(deviceId);
-    importedBundles.get(this)?.delete(deviceId);
+    // Inside an edit the device may come back with Undo, and it is still an imported one then.
+    if (!this.editing) importedBundles.get(this)?.delete(deviceId);
     this.replace(track, { devices: Object.freeze(track.devices.filter((device) => device.id !== deviceId)) });
+  }
+
+  /** Put a device at position `index` of its track's chain (0 is first; the others shift). The same position is no change. Inside `project.edit` it is part of that Undo step. */
+  moveDevice(deviceId: string, index: number): void {
+    assertProjectActive(this);
+    const track = this.s.tracks.find((item) => item.devices.some((device) => device.id === deviceId));
+    if (!track) throw new Error("Project device needs an existing track.");
+    if (!Number.isInteger(index) || index < 0 || index >= track.devices.length)
+      throw new RangeError(`Project moveDevice needs a position from 0 to ${track.devices.length - 1}.`);
+    const from = track.devices.findIndex((device) => device.id === deviceId);
+    if (from === index) return;
+    const devices = track.devices.filter((device) => device.id !== deviceId);
+    devices.splice(index, 0, track.devices[from]);
+    this.replace(track, { devices: Object.freeze(devices) });
   }
 
   setVolumeAutomation(trackId: string, points: readonly AutomationPoint[]): void {
@@ -2438,29 +2580,45 @@ export class Project {
   }
 
   /**
-   * Point a clip at part of its content while it stays where it is on the timeline: `clip.time` is kept and the duration becomes `end - start`.
-   * An audio clip takes recording seconds inside the recording (`0 <= start < end <= clip.sourceLength`); a fade survives only at an edge whose recording
-   * position did not move, as with `resizeClip`. A MIDI clip takes content beats (`start` may be negative or past the last note: the window can show empty
-   * content) and keeps its notes: the window is `sourceOffset = start`, `duration = end - start`. A time-stretched or looped clip throws.
+   * Point a clip at part of its content while it stays where it is on the timeline: `clip.time` is kept.
+   * An audio clip takes recording seconds inside the recording (`0 <= start < end <= clip.sourceLength`); the duration becomes `end - start` and a fade survives only at an
+   * edge whose recording position did not move, as with `resizeClip`. A MIDI clip takes content beats (`start` may be negative or past the last note: the window can show empty
+   * content) and keeps its notes: the window is `sourceOffset = start`, `duration = end - start`.
+   * On a looped clip the range is the new loop and the point the clip starts from (a slip): `loop = { start, end }`, `sourceOffset = start`, and `time`, `duration`, fades and
+   * the clip's place stay, so it keeps filling the same stretch of the timeline and now repeats that part (a MIDI `start` must be `>= 0`, as for `setClipLoop`).
+   * On a time-stretched audio clip the range is in seconds of the clip's stored (stretched) audio, as `clipRecording` shows it, so it can only narrow the clip; the stretch ratio and warp anchors are kept.
    * Wrap it in `project.edit` for one Undo step, like the other clip operations.
    */
   setClipSourceRange(clipId: string, range: { start: number; end: number }): ProjectClip {
     assertProjectActive(this);
     const where = this.locate(clipId);
     const { clip } = where;
-    if (clip.kind === "audio" ? clip.stretch || clip.loop : clip.loop)
-      throw new RangeError("Project setClipSourceRange needs a clip without time-stretch or loop.");
     const { start, end } = range ?? ({} as { start: number; end: number });
     if (clip.kind === "midi") {
       if (!Number.isFinite(start) || !Number.isFinite(end) || !(start < end))
         throw new RangeError("Project MIDI source range needs finite start < end beats.");
-      const resized = midiWindow(clip, clip.id, { sourceOffset: start, duration: end - start });
+      let resized: MidiClip;
+      if (clip.loop) {
+        if (start < 0) throw new RangeError("Project clip loop needs 0 <= start < end inside the clip's content.");
+        resized = new MidiClip(
+          clip.id,
+          clip.time,
+          { notes: [], duration: clip.duration, sourceOffset: start },
+          Object.freeze({ startBeat: start, endBeat: end }),
+          clip.midi,
+        );
+      } else resized = midiWindow(clip, clip.id, { sourceOffset: start, duration: end - start });
       this.replaceClip(where, resized);
       this.retire(clip);
       return resized;
     }
     if (!Number.isFinite(start) || !Number.isFinite(end)) throw outsideRecording();
     const rate = clip.sampleRate;
+    if (clip.loop) {
+      const resized = untracked(() => this.slippedLoop(clip, start, end));
+      this.replaceClip(where, resized);
+      return resized;
+    }
     const first = Math.round((start - clip.sourceOffset) * rate);
     const last = Math.round((end - clip.sourceOffset) * rate);
     if (first >= last) throw outsideRecording();
@@ -2471,6 +2629,40 @@ export class Project {
     this.replaceClip(where, resized);
     this.retire(clip);
     return resized;
+  }
+
+  /** A looped audio clip that loops recording seconds `[start, end)` and starts from `start`, in the same place with the same length. */
+  private slippedLoop(clip: AudioClip, start: number, end: number): AudioClip {
+    const rate = clip.sampleRate;
+    const first = Math.round(start * rate);
+    const last = Math.round(end * rate);
+    const recording = recordingOf(clip);
+    if (first < 0 || first >= last || last > recording.frames) throw outsideRecording();
+    const own = Math.round(clip.sourceOffset * rate);
+    // The window runs to the end of the recording, so the loop can play any part of it.
+    const playback = sliceAudioSource(clip, first - own, recording.frames - recording.offset);
+    let gainAutomation = clip.gainAutomation;
+    if (gainAutomation && first !== own) {
+      // Points are in recording seconds, so the window's new start moves `sourceStart` by the recording distance.
+      const sourceStart = gainAutomation.sourceStart + (first - own) / rate;
+      gainAutomation =
+        sourceStart >= 0
+          ? Object.freeze({ sourceStart, points: gainAutomation.points })
+          : Object.freeze({
+              sourceStart: 0,
+              points: Object.freeze(gainAutomation.points.map((point) => Object.freeze({ ...point, time: point.time - sourceStart }))),
+            });
+    }
+    return Object.freeze({
+      kind: "audio" as const,
+      id: clip.id,
+      time: clip.time,
+      ...playback,
+      duration: clip.duration,
+      loop: Object.freeze({ startSeconds: start, endSeconds: end }),
+      ...(clip.envelope ? { envelope: clip.envelope } : {}),
+      ...(gainAutomation ? { gainAutomation } : {}),
+    });
   }
 
   private resizeUntracked(clip: ProjectClip, edges: { start?: number; end?: number }): ProjectClip {

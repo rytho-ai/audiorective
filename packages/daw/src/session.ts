@@ -109,6 +109,21 @@ export class ProjectSession {
     });
   }
 
+  /** Put a scene at position `index` (0 is the first scene; the others shift), keeping its clips and id. The same position is no change. Throws on an unknown scene or a position outside the scenes. */
+  moveScene(sceneId: string, index: number): void {
+    assertProjectActive(this.project);
+    untracked(() => {
+      const state = this.bridge.peek();
+      const from = this.position(state, sceneId);
+      if (!Number.isInteger(index) || index < 0 || index >= state.scenes.length)
+        throw new RangeError(`Project session moveScene needs a position from 0 to ${state.scenes.length - 1}.`);
+      if (from === index) return;
+      const scenes = state.scenes.filter((scene) => scene.id !== sceneId);
+      scenes.splice(index, 0, state.scenes[from]);
+      this.bridge.write(this.withScenes(state, scenes));
+    });
+  }
+
   /** Remove a scene and every clip in its slots. */
   removeScene(sceneId: string): void {
     assertProjectActive(this.project);

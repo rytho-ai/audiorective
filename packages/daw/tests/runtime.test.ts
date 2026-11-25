@@ -62,7 +62,7 @@ vi.mock("@audiorective/host/webclap", () => ({
       const host = {
         descriptor: { id: "fake.synth" },
         input: {},
-        output: { connect: vi.fn() },
+        output: { connect: vi.fn(), disconnect: vi.fn() },
         loadState: vi.fn(async (bytes: Uint8Array) => fakes.loadStateImpl?.(bytes)),
         saveState: vi.fn(async () => new Uint8Array([9, 9])),
         allNotesOff: vi.fn(),
@@ -119,6 +119,7 @@ vi.mock("@audiorective/launcher", () => ({
 }));
 
 import { effect } from "@audiorective/core";
+import { WebClapHost } from "@audiorective/host/webclap";
 import { Project, Workspace, openWorkspace, saveWorkspace, saveWorkspaceTo, sessionFor } from "../src";
 import * as projectEntry from "../src/project";
 import * as runtimeEntry from "../src/runtime-entry";
@@ -369,6 +370,98 @@ describe("workspace automatic application", () => {
 });
 
 /** Public stateful readers are tracked: an effect over each re-runs, seeing the new value, when the owner changes it. */
+describe("workspace addWebClapDevice", () => {
+  const described = () => ({ descriptor: { id: "fake.synth", name: "Synth", vendor: "t", version: "1" }, dispose: vi.fn() }) as never;
+  const gatedLoad = () => {
+    let settle!: (outcome: { error?: Error }) => void;
+    vi.mocked(WebClapHost.load).mockImplementationOnce(async () => described());
+    vi.mocked(WebClapHost.load).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          settle = ({ error }) =>
+            resolve({
+              ...described(),
+              input: {},
+              // A host that cannot be wired into the chain fails the rebuild, as a real plug-in that breaks on connect would.
+              output: {
+                connect: vi.fn(() => {
+                  if (error) throw error;
+                }),
+                disconnect: vi.fn(),
+              },
+              loadState: vi.fn(),
+              saveState: vi.fn(),
+              allNotesOff: vi.fn(),
+            } as never);
+        }),
+    );
+    return (outcome: { error?: Error }) => settle(outcome);
+  };
+
+  test("rejects when Undo removed the device while it was loading", async () => {
+    const { project, track, workspace } = await setup();
+    const settle = gatedLoad();
+    const added = workspace.addWebClapDevice(track.id, "/fake.wasm");
+    await tick();
+    expect(project.undo().status).toBe("applied");
+    settle({});
+    await expect(added).rejects.toThrow("Workspace device was removed before it finished loading.");
+    expect(project.tracks[0].devices).toEqual([]);
+    workspace.dispose();
+    project.dispose();
+  });
+
+  test("a failed rebuild removes only its own device and keeps an edit made meanwhile", async () => {
+    const { project, track, workspace } = await setup();
+    // A new track makes the structural rebuild run, and the rack of every rebuilt track fails.
+    const extra = project.addTrack("Extra", "midi");
+    const settle = gatedLoad();
+    const added = workspace.addWebClapDevice(track.id, "/fake.wasm");
+    const rejected = expect(added).rejects.toThrow("rack failed");
+    await tick();
+    const clip = project.edit("Add clip", () => project.addMidiClip(extra.id, { notes: [], duration: 1 }, 0));
+    fakes.rackError = new Error("rack failed");
+    settle({});
+    await rejected;
+    expect(project.tracks[0].devices).toEqual([]);
+    expect(project.tracks[1].clips.map((item) => item.id)).toEqual([clip.id]);
+    expect(project.cells.history.value.undo).toBe("Remove Synth");
+    workspace.dispose();
+    project.dispose();
+  });
+
+  test("a failed load with nothing edited since takes the Add back out of history", async () => {
+    const { project, track, workspace } = await setup();
+    const settle = gatedLoad();
+    const added = workspace.addWebClapDevice(track.id, "/fake.wasm");
+    const rejected = expect(added).rejects.toThrow("load failed");
+    await tick();
+    settle({ error: new Error("load failed") });
+    await rejected;
+    expect(project.tracks[0].devices).toEqual([]);
+    expect(project.cells.history.value).toEqual({ redo: "Add Synth" });
+    workspace.dispose();
+    project.dispose();
+  });
+
+  test("undoing an unrelated device add does not load an empty state into a running plug-in", async () => {
+    const { project, track, workspace } = await setup({ withDevice: true });
+    await workspace.flush();
+    const calls = () => fakes.hosts.reduce((sum, host) => sum + host.loadState.mock.calls.length, 0);
+    const before = calls();
+    const other = project.edit("Add B", () =>
+      project.addWebClapDevice(track.id, { pluginId: "fake.synth", name: "B", vendor: "t", version: "1", bundleUrl: "/fake.wasm" }),
+    );
+    await workspace.flush();
+    expect(other.state.length).toBe(0);
+    project.undo();
+    await workspace.flush();
+    expect(calls()).toBe(before);
+    workspace.dispose();
+    project.dispose();
+  });
+});
+
 describe("workspace composition", () => {
   test("saveWorkspace captures device state and reopens through openWorkspace", async () => {
     const { project, device, workspace } = await setup({ withDevice: true });

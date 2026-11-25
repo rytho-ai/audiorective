@@ -1205,6 +1205,28 @@
         "Does not delete notes, call setNotes or keep a hand-made backup of the clip's notes",
         "Takes absolute beats for resizeClip and content beats (not clip-local) for setClipSourceRange"
       ]
+    },
+    {
+      "id": 93,
+      "prompt": "My DAW page has a looped MIDI clip (a two-bar pattern repeating across eight bars) on the timeline. Add a \"Loop bars 3-4 of the pattern instead\" action that makes the clip repeat a different two-bar part of its content from the same place with the same length, and let the person undo it. Do not run anything.",
+      "expected_output": "Uses project.setClipSourceRange on the looped clip inside project.edit: the range becomes the loop and the start, and the clip keeps its position and length.",
+      "files": [],
+      "expectations": [
+        "Calls project.setClipSourceRange(id, { start, end }) in content beats on the looped clip, wrapped in project.edit for one undo step",
+        "Does not remove the loop first, re-add notes, or call setClipLoop and resizeClip by hand to rebuild the clip",
+        "Does not move the clip or change its duration; relies on the clip keeping its time and length"
+      ]
+    },
+    {
+      "id": 94,
+      "prompt": "My DAW page plays a Workspace with a MIDI track while the transport runs. Add an \"Add synth\" button that puts the WebCLAP plug-in at /plugin/oxo-synth2.wclap on that track without stopping playback, and make Ctrl+Z take it away again. Do not run anything.",
+      "expected_output": "Uses workspace.addWebClapDevice (one Undo step, live) and project.undo, with no sync() and no transport restart.",
+      "files": [],
+      "expectations": [
+        "Calls await workspace.addWebClapDevice(trackId, bundleUrl) and keeps the returned device",
+        "Undoes with project.undo() and awaits workspace.flush() if it needs the result, without calling workspace.sync() or stopping and restarting the transport",
+        "Does not build the host, connect audio nodes or copy descriptor fields by hand"
+      ]
     }
   ]
 }

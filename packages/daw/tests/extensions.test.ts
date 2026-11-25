@@ -379,6 +379,61 @@ describe("extension summaries and read-only operations", () => {
     project.dispose();
   });
 
+  test("a read-only operation cannot edit notes through clip.midi: it throws before anything changes", () => {
+    const { project } = song();
+    const clip = project.tracks[0].clips[0];
+    if (clip.kind !== "midi") throw new Error("expected a MIDI clip");
+    clip.midi.setNotes([{ id: "n", pitch: 60, velocity: 0.8, start: 0, duration: 1 }]);
+    const notes = clip.midi.notes.value;
+    const revision = clip.midi.revision.value;
+    let recipeRan = false;
+    const writes: Record<string, () => void> = {
+      edit: () =>
+        clip.midi.edit((draft) => {
+          recipeRan = true;
+          draft[0].pitch = 70;
+        }),
+      setNotes: () => clip.midi.setNotes([]),
+    };
+    for (const [name, write] of Object.entries(writes)) {
+      project.operations.register(
+        defineOperation({ name: `test.notes-${name}`, description: "Writes", input: { type: "object" }, readOnly: true, run: write }),
+      );
+      expect(() => project.operations.call(`test.notes-${name}`)).toThrow(
+        `Operation "test.notes-${name}" is read-only and cannot change the project.`,
+      );
+      expect(clip.midi.notes.value).toBe(notes);
+      expect(clip.midi.revision.value).toBe(revision);
+    }
+    expect(recipeRan).toBe(false);
+    // The guard is released afterwards, also for a clip that other operations did not touch.
+    clip.midi.edit((draft) => void (draft[0].pitch = 72));
+    expect(clip.midi.notes.value[0].pitch).toBe(72);
+    project.dispose();
+  });
+
+  test("an async read-only operation is refused before it runs on, and its first synchronous write is blocked", () => {
+    const { project } = song();
+    let wrote = false;
+    project.operations.register(
+      defineOperation({
+        name: "test.async-write",
+        description: "Async",
+        input: { type: "object" },
+        readOnly: true,
+        run: async (target) => {
+          target.setTitle("changed");
+          wrote = true;
+        },
+      }),
+    );
+    const version = project.cells.version.value;
+    expect(() => project.operations.call("test.async-write")).toThrow();
+    expect(wrote).toBe(false);
+    expect(project.cells.version.value).toBe(version);
+    project.dispose();
+  });
+
   test("a read-only operation must be synchronous", () => {
     const { project } = song();
     project.operations.register(

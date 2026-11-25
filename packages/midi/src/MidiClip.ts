@@ -136,6 +136,7 @@ export class MidiClip {
   private lastFrom = -Infinity;
   private lastNow = 0;
   private disposed = false;
+  private writeGuard: (() => void) | null = null;
   private readonly onAbort = () => this.dispose();
 
   constructor(notes: readonly NoteInit[] = [], options: MidiClipOptions = {}) {
@@ -160,6 +161,7 @@ export class MidiClip {
 
   private commit(notes: readonly NoteInit[]): void {
     if (this.disposed) throw new Error("MidiClip is disposed.");
+    this.writeGuard?.();
     const next = normalizeNotes(notes, "MidiClip");
     batch(() => {
       this.store.value = next;
@@ -180,9 +182,20 @@ export class MidiClip {
    */
   edit(recipe: (draft: NoteDraft) => void): void {
     if (this.disposed) throw new Error("MidiClip is disposed.");
+    this.writeGuard?.();
     const draft = untracked(() => this.store.value).map((note) => ({ ...note })) as NoteDraft;
     recipe(draft);
     this.commit(draft);
+  }
+
+  /**
+   * Lets an owner veto note writes: `guard` runs before every `edit` and `setNotes` (before the recipe), and a throw there leaves the notes unchanged. Pass `null` to remove it.
+   * Returns the guard it replaced, so a caller that installs one for a while can put the previous one back.
+   */
+  setWriteGuard(guard: (() => void) | null): (() => void) | null {
+    const previous = this.writeGuard;
+    this.writeGuard = guard;
+    return previous;
   }
 
   /** The audio-context time now, from the transport the clip is attached to; a note is started when its on time has passed on this clock, not the last window's. */

@@ -78,6 +78,78 @@ describe("scenes", () => {
     expect(session.scenes[0]).toEqual({ id: a.id, name: "Opening" });
   });
 
+  test("moveScene puts a scene at a position, keeps its clips and ids, and an equal position is no change", () => {
+    const { project, session, keys, a, b, slot } = song();
+    const c = session.addScene({ name: "Outro" });
+    const hook = session.setMidiClip(slot(keys, a), { notes: notes(60), duration: 4 }, { name: "Hook" });
+    const version = project.cells.version.value;
+    session.moveScene(a.id, 2);
+    expect(session.scenes.map(({ id }) => id)).toEqual([b.id, c.id, a.id]);
+    expect(session.clipAt(slot(keys, a))).toBe(hook);
+    expect(project.cells.version.value).not.toBe(version);
+    session.moveScene(c.id, 0);
+    expect(session.scenes.map(({ id }) => id)).toEqual([c.id, b.id, a.id]);
+    const again = project.cells.version.value;
+    session.moveScene(c.id, 0);
+    expect(project.cells.version.value).toBe(again);
+    expect(() => session.moveScene("nope", 0)).toThrow(UNKNOWN);
+    expect(() => session.moveScene(a.id, 3)).toThrow("Project session moveScene needs a position from 0 to 2.");
+    expect(() => session.moveScene(a.id, -1)).toThrow("Project session moveScene needs a position from 0 to 2.");
+    expect(() => session.moveScene(a.id, 0.5)).toThrow("Project session moveScene needs a position from 0 to 2.");
+  });
+
+  test("a reorder is one Undo step that restores the order and redo repeats it, and it survives a rename after it", () => {
+    const { project, session, a, b } = song();
+    const c = session.addScene({ name: "Outro" });
+    const d = session.addScene({ name: "Coda" });
+    const ids = () => session.scenes.map(({ id }) => id);
+    project.edit("Move Intro", () => session.moveScene(a.id, 2));
+    expect(ids()).toEqual([b.id, c.id, a.id, d.id]);
+    expect(project.cells.history.value.undo).toBe("Move Intro");
+    expect(project.undo().status).toBe("applied");
+    expect(ids()).toEqual([a.id, b.id, c.id, d.id]);
+    expect(project.redo().status).toBe("applied");
+    expect(ids()).toEqual([b.id, c.id, a.id, d.id]);
+    // A later unrelated rename of a scene the step did not touch does not block the undo.
+    project.edit("Rename", () => session.renameScene(b.id, "Verse"));
+    project.undo();
+    project.undo();
+    expect(ids()).toEqual([a.id, b.id, c.id, d.id]);
+  });
+
+  test("undo of a scene move conflicts when another move happened outside history, and changes nothing", () => {
+    const { project, session, a, b } = song();
+    const c = session.addScene({ name: "Outro" });
+    const d = session.addScene({ name: "Coda" });
+    const ids = () => session.scenes.map(({ id }) => id);
+    project.edit("Move Intro", () => session.moveScene(a.id, 2));
+    session.moveScene(d.id, 0);
+    expect(ids()).toEqual([d.id, b.id, c.id, a.id]);
+    expect(project.undo().status).toBe("conflict");
+    expect(ids()).toEqual([d.id, b.id, c.id, a.id]);
+  });
+
+  test("reordering with several scenes changed in one edit undoes as one step", () => {
+    const { project, session, a, b } = song();
+    const c = session.addScene({ name: "Outro" });
+    project.edit("Rearrange", () => {
+      session.moveScene(c.id, 0);
+      session.renameScene(a.id, "Opening");
+      session.moveScene(b.id, 0);
+    });
+    expect(session.scenes.map(({ id, name }) => [id, name])).toEqual([
+      [b.id, "Drop"],
+      [c.id, "Outro"],
+      [a.id, "Opening"],
+    ]);
+    project.undo();
+    expect(session.scenes.map(({ id, name }) => [id, name])).toEqual([
+      [a.id, "Intro"],
+      [b.id, "Drop"],
+      [c.id, "Outro"],
+    ]);
+  });
+
   test("removeScene drops the scene and the clips in its slots", () => {
     const { project, session, keys, a, b, slot } = song();
     const clip = session.setMidiClip(slot(keys, a), { notes: notes(60), duration: 4 }, { name: "Hook" });
@@ -599,6 +671,17 @@ describe("save and reopen", () => {
     const bytes = saveDawProject(project);
     expect(strFromU8(unzipSync(bytes)["project.xml"])).not.toContain("Scenes");
     expect(sessionFor(openDawProject(bytes).project).scenes).toEqual([]);
+  });
+
+  test("a moved scene keeps its new place with its clips", () => {
+    const { project, session, keys, a, b, slot } = song();
+    const hook = session.setMidiClip(slot(keys, a), { notes: notes(60), duration: 4 }, { name: "Hook" });
+    session.moveScene(a.id, 1);
+    const reopened = openDawProject(saveDawProject(project)).project;
+    const grid = sessionFor(reopened);
+    expect(grid.scenes.map(({ id }) => id)).toEqual([b.id, a.id]);
+    expect(grid.clipAt(slot(keys, a))?.id).toBe(hook.id);
+    expect(grid.clipAt(slot(keys, b))).toBeNull();
   });
 
   test("a scene with no clips survives", () => {

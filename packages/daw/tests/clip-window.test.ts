@@ -373,10 +373,125 @@ describe("setClipSourceRange", () => {
     expect(() => project.setClipSourceRange("missing", { start: 0, end: 1 })).toThrow("Project clip does not exist.");
     const midi = project.addMidiClip(project.addTrack("Keys", "midi").id, { duration: 4, notes: [] }, 0);
     expect(() => project.setClipSourceRange(midi.id, { start: 2, end: 1 })).toThrow("Project MIDI source range needs finite start < end beats.");
-    project.setClipLoop(clip.id, { startSeconds: 0, endSeconds: 1 });
-    expect(() => project.setClipSourceRange(clip.id, { start: 0, end: 1 })).toThrow("without time-stretch or loop");
     expect(project.tracks).not.toBe(before);
     project.dispose();
+  });
+
+  describe("on a looped clip", () => {
+    const looped = () => {
+      const { project, clip } = whole();
+      project.setClipLoop(clip.id, { startSeconds: 0, endSeconds: 1 });
+      project.resizeClip(clip.id, { end: 9 });
+      return { project, clip };
+    };
+
+    test("the range becomes the loop and the start, and the clip keeps its time and length", () => {
+      const { project, clip } = looped();
+      const moved = audio(project.setClipSourceRange(clip.id, { start: 1.5, end: 2.5 }));
+      expect(moved).toMatchObject({
+        id: clip.id,
+        time: 5,
+        duration: 4,
+        sourceOffset: 1.5,
+        sourceLength: 3,
+        loop: { startSeconds: 1.5, endSeconds: 2.5 },
+      });
+      // The window runs to the end of the recording, as for any looped clip.
+      expect(samples(moved)).toEqual(slice(12, 24));
+      expect(project.clipName(clip.id)).toBe("Vox");
+      project.dispose();
+    });
+
+    test("keeps the envelope, moves gain automation with the new start and is one undo step", () => {
+      const { project, clip } = looped();
+      project.setAudioClipEnvelope(clip.id, { gain: 0.5, fadeIn: 0.25, fadeOut: 0.5 });
+      project.setAudioClipGainAutomation(clip.id, [
+        { time: 0, value: 1, shape: "linear" },
+        { time: 2, value: 0.5, shape: "linear" },
+      ]);
+      project.edit("Slip", () => void project.setClipSourceRange(clip.id, { start: 1, end: 2 }));
+      const after = audio(project.tracks[0].clips[0]);
+      expect(after.envelope).toEqual({ gain: 0.5, fadeIn: 0.25, fadeOut: 0.5 });
+      expect(after.gainAutomation?.sourceStart).toBe(1);
+      expect(after.loop).toEqual({ startSeconds: 1, endSeconds: 2 });
+      project.undo();
+      const before = audio(project.tracks[0].clips[0]);
+      expect(before).toMatchObject({ time: 5, duration: 4, sourceOffset: 0, loop: { startSeconds: 0, endSeconds: 1 } });
+      expect(before.gainAutomation?.sourceStart).toBe(0);
+      project.redo();
+      expect(audio(project.tracks[0].clips[0])).toMatchObject({ sourceOffset: 1, loop: { startSeconds: 1, endSeconds: 2 } });
+      project.dispose();
+    });
+
+    test("must stay inside the recording and survives save and reopen", () => {
+      const { project, clip } = looped();
+      for (const range of [
+        { start: -0.5, end: 1 },
+        { start: 2, end: 3.5 },
+        { start: 2, end: 2 },
+        { start: NaN, end: 2 },
+      ])
+        expect(() => project.setClipSourceRange(clip.id, range)).toThrow(EDGES);
+      expect(audio(project.tracks[0].clips[0]).loop).toEqual({ startSeconds: 0, endSeconds: 1 });
+      project.setClipSourceRange(clip.id, { start: 2, end: 3 });
+      const reopened = audio(openDawProject(saveDawProject(project)).project.tracks[0].clips[0]);
+      expect(reopened).toMatchObject({ time: 5, duration: 4, sourceOffset: 2, loop: { startSeconds: 2, endSeconds: 3 } });
+      project.dispose();
+    });
+
+    test("works on a Session slot clip", () => {
+      const { project, clip } = looped();
+      const session = sessionFor(project);
+      const scene = session.addScene();
+      const slot = audio(session.copyToSlot(clip.id, { trackId: project.tracks[0].id, sceneId: scene.id }));
+      const moved = audio(project.setClipSourceRange(slot.id, { start: 1, end: 2 }));
+      expect(moved).toMatchObject({ time: 0, duration: 4, sourceOffset: 1, loop: { startSeconds: 1, endSeconds: 2 } });
+      expect(session.clipAt({ trackId: project.tracks[0].id, sceneId: scene.id })).toBe(moved);
+      project.dispose();
+    });
+  });
+
+  describe("on a time-stretched clip", () => {
+    const stretched = () => {
+      const { project, clip } = whole();
+      // 3 s of audio stretched to 6 s: the stored recording is the stretched audio.
+      const rendered = project.applyAudioClipStretch(clip, 2, {
+        sampleRate: RATE,
+        channels: [Float32Array.from({ length: 48 }, (_, index) => (index + 1) / 100)],
+      });
+      return { project, clip: rendered };
+    };
+
+    test("the range is in seconds of the stored stretched audio and the clip keeps its time", () => {
+      const { project, clip } = stretched();
+      expect(clip).toMatchObject({ time: 5, duration: 6, sourceOffset: 0, sourceLength: 6 });
+      const trimmed = audio(project.setClipSourceRange(clip.id, { start: 2, end: 4 }));
+      expect(trimmed).toMatchObject({ id: clip.id, time: 5, duration: 2, sourceOffset: 0 });
+      expect(trimmed.stretch?.ratio).toBe(2);
+      expect(samples(trimmed)).toEqual(Array.from({ length: 16 }, (_, index) => Math.fround((index + 17) / 100)));
+      // A quarter of the original: 1 s of the 3 s source plays in the 2 s the clip lasts.
+      expect(trimmed.stretch?.source.channels?.[0]).toHaveLength(8);
+      project.dispose();
+    });
+
+    test("cannot reach outside the stored audio, is one undo step and survives save and reopen", () => {
+      const { project, clip } = stretched();
+      for (const range of [
+        { start: -1, end: 2 },
+        { start: 3, end: 7 },
+        { start: 2, end: 2 },
+      ])
+        expect(() => project.setClipSourceRange(clip.id, range)).toThrow(EDGES);
+      project.edit("Trim", () => void project.setClipSourceRange(clip.id, { start: 1, end: 3 }));
+      const reopened = audio(openDawProject(saveDawProject(project)).project.tracks[0].clips[0]);
+      expect(reopened).toMatchObject({ time: 5, duration: 2 });
+      expect(reopened.stretch?.ratio).toBe(2);
+      project.undo();
+      expect(project.tracks[0].clips[0]).toMatchObject({ time: 5, duration: 6 });
+      project.redo();
+      expect(project.tracks[0].clips[0]).toMatchObject({ time: 5, duration: 2 });
+      project.dispose();
+    });
   });
 
   test("survives save and reopen", () => {

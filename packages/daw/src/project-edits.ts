@@ -140,7 +140,7 @@ export type ResizeClipEdit = Readonly<{
 export type SetClipSourceRangeEdit = Readonly<{
   type: "setClipSourceRange";
   clip: EditClipSelector;
-  /** The part of the content to play, keeping the clip's position: content beats for a MIDI clip, recording seconds for an audio clip. */
+  /** The part of the content to play, keeping the clip's position: content beats for a MIDI clip, recording seconds for an audio clip (seconds of the stretched audio when it is time-stretched). On a looped clip it becomes the loop and the start, and the clip keeps its length. */
   start: number;
   end: number;
 }>;

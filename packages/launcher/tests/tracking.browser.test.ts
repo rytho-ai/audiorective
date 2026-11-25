@@ -175,6 +175,10 @@ describe("public readers are tracked", () => {
       () => launcher.insertScene(1),
     );
     await expectTracked(
+      () => launcher.scenes.map((s) => s.name).join(),
+      () => launcher.moveScene(0, 1),
+    );
+    await expectTracked(
       () => launcher.scenes[0]!.tempo.value,
       () => (launcher.scenes[0]!.tempo.value = 90),
     );

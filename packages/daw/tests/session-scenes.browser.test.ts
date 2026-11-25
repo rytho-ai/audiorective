@@ -176,6 +176,42 @@ describe("Session scenes in the Workspace", () => {
     expect(rounded(onsets(x, 0.2))).toEqual([3, 5, 7]);
   }, 30_000);
 
+  test("moving a scene leaves playing and queued Session clips alone and keeps the launcher", async () => {
+    const { project, session, drums, intro, drop } = song();
+    let launcher: Workspace["session"]["value"] | undefined;
+    let playing: unknown;
+    const x = await render(
+      project,
+      9,
+      [
+        { at: 0.2, run: (w) => w.session.value.launchScene(1) },
+        {
+          at: 2.5,
+          run: (w) => {
+            launcher = w.session.value;
+            playing = w.sessionClip(drums.id, session.clipAt({ trackId: drums.id, sceneId: drop.id })!.id);
+            // The Intro waits for the bar at 4 s while the Drop plays.
+            w.session.value.launchScene(0);
+          },
+        },
+        { at: 2.6, run: () => session.moveScene(intro.id, 1) },
+        {
+          at: 3.1,
+          run: (w) => {
+            expect(w.session.value).toBe(launcher);
+            expect(w.session.value.scenes.map((scene) => scene.name)).toEqual(["Drop", "Intro"]);
+            expect(w.sessionClip(drums.id, session.clipAt({ trackId: drums.id, sceneId: drop.id })!.id)).toBe(playing);
+            expect((playing as { index: number; playing: { value: boolean } }).index).toBe(0);
+            expect((playing as { playing: { value: boolean } }).playing.value).toBe(true);
+          },
+        },
+      ],
+      { instruments: { [drums.id]: { sound: click } } },
+    );
+    // The Drop's hit on beat 3 of the bar from 2 s (3 s); the queued Intro starts at 4 s on its beat 1 and loops: 4, 6, 8.
+    expect(rounded(onsets(x, 0.2))).toEqual([3, 4, 6, 8]);
+  }, 30_000);
+
   test("sessionClip finds the clip by id and follows scene order", async () => {
     const { project, session, drums, intro, drop } = song();
     const context = new OfflineAudioContext(2, RATE, RATE);

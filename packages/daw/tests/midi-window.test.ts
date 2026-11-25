@@ -166,8 +166,33 @@ describe("non-destructive MIDI windows", () => {
     const empty = asMidi(project.setClipSourceRange(clip.id, { start: -3, end: 1 }));
     expect(onsets(empty)).toEqual([[60, 3]]);
     expect(() => project.setClipSourceRange(clip.id, { start: 2, end: 2 })).toThrow("Project MIDI source range needs finite start < end beats.");
-    project.setClipLoop(clip.id, { startBeat: 0, endBeat: 1 });
-    expect(() => project.setClipSourceRange(clip.id, { start: 0, end: 2 })).toThrow("without time-stretch or loop");
+    project.dispose();
+  });
+
+  it("setClipSourceRange on a looped clip makes the range the loop and the start and keeps the clip's span", () => {
+    const { project, clip } = eightBars();
+    project.setClipLoop(clip.id, { startBeat: 0, endBeat: 4 });
+    project.resizeClip(clip.id, { end: 16 });
+    const slipped = asMidi(project.setClipSourceRange(clip.id, { start: 16, end: 20 }));
+    expect([slipped.time, slipped.sourceOffset, slipped.duration, slipped.loop]).toEqual([0, 16, 16, { startBeat: 16, endBeat: 20 }]);
+    // The bar-5 note (pitch 64) now starts every pass of the loop: beats 0, 4, 8, 12.
+    expect(onsets(slipped)).toEqual([
+      [64, 0],
+      [64, 4],
+      [64, 8],
+      [64, 12],
+    ]);
+    expect(slipped.midi).toBe(clip.midi);
+    expect(() => project.setClipSourceRange(clip.id, { start: 3, end: 3 })).toThrow("Project MIDI source range needs finite start < end beats.");
+    expect(() => project.setClipSourceRange(clip.id, { start: -1, end: 2 })).toThrow(
+      "Project clip loop needs 0 <= start < end inside the clip's content.",
+    );
+    project.edit("Slip", () => void project.setClipSourceRange(clip.id, { start: 8, end: 10 }));
+    expect(find(project, clip.id)).toMatchObject({ sourceOffset: 8, loop: { startBeat: 8, endBeat: 10 } });
+    project.undo();
+    expect(find(project, clip.id)).toMatchObject({ sourceOffset: 16, duration: 16, loop: { startBeat: 16, endBeat: 20 } });
+    const reopened = asMidi(openDawProject(saveDawProject(project)).project.tracks[0].clips[0]);
+    expect([reopened.sourceOffset, reopened.duration, reopened.loop]).toEqual([16, 16, { startBeat: 16, endBeat: 20 }]);
     project.dispose();
   });
 

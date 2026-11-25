@@ -87,6 +87,64 @@ describe("insertScene and removeScene", () => {
     launcher.dispose();
   });
 
+  test("moveScene reorders slots while a clip plays and a queued launch follows its scene", async () => {
+    const { ctx, ticks, clock } = rig(9);
+    const launcher = new ClipLauncher(
+      {
+        a: [{ buffer: tone(ctx, 200), loop: true }, null, null],
+        b: [null, { buffer: tone(ctx, 500), loop: true }, { buffer: tone(ctx, 600), loop: true }],
+      },
+      { context: ctx, scenes: [{ name: "One" }, { name: "Two" }, { name: "Three" }] },
+    );
+    clock.attach(launcher);
+    const log = record(launcher, ["started", "ended"]);
+    const playing = launcher.tracks.a!.clips[0]!;
+    const queued = launcher.tracks.b!.clips[1]!;
+    const one = launcher.scenes[0];
+    const two = launcher.scenes[1];
+    const out = await driveOffline(
+      ctx,
+      ticks,
+      [
+        { at: 0.2, run: () => launcher.launchScene(0) },
+        // Scene Two waits for the next bar (2.1 s); moving it to the front must not lose or retarget the launch.
+        { at: 0.5, run: () => launcher.launchScene(1) },
+        { at: 0.6, run: () => launcher.moveScene(1, 0) },
+        { at: 3.0, run: () => launcher.moveScene(0, 2) },
+      ],
+      start(clock),
+    );
+    expect(launcher.scenes.map((scene) => scene.name)).toEqual(["One", "Three", "Two"]);
+    expect(launcher.scenes.map((scene) => scene.index)).toEqual([0, 1, 2]);
+    expect(launcher.scenes[0]).toBe(one);
+    expect(launcher.scenes[2]).toBe(two);
+    expect(playing.index).toBe(0);
+    expect(queued.index).toBe(2);
+    expect(launcher.tracks.b!.clips.map((clip) => clip?.index)).toEqual([undefined, 1, 2]);
+    expect(log.filter((e) => e.type === "ended")).toEqual([]);
+    expect(log.filter((e) => e.type === "started" && e.track === "b").map((e) => [e.clip, r3(e.when)])).toEqual([[0, 2.1]]);
+    expect(playing.playing.value).toBe(true);
+    expect(queued.playing.value).toBe(true);
+    expect(rms(out, 0.3, 7.9)).toBeGreaterThan(0.05);
+    expect(() => launcher.moveScene(5, 0)).toThrow("moveScene needs indices from 0 to 2.");
+    expect(() => launcher.moveScene(0, -1)).toThrow("moveScene needs indices from 0 to 2.");
+    launcher.moveScene(1, 1);
+    expect(launcher.scenes.map((scene) => scene.name)).toEqual(["One", "Three", "Two"]);
+    launcher.dispose();
+  });
+
+  test("moveScene keeps a chain naming the same scenes", () => {
+    const { ctx } = rig(1);
+    const launcher = new ClipLauncher({ a: [null, null, null, null] }, { context: ctx });
+    launcher.playChain([0, 2, 3]);
+    launcher.moveScene(0, 2);
+    // Scenes 0, 2, 3 are now at 2, 1, 3.
+    expect(launcher.chain.value?.scenes).toEqual([2, 1, 3]);
+    launcher.moveScene(3, 0);
+    expect(launcher.chain.value?.scenes).toEqual([3, 2, 0]);
+    launcher.dispose();
+  });
+
   test("a scene's name can be mirrored in place", () => {
     const { ctx } = rig(1);
     const launcher = new ClipLauncher({ a: [null] }, { context: ctx, scenes: [{ name: "Old" }] });

@@ -66,6 +66,29 @@ describe("MidiClip readers are tracked", () => {
     clip.dispose();
   });
 
+  test("a write guard vetoes edit and setNotes before they change anything and can be replaced", () => {
+    const clip = watch(new MidiClip([note("n")]), touchedClip);
+    let ran = false;
+    const veto = () => {
+      throw new Error("vetoed");
+    };
+    expect(clip.setWriteGuard(veto)).toBeNull();
+    const revision = clip.revision.value;
+    expect(() =>
+      clip.edit(() => {
+        ran = true;
+      }),
+    ).toThrow("vetoed");
+    expect(() => clip.setNotes([])).toThrow("vetoed");
+    expect(ran).toBe(false);
+    expect(clip.revision.value).toBe(revision);
+    expect(clip.notes.value).toHaveLength(1);
+    expect(clip.setWriteGuard(null)).toBe(veto);
+    clip.setNotes([]);
+    expect(clip.notes.value).toHaveLength(0);
+    clip.dispose();
+  });
+
   test("the instrument, a plain property, is read and written directly and scheduling members are exercised", () => {
     const clip = watch(new MidiClip([note("n")]), touchedClip);
     const inst = { noteOn: vi.fn(), noteOff: vi.fn() };

@@ -85,6 +85,7 @@ export type JsonSchema = Readonly<{
  * A named edit an app adds to its songs: `project.operations.register(removeGap)`, then `project.operations.call("podcast.remove-gap", { start: 10, end: 20 })`.
  * `run` edits the song with Project methods; each call is one Undo step labelled `label` (default `description`), and if `run` throws, nothing changes.
  * With `readOnly: true` it is a query instead: it returns its result, makes no Undo step and cannot change the song.
+ * `run` must be synchronous: a read-only `run` that returns a Promise makes `call` throw `Operation "…" must be synchronous.`, and nothing after its first `await` is guarded.
  */
 export interface ProjectOperation<Args extends object = Readonly<Record<string, unknown>>, Result = unknown> {
   /** Unique name callers use, such as "podcast.remove-gap". */

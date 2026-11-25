@@ -486,7 +486,6 @@ describe("mcpTools clip windows", () => {
     const schema = JSON.stringify(tools.find((tool) => tool.name === "apply_edits")!.inputSchema);
     expect(schema).toContain("resizeClip");
     expect(schema).toContain("setClipSourceRange");
-    project.setClipLoop(midi.id, null); // setClipSourceRange needs a clip without a loop
     const result = await call("apply_edits", {
       expectedVersion: project.cells.version.value,
       label: "Window",
@@ -497,7 +496,9 @@ describe("mcpTools clip windows", () => {
     });
     expect(parse(result).status).toBe("applied");
     const clip = project.findClips({ trackName: "Keys" })[0];
-    expect([clip.startBeat, clip.sourceOffset, clip.durationBeats]).toEqual([2, 1, 4]);
+    // On a looped clip the range is the loop and the start: the clip keeps its place and length.
+    expect([clip.startBeat, clip.sourceOffset, clip.durationBeats]).toEqual([2, 1, 12]);
+    expect(clip.loop).toEqual({ startBeat: 1, endBeat: 5 });
   });
 });
 

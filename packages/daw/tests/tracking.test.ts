@@ -161,6 +161,14 @@ const rows: Array<{ name: string; read: (ctx: Ctx) => unknown; mutate: (ctx: Ctx
     read: (c) => c.project.tracks[0].devices[0].state,
     mutate: (c) => c.project.setDeviceState(c.deviceId, new Uint8Array([1, 2, 3])),
   },
+  {
+    name: "Project.tracks (moveDevice)",
+    read: (c) => c.project.tracks[0].devices,
+    mutate: (c) => {
+      c.project.addWebClapDevice(c.trackId, { pluginId: "r", name: "R", vendor: "v", version: "1", bundleUrl: "/r" });
+      c.project.moveDevice(c.deviceId, 1);
+    },
+  },
   { name: "Project.tracks (removeDevice)", read: (c) => c.project.tracks[0].devices, mutate: (c) => c.project.removeDevice(c.deviceId) },
   { name: "Project.bpm (setTempoChanges)", read: (c) => c.project.bpm, mutate: (c) => c.project.setTempoChanges([{ beat: 0, bpm: 90 }]) },
   { name: "Project.tempoMap", read: (c) => c.project.tempoMap, mutate: (c) => c.project.setTempoChanges([{ beat: 4, bpm: 60 }]) },
@@ -244,6 +252,14 @@ const rows: Array<{ name: string; read: (ctx: Ctx) => unknown; mutate: (ctx: Ctx
   { name: "ProjectSession.scenes (renameScene)", read: (c) => c.session.scenes, mutate: (c) => c.session.renameScene(c.sceneId, "Verse") },
   { name: "ProjectSession.scenes (removeScene)", read: (c) => c.session.scenes, mutate: (c) => c.session.removeScene(c.sceneId) },
   { name: "ProjectSession.scenes (duplicateScene)", read: (c) => c.session.scenes, mutate: (c) => void c.session.duplicateScene(c.sceneId) },
+  {
+    name: "ProjectSession.scenes (moveScene)",
+    read: (c) => c.session.scenes.map((scene) => scene.id).join(),
+    mutate: (c) => {
+      const other = c.session.addScene().id;
+      c.session.moveScene(other, 0);
+    },
+  },
   {
     name: "ProjectSession.clipAt (setMidiClip)",
     read: (c) => c.session.clipAt({ trackId: c.trackId, sceneId: c.sceneId }),
@@ -364,7 +380,9 @@ const commands: Array<{ name: string; run: (ctx: Ctx) => unknown }> = [
   { name: "splitClip (audio)", run: (c) => c.project.splitClip(c.audioClipId, 0.05) },
   { name: "rippleDelete", run: (c) => c.project.rippleDelete({ startSeconds: 0.02, endSeconds: 0.04 }, { crossfade: 0.01 }) },
   { name: "MidiClip.playbackEvents", run: (c) => c.clip.playbackEvents() },
+  { name: "moveDevice", run: (c) => c.project.moveDevice(c.deviceId, 0) },
   { name: "ProjectSession.addScene", run: (c) => c.session.addScene() },
+  { name: "ProjectSession.moveScene", run: (c) => c.session.moveScene(c.session.addScene().id, 0) },
   {
     name: "ProjectSession.setMidiClip",
     run: (c) => c.session.setMidiClip({ trackId: c.trackId, sceneId: c.sceneId }, { duration: 1, notes: [] }),

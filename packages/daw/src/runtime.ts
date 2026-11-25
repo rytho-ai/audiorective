@@ -583,7 +583,7 @@ export class Workspace {
    * Add the WebCLAP plug-in at `bundleUrl` to a track: loads the bundle once to read its CLAP ID, name, vendor and version, records the device with
    * `project.addWebClapDevice` (`bundleUrl` is stored as given), then runs `sync()`, so playback stops, as for any device change; pending track edits apply with it.
    * `options.pluginId` picks one plug-in of a bundle that holds several. Not an Undo step (device and track-list changes never are).
-   * A bundle that cannot load rejects with its error and leaves the Project unchanged; if the rebuild fails, the device is removed again.
+   * A bundle that cannot load rejects with its error and leaves the Project unchanged; if the rebuild fails, only this device is removed again (as Undo when nothing was edited since, else as a new edit), and any other edit stays. If the device is gone from the Project when loading ends (Undo, a removal, a replaced song), it rejects with `Workspace device was removed before it finished loading.`
    */
   async addWebClapDevice(trackId: string, bundleUrl: string, options: Readonly<{ pluginId?: string }> = {}): Promise<WebClapDevice> {
     if (this.disposed) throw new Error("Workspace is disposed.");
@@ -593,13 +593,25 @@ export class Workspace {
     const { id, name, vendor, version } = host.descriptor;
     host.dispose();
     if (this.disposed) throw new Error("Workspace is disposed.");
-    const device = this.project.addWebClapDevice(trackId, { pluginId: id, name, vendor, version, bundleUrl });
+    const project = this.project;
+    const device = project.edit(`Add ${name}`, () => project.addWebClapDevice(trackId, { pluginId: id, name, vendor, version, bundleUrl }));
+    const added = untracked(() => project.cells.version.value);
+    const present = () =>
+      !this.disposed && this.project === project && project.tracks.some((track) => track.devices.some((item) => item.id === device.id));
     try {
-      await this.sync();
+      // A structural edit still waiting (a new track) is applied with it; otherwise the device goes into the running track.
+      if (untracked(() => this.topologyPending.value)) await this.sync();
+      else await this.flush();
     } catch (error) {
-      if (!this.disposed) this.project.removeDevice(device.id);
+      if (present()) {
+        // Undo only while nothing else has been edited since; otherwise take out just this device, so another edit stays.
+        if (untracked(() => project.cells.version.value) === added && project.cells.history.value.undo === `Add ${name}`) project.undo();
+        else project.edit(`Remove ${name}`, () => project.removeDevice(device.id));
+        await this.flush().catch(() => undefined);
+      }
       throw error;
     }
+    if (!present()) throw new Error("Workspace device was removed before it finished loading.");
     return device;
   }
 
@@ -711,6 +723,78 @@ export class Workspace {
     return { project: this.project, options: this.options, warn: (message) => this.warn(message), loaded: this.loadedBundles };
   }
 
+  /** Load a device's plug-in and restore its state; a bundle that cannot load is a warning and no host. */
+  private async loadDeviceHost(device: WebClapDevice, stage: TrackStage): Promise<WebClapHost | undefined> {
+    const bundleUrl = stage.options.resolveBundle
+      ? await stage.options.resolveBundle(device)
+      : importedBundles.get(stage.project)?.has(device.id)
+        ? undefined
+        : device.bundleUrl;
+    if (!bundleUrl) {
+      stage.warn(`Device ${device.name} has no WebCLAP bundle.`);
+      return undefined;
+    }
+    let host: WebClapHost | undefined;
+    try {
+      host = await WebClapHost.load(this.context, { url: bundleUrl, pluginId: device.pluginId, workletUrl: stage.options.workletUrl });
+      if (host.descriptor?.id !== device.pluginId) {
+        host.dispose();
+        stage.warn(`Device ${device.name} has a different CLAP ID in its bundle.`);
+        return undefined;
+      }
+      if (!stage.loaded.has(device.pluginId)) stage.loaded.set(device.pluginId, new Set());
+      stage.loaded.get(device.pluginId)!.add(bundleUrl);
+      if (device.state.length) await host.loadState(device.state);
+      return host;
+    } catch (error) {
+      host?.dispose();
+      stage.warn(`Device ${device.name} could not load: ${String(error)}`);
+      return undefined;
+    }
+  }
+
+  /** Connect the track's input through its hosts, in order, to its rack. Reconnects a chain that is already wired. */
+  private wireDevices(runtime: TrackRuntime): void {
+    runtime.input.disconnect();
+    let previous: AudioNode = runtime.input;
+    for (const host of runtime.hosts.values()) {
+      host.output.disconnect();
+      previous.connect(host.input);
+      previous = host.output;
+    }
+    previous.connect(runtime.rack.input);
+  }
+
+  /** Where a MIDI track plays: its first loaded device, or without devices its `instruments` sampler. */
+  private pointMidi(runtime: TrackRuntime, track: ProjectTrack, instruments: WorkspaceOptions["instruments"]): void {
+    if (track.kind !== "midi") return;
+    const first = runtime.hosts.values().next().value;
+    if (first) {
+      if (runtime.sampler) {
+        runtime.midi?.allNotesOff();
+        runtime.sampler.dispose();
+        runtime.sampler = undefined;
+      }
+      runtime.midi = first;
+      return;
+    }
+    if (runtime.midi && !runtime.sampler) runtime.midi = undefined;
+    const instrument = track.devices.length ? undefined : typeof instruments === "function" ? instruments(track) : instruments?.[track.id];
+    if (!instrument) {
+      if (runtime.sampler) {
+        runtime.midi?.allNotesOff();
+        runtime.sampler.dispose();
+        runtime.sampler = undefined;
+        runtime.midi = undefined;
+      }
+      return;
+    }
+    if (runtime.sampler) return;
+    runtime.sampler = new Sampler(this.context, instrument);
+    runtime.sampler.connect(runtime.rack.input);
+    runtime.midi = new SamplerSink(runtime.sampler, this.context);
+  }
+
   private async createTrack(track: ProjectTrack, stage: TrackStage = this.liveStage()): Promise<TrackRuntime> {
     const automationGain = this.context.createGain();
     let strip: MixerStrip | undefined;
@@ -724,6 +808,8 @@ export class Workspace {
       if (strip) this.mixer.releaseStrip(strip);
       throw error;
     }
+    // The track's own input: whatever feeds the track connects here, and the devices are spliced in behind it.
+    const input = this.context.createGain();
     const runtime: TrackRuntime = {
       kind: track.kind,
       clips: track.clips,
@@ -736,60 +822,17 @@ export class Workspace {
       macroSettings: track.effectMacros,
       sendName: strip.sendName,
       sends: new Map(),
-      input: automationGain,
+      input,
       hosts: new Map(),
     };
     try {
-      runtime.input = runtime.rack.input;
       runtime.rack.output.connect(automationGain);
-      let previous: WebClapHost | undefined;
       for (const device of track.devices) {
-        const bundleUrl = stage.options.resolveBundle
-          ? await stage.options.resolveBundle(device)
-          : importedBundles.get(stage.project)?.has(device.id)
-            ? undefined
-            : device.bundleUrl;
-        if (!bundleUrl) {
-          stage.warn(`Device ${device.name} has no WebCLAP bundle.`);
-          continue;
-        }
-        let host: WebClapHost | undefined;
-        try {
-          host = await WebClapHost.load(this.context, { url: bundleUrl, pluginId: device.pluginId, workletUrl: stage.options.workletUrl });
-          if (host.descriptor?.id !== device.pluginId) {
-            host.dispose();
-            stage.warn(`Device ${device.name} has a different CLAP ID in its bundle.`);
-            continue;
-          }
-          if (!stage.loaded.has(device.pluginId)) stage.loaded.set(device.pluginId, new Set());
-          stage.loaded.get(device.pluginId)!.add(bundleUrl);
-          if (device.state.length) await host.loadState(device.state);
-          if (previous) previous.output.connect(host.input);
-          previous = host;
-          runtime.hosts.set(device.id, host);
-          if (track.kind === "midi" && !runtime.midi) runtime.midi = host;
-        } catch (error) {
-          host?.dispose();
-          stage.warn(`Device ${device.name} could not load: ${String(error)}`);
-        }
+        const host = await this.loadDeviceHost(device, stage);
+        if (host) runtime.hosts.set(device.id, host);
       }
-      if (previous) {
-        previous.output.connect(runtime.rack.input);
-        runtime.input = [...runtime.hosts.values()][0].input;
-      }
-      // A track with a device plays the device; its instruments entry is ignored, so render workspaces sharing these options stay warning-free.
-      const instruments = stage.options.instruments;
-      const instrument =
-        track.kind === "midi" && !track.devices.length
-          ? typeof instruments === "function"
-            ? instruments(track)
-            : instruments?.[track.id]
-          : undefined;
-      if (instrument) {
-        runtime.sampler = new Sampler(this.context, instrument);
-        runtime.sampler.connect(runtime.rack.input);
-        runtime.midi = new SamplerSink(runtime.sampler, this.context);
-      }
+      this.wireDevices(runtime);
+      this.pointMidi(runtime, track, stage.options.instruments);
       this.mixer.connectReceive(strip, runtime.input);
       if (track.kind !== "bus") runtime.session = new AudioTrackSession(this.context, runtime.input);
       this.updateAutomation(runtime, track);
@@ -798,6 +841,63 @@ export class Workspace {
       this.disposeTrack(runtime);
       throw error;
     }
+  }
+
+  /**
+   * Make a live track's chain match `track.devices` without stopping anything: devices that went are disposed (their last state is kept for Redo),
+   * new ones are loaded off to the side, then the chain is rewired in one synchronous step. Only this track's audio is interrupted, briefly.
+   */
+  private async applyDevices(project: Project, track: ProjectTrack, runtime: TrackRuntime): Promise<void> {
+    const keys = deviceKeys(track);
+    const before = new Map(runtime.deviceKeys.map((key) => [key.slice(0, key.indexOf("\u0000")), key] as const));
+    const stays = new Set(track.devices.filter((device, index) => before.get(device.id) === keys[index]).map((device) => device.id));
+    const leaving = [...runtime.hosts].filter(([id]) => !stays.has(id));
+    // A device the Project no longer has keeps its last state in the history steps that can bring it back.
+    for (const [id, host] of leaving) {
+      if (track.devices.some((device) => device.id === id)) continue;
+      try {
+        const state = await host.saveState();
+        if (!this.disposed) captureDeviceState(project, id, state);
+      } catch {
+        // The device then comes back with the state its step recorded.
+      }
+    }
+    const loaded = new Map<string, WebClapHost>();
+    for (const device of track.devices) {
+      if (stays.has(device.id)) continue;
+      const host = await this.loadDeviceHost(device, this.liveStage());
+      if (host) loaded.set(device.id, host);
+    }
+    if (this.disposed) {
+      for (const host of loaded.values()) host.dispose();
+      return;
+    }
+    // From here no await: the swap is one step.
+    const midi = runtime.midi;
+    for (const [id, host] of leaving) {
+      host.allNotesOff();
+      host.dispose();
+      runtime.hosts.delete(id);
+      runtime.deviceStates.delete(id);
+    }
+    const hosts = new Map<string, WebClapHost>();
+    for (const device of track.devices) {
+      const host = loaded.get(device.id) ?? runtime.hosts.get(device.id);
+      if (!host) continue;
+      hosts.set(device.id, host);
+      if (loaded.has(device.id)) runtime.deviceStates.set(device.id, device.state);
+    }
+    runtime.hosts = hosts;
+    runtime.deviceKeys = keys;
+    this.wireDevices(runtime);
+    this.pointMidi(runtime, track, this.options.instruments);
+    if (runtime.midi !== midi) {
+      // The track plays into another device now: sounding notes end, and its Session clips are rebuilt for the new one.
+      midi?.allNotesOff();
+      const slots = this.sessionLauncher?.tracks[track.id];
+      if (slots) for (const clip of slots.clips) if (clip) this.sessionSources.delete(clip);
+    }
+    if (this.clock.state.value === "playing") void this.clock.refresh();
   }
 
   /**
@@ -816,16 +916,20 @@ export class Workspace {
       tracks.every((track) => {
         const runtime = this.tracks.get(track.id);
         if (!runtime) return track.kind === "bus" && !track.devices.length;
-        const nextKeys = deviceKeys(track);
-        return (
-          runtime.kind === track.kind &&
-          runtime.deviceKeys.length === nextKeys.length &&
-          runtime.deviceKeys.every((key, index) => key === nextKeys[index])
-        );
+        return runtime.kind === track.kind;
       });
     if (!compatible) {
       this.topologyPending.value = true;
       return;
+    }
+    // Devices added, removed or moved on a track that stays are spliced into that track's chain; the other tracks play on.
+    for (const track of tracks) {
+      const runtime = this.tracks.get(track.id);
+      if (!runtime) continue;
+      const keys = deviceKeys(track);
+      if (runtime.deviceKeys.length === keys.length && runtime.deviceKeys.every((key, index) => key === keys[index])) continue;
+      await this.applyDevices(project, track, runtime);
+      if (this.disposed) return;
     }
 
     for (const track of tracks) {
@@ -834,7 +938,7 @@ export class Workspace {
       for (const device of track.devices) {
         if (runtime.deviceStates.get(device.id) === device.state) continue;
         const host = runtime.hosts.get(device.id);
-        if (host) await host.loadState(device.state);
+        if (host && device.state.length) await host.loadState(device.state);
         if (this.disposed) return;
         runtime.deviceStates.set(device.id, device.state);
         if (this.project !== project || project.tracks !== tracks) return this.applyLight();
@@ -1071,15 +1175,7 @@ export class Workspace {
     const scenes = grid.scenes;
     const wanted = scenes.map(({ id }) => id);
     const known = this.sessionSceneIds;
-    const kept = known.filter((id) => wanted.includes(id));
-    if (kept.some((id, index) => id !== wanted.filter((other) => kept.includes(other))[index])) {
-      // Scenes are only added and removed, never reordered; a different order means the launcher no longer matches, so build it again.
-      launcher.dispose();
-      this.sessionLauncher = undefined;
-      this.sessionRevision.value++;
-      return;
-    }
-    // Slots follow the scenes in place, so clips in later scenes keep playing: removed scenes first (last to first), then inserted ones.
+    // Slots follow the scenes in place, so clips in other scenes keep playing: removed scenes first (last to first), then the others into place, inserted or moved.
     for (let index = known.length - 1; index >= 0; index--)
       if (!wanted.includes(known[index])) {
         launcher.removeScene(index);
@@ -1087,7 +1183,12 @@ export class Workspace {
       }
     wanted.forEach((id, index) => {
       if (known[index] === id) return;
-      launcher.insertScene(index, { name: scenes[index].name });
+      const from = known.indexOf(id);
+      if (from < 0) launcher.insertScene(index, { name: scenes[index].name });
+      else {
+        launcher.moveScene(from, index);
+        known.splice(from, 1);
+      }
       known.splice(index, 0, id);
     });
     scenes.forEach(({ name }, index) => launcher.scenes[index]._rename(name));
@@ -1497,6 +1598,7 @@ export class Workspace {
     runtime.sampler?.dispose();
     runtime.automationBinding?.dispose();
     runtime.automationGain.disconnect();
+    runtime.input.disconnect();
     this.mixer.disposeStrip(runtime);
   }
 
