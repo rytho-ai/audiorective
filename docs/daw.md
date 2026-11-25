@@ -16,21 +16,173 @@ A project-file tool imports only `daw/project` and `daw/dawproject`; it loads no
 
 ## Method index
 
-Every `Project` and `Workspace` method by job, each linking to the section that explains it. `clip.midi` is a MIDI clip's note list (`edit(draft => ...)`, `setNotes`, `notes.value`).
+Signatures of the public methods, copied from the built `.d.ts` and grouped by job; the linked section explains each group. `Project`, `ProjectSession` and the helpers import from `@audiorective/daw` (Node-safe pure entries: `/project` and `/dawproject`; browser: `/runtime`). `clip.midi` is a MIDI clip's note list (`edit(draft => ...)`, `setNotes`, `notes.value`). `TimeRange` is `{ startBeat, endBeat }` or `{ startSeconds, endSeconds }`; options not spelled out are in the linked section. A `time` is project seconds for audio clips and beats for MIDI clips.
 
-| Job            | Where it lives                                                                                                                                                                                                                                                                        | Read                                                                                                                                                                                    |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Tracks         | `Project`: `addTrack`, `removeTrack`, `setTrackName`, `addWebClapDevice`, `setDeviceState`, `removeDevice`, `tracks`                                                                                                                                                                  | [Live browser workspace](#live-browser-workspace), [Page-made instruments](#page-made-instruments)                                                                                      |
-| Clips          | `Project`: `addAudioClip`, `addAudioMediaClip`, `addMidiClip`, `addMidiTake`, `moveClip`, `duplicateClip`, `resizeClip`, `splitClip`, `removeClip`, `rippleDelete`, `setClipLoop`, `setClipSourceRange`, `clipRecording`, `setClipName`, `linkedClips`, `makeClipUnique`, `findClips` | [Arrange clips](#arrange-clips-and-mix-tracks), [Linked clips](#linked-clips), [Loop a clip](#loop-a-clip)                                                                              |
-| Clip audio     | `Project`: `setAudioClipEnvelope`, `setAudioClipGainAutomation`, `applyAudioClipStretch`; `Workspace`: `prepareAudioClipStretch`, `auditionAudioClip`, `auditionRange`                                                                                                                | [Clip volume and fades](#clip-volume-and-fades), [Pitch-preserving clip stretch](#pitch-preserving-clip-stretch)                                                                        |
-| Notes          | `clip.midi.edit`, `clip.midi.setNotes`; `applyEdits` operation `setNoteVelocity`                                                                                                                                                                                                      | [Edit a project as one undoable step](#edit-a-project-as-one-undoable-step)                                                                                                             |
-| Session        | `sessionFor(project)`: `addScene`, `duplicateScene`, `setMidiClip` and the other slot methods; `Workspace`: `session`, `sessionClip`                                                                                                                                                  | [Session scenes and clip slots](#session-scenes-and-clip-slots), [Clip Launcher](#clip-launcher)                                                                                        |
-| History        | `Project`: `edit`, `applyEdits`, `undo`, `redo`, `clearHistory`, `overview`, `cells.version`, `cells.history`                                                                                                                                                                         | [Edit a project as one undoable step](#edit-a-project-as-one-undoable-step)                                                                                                             |
-| Save and open  | `saveWorkspace`, `saveWorkspaceTo`, `openWorkspace`, `openWorkspaceBlob`, `Workspace.open`, `saveDawProject`, `openDawProject`, `Project.snapshot`, `Workspace.checkpoint`                                                                                                            | [Save and reopen a project](#save-and-reopen-a-project)                                                                                                                                 |
-| Render         | `renderMixRange`, `renderSession`, `exportAudioFallbackTo`, `portabilityReport`                                                                                                                                                                                                       | [Render a session, export WAV](#render-a-session-export-wav)                                                                                                                            |
-| Playback       | `Workspace`: `play`, `pause`, `stop`, `seek`, `position`, `duration`, `loop`, `arrangement`, `refresh`, `flush`, `sync`, `editStatus`, `renderSettled`, `player`                                                                                                                      | [Live browser workspace](#live-browser-workspace), [Apply Project edits to the live graph](#apply-project-edits-to-the-live-graph), [Mount playback controls](#mount-playback-controls) |
-| Tempo, markers | `Project`: `bpm`, `setTempoChanges`, `tempoMap`, `markers`, `setMarkers`, `clipTimeSeconds`, `title`, `setTitle`                                                                                                                                                                      | [Tempo and arrangement time](#tempo-and-arrangement-time)                                                                                                                               |
-| Mixer          | `Project` and `Workspace`: `setTrackVolume`, `setTrackMuted`, `setTrackSolo`, `setTrackPan`, `setTrackRouting`, `setTrackEffects`, `setTrackMacroValue`, `setMasterVolume`; `Project`: `setVolumeAutomation`, `setTrackRackPreset`; `Workspace`: `trackMixerOutput`, `cells.levels`   | [Mixer buses and sends](#mixer-buses-and-sends), [Effect rack](#effect-rack), [Track and master levels](#track-and-master-levels)                                                       |
+**Tracks and devices** ([Live browser workspace](#live-browser-workspace), [Page-made instruments](#page-made-instruments)). `Project`:
+
+```ts
+new Project(options?: ProjectOptions)
+tracks: readonly ProjectTrack[]                         // tracked
+addTrack(name: string, kind: TrackKind, options?: { id?, volume?, muted?, solo?, pan?, busRole? }): ProjectTrack
+removeTrack(trackId: string): void
+setTrackName(trackId: string, name: string): void
+addWebClapDevice(trackId: string, details: { id?, state?, ... }): WebClapDevice
+setDeviceState(deviceId: string, bytes: Uint8Array): void
+removeDevice(deviceId: string): void
+```
+
+**Clips** ([Arrange clips](#arrange-clips-and-mix-tracks), [Linked clips](#linked-clips), [Loop a clip](#loop-a-clip)). `Project`:
+
+```ts
+addAudioClip(trackId: string, audio: ProjectAudio, time: number, options?: AudioClipOptions): AudioClip
+addAudioMediaClip(trackId: string, media: AudioMedia, time: number, options?: AudioClipOptions & { startFrame?, frameCount? }): MediaAudioClip
+addMidiClip(trackId: string, data: ProjectMidiData, time: number, options?: { id?, name?, linkedTo? }): MidiClip
+addMidiTake(trackId: string, take: MidiTake, time?: number): MidiClip
+moveClip(clipId: string, trackId: string, time: number): void
+duplicateClip(clipId: string, time: number, trackIdOrOptions?: string | { trackId?, linked? }): ProjectClip
+resizeClip(clipId: string, edges: { start?: number; end?: number }): ProjectClip
+splitClip(clipId: string, offset: number): readonly [ProjectClip, ProjectClip]
+removeClip(clipId: string): void
+rippleDelete(range: TimeRange, options?: { crossfade?: boolean | number }): void
+setClipLoop(clipId: string, loop: BeatRange | SecondsRange | null): void
+setClipSourceRange(clipId: string, range: { start: number; end: number }): AudioClip
+clipRecording(clipId: string): AudioClipSource & { duration: number }
+clipName(clipId: string): string | undefined
+setClipName(clipId: string, name: string): void
+linkedClips(clipId: string): readonly ProjectClip[]
+makeClipUnique(clipId: string): ProjectClip
+findClips(query?: ProjectClipQuery): readonly ProjectClipSummary[]
+```
+
+`project.tracks[].clips` and `session.clipAt(slot)` are `ProjectClip = AudioClip | MidiClip`, discriminated by `clip.kind` (`"audio"` or `"midi"`). Narrow with `if (clip.kind === "midi")` on one variable (a second call such as `clipAt(slot)?.kind` does not narrow the first), or take the typed slot readers below.
+
+**Clip audio** ([Clip volume and fades](#clip-volume-and-fades), [Pitch-preserving clip stretch](#pitch-preserving-clip-stretch)):
+
+```ts
+project.setAudioClipEnvelope(clipId: string, settings: ClipEnvelope): AudioClip
+project.setAudioClipGainAutomation(clipId: string, points: readonly AutomationPoint[]): AudioClip
+project.applyAudioClipStretch(expected: AudioClip, ratio: number, rendered?: ProjectAudio, warp?: readonly ClipStretchAnchor[]): AudioClip
+workspace.prepareAudioClipStretch(clipId: string, ratio: number, processor?, options?: { signal?, anchors? }): Promise<PreparedClipStretch>
+workspace.auditionAudioClip(clipId: string, options?: { range?: { start: number; end: number } }): Promise<void>
+workspace.stopClipAudition(): void
+workspace.auditionRange(range: LoopRange, options?: { trackIds?: readonly string[] }): Promise<void>
+workspace.stopRangeAudition(): void
+```
+
+**Session** ([Session scenes and clip slots](#session-scenes-and-clip-slots), [Clip Launcher](#clip-launcher)). `sessionFor(project: Project): ProjectSession`, then:
+
+```ts
+scenes: readonly SessionScene[]                         // tracked; { id, name }
+clipAt(slot: SessionSlot): ProjectClip | null           // slot = { trackId, sceneId }
+midiClipAt(slot: SessionSlot): MidiClip | null          // null for empty, audio or unknown
+audioClipAt(slot: SessionSlot): AudioClip | null
+addScene(options?: { name?: string; afterSceneId?: string }): SessionScene
+renameScene(sceneId: string, name: string): void
+removeScene(sceneId: string): void
+duplicateScene(sceneId: string, options?: { afterSceneId?: string }): SessionScene
+setMidiClip(slot: SessionSlot, data: ProjectMidiData, options?: { name?: string }): MidiClip
+setAudioClip(slot: SessionSlot, audio: ProjectAudio, options?: { name?: string }): AudioClip
+moveClip(from: SessionSlot, to: SessionSlot): void
+clearSlot(slot: SessionSlot): void
+copyToSlot(clipId: string, slot: SessionSlot, options?: { linked?: boolean }): ProjectClip
+copyToArrangement(slot: SessionSlot, options: { trackId?, atBeat?, atSeconds?, linked? }): ProjectClip
+```
+
+On `Workspace`: `session: ReadonlyCell<ClipLauncher>` and `sessionClip(trackId: string, clipId: string): Clip | null`.
+
+**History** ([Edit a project as one undoable step](#edit-a-project-as-one-undoable-step)). `Project`:
+
+```ts
+edit<T>(label: string, action: () => T): T
+applyEdits(request: ProjectEditRequest): ProjectEditReceipt
+undo(options?: { expectedVersion?: ProjectVersion }): ProjectEditReceipt
+redo(options?: { expectedVersion?: ProjectVersion }): ProjectEditReceipt
+clearHistory(): void
+overview(): ProjectOverview
+cells: { revision, version: ReadonlyCell<ProjectVersion>, history: ReadonlyCell<{ undo?, redo? }>, content }
+snapshot(): Project
+dispose(): void
+```
+
+**Tempo and markers** ([Tempo and arrangement time](#tempo-and-arrangement-time)). `Project`:
+
+```ts
+bpm: number                                             // tempo at beat 0
+tempoMap: TempoMap
+setTempoChanges(changes: readonly TempoChange[]): void  // { beat, bpm }
+clipTimeSeconds(clip: ProjectClip, localTime?: number): number
+markers: readonly ProjectMarker[]
+setMarkers(markers: readonly ProjectMarker[]): void
+findMarker(query: { name: string; occurrence?: number }): ProjectMarker | undefined
+title: string
+setTitle(title: string): void
+```
+
+**Mixer** ([Mixer buses and sends](#mixer-buses-and-sends), [Effect rack](#effect-rack), [Track and master levels](#track-and-master-levels)). On `Project` and `Workspace`:
+
+```ts
+setTrackVolume(trackId: string, value: number): void
+setTrackMuted(trackId: string, muted: boolean): void
+setTrackSolo(trackId: string, solo: boolean): void
+setTrackPan(trackId: string, pan: number): void
+setTrackRouting(trackId: string, routing: TrackRouting): void
+setTrackEffects(trackId: string, effects: readonly RackEffect[]): void
+setTrackMacroValue(trackId: string, macroId: string, value: number): void
+setMasterVolume(value: number): void
+```
+
+`Project` only: `setVolumeAutomation(trackId: string, points: readonly AutomationPoint[]): void`, `setTrackRackPreset(trackId: string, preset: RackPreset): void`, `masterVolume: number`. `Workspace` only: `trackMixerOutput(trackId: string): AudioNode | undefined`, `trackEffectOutput(trackId: string): AudioNode | undefined`, `cells.levels: ReadonlyCell<WorkspaceLevels>`.
+
+**Workspace: playback and sync** ([Live browser workspace](#live-browser-workspace), [Apply Project edits to the live graph](#apply-project-edits-to-the-live-graph), [Mount playback controls](#mount-playback-controls)):
+
+```ts
+Workspace.create(context: AudioContext, project: Project, options?: WorkspaceOptions): Promise<Workspace>
+workspace.project: Project
+workspace.play(): Promise<void>
+workspace.pause(): void
+workspace.stop(): void
+workspace.seek(seconds: number): void
+workspace.position: number                             // project seconds
+workspace.duration: number
+workspace.loop: WorkspaceLoop                           // setRegion, setEnabled
+workspace.arrangement: Cell<boolean>                    // false: Session only
+workspace.player: WorkspacePlayer                       // for mountPlayer
+workspace.flush(): Promise<void>
+workspace.sync(): Promise<void>                         // structural rebuild; see cells.needsSync
+workspace.refresh(): void
+workspace.editStatus(version: ProjectVersion): Promise<PlaybackEditStatus>
+workspace.renderSettled(): Promise<void>
+workspace.addWebClapDevice(trackId: string, bundleUrl: string, options?: { pluginId?: string }): Promise<WebClapDevice>
+workspace.host(deviceId: string): WebClapHost | undefined
+workspace.open(source: WorkspaceSource, options?: WorkspaceOpenOptions): Promise<void>
+workspace.checkpoint(): Promise<Project>
+workspace.cells: { needsSync, error, warnings, session, auditioningClip, auditioningRange, levels }
+```
+
+**Save, open, render** ([Save and reopen a project](#save-and-reopen-a-project), [Render a session, export WAV](#render-a-session-export-wav)). Root functions:
+
+```ts
+openWorkspace(context: AudioContext, bytes: Uint8Array, options?: WorkspaceOptions): Promise<Workspace>
+openWorkspaceBlob(context: AudioContext, blob: Blob, options?: WorkspaceOptions): Promise<Workspace>
+saveWorkspace(workspace: Workspace, options?: SaveWorkspaceOptions): Promise<Uint8Array>
+saveWorkspaceTo(workspace: Workspace, destination: WritableStream<Uint8Array>, options?: SaveWorkspaceOptions): Promise<void>
+saveDawProject(project: Project): Uint8Array            // pure, Node-safe
+saveDawProjectTo(project: Project, destination: WritableStream<Uint8Array>): Promise<void>
+openDawProject(bytes: Uint8Array): OpenDawProjectResult // { project, warnings }
+openDawProjectBlob(blob: Blob): Promise<OpenDawProjectResult>
+portabilityReport(project: Project, warnings?: readonly string[]): PortabilityReport
+renderMixRange(workspace: Workspace, options: MixRangeOptions): Promise<MixRangeResult>
+renderSession(workspace: Workspace, options: RenderSessionOptions): Promise<RenderSessionResult>
+exportAudioFallbackTo(workspace: Workspace, destination: WritableStream<Uint8Array>, options?: AudioFallbackOptions): Promise<void>
+encodeWav(pcm: PCMData, options?: { bitDepth?: 16 | 24 | 32 }): Blob          // from @audiorective/core, re-exported
+encodeWavBytes(pcm: PCMData, options?: { bitDepth?: 16 | 24 | 32 }): Uint8Array
+sessionFor(project: Project): ProjectSession
+selectionFor(project: Project): ProjectSelection
+defineExtension<T>(definition: { id, version?, defaultValue, validate? }): ExtensionDefinition<T>   // then project.extension(def)
+defineOperation<Args, Result>(operation: ProjectOperation<Args, Result>): ProjectOperation<Args, Result>   // then project.operations
+```
+
+`renderMixRange` takes `{ expectedVersion, range: TimeRange, prerollSeconds?, seamBeats?, signal? }`; `renderSession` takes `{ scenes: readonly string[], expectedVersion?, tailSeconds?, signal? }`. Both resolve to `{ status: "rendered", audio: PCMData, durationSeconds, peakDbFS, loudnessLUFS, ... }` or a non-rendered status such as `conflict`.
 
 ## Save and reopen a project
 
@@ -378,17 +530,12 @@ import { openWorkspace, saveWorkspace } from "@audiorective/daw";
 
 const project = new Project({ bpm: 120 });
 const track = project.addTrack("Synth", "midi");
-const device = project.addWebClapDevice(track.id, {
-  pluginId: "com.oxo.music.oxosynth2",
-  name: "Oxo Synth2",
-  vendor: "chab (Oxo Music)",
-  version: "1.1.1",
-  bundleUrl: "/plugin/oxo-synth2.wclap",
-});
 const workspace = await Workspace.create(context, project, {
   destination: context.destination,
   workletUrl: "/assets/webclap-worklet.js",
 });
+// Reads the CLAP ID, name, vendor and version from the bundle, records the device, then runs sync() (playback stops).
+const device = await workspace.addWebClapDevice(track.id, "/plugin/oxo-synth2.wclap");
 const iframe = document.querySelector<HTMLIFrameElement>("#plugin-editor")!;
 const host = workspace.host(device.id); // lookup by device ID, not track ID
 const detachEditor = host?.hasEditor ? await host.mountEditor(iframe) : undefined;
@@ -412,6 +559,8 @@ const reopened = await openWorkspace(context, bytes, {
 });
 // Inspect reopened.warnings and reopened.project before playing.
 ```
+
+`workspace.addWebClapDevice(trackId, bundleUrl, { pluginId? })` is the way to put a plug-in on a track from a bundle URL alone: it loads the bundle once to read its identity, so no descriptor field is copied by hand and none can be guessed wrong, then calls `project.addWebClapDevice` and `sync()`. It returns the `WebClapDevice`. `pluginId` picks one plug-in of a bundle that holds several. A bundle that fails to load rejects with the host's error and leaves the Project unchanged; if the rebuild then fails the device is removed again. Playback stops, because a device changes the graph and `sync()` rebuilds every track; add all tracks and devices before `play()`. It is not an Undo step, like every track-list and device change. Use `project.addWebClapDevice` directly only when the Project is built without a browser (a server, a test) and the identity is known.
 
 ### File > Open in a running app
 
@@ -602,7 +751,7 @@ session.copyToArrangement(slot, { atBeat: 32, linked: true }); // same, but shar
 session.copyToSlot(clip.id, { trackId: keys.id, sceneId: chorus.id }, { linked: true }); // a linked copy of any timeline or slot clip, in a slot
 ```
 
-- `session.scenes` (tracked) lists `{ id, name }` in order; `clipAt({ trackId, sceneId })` (tracked) returns the slot's clip or `null`, also for an unknown scene or track.
+- `session.scenes` (tracked) lists `{ id, name }` in order; `clipAt({ trackId, sceneId })` (tracked) returns the slot's clip or `null`, also for an unknown scene or track. `midiClipAt(slot)` and `audioClipAt(slot)` return the same clip already typed as `MidiClip` or `AudioClip`, and `null` when the slot is empty or holds the other kind, so `session.midiClipAt(slot)?.midi.edit(...)` needs no cast.
 - `addScene({ name?, afterSceneId? })`, `renameScene`, `removeScene` (drops the scene's clips) and `duplicateScene(sceneId, { afterSceneId? })` (the copy is named "… copy" and has new clip ids).
 - `setMidiClip(slot, data, { name? })` takes what `addMidiClip` takes; `setAudioClip(slot, audio, { name? })` what `addAudioClip` takes. Each replaces the slot's clip. `moveClip(from, to)` keeps the clip's id; `clearSlot(slot)` empties a slot.
 - `copyToArrangement(slot, { trackId?, atBeat? | atSeconds?, linked? })` needs exactly one position, in the unit you prefer (the tempo map converts), and a track of the clip's kind (default: the slot's track). `linked: true` makes a MIDI copy that shares the slot clip's notes.
@@ -828,6 +977,7 @@ A small [Cubase 14 export shared on the Steinberg forum](https://forums.steinber
 | `Project cannot extend a time-stretched clip; set its ratio to 1 first.`                                                                                                                                                  | A stretched clip may shrink only. Apply ratio 1 with `applyAudioClipStretch`, then resize.                                                                                                                                                                |
 | `Project markers need unique non-negative times and names.` / `Project markers need seconds time.`                                                                                                                        | Supply named markers at distinct non-negative project seconds.                                                                                                                                                                                            |
 | `Project has invalid channel mute or solo.` / `Project has unsupported track pan units.` / `Project has invalid track pan.`                                                                                               | Supply DAWproject channel mute/solo as booleans and normalized pan between 0 and 1.                                                                                                                                                                       |
+| `Workspace device needs an existing track.` / `Workspace device needs a bundle URL.`                                                                                                                                      | `workspace.addWebClapDevice` got a track ID the Project does not have, or an empty URL. Pass a current `track.id` and the bundle URL. A bundle that cannot load rejects with the host error (see `host.md`).                                              |
 | `Project WebCLAP device needs an ID, name, bundle URL and byte state.` / `Project device needs an existing track.`                                                                                                        | Supply a current track ID, CLAP identity and URL; state must be `Uint8Array`.                                                                                                                                                                             |
 | `Project device state needs bytes.` / `Workspace is disposed.`                                                                                                                                                            | Supply `Uint8Array` state or create a new Workspace after disposing one.                                                                                                                                                                                  |
 | `Workspace open needs the @audiorective/daw root entry: import it once so the file reader is registered.`                                                                                                                 | `workspace.open` ran in a bundle that never loaded the `@audiorective/daw` root entry (only `daw/runtime`).                                                                                                                                               | Import `openWorkspace` or anything else from `@audiorective/daw` once, or parse the file with `openDawProject` and assign `workspace.project`. |

@@ -580,6 +580,30 @@ export class Workspace {
   }
 
   /**
+   * Add the WebCLAP plug-in at `bundleUrl` to a track: loads the bundle once to read its CLAP ID, name, vendor and version, records the device with
+   * `project.addWebClapDevice` (`bundleUrl` is stored as given), then runs `sync()`, so playback stops, as for any device change; pending track edits apply with it.
+   * `options.pluginId` picks one plug-in of a bundle that holds several. Not an Undo step (device and track-list changes never are).
+   * A bundle that cannot load rejects with its error and leaves the Project unchanged; if the rebuild fails, the device is removed again.
+   */
+  async addWebClapDevice(trackId: string, bundleUrl: string, options: Readonly<{ pluginId?: string }> = {}): Promise<WebClapDevice> {
+    if (this.disposed) throw new Error("Workspace is disposed.");
+    if (!this.project.tracks.some((track) => track.id === trackId)) throw new Error("Workspace device needs an existing track.");
+    if (typeof bundleUrl !== "string" || !bundleUrl) throw new Error("Workspace device needs a bundle URL.");
+    const host = await WebClapHost.load(this.context, { url: bundleUrl, pluginId: options.pluginId, workletUrl: this.options.workletUrl });
+    const { id, name, vendor, version } = host.descriptor;
+    host.dispose();
+    if (this.disposed) throw new Error("Workspace is disposed.");
+    const device = this.project.addWebClapDevice(trackId, { pluginId: id, name, vendor, version, bundleUrl });
+    try {
+      await this.sync();
+    } catch (error) {
+      if (!this.disposed) this.project.removeDevice(device.id);
+      throw error;
+    }
+    return device;
+  }
+
+  /**
    * File > Open in place: replace the song with a `.dawproject` file (bytes, Blob or File) and keep this Workspace, its `cells`, `loop` and every subscription.
    * The file is read and its devices, plug-in states and instruments are fully loaded off to the side first, so a bad file rejects with the error
    * `openWorkspace` would throw and the current song plays on untouched. On success playback stops at 0, `project` becomes the opened Project (this Workspace owns it and

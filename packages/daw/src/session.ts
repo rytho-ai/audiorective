@@ -51,6 +51,18 @@ export class ProjectSession {
     return this.bridge.state().slots.get(slotKey(slot.sceneId, slot.trackId)) ?? null;
   }
 
+  /** The MIDI clip in a slot, or null when the slot is empty, holds an audio clip, or the scene or track does not exist. Tracked. Same as `clipAt` narrowed to `MidiClip`. */
+  midiClipAt(slot: SessionSlot): MidiClip | null {
+    const clip = this.clipAt(slot);
+    return clip?.kind === "midi" ? clip : null;
+  }
+
+  /** The audio clip in a slot, or null when the slot is empty, holds a MIDI clip, or the scene or track does not exist. Tracked. Same as `clipAt` narrowed to `AudioClip`. */
+  audioClipAt(slot: SessionSlot): AudioClip | null {
+    const clip = this.clipAt(slot);
+    return clip?.kind === "audio" ? clip : null;
+  }
+
   private position(state: SessionState, sceneId: string): number {
     const index = state.scenes.findIndex((scene) => scene.id === sceneId);
     if (index < 0) throw unknownSlot();

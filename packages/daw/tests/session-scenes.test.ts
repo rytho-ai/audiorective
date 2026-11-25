@@ -37,6 +37,22 @@ describe("sessionFor", () => {
     expect(sessionFor(new Project())).not.toBe(session);
   });
 
+  test("midiClipAt and audioClipAt narrow clipAt by kind", () => {
+    const { session, keys, vocal, a, b, slot } = song();
+    const m = session.setMidiClip(slot(keys, a), { duration: 4, notes: notes(60) });
+    const au = session.setAudioClip(slot(vocal, a), { sampleRate: RATE, channels: [recording()] });
+    const notesNow: number = session.midiClipAt(slot(keys, a))!.midi.notes.value[0].pitch; // typed: no cast
+    const frames: number = session.audioClipAt(slot(vocal, a))!.channels[0].length;
+    expect(notesNow).toBe(60);
+    expect(frames).toBe(4 * RATE);
+    expect(session.midiClipAt(slot(keys, a))).toBe(m);
+    expect(session.audioClipAt(slot(vocal, a))).toBe(au);
+    expect(session.midiClipAt(slot(vocal, a))).toBeNull();
+    expect(session.audioClipAt(slot(keys, a))).toBeNull();
+    expect(session.midiClipAt(slot(keys, b))).toBeNull();
+    expect(session.midiClipAt({ trackId: "nope", sceneId: a.id })).toBeNull();
+  });
+
   test("a new Project has no scenes", () => {
     expect(sessionFor(new Project()).scenes).toEqual([]);
   });

@@ -250,6 +250,17 @@ const rows: Array<{ name: string; read: (ctx: Ctx) => unknown; mutate: (ctx: Ctx
       void c.session.setAudioClip({ trackId: c.audioTrackId, sceneId: c.sceneId }, { sampleRate: 8000, channels: [new Float32Array(80)] }),
   },
   {
+    name: "ProjectSession.midiClipAt (setMidiClip)",
+    read: (c) => c.session.midiClipAt({ trackId: c.trackId, sceneId: c.sceneId }),
+    mutate: (c) => void c.session.setMidiClip({ trackId: c.trackId, sceneId: c.sceneId }, { duration: 1, notes: [] }),
+  },
+  {
+    name: "ProjectSession.audioClipAt (setAudioClip)",
+    read: (c) => c.session.audioClipAt({ trackId: c.audioTrackId, sceneId: c.sceneId }),
+    mutate: (c) =>
+      void c.session.setAudioClip({ trackId: c.audioTrackId, sceneId: c.sceneId }, { sampleRate: 8000, channels: [new Float32Array(80)] }),
+  },
+  {
     name: "ProjectSession.clipAt (moveClip)",
     read: (c) => c.session.clipAt({ trackId: c.trackId, sceneId: c.sceneId }),
     mutate: (c) => {
