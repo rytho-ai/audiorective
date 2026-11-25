@@ -571,8 +571,10 @@ export type SessionBridge = Readonly<{
   /** A clip made for a slot, at time 0, with its ID reserved. */
   midi(data: ProjectMidiData, name: string | undefined): { clip: MidiClip; name: string | undefined };
   audio(audio: ProjectAudio, name: string | undefined): { clip: AudioClip; name: string | undefined };
-  /** A copy of a clip with its own ID, name, loop and envelope. */
-  clone(clip: ProjectClip, time: number): { clip: ProjectClip; name: string | undefined };
+  /** A copy of a clip with its own ID, name, loop and envelope; `linked` makes a MIDI copy share the source's notes. */
+  clone(clip: ProjectClip, time: number, linked?: boolean): { clip: ProjectClip; name: string | undefined };
+  /** A clip on the timeline or in a slot, by ID. */
+  find(clipId: string): ProjectClip | undefined;
   /** Replace the grid. `named` clips take their names; `dropped` clips and `droppedIds` leave the project. */
   write(
     next: SessionState,
@@ -791,7 +793,8 @@ export class Project {
       newSceneId: () => this.reserve(undefined, "scene"),
       midi: (data: ProjectMidiData, name: string | undefined) => this.buildMidiClip(data, 0, { name }),
       audio: (audio: ProjectAudio, name: string | undefined) => this.buildAudioClip(audio, 0, { name }),
-      clone: (clip: ProjectClip, time: number) => untracked(() => this.cloneClip(clip, time)),
+      clone: (clip: ProjectClip, time: number, linked = false) => untracked(() => this.cloneClip(clip, time, linked)),
+      find: (clipId: string) => this.findClip(clipId),
       write: (
         next: SessionState,
         change: Readonly<{ named?: ReadonlyMap<string, string>; dropped?: readonly ProjectClip[]; droppedIds?: readonly string[] }> = {},
@@ -846,9 +849,10 @@ export class Project {
   }
 
   /** A copy of `clip` at `time` with its own ID, name, loop and envelope, not placed anywhere. */
-  private cloneClip(clip: ProjectClip, time: number): { clip: ProjectClip; name: string | undefined } {
+  private cloneClip(clip: ProjectClip, time: number, linked = false): { clip: ProjectClip; name: string | undefined } {
     const name = this.s.clipNames.get(clip.id);
     if (clip.kind === "audio") {
+      if (linked) throw new Error("Project can link only MIDI clips; an audio clip cannot share content.");
       const options = { name, envelope: clip.envelope, stretch: clip.stretch, gainAutomation: clip.gainAutomation };
       const built = clip.media
         ? this.buildMediaClip(clip.media, time, { ...options, startFrame: clip.startFrame, frameCount: clip.frameCount })
@@ -858,7 +862,16 @@ export class Project {
     }
     const id = this.reserve(undefined, "clip");
     const loop = clip.loop && Object.freeze({ ...clip.loop });
-    return { clip: new MidiClip(id, time, { notes: clip.midi.notes.value, duration: clip.duration, events: clip.events }, loop), name };
+    return {
+      clip: new MidiClip(
+        id,
+        time,
+        { notes: clip.midi.notes.value, duration: clip.duration, events: clip.events },
+        loop,
+        linked ? clip.midi : undefined,
+      ),
+      name,
+    };
   }
 
   /** Read a compact, JSON-serializable view and the version it describes. */
@@ -1796,7 +1809,7 @@ export class Project {
     return { clip, name };
   }
 
-  /** `linkedTo` is a timeline MIDI clip whose notes the new clip shares (as `duplicateClip(..., { linked: true })` does); `data.notes` is then ignored. */
+  /** `linkedTo` is a MIDI clip (on the timeline or in a Session slot) whose notes the new clip shares (as `duplicateClip(..., { linked: true })` does); `data.notes` is then ignored. */
   addMidiClip(trackId: string, data: ProjectMidiData, time: number, options: { id?: string; name?: string; linkedTo?: string } = {}): MidiClip {
     assertProjectActive(this);
     const track = this.track(trackId, "midi");
@@ -1815,7 +1828,7 @@ export class Project {
     const name = normalizeClipName(options.name);
     let shared: MidiNotes | undefined;
     if (options.linkedTo !== undefined) {
-      const source = this.s.tracks.flatMap((track) => track.clips).find((clip) => clip.id === options.linkedTo);
+      const source = this.findClip(options.linkedTo);
       if (!source) throw new Error("Project clip does not exist.");
       if (!(source instanceof MidiClip)) throw new Error("Project can link only MIDI clips; an audio clip cannot share content.");
       shared = source.midi;
@@ -1896,12 +1909,21 @@ export class Project {
     return clip.loop ? this.looped(copy, clip.loop, clip.duration) : copy;
   }
 
-  /** The other timeline clips that share this clip's MIDI notes, in track and time order; empty when it is not linked. Tracked. */
+  /**
+   * The other clips that share this clip's MIDI notes, timeline clips first in track and time order, then Session slot clips in scene and track order;
+   * empty when it is not linked. Works for a timeline or slot clip ID. Tracked.
+   */
   linkedClips(clipId: string): readonly ProjectClip[] {
-    const clips = this.tracks.flatMap((track) => track.clips);
+    const clips = [...this.tracks.flatMap((track) => track.clips), ...this.slotClipsInOrder()];
     const clip = clips.find((item) => item.id === clipId);
     if (!(clip instanceof MidiClip)) return Object.freeze([]);
     return Object.freeze(clips.filter((other): other is MidiClip => other instanceof MidiClip && other !== clip && other.midi === clip.midi));
+  }
+
+  /** Slot clips in scene order, then track order. Tracked. */
+  private slotClipsInOrder(): readonly ProjectClip[] {
+    const { scenes, slots } = this.store.value.session;
+    return scenes.flatMap((scene) => this.store.value.tracks.flatMap((track) => slots.get(slotKey(scene.id, track.id)) ?? []));
   }
 
   /**
@@ -1912,7 +1934,7 @@ export class Project {
     assertProjectActive(this);
     const where = this.locate(clipId);
     const { clip } = where;
-    if (!(clip instanceof MidiClip) || !where.track || !untracked(() => this.linkedClips(clipId)).length) return clip;
+    if (!(clip instanceof MidiClip) || !untracked(() => this.linkedClips(clipId)).length) return clip;
     const next = new MidiClip(
       clip.id,
       clip.time,
@@ -2001,6 +2023,16 @@ export class Project {
     if (current && (isMidi ? current.startBeat === start && current.endBeat === end : current.startSeconds === start && current.endSeconds === end))
       return;
     this.looped(clip, isMidi ? { startBeat: start, endBeat: end } : { startSeconds: start, endSeconds: end }, clip.duration);
+  }
+
+  /** A clip on the timeline or in a Session slot, by ID; undefined when there is none. */
+  private findClip(clipId: string): ProjectClip | undefined {
+    for (const track of this.s.tracks) {
+      const clip = track.clips.find((item) => item.id === clipId);
+      if (clip) return clip;
+    }
+    for (const clip of this.s.session.slots.values()) if (clip.id === clipId) return clip;
+    return undefined;
   }
 
   /** A clip on the timeline or in a Session slot, by ID. */

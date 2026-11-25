@@ -271,6 +271,16 @@ const rows: Array<{ name: string; read: (ctx: Ctx) => unknown; mutate: (ctx: Ctx
       c.session.copyToArrangement({ trackId: c.trackId, sceneId: c.sceneId }, { atBeat: 4 });
     },
   },
+  {
+    name: "ProjectSession.clipAt (copyToSlot)",
+    read: (c) => c.session.clipAt({ trackId: c.trackId, sceneId: c.sceneId }),
+    mutate: (c) => void c.session.copyToSlot(c.clip.id, { trackId: c.trackId, sceneId: c.sceneId }, { linked: true }),
+  },
+  {
+    name: "Project.linkedClips (copyToSlot)",
+    read: (c) => c.project.linkedClips(c.clip.id),
+    mutate: (c) => void c.session.copyToSlot(c.clip.id, { trackId: c.trackId, sceneId: c.sceneId }, { linked: true }),
+  },
   { name: "Project.cells.revision", read: (c) => c.project.cells.revision.value, mutate: (c) => c.project.setTitle("Revised") },
   {
     name: "Project.clipTimeSeconds (tempo change)",
@@ -355,6 +365,10 @@ const commands: Array<{ name: string; run: (ctx: Ctx) => unknown }> = [
       c.session.setMidiClip({ trackId: c.trackId, sceneId: c.sceneId }, { duration: 1, notes: [] });
       return c.session.copyToArrangement({ trackId: c.trackId, sceneId: c.sceneId }, { atBeat: 4 });
     },
+  },
+  {
+    name: "ProjectSession.copyToSlot",
+    run: (c) => c.session.copyToSlot(c.clip.id, { trackId: c.trackId, sceneId: c.sceneId }, { linked: true }),
   },
   {
     name: "setClipLoop (slot clip)",

@@ -77,6 +77,8 @@ const DAW_RUNTIME = [
   "track-rack.ts",
   "rack-macro.ts",
   "project-lookup.ts",
+  "session-notes.ts",
+  "song-parser.ts",
 ];
 const DAW_ROOT = ["index.ts", "compose.ts"];
 

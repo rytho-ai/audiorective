@@ -1,6 +1,7 @@
 import { keepsFileBackedEntries } from "./dawproject";
 import { openDawProject, openDawProjectBlob, saveDawProject, saveDawProjectTo } from "./dawproject";
 import { Workspace, type WorkspaceOptions } from "./runtime";
+import { registerSongParser } from "./song-parser";
 import type { OpenDawProjectResult } from "./dawproject";
 import type { Project } from "./model";
 import type { ProjectVersion } from "./project-edits";
@@ -12,6 +13,9 @@ function assertSaveVersion(project: Project, options: SaveWorkspaceOptions): voi
   if (options.expectedVersion !== undefined && project.cells.version.value !== options.expectedVersion)
     throw new Error("Workspace save stopped: the project changed after expectedVersion was read.");
 }
+
+// `workspace.open` reads files through the codec, which the runtime may not import.
+registerSongParser((source) => (source instanceof Uint8Array ? openDawProject(source) : openDawProjectBlob(source)));
 
 async function start(context: AudioContext, opened: OpenDawProjectResult, options: WorkspaceOptions): Promise<Workspace> {
   try {

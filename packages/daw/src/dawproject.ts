@@ -1036,7 +1036,7 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
     const secondsMidi: Array<{ trackId: string; midi: ReturnType<typeof readMidi>; sceneId?: string }> = [];
     // Clips whose content is another clip's timeline (`reference`), added once every clip with content is known.
     const referenced: Array<{ trackId: string; clip: Element; sceneId?: string }> = [];
-    // The notes and Lanes timelines of the MIDI clips on the timeline, by XML ID: what a `reference` can point at.
+    // The notes and Lanes timelines of the MIDI clips in the arrangement or a Session slot, by XML ID: what a `reference` can point at.
     const timelineOwners = new Map<string, { clipId: string; withEvents: boolean }>();
     const readClip = (clip: Element, trackId: string, track: ProjectTrack, unit: "seconds" | "beats", index: number, sceneId?: string): void => {
       childrenOnly(clip, ["Lanes", "Audio"]);
@@ -1054,11 +1054,9 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
           const added = project.addMidiClip(trackId, midi, midi.time, { id: midi.id, name: midi.name });
           if (midi.loop) project.setClipLoop(added.id, { startBeat: midi.loop.start, endBeat: midi.loop.end });
           if (sceneId) adoptSlotClip(project, added.id, sceneId);
-          else {
-            const [lanesId, notesId] = midi.timelines;
-            if (lanesId) timelineOwners.set(lanesId, { clipId: added.id, withEvents: true });
-            if (notesId) timelineOwners.set(notesId, { clipId: added.id, withEvents: false });
-          }
+          const [lanesId, notesId] = midi.timelines;
+          if (lanesId) timelineOwners.set(lanesId, { clipId: added.id, withEvents: true });
+          if (notesId) timelineOwners.set(notesId, { clipId: added.id, withEvents: false });
         } else secondsMidi.push({ trackId, midi, sceneId });
       } else {
         attributesOnly(clip, [
@@ -1327,8 +1325,10 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
     for (const { trackId, clip, sceneId } of referenced) {
       const id = attr(clip, "reference");
       const owner = timelineOwners.get(id);
-      if (!owner) throw new Error(`Project clip reference "${id}" does not match any MIDI notes on the timeline.`);
-      const source = project.tracks.flatMap((track) => track.clips).find((item) => item.id === owner.clipId) as MidiClip;
+      if (!owner) throw new Error(`Project clip reference "${id}" does not match any MIDI notes in the arrangement or a Session scene.`);
+      const source = [...project.tracks.flatMap((track) => track.clips), ...readSession(project).slots.values()].find(
+        (item) => item.id === owner.clipId,
+      ) as MidiClip;
       const time = numberAttr(clip, "time");
       const loop = readLoop(clip);
       const added = project.addMidiClip(
@@ -1338,8 +1338,7 @@ function parseDawProjectEntries(entries: ArchiveEntries): OpenDawProjectResult {
         {
           id: stored && clip.getAttribute("id") ? clip.getAttribute("id")! : undefined,
           name: clip.getAttribute("name") || undefined,
-          // A Session slot never shares notes with the timeline.
-          ...(sceneId ? {} : { linkedTo: owner.clipId }),
+          linkedTo: owner.clipId,
         },
       );
       if (loop) project.setClipLoop(added.id, { startBeat: loop.start, endBeat: loop.end });

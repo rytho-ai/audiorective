@@ -34,6 +34,8 @@ import type { AudioClipGainAutomation, MediaAudioClip, PcmAudioClip, ProjectClip
 import type { BeatRange, ProjectVersion, SecondsRange } from "./project-edits";
 import { audioLoopFrames } from "./clip-loop";
 import { sessionFor } from "./session";
+import { sessionNotes } from "./session-notes";
+import { songParser } from "./song-parser";
 
 export { scheduleClipEnvelope } from "./schedule-clip-envelope";
 export type { PreparedClipStretch } from "./clip-stretch";
@@ -48,6 +50,20 @@ export type PlaybackEditStatus = "applied" | "needs-sync" | "failed" | "supersed
 
 /** A `Sampler` setup for one MIDI track: what it plays (`sound`), its root note, release and polyphony. */
 export type TrackInstrument = Omit<SamplerOptions, "signal">;
+
+/** What building a track reads: the live Workspace's, or the staged song of `open`. */
+type TrackStage = Readonly<{
+  project: Project;
+  options: WorkspaceOptions;
+  warn: (message: string) => void;
+  loaded: Map<string, Set<string>>;
+}>;
+
+/** What `workspace.open` accepts: the file's bytes, or a Blob or File. */
+export type WorkspaceSource = Uint8Array | Blob;
+
+/** The options `workspace.open` takes. Those given replace the workspace's own for this song and later syncs; those left out stay. */
+export type WorkspaceOpenOptions = Pick<WorkspaceOptions, "workletUrl" | "resolveBundle" | "instruments" | "warnings">;
 
 export type WorkspaceOptions = {
   destination?: AudioNode;
@@ -150,7 +166,7 @@ export class Workspace {
   private readonly projectSource: Cell<Project>;
   /** The Project this Workspace disposes with itself, when it was handed one. */
   private ownedProject?: Project;
-  private readonly options: WorkspaceOptions;
+  private options: WorkspaceOptions;
   /** Bundle URLs this workspace has loaded, by CLAP ID: already approved, so `deviceOptions` approves them again in a file saved from here. */
   private readonly loadedBundles = new Map<string, Set<string>>();
   /**
@@ -563,6 +579,77 @@ export class Workspace {
     return this.serialize(() => this.applyProjectEdit(() => this.rebuildTracks()));
   }
 
+  /**
+   * File > Open in place: replace the song with a `.dawproject` file (bytes, Blob or File) and keep this Workspace, its `cells`, `loop` and every subscription.
+   * The file is read and its devices, plug-in states and instruments are fully loaded off to the side first, so a bad file rejects with the error
+   * `openWorkspace` would throw and the current song plays on untouched. On success playback stops at 0, `project` becomes the opened Project (this Workspace owns it and
+   * disposes the old one if it owned that), `warnings` hold the new file's, `cells.needsSync` and `cells.error` clear, `session` is rebuilt and the loop is cleared (region off: its beats belong to the old song). `options` entries replace the workspace's own for this song and later syncs.
+   */
+  async open(source: WorkspaceSource, options: WorkspaceOpenOptions = {}): Promise<void> {
+    if (this.disposed) throw new Error("Workspace is disposed.");
+    const parse = songParser();
+    if (!parse) throw new Error("Workspace open needs the @audiorective/daw root entry: import it once so the file reader is registered.");
+    const opened = await parse(source);
+    return this.serialize(() => this.swapSong(opened, options));
+  }
+
+  private async swapSong(opened: Readonly<{ project: Project; warnings: readonly string[] }>, options: WorkspaceOpenOptions): Promise<void> {
+    const project = opened.project;
+    const warnings = [...opened.warnings, ...(options.warnings ?? [])];
+    const { warnings: _creationWarnings, ...given } = options;
+    const stage: TrackStage = {
+      project,
+      options: { ...this.options, ...Object.fromEntries(Object.entries(given).filter(([, value]) => value !== undefined)) },
+      warn: (message) => warnings.push(message),
+      loaded: new Map(),
+    };
+    const built = new Map<string, TrackRuntime>();
+    try {
+      for (const track of project.tracks) {
+        const runtime = await this.createTrack(track, stage);
+        built.set(track.id, runtime);
+        if (this.disposed) throw new Error("Workspace is disposed.");
+      }
+    } catch (error) {
+      for (const runtime of built.values()) this.disposeTrack(runtime);
+      project.dispose();
+      throw error;
+    }
+    // Everything is ready: no await from here, so the swap is one step.
+    this.stop();
+    this.audition.stop();
+    this.stretch.abortAll();
+    const old = this.ownedProject;
+    batch(() => {
+      this.disposeTracks();
+      for (const [id, runtime] of built) this.tracks.set(id, runtime);
+      this.options = stage.options;
+      for (const [id, urls] of stage.loaded) {
+        if (!this.loadedBundles.has(id)) this.loadedBundles.set(id, new Set());
+        for (const url of urls) this.loadedBundles.get(id)!.add(url);
+      }
+      this.ownedProject = project;
+      this.projectSource.value = project;
+      this.recordCurrentProject();
+      this.activeTempoMap = project.tempoMap;
+      this.clock.meter.value = [...project.signature];
+      this.mixer.applyRouting(project.tracks);
+      this.mixer.applyMixer();
+      this.sessionRevision.value++;
+      this.sessionClipEdits.value++;
+      this.bindNotes();
+      this.loop.setRegion(null);
+      this.seek(0);
+      this.stop();
+      this.warningMessages.value = Object.freeze(warnings);
+      this.mediaError.value = null;
+      this.applicationError.value = null;
+      this.failedApplication = undefined;
+      this.topologyPending.value = false;
+    });
+    old?.dispose();
+  }
+
   private async rebuildTracks(position = this.position): Promise<void> {
     if (this.disposed) throw new Error("Workspace is disposed.");
     this.recordCurrentProject();
@@ -596,7 +683,11 @@ export class Workspace {
     }
   }
 
-  private async createTrack(track: ProjectTrack): Promise<TrackRuntime> {
+  private liveStage(): TrackStage {
+    return { project: this.project, options: this.options, warn: (message) => this.warn(message), loaded: this.loadedBundles };
+  }
+
+  private async createTrack(track: ProjectTrack, stage: TrackStage = this.liveStage()): Promise<TrackRuntime> {
     const automationGain = this.context.createGain();
     let strip: MixerStrip | undefined;
     let rack: TrackRack;
@@ -629,25 +720,25 @@ export class Workspace {
       runtime.rack.output.connect(automationGain);
       let previous: WebClapHost | undefined;
       for (const device of track.devices) {
-        const bundleUrl = this.options.resolveBundle
-          ? await this.options.resolveBundle(device)
-          : importedBundles.get(this.project)?.has(device.id)
+        const bundleUrl = stage.options.resolveBundle
+          ? await stage.options.resolveBundle(device)
+          : importedBundles.get(stage.project)?.has(device.id)
             ? undefined
             : device.bundleUrl;
         if (!bundleUrl) {
-          this.warn(`Device ${device.name} has no WebCLAP bundle.`);
+          stage.warn(`Device ${device.name} has no WebCLAP bundle.`);
           continue;
         }
         let host: WebClapHost | undefined;
         try {
-          host = await WebClapHost.load(this.context, { url: bundleUrl, pluginId: device.pluginId, workletUrl: this.options.workletUrl });
+          host = await WebClapHost.load(this.context, { url: bundleUrl, pluginId: device.pluginId, workletUrl: stage.options.workletUrl });
           if (host.descriptor?.id !== device.pluginId) {
             host.dispose();
-            this.warn(`Device ${device.name} has a different CLAP ID in its bundle.`);
+            stage.warn(`Device ${device.name} has a different CLAP ID in its bundle.`);
             continue;
           }
-          if (!this.loadedBundles.has(device.pluginId)) this.loadedBundles.set(device.pluginId, new Set());
-          this.loadedBundles.get(device.pluginId)!.add(bundleUrl);
+          if (!stage.loaded.has(device.pluginId)) stage.loaded.set(device.pluginId, new Set());
+          stage.loaded.get(device.pluginId)!.add(bundleUrl);
           if (device.state.length) await host.loadState(device.state);
           if (previous) previous.output.connect(host.input);
           previous = host;
@@ -655,7 +746,7 @@ export class Workspace {
           if (track.kind === "midi" && !runtime.midi) runtime.midi = host;
         } catch (error) {
           host?.dispose();
-          this.warn(`Device ${device.name} could not load: ${String(error)}`);
+          stage.warn(`Device ${device.name} could not load: ${String(error)}`);
         }
       }
       if (previous) {
@@ -663,7 +754,7 @@ export class Workspace {
         runtime.input = [...runtime.hosts.values()][0].input;
       }
       // A track with a device plays the device; its instruments entry is ignored, so render workspaces sharing these options stay warning-free.
-      const instruments = this.options.instruments;
+      const instruments = stage.options.instruments;
       const instrument =
         track.kind === "midi" && !track.devices.length
           ? typeof instruments === "function"
@@ -886,11 +977,11 @@ export class Workspace {
       const host = this.tracks.get(trackId)?.midi;
       if (!host || !(clip.duration > 0)) return null;
       // The project's note model is itself a clock scheduler; it plays into the track's first device and loops over the clip's length.
-      clip.midi.instrument = host;
+      const scheduler = sessionNotes(this.project, clip, trackId, host);
       const [numerator, denominator] = this.project.signature;
       // A looped clip repeats its notes up to the loop end. The scheduler plays from the clip's first beat, so a loop that starts later still plays the lead-in on each pass.
       const beats = clip.loop ? Math.min(clip.loop.endBeat, clip.duration) : clip.duration;
-      return { scheduler: clip.midi, loop: true, length: `${beats / ((numerator * 4) / denominator)}m`, name: clip.id };
+      return { scheduler, loop: true, length: `${beats / ((numerator * 4) / denominator)}m`, name: clip.id };
     }
     if (clip.kind !== "audio") return null;
     // A file-backed clip plays from a copy of its audio read into memory: null until it has been read, then the launcher clip arrives.

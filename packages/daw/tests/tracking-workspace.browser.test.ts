@@ -1,6 +1,6 @@
 import { effect } from "@audiorective/core";
 import { afterEach, describe, expect, test } from "vitest";
-import { Project, Workspace } from "../src";
+import { Project, Workspace, saveDawProject } from "../src";
 
 const cleanups: Array<() => unknown> = [];
 afterEach(async () => {
@@ -11,6 +11,17 @@ type Ctx = { project: Project; workspace: Workspace; trackId: string };
 
 /** Each row reads a `workspace.cells` entry inside an effect, changes it through the owner's public API, and expects the effect to re-run with a new value. */
 const rows: Record<string, { read: (c: Ctx) => unknown; mutate: (c: Ctx) => Promise<unknown> | void }> = {
+  // `workspace.open(...)` swaps the song in place: readers of `project` and `loop` re-run without being rebound.
+  open: {
+    read: (c) => [c.workspace.project, c.workspace.loop.cells.enabled.value],
+    mutate: async (c) => {
+      const next = new Project({ bpm: 100 });
+      next.addTrack("Next", "audio");
+      const bytes = saveDawProject(next);
+      next.dispose();
+      await c.workspace.open(bytes);
+    },
+  },
   levels: {
     read: (c) => c.workspace.cells.levels.value,
     mutate: async (c) => {

@@ -23,7 +23,7 @@ export type ProjectClipSummary = Readonly<{
   durationSeconds: number;
   startBeat: number;
   durationBeats: number;
-  /** The IDs of the other timeline clips that share this clip's MIDI notes; omitted when the clip is not linked. */
+  /** The IDs of the other clips (timeline or Session slot) that share this clip's MIDI notes; omitted when the clip is not linked. */
   linkedTo?: readonly string[];
 }>;
 
@@ -49,6 +49,8 @@ export type ProjectSlotClipSummary = Readonly<{
   trackName: string;
   duration: number;
   unit: "seconds" | "beats";
+  /** The IDs of the other clips (timeline or Session slot) that share this clip's MIDI notes; omitted when the clip is not linked. */
+  linkedTo?: readonly string[];
 }>;
 
 export type ProjectClipQuery = Readonly<{
@@ -204,6 +206,7 @@ export function projectOverview(project: Project, version: ProjectVersion): Proj
         const clip = readSession(project).slots.get(slotKey(scene.id, track.id));
         if (!clip) return [];
         const name = project.clipName(clip.id);
+        const linked = project.linkedClips(clip.id).map(({ id }) => id);
         return [
           {
             id: clip.id,
@@ -213,6 +216,7 @@ export function projectOverview(project: Project, version: ProjectVersion): Proj
             trackName: track.name,
             duration: clip.duration,
             unit: clip.kind === "midi" ? ("beats" as const) : ("seconds" as const),
+            ...(linked.length ? { linkedTo: linked } : {}),
           },
         ];
       }),

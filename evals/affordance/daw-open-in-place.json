@@ -1,0 +1,26 @@
+{
+  "area": "daw-open-in-place",
+  "description": "API-shape experiment for File > Open in a running DAW page: the song is replaced without rebuilding the page's bindings. Expectations describe behaviour, not names.",
+  "tasks": [
+    {
+      "id": "O1-file-open",
+      "prompt": "A browser DAW page already runs a song on `context`, an AudioContext. The page has bound a mixer (one fader and level meter per track, from the engine's track meters), a Loop toggle button that follows whether the engine's loop is on, a banner showing the engine's error, and a track list that follows the engine's song. Write the File > Open handler for a `File` the user picked. It must replace the song in the running DAW without rebuilding any of those bindings (the mixer, the Loop button, the meters, the error banner and the track list keep working for the new song), and the Loop button must show the loop as off afterwards. If the chosen file is bad, the song that was playing must keep playing unchanged and the page shows the failure.",
+      "hostDeclarations": "declare const workspace: import(\"@audiorective/daw\").Workspace;\ndeclare const context: AudioContext;\ndeclare const file: File;\ndeclare function showError(message: string): void;",
+      "expectations": [
+        "Opens the file into the engine that is already running instead of creating a second engine and moving the page's bindings to it.",
+        "Does not tear down and recreate the mixer, meter, error or track-list bindings, and does not rebuild the engine's loop; they read the engine's reactive state.",
+        "Does not stop the old song or dispose anything of it by hand before the file is known to be good; the file's parsing and loading happen before the song is replaced.",
+        "Catches a failed open, reports it with the page's error display, and leaves the playing song alone.",
+        "Does not leave the Loop button showing on after the new song is open: it follows the engine's loop state or the handler turns the loop off through the engine.",
+        "Does not hand-parse the project file or hand-copy tracks from a parsed project into the running song."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "No second engine for File > Open",
+          "none": ["openWorkspace(Blob)?\\s*\\(", "Workspace\\.create\\s*\\("]
+        }
+      ]
+    }
+  ]
+}

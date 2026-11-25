@@ -211,10 +211,29 @@ export class ProjectSession {
   }
 
   /**
-   * Place a copy of a slot's clip on the timeline, at `atBeat` or `atSeconds` (exactly one) on the slot's track or on `trackId`, a track of the same kind.
-   * The slot keeps its clip. Returns the copy, which has its own ID.
+   * Put a copy of a timeline or slot clip in a slot of a track of the same kind, replacing what it held; the source stays where it is.
+   * The copy has its own ID. With `linked: true` a MIDI copy shares the source's notes and events, as `duplicateClip(..., { linked: true })` does:
+   * an edit through any member changes all, and `makeClipUnique` leaves the group. Only MIDI clips link.
    */
-  copyToArrangement(slot: SessionSlot, options: { trackId?: string; atBeat?: number; atSeconds?: number }): ProjectClip {
+  copyToSlot(clipId: string, slot: SessionSlot, options: { linked?: boolean } = {}): ProjectClip {
+    assertProjectActive(this.project);
+    return untracked(() => {
+      const state = this.bridge.peek();
+      const kind = this.check(state, slot);
+      const source = this.bridge.find(clipId);
+      if (!source) throw new Error("Project clip does not exist.");
+      if (source.kind !== kind) throw wrongKind();
+      const copy = this.bridge.clone(source, 0, options.linked === true);
+      this.fill(state, slot, copy.clip, copy.name);
+      return copy.clip;
+    });
+  }
+
+  /**
+   * Place a copy of a slot's clip on the timeline, at `atBeat` or `atSeconds` (exactly one) on the slot's track or on `trackId`, a track of the same kind.
+   * The slot keeps its clip. Returns the copy, which has its own ID. With `linked: true` a MIDI copy shares the slot clip's notes (see `copyToSlot`).
+   */
+  copyToArrangement(slot: SessionSlot, options: { trackId?: string; atBeat?: number; atSeconds?: number; linked?: boolean }): ProjectClip {
     assertProjectActive(this.project);
     return untracked(() => {
       const state = this.bridge.peek();
@@ -233,7 +252,7 @@ export class ProjectSession {
           ? (options.atBeat ?? tempo.secondsToBeat(options.atSeconds!))
           : (options.atSeconds ?? tempo.beatToSeconds(options.atBeat!));
       if (!Number.isFinite(time) || time < 0) throw new RangeError("Project clip time must be finite and non-negative.");
-      const copy = this.bridge.clone(clip, time);
+      const copy = this.bridge.clone(clip, time, options.linked === true);
       this.bridge.place(trackId, copy.clip, copy.name);
       return copy.clip;
     });

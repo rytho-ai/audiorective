@@ -27,6 +27,18 @@
         "Renders both bar ranges offline through the mix.",
         "Reports whether the two bass parts match."
       ]
+    },
+    {
+      "id": "K3-pattern-in-scene",
+      "prompt": "A browser pattern-style DAW has an open song as `project` (4/4, 120 BPM) and its running engine as `workspace`. The song has a Drums MIDI track with a sound already set up. Each pattern is stored in its own Session scene so the producer can audition it in Pattern mode and bounce a scene chain, and the same pattern is also placed on the timeline. Write the code that stores a one-bar pattern (kick on every beat) in a new scene named \"Pattern 1\", then places it on the Drums track at bars 1 and 3 so the placements and the scene share one pattern: changing a note once (one Undo step) changes the scene and both placements, with no copying of notes by page code. Then render the scene offline through the mix and check that the changed note is heard. Then save the song to a `.dawproject` Blob and open it again: the scene and both placements still share the pattern, and editing the pattern at bar 3 changes the scene's clip.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;",
+      "expectations": [
+        "Stores the pattern in a new Session scene slot of the Drums track and places it on the timeline at bars 1 and 3 as clips that share the slot clip's notes through the song model, not as independent copies kept in sync by page code.",
+        "One note edit changes the scene's clip and both timeline placements, as a single Undo step.",
+        "Renders the scene offline through the mix and the rendered audio reflects the changed note.",
+        "Save and reopen keep the scene clip and both placements sharing one pattern, stored in the standard file rather than in app-specific data.",
+        "After reopening, an edit to the bar-3 placement changes the scene's clip."
+      ]
     }
   ]
 }
