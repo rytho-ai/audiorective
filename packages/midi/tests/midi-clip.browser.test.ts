@@ -661,6 +661,100 @@ describe("a MidiClip into a bare Sampler", () => {
   });
 });
 
+describe("abutting same-pitch notes", () => {
+  const sixteenths = () => Array.from({ length: 16 }, (_, i) => note(36, i * 0.25, 0.25));
+  const sequence = (calls: Call[]) => calls.map((c) => `${c.kind}:${c.pitch}@${c.when.toFixed(4)}`);
+
+  test("each note-off reaches the instrument before the next note-on at the same time", async () => {
+    const { clock, run } = rig(3);
+    const { inst, calls } = instrument();
+    const clip = new MidiClip(sixteenths(), { instrument: inst });
+    disposers.push(() => clip.dispose());
+    clock.attach(clip);
+    await run();
+    expect(calls.filter((c) => c.kind === "on")).toHaveLength(16);
+    for (let i = 1; i < 16; i++) {
+      const when = (i * 0.25 * 0.5).toFixed(4);
+      const at = sequence(calls).filter((entry) => entry.endsWith(`@${when}`));
+      expect(at).toEqual([`off:36@${when}`, `on:36@${when}`]);
+    }
+  });
+
+  test("a looping clip keeps the order across the wrap", async () => {
+    const { clock, run } = rig(3);
+    const { inst, calls } = instrument();
+    const clip = new MidiClip(sixteenths(), { instrument: inst, loop: true, length: 4 });
+    disposers.push(() => clip.dispose());
+    clock.attach(clip);
+    await run();
+    const wrap = sequence(calls).filter((entry) => entry.endsWith("@2.0000"));
+    expect(wrap).toEqual(["off:36@2.0000", "on:36@2.0000"]);
+  });
+});
+
+describe("abutting notes that differ by float round-off", () => {
+  const alternates = (calls: Call[]) => calls.map((c) => c.kind).every((kind, i) => kind === (i % 2 === 0 ? "on" : "off"));
+
+  test("triplets (start i/3, duration 1/3) alternate on and off", async () => {
+    const { clock, run } = rig(4);
+    const { inst, calls } = instrument();
+    const notes = Array.from({ length: 12 }, (_, i) => note(36, i / 3, 1 / 3));
+    // the premise: some neighbour ends one ulp away from the next start
+    expect(notes.some((n, i) => i > 0 && notes[i - 1].start + notes[i - 1].duration !== n.start)).toBe(true);
+    const clip = new MidiClip(notes, { instrument: inst });
+    disposers.push(() => clip.dispose());
+    clock.attach(clip);
+    await run();
+    expect(calls).toHaveLength(24);
+    expect(alternates(calls)).toBe(true);
+  });
+
+  test("a run of 0.1-beat notes alternates on and off", async () => {
+    const { clock, run } = rig(4);
+    const { inst, calls } = instrument();
+    const notes = Array.from({ length: 30 }, (_, i) => note(36, i * 0.1, 0.1));
+    expect(notes.some((n, i) => i > 0 && notes[i - 1].start + notes[i - 1].duration !== n.start)).toBe(true);
+    const clip = new MidiClip(notes, { instrument: inst });
+    disposers.push(() => clip.dispose());
+    clock.attach(clip);
+    await run();
+    expect(calls).toHaveLength(60);
+    expect(alternates(calls)).toBe(true);
+  });
+});
+
+describe("a restarted launcher clip", () => {
+  test("a clip stopped and launched again plays its edited notes in the first pass", async () => {
+    const { inst, calls } = instrument();
+    const clip = new MidiClip([note(60, 0, 1, { id: "a" })], { instrument: inst });
+    const ctx = new OfflineAudioContext(1, 8 * SR, SR);
+    const ticks = new ManualTickSource();
+    const clock = new Clock({ context: ctx, tickSource: ticks, bpm: 120, lookAhead: 0.1 });
+    disposers.push(() => clock.dispose());
+    const launcher = new ClipLauncher({ lead: [{ scheduler: clip, loop: true, length: "1m" }] }, { context: ctx });
+    disposers.push(
+      () => launcher.dispose(),
+      () => clip.dispose(),
+    );
+    clock.attach(launcher);
+    const slot = () => launcher.tracks.lead!.clips[0]!;
+    await driveOffline(
+      ctx,
+      ticks,
+      [
+        { at: 0, run: () => slot().launch({ quantize: "none" }) },
+        { at: 1.2, run: () => launcher.stopAll({ quantize: "none" }) },
+        { at: 1.5, run: () => clip.setNotes([note(72, 0, 1, { id: "a" })]) },
+        { at: 3, run: () => slot().launch({ quantize: "none" }) },
+      ],
+      () => clock.start(),
+    );
+    const ons = calls.filter((c) => c.kind === "on" && c.when >= 2.5).map((c) => c.pitch);
+    expect(ons[0]).toBe(72);
+    expect(ons.every((pitch) => pitch === 72)).toBe(true);
+  });
+});
+
 describe("MidiClip transform", () => {
   const notes = [note(60, 0, 1, { id: "a" }), note(62, 1, 1, { id: "b" }), note(64, 2, 1, { id: "c" })];
   const play = async (clip: MidiClip, calls: Call[], seconds = 5) => {

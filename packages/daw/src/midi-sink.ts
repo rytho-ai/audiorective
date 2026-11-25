@@ -13,10 +13,13 @@ export interface MidiSink extends Instrument {
   messagesHandled(): Promise<void>;
 }
 
-type Held = { voice: Voice; note: number; release: number };
+type Held = { voice: Voice; note: number; release: number; seq: number };
+type NoteOff = { time: number; seq: number };
 
 /** A release far enough ahead to stand for "not released": a voice's pending stop can be moved later but not removed. */
 const NEVER = 1e9;
+/** Seconds within which two message times are one instant: `start + duration` against the next `start` differs by round-off, which must not decide which came first. */
+const SAME_TIME = 1e-9;
 const done: CancellableEvent = { cancel() {}, onEnded: (listener) => listener() };
 
 /**
@@ -27,9 +30,11 @@ const done: CancellableEvent = { cancel() {}, onEnded: (listener) => listener() 
 export class SamplerSink implements MidiSink {
   private readonly held = new Set<Held>();
   /** Pending note-offs by note: they release that note's voices started by then. */
-  private readonly noteOffs = new Map<number, number[]>();
+  private readonly noteOffs = new Map<number, NoteOff[]>();
+  /** Call order: a note-off at a voice's start time releases it only when it was sent after the note-on. */
+  private seq = 0;
   /** Pending all-notes-off times: they release every voice started before then. */
-  private readonly allOffs: number[] = [];
+  private readonly allOffs: NoteOff[] = [];
 
   constructor(
     readonly sampler: Sampler,
@@ -40,7 +45,7 @@ export class SamplerSink implements MidiSink {
     this.prune();
     const voice = this.sampler.noteOn(note, { when: options.when, velocity: options.velocity });
     if (!voice) return done;
-    const held: Held = { voice, note, release: Infinity };
+    const held: Held = { voice, note, release: Infinity, seq: this.seq++ };
     this.held.add(held);
     this.apply(held);
     return {
@@ -92,8 +97,9 @@ export class SamplerSink implements MidiSink {
   }
 
   /** Add a pending release at `when` to `times` and apply it to the voices `reaches`; the event withdraws it. */
-  private pending(times: number[], when: number, reaches: (held: Held) => boolean): CancellableEvent {
-    times.push(when);
+  private pending(times: NoteOff[], when: number, reaches: (held: Held) => boolean): CancellableEvent {
+    const entry: NoteOff = { time: when, seq: this.seq++ };
+    times.push(entry);
     const reapply = () => {
       for (const held of this.held) if (reaches(held)) this.apply(held);
     };
@@ -103,7 +109,7 @@ export class SamplerSink implements MidiSink {
       cancel: () => {
         if (withdrawn) return;
         withdrawn = true;
-        const index = times.indexOf(when);
+        const index = times.indexOf(entry);
         if (index >= 0) times.splice(index, 1);
         reapply();
       },
@@ -115,8 +121,9 @@ export class SamplerSink implements MidiSink {
   private apply(held: Held): void {
     const start = held.voice.when;
     let release = Infinity;
-    for (const time of this.noteOffs.get(held.note) ?? []) if (time >= start) release = Math.min(release, time);
-    for (const time of this.allOffs) if (time > start) release = Math.min(release, time);
+    for (const off of this.noteOffs.get(held.note) ?? [])
+      if (off.time > start + SAME_TIME || (off.time >= start - SAME_TIME && off.seq > held.seq)) release = Math.min(release, off.time);
+    for (const off of this.allOffs) if (off.time > start + SAME_TIME) release = Math.min(release, off.time);
     if (release === held.release) return;
     held.release = release;
     held.voice.stop(Number.isFinite(release) ? release : NEVER);
@@ -127,8 +134,8 @@ export class SamplerSink implements MidiSink {
     const now = this.context.currentTime;
     for (const held of this.held) if (!untracked(() => held.voice.playing.value)) this.held.delete(held);
     // In place: a pending event withdraws its time from the same array.
-    const drop = (times: number[]) => {
-      for (let i = times.length - 1; i >= 0; i--) if (times[i] < now) times.splice(i, 1);
+    const drop = (times: NoteOff[]) => {
+      for (let i = times.length - 1; i >= 0; i--) if (times[i].time < now) times.splice(i, 1);
     };
     for (const [note, times] of this.noteOffs) {
       drop(times);

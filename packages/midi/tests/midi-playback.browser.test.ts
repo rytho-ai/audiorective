@@ -114,3 +114,12 @@ test("playback rejects invalid notes and duplicate IDs with its public error", (
     "MIDI playback needs finite, non-negative times and valid MIDI notes.",
   );
 });
+
+test("abutting notes that differ by float round-off still release before the next on", () => {
+  const triplets = Array.from({ length: 12 }, (_, i) => note(`t${i}`, i / 3, 1 / 3, 36));
+  const tenths = Array.from({ length: 30 }, (_, i) => note(`p${i}`, i * 0.1, 0.1, 36));
+  for (const notes of [triplets, tenths]) {
+    const events = compileMidiPlaybackEvents({ events: [] }, { notes, duration: 10 });
+    expect(events.map((event) => event.data[0] & 0xf0)).toEqual(notes.flatMap(() => [0x90, 0x80]));
+  }
+});

@@ -89,6 +89,8 @@ type Sent = {
   pitch: number;
   on: number;
   off: number;
+  /** Sends the note-on when it is still waiting for its place in the window's message order. */
+  sendOn?: () => void;
   cancelOn?: () => void;
   cancelOff?: () => void;
   /** The beat transport the note was scheduled on: its off is sent in the window that contains it, at whatever tempo then. */
@@ -99,6 +101,8 @@ type Sent = {
   ended: Array<() => void>;
 };
 const EPS = 1e-8;
+/** Seconds within which two message times count as the same instant: round-off from `start + duration` against the next `start` (triplets, 0.1-beat grids) is far below it. */
+const SAME_TIME = 1e-9;
 const cancelOf = (result: unknown): (() => void) | undefined => {
   const cancel = (result as { cancel?: unknown } | null | undefined)?.cancel;
   return typeof cancel === "function" ? () => (cancel as () => void).call(result) : undefined;
@@ -128,6 +132,8 @@ export class MidiClip {
   private readonly signal: AbortSignal | undefined;
   /** The notes a loop pass plays, taken when the pass is first scheduled: an edit is heard from the next pass. */
   private pass: { index: number; notes: readonly MidiNote[] } | null = null;
+  /** Start beat of the latest window: a window that starts earlier is a restart (stop and relaunch), and the pass snapshot is dropped. */
+  private lastFrom = -Infinity;
   private lastNow = 0;
   private disposed = false;
   private readonly onAbort = () => this.dispose();
@@ -157,6 +163,8 @@ export class MidiClip {
     const next = normalizeNotes(notes, "MidiClip");
     batch(() => {
       this.store.value = next;
+      // a snapshot kept for a pass that is not playing (nothing sent is still sounding or pending) is stale
+      if (![...this.sent].some((sent) => !sent.done)) this.pass = null;
       this.revisionStore.value = untracked(() => this.revisionStore.value) + 1;
     });
   }
@@ -221,7 +229,11 @@ export class MidiClip {
       const notes = this.store.value;
       const from = window.beat.start - EPS;
       const to = window.beat.end - EPS;
+      if (from < this.lastFrom - EPS) this.pass = null;
+      this.lastFrom = from;
       this.adopt(window, notes, timing);
+      // Messages go out in time order, a note-off before a note-on at the same time (MIDI convention): an abutting same-pitch note must not be released by its predecessor.
+      const starts: Sent[] = [];
       const play = (note: MidiNote, onBeat: number, offBeat: number, pass: number, end: number) => {
         if (!(offBeat > onBeat) || onBeat < from || onBeat >= to) return;
         let velocity = note.velocity;
@@ -266,7 +278,11 @@ export class MidiClip {
           timing,
           offSent: false,
         };
-        sent.cancelOn = cancelOf(instrument.noteOn(note.pitch, { velocity, when: on, channel: note.channel }));
+        sent.sendOn = () => {
+          sent.sendOn = undefined;
+          sent.cancelOn = cancelOf(instrument.noteOn(note.pitch, { velocity, when: on, channel: note.channel }));
+        };
+        starts.push(sent);
         this.sent.add(sent);
         this.own(window, sent);
       };
@@ -283,14 +299,28 @@ export class MidiClip {
       } else for (const note of notes) play(note, note.start, note.start + note.duration, 0, Infinity);
       // a note's note-off is sent in the window that contains it, so a cut before that window sends only the cut
       const windowEnd = timing.beatToTime(window.beat.end);
+      const messages: { time: number; rank: number; send: () => void }[] = [];
+      for (const sent of starts) messages.push({ time: sent.on, rank: 1, send: () => sent.sendOn?.() });
+      const fresh = new Set(starts);
       for (const sent of [...this.sent]) {
         if (sent.offSent || sent.done) continue;
         const off = sent.timing.beatToTime(sent.offBeat);
         if (!(off < windowEnd)) continue;
         sent.offSent = true;
         sent.off = Math.max(off, sent.on);
-        sent.cancelOff = cancelOf(sent.instrument.noteOff(sent.pitch, sent.off));
+        // A note that starts and ends at one time keeps its on first.
+        const own = fresh.has(sent) && sent.off <= sent.on;
+        messages.push({
+          time: sent.off,
+          rank: own ? 2 : 0,
+          send: () => {
+            // a cut that arrived while the window was being built has already sent its own note-off
+            if (!sent.done && !sent.cancelOff) sent.cancelOff = cancelOf(sent.instrument.noteOff(sent.pitch, sent.off));
+          },
+        });
       }
+      messages.sort((a, b) => (Math.abs(a.time - b.time) <= SAME_TIME ? a.rank - b.rank || a.time - b.time : a.time - b.time));
+      for (const message of messages) message.send();
     });
   }
 
@@ -344,6 +374,13 @@ export class MidiClip {
   private release(sent: Sent, at = Math.max(this.currentTime(), sent.on), final = false): void {
     if (sent.done) return;
     const now = this.currentTime();
+    if (sent.on > now && sent.sendOn) {
+      // revoked before it was sent: the instrument never hears it
+      sent.sendOn = undefined;
+      sent.offSent = true;
+      return this.finish(sent);
+    }
+    sent.sendOn?.();
     if (sent.offSent && sent.off <= at) return final ? this.finish(sent) : undefined;
     sent.cancelOff?.();
     if (sent.on > now && sent.cancelOn) {

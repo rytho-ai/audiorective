@@ -46,6 +46,9 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ### Fixed
 
+- **midi, daw:** abutting notes whose `start + duration` differs from the next `start` by float round-off (triplets, 0.1-beat grids) no longer drop the next note in live playback: a `MidiClip` and the `Sampler` instrument treat times within 1 ns as one instant.
+- **midi:** a `MidiClip` in a launcher that is stopped and launched again plays its current notes in the first pass, not the notes from before an edit made since it stopped.
+- **midi, daw:** abutting same-pitch notes (each note ending exactly where the next starts) no longer go silent in live playback. A `MidiClip` on a clock or launcher now sends its messages in time order with a note-off before a note-on at the same time, and a `Sampler` instrument (`WorkspaceOptions.instruments`) ignores a note-off sent before a same-time note-on instead of cutting the new voice.
 - **daw:** Opening a `.dawproject` with files this codec does not use keeps them and writes them back unchanged on save, instead of failing with `Project archive has unsupported files.`
 - **launcher:** A launch waiting for `clock.start()` with no time now begins exactly on beat 0 instead of at the next timer tick.
 - **launcher:** A scheduler clip stopped in the same look-ahead as a clock refresh (another track's launch, an edit, a tempo change) still cuts its held notes at the stop instead of letting them ring.
