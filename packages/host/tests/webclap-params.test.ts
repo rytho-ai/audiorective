@@ -74,6 +74,17 @@ describe("WebClapHost params", () => {
     expect(host.latency.value).toBe(48);
   });
 
+  it("looks parameters up by a dynamic id and yields undefined for an unknown one", async () => {
+    const { host } = await load();
+    for (const entry of host.parameterInfo) {
+      expect(host.params[entry.id]).toBe(host.params[String(entry.id)]);
+      expect(host.param(entry.id)).toBe(host.params[String(entry.id)]);
+      expect(host.param(String(entry.id))).toBe(host.params[String(entry.id)]);
+    }
+    expect(host.param(99)).toBeUndefined();
+    expect(host.param("nope")).toBeUndefined();
+  });
+
   it("forwards writes to the worklet", async () => {
     const { host, port } = await load();
     host.params["7"].value = 0.75;

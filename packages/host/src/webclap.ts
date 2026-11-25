@@ -37,6 +37,14 @@ type LoadedMessage = {
 };
 /** CLAP parameter registry: one `Param<number>` per CLAP parameter id, keyed by the id as a decimal string. */
 export type WebClapParams = Record<`${number}`, Param<number>>;
+/**
+ * `host.params`: a literal id (`params["7"]`) is a `Param<number>`; an id held in a `string` or `number` variable (`params[info.id]`) is `Param<number> | undefined`, because the plug-in may not have it.
+ * (`WebClapParams` stays the processor's registry type: a core registry cannot carry a string index signature.)
+ */
+export type WebClapParamAccess = WebClapParams & {
+  readonly [id: string]: Param<number> | undefined;
+  readonly [id: number]: Param<number> | undefined;
+};
 type HostMessage = LoadedMessage | { type: string; [key: string]: unknown };
 type Waiter<T> = { resolve(value: T): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> };
 
@@ -50,6 +58,7 @@ const modules = new WeakMap<AudioContext, Map<string, Promise<void>>>();
  * Each CLAP parameter is a `Param<number>` in `params`, keyed by its CLAP id (`host.params["7"].value`); writes reach the plug-in and the plug-in's own changes update the Param.
  */
 export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: ReadonlyCell<readonly WebClapParameter[]> }> {
+  declare readonly params: WebClapParamAccess;
   readonly node: AudioWorkletNode;
   readonly bundleUrl: string;
   readonly descriptor: WebClapDescriptor;
@@ -73,6 +82,11 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
   /** Tracked frozen parameter metadata in the plug-in's order (id, name, min, max, default, text, step); `host.params[String(info.id)]` is its live Param. Last reported by the plug-in; the same value as `cells.parameterInfo`. Live values are in `params`. */
   get parameterInfo(): readonly WebClapParameter[] {
     return this.cells.parameterInfo.value;
+  }
+
+  /** The live Param of a CLAP parameter id (a number or its decimal string), or undefined when the plug-in has no such id. */
+  param(id: number | string): Param<number> | undefined {
+    return (this.params as Record<string, Param<number> | undefined>)[String(id)];
   }
 
   private constructor(context: AudioContext, node: AudioWorkletNode, bundleUrl: string, loaded: LoadedMessage, early: HostMessage[]) {
