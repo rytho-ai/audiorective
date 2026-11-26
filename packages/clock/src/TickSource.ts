@@ -9,16 +9,19 @@ export class ManualTickSource implements TickSource {
   private _onTick?: () => void;
   private _running = false;
 
+  /** Begins accepting `tick()`; `onTick` is called once per `tick()` while started. */
   start(onTick: () => void): void {
     this._onTick = onTick;
     this._running = true;
   }
 
+  /** Stops accepting `tick()`; later ticks are ignored until `start`. */
   stop(): void {
     this._running = false;
     this._onTick = undefined;
   }
 
+  /** Runs one tick now; does nothing when stopped. */
   tick(): void {
     if (this._running) this._onTick?.();
   }
@@ -33,10 +36,12 @@ export class IntervalTickSource implements TickSource {
     this._intervalMs = intervalMs;
   }
 
+  /** Calls `onTick` every `intervalMs` milliseconds with `setInterval`; a second start replaces the first. */
   start(onTick: () => void): void {
     this._handle = setInterval(onTick, this._intervalMs);
   }
 
+  /** Clears the interval; safe to call when not started. */
   stop(): void {
     if (this._handle !== undefined) clearInterval(this._handle);
     this._handle = undefined;
@@ -68,6 +73,7 @@ export class WorkerTickSource implements TickSource {
     this._intervalMs = intervalMs;
   }
 
+  /** Starts the Worker timer that calls `onTick` each interval; a second start replaces the first. */
   start(onTick: () => void): void {
     if (typeof Worker === "undefined") {
       this._fallback = new IntervalTickSource(this._intervalMs);
@@ -82,6 +88,7 @@ export class WorkerTickSource implements TickSource {
     this._worker.postMessage(this._intervalMs);
   }
 
+  /** Stops the Worker timer; safe to call when not started. */
   stop(): void {
     if (this._worker) {
       this._worker.postMessage("stop");

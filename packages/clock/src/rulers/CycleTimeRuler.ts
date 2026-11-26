@@ -32,6 +32,7 @@ export class CycleTimeRuler implements Ruler<CycleTimePoint, CycleTimePoint> {
     this._from = options.from ?? 0;
   }
 
+  /** Cycle number, seconds into the cycle and phase (0 up to 1) of the timeline's seconds position; `beat` is ignored. */
   at(beat: number, timeline: TimelineLike): CycleTimePoint {
     const rel = timeline.position - this._from;
     const cycle = Math.floor(rel / this._seconds);
@@ -40,6 +41,7 @@ export class CycleTimeRuler implements Ruler<CycleTimePoint, CycleTimePoint> {
     return { cycle, secondsInCycle, phase };
   }
 
+  /** Same reading as `at`, taken at the timeline's current seconds position. */
   read(window: Pick<CoreTickWindow, "beat">, timeline: TimelineLike): CycleTimePoint {
     return this.at(0, timeline);
   }

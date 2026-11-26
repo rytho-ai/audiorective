@@ -22,6 +22,15 @@ const rows: Record<string, { read: (c: Ctx) => unknown; mutate: (c: Ctx) => Prom
       await c.workspace.open(bytes);
     },
   },
+  // `workspace.open(project)` takes a Project in place of a file: the same readers re-run.
+  openProject: {
+    read: (c) => [c.workspace.project, c.workspace.cells.session.value, c.workspace.loop.cells.enabled.value],
+    mutate: async (c) => {
+      const next = new Project({ bpm: 100 });
+      next.addTrack("Next", "audio");
+      await c.workspace.open(next, { ownsProject: true });
+    },
+  },
   levels: {
     read: (c) => c.workspace.cells.levels.value,
     mutate: async (c) => {
@@ -41,8 +50,8 @@ const rows: Record<string, { read: (c: Ctx) => unknown; mutate: (c: Ctx) => Prom
 const COVERED_ELSEWHERE: Record<string, string> = {
   needsSync: "project-edits.browser.test.ts",
   error: "runtime.test.ts",
-  warnings: "runtime.test.ts",
-  session: "session-*.browser.test.ts",
+  warnings: "runtime.test.ts, open-in-place.browser.test.ts",
+  session: "session-*.browser.test.ts, open-in-place.browser.test.ts",
   auditioningClip: "audition tests",
   auditioningRange: "audition tests",
 };

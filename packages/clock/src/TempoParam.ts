@@ -71,7 +71,7 @@ export class TempoParam extends Param<number> {
     return this;
   }
 
-  /** Query the curve at an arbitrary time — the AudioParam-backed sibling can never do this. */
+  /** Query the curve at audio-context `time` (seconds) — the AudioParam-backed sibling can never do this. */
   valueAtTime(time: number): number {
     return this._curve.valueAt(time);
   }

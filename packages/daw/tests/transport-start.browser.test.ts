@@ -113,7 +113,7 @@ function dcProject(seconds = 4) {
   p.addAudioClip(a.id, { sampleRate: RATE, channels: [dc, dc] }, 0);
   return { p, a };
 }
-const trueProjectTime = (ws: Workspace, t: number) => (ws.timeline.timeToBeat(t) * 60) / 120;
+const trueProjectTime = (ws: Workspace, t: number) => (ws.transport.timeline.timeToBeat(t) * 60) / 120;
 const frameError = (placed: number, truth: number) => Math.round((placed - truth) * RATE);
 
 test("a default anchor taken right after play() places a later take with 0 frames of error", async () => {
@@ -134,7 +134,7 @@ test("an anchor taken during the start lead, an explicit audioTime and one taken
   const { ws, context } = await open(p);
   ws.seek(1);
   await ws.play();
-  const when = ws.timeline.beatToTime(2);
+  const when = ws.transport.timeline.beatToTime(2);
   const t = when + 0.5;
   await sleep(700);
   const truth = trueProjectTime(ws, t);
@@ -150,12 +150,12 @@ test("a take that starts before the transport's start maps linearly earlier; cro
   const { ws } = await open(p);
   ws.seek(1);
   await ws.play();
-  const when = ws.timeline.beatToTime(2);
+  const when = ws.transport.timeline.beatToTime(2);
   const anchor = ws.takeAnchor(when - 0.01);
   expect(frameError(ws.takePosition(anchor, { startTime: when - 0.01 }), 0.99)).toBe(0);
   ws.stop();
   await ws.play();
-  const from0 = ws.timeline.beatToTime(0);
+  const from0 = ws.transport.timeline.beatToTime(0);
   const early = ws.takeAnchor(from0 - 0.01);
   expect(() => ws.takePosition(early, { startTime: from0 - 0.01 })).toThrow(/crosses project zero/);
   expect(frameError(ws.takePosition(early, { startTime: from0 }), 0)).toBe(0);
@@ -171,7 +171,7 @@ test("take placement after a seek restart and on a stopped transport", async () 
   media.delay = 80;
   ws.seek(5);
   await sleep(500);
-  const when = ws.timeline.beatToTime(10);
+  const when = ws.transport.timeline.beatToTime(10);
   const t = when + 0.3;
   await sleep(400);
   const anchor = ws.takeAnchor(when - 0.01);
@@ -320,7 +320,7 @@ async function seekRig() {
   const resets: ResetReason[] = [];
   const changes: string[] = [];
   const offs = [
-    rig.ws.clock.state.subscribe((s) => states.push(s)),
+    rig.ws.transport.state.subscribe((s) => states.push(s)),
     rig.ws.player.isPlaying.subscribe((v) => playing.push(v)),
     rig.ws.transport.attach({
       schedule: () => {},
@@ -344,7 +344,7 @@ test("seek while playing into slow media keeps the transport playing and resumes
   const seekFrame = Math.round(r.context.currentTime * RATE);
   r.ws.seek(5.5);
   await sleep(100);
-  expect(r.ws.clock.state.value).toBe("playing");
+  expect(r.ws.transport.state.value).toBe("playing");
   expect(r.ws.player.isPlaying.value).toBe(true);
   expect(r.ws.position).toBeCloseTo(5.5, 3);
   await sleep(800);
@@ -454,7 +454,7 @@ test("a failed read during the wait reports once, keeps the transport playing an
   r.ws.seek(5.5);
   await sleep(800);
   expect(r.ws.cells.error.value).toContain("could not read its media");
-  expect(r.ws.clock.state.value).toBe("playing");
+  expect(r.ws.transport.state.value).toBe("playing");
   expect(r.states).toEqual([]);
   expect(r.resets).not.toContain("pause");
   expect(r.media.reads.length).toBeLessThanOrEqual(2);
@@ -488,7 +488,7 @@ test("a seek that waits for media cancels an armed take like any seek", async ()
   );
   r.ws.seek(5);
   expect(await Promise.race([outcome, sleep(150).then(() => "pending")])).toBe("AbortError");
-  expect(r.ws.clock.state.value).toBe("playing");
+  expect(r.ws.transport.state.value).toBe("playing");
 });
 
 test("a quantized take requested during the seek wait settles with AbortError instead of hanging", async () => {
@@ -526,9 +526,9 @@ test("a launch queued during the seek wait is still audible", async () => {
   await sleep(300);
   media.delay = 250;
   ws.seek(5.5);
-  ws.session.value.tracks[b.id].clips[0]!.launch({ quantize: "4n" });
+  ws.cells.session.value.tracks[b.id].clips[0]!.launch({ quantize: "4n" });
   await sleep(1500);
   const x = cap.pcm();
   expect(level(x.l, x.l.length - RATE / 2, x.l.length)).toBeGreaterThan(0.1);
-  expect(ws.clock.state.value).toBe("playing");
+  expect(ws.transport.state.value).toBe("playing");
 });

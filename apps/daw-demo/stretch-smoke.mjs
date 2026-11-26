@@ -157,8 +157,7 @@ try {
         duration: reopened.duration,
         anchor: reopened.stretch.anchors[0],
         original: same(reopened.stretch.source.channels[0], source),
-        // The file holds the original and the warp, not the render: a reader without an engine gets varispeed audio of the same length.
-        rendered: reopened.channels[0].length === committed.channels[0].length,
+        rendered: same(reopened.channels[0], committed.channels[0]),
       };
       restored.dispose();
       restored.project.dispose();
@@ -203,8 +202,7 @@ try {
       const reopened = openDawProject(archive).project;
       const saved = reopened.tracks[0].clips[0];
       const sameSource = saved.stretch.source.channels[0].every((value, index) => value === original[index]);
-      // The file holds the original and its warp, not the render: reopened without an engine the clip is varispeed audio of the same length.
-      const sameOutput = saved.channels[0].length === first.channels[0].length;
+      const sameOutput = saved.channels[0].every((value, index) => value === first.channels[0][index]);
       const halve = await workspace.prepareAudioClipStretch(clip.id, 0.5, stretch);
       const second = halve.apply();
 

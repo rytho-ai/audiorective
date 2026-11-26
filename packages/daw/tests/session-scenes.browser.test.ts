@@ -1,7 +1,7 @@
 import { ManualTickSource } from "@audiorective/clock";
 import type { SoundFactory } from "@audiorective/core";
 import { afterEach, describe, expect, test } from "vitest";
-import { Project, Workspace, openWorkspaceBlob, saveDawProjectTo, sessionFor, type WorkspaceOptions } from "../src";
+import { Project, Workspace, openWorkspace, saveDawProjectTo, sessionFor, type WorkspaceOptions } from "../src";
 
 const RATE = 48_000;
 const QUANTUM = 128;
@@ -35,7 +35,7 @@ async function render(
   const workspace = open
     ? await open(context as unknown as AudioContext, all)
     : await Workspace.create(context as unknown as AudioContext, project, all);
-  expect(workspace.warnings).toEqual([]);
+  expect(workspace.cells.warnings.value).toEqual([]);
   const pending = [...actions].sort((a, b) => a.at - b.at);
   while (pending[0]?.at === 0) pending.shift()!.run(workspace);
   await workspace.play();
@@ -111,8 +111,8 @@ describe("Session scenes in the Workspace", () => {
       project,
       8,
       [
-        { at: 0.2, run: (w) => w.session.value.launchScene(0) },
-        { at: 2.5, run: (w) => w.session.value.launchScene(1) },
+        { at: 0.2, run: (w) => w.cells.session.value.launchScene(0) },
+        { at: 2.5, run: (w) => w.cells.session.value.launchScene(1) },
       ],
       { instruments },
     );
@@ -126,7 +126,7 @@ describe("Session scenes in the Workspace", () => {
 
   test("slot clips play while the Arrangement is empty, and loop on the bar", async () => {
     const { project, instruments } = song();
-    const x = await render(project, 7, [{ at: 0.2, run: (w) => w.session.value.launchScene(0) }], {
+    const x = await render(project, 7, [{ at: 0.2, run: (w) => w.cells.session.value.launchScene(0) }], {
       instruments: { [project.tracks[0].id]: instruments[project.tracks[0].id] },
     });
     expect(project.tracks.flatMap((track) => track.clips)).toEqual([]);
@@ -140,7 +140,7 @@ describe("Session scenes in the Workspace", () => {
       project,
       8,
       [
-        { at: 0.2, run: (w) => w.session.value.tracks[drums.id]!.clips[0]!.launch() },
+        { at: 0.2, run: (w) => w.cells.session.value.tracks[drums.id]!.clips[0]!.launch() },
         {
           at: 2.5,
           run: () => {
@@ -148,7 +148,7 @@ describe("Session scenes in the Workspace", () => {
             session.setMidiClip({ trackId: drums.id, sceneId: intro.id }, hit(1));
           },
         },
-        { at: 3, run: (w) => w.session.value.tracks[drums.id]!.clips[0]!.launch() },
+        { at: 3, run: (w) => w.cells.session.value.tracks[drums.id]!.clips[0]!.launch() },
       ],
       { instruments: { [drums.id]: { sound: click } }, arrangement: true },
     );
@@ -165,7 +165,7 @@ describe("Session scenes in the Workspace", () => {
       project,
       9,
       [
-        { at: 0.2, run: (w) => w.session.value.launchScene(1) },
+        { at: 0.2, run: (w) => w.cells.session.value.launchScene(1) },
         { at: 2.5, run: () => void session.addScene({ afterSceneId: intro.id }) },
         { at: 3.5, run: () => void session.duplicateScene(drop.id) },
         { at: 5.5, run: () => session.removeScene(intro.id) },
@@ -184,22 +184,22 @@ describe("Session scenes in the Workspace", () => {
       project,
       9,
       [
-        { at: 0.2, run: (w) => w.session.value.launchScene(1) },
+        { at: 0.2, run: (w) => w.cells.session.value.launchScene(1) },
         {
           at: 2.5,
           run: (w) => {
-            launcher = w.session.value;
+            launcher = w.cells.session.value;
             playing = w.sessionClip(drums.id, session.clipAt({ trackId: drums.id, sceneId: drop.id })!.id);
             // The Intro waits for the bar at 4 s while the Drop plays.
-            w.session.value.launchScene(0);
+            w.cells.session.value.launchScene(0);
           },
         },
         { at: 2.6, run: () => session.moveScene(intro.id, 1) },
         {
           at: 3.1,
           run: (w) => {
-            expect(w.session.value).toBe(launcher);
-            expect(w.session.value.scenes.map((scene) => scene.name)).toEqual(["Drop", "Intro"]);
+            expect(w.cells.session.value).toBe(launcher);
+            expect(w.cells.session.value.scenes.map((scene) => scene.name)).toEqual(["Drop", "Intro"]);
             expect(w.sessionClip(drums.id, session.clipAt({ trackId: drums.id, sceneId: drop.id })!.id)).toBe(playing);
             expect((playing as { index: number; playing: { value: boolean } }).index).toBe(0);
             expect((playing as { playing: { value: boolean } }).playing.value).toBe(true);
@@ -221,21 +221,21 @@ describe("Session scenes in the Workspace", () => {
     });
     cleanups.push(() => workspace.dispose());
     const second = session.clipAt({ trackId: drums.id, sceneId: drop.id })!;
-    expect(workspace.sessionClip(drums.id, second.id)).toBe(workspace.session.value.tracks[drums.id]!.clips[1]);
-    expect(workspace.session.value.scenes.map((scene) => scene.name)).toEqual(["Intro", "Drop"]);
+    expect(workspace.sessionClip(drums.id, second.id)).toBe(workspace.cells.session.value.tracks[drums.id]!.clips[1]);
+    expect(workspace.cells.session.value.scenes.map((scene) => scene.name)).toEqual(["Intro", "Drop"]);
     // Scenes change in place: the launcher stays, names follow, and the clip keeps its launcher clip.
-    const before = workspace.session.value;
+    const before = workspace.cells.session.value;
     const keptClip = workspace.sessionClip(drums.id, second.id);
     session.addScene({ afterSceneId: intro.id, name: "Verse" });
     session.renameScene(drop.id, "Chorus");
     await workspace.flush();
-    expect(workspace.session.value).toBe(before);
-    expect(workspace.session.value.scenes.map((scene) => scene.name)).toEqual(["Intro", "Verse", "Chorus"]);
+    expect(workspace.cells.session.value).toBe(before);
+    expect(workspace.cells.session.value.scenes.map((scene) => scene.name)).toEqual(["Intro", "Verse", "Chorus"]);
     expect(workspace.sessionClip(drums.id, second.id)).toBe(keptClip);
     expect(keptClip!.index).toBe(2);
     session.removeScene(intro.id);
     await workspace.flush();
-    expect(workspace.session.value.scenes.map((scene) => scene.name)).toEqual(["Verse", "Chorus"]);
+    expect(workspace.cells.session.value.scenes.map((scene) => scene.name)).toEqual(["Verse", "Chorus"]);
     expect(workspace.sessionClip(drums.id, second.id)).toBe(keptClip);
     expect(keptClip!.index).toBe(1);
   }, 30_000);
@@ -266,15 +266,15 @@ describe("Session slots of a reopened file", () => {
     cleanups.push(() => project.dispose());
     const blob = await archive(project);
     const reopened: Workspace[] = [];
-    const x = await render(project, 6, [{ at: 0.2, run: (w) => w.session.value.launchScene(0) }], {}, async (context, options) => {
-      const workspace = await openWorkspaceBlob(context, blob, options);
+    const x = await render(project, 6, [{ at: 0.2, run: (w) => w.cells.session.value.launchScene(0) }], {}, async (context, options) => {
+      const workspace = await openWorkspace(context, blob, options);
       reopened.push(workspace);
       const grid = sessionFor(workspace.project);
       const slots = grid.scenes.map((scene) => grid.clipAt({ trackId: track.id, sceneId: scene.id })!);
       expect(slots.every((clip) => clip.kind === "audio" && !!clip.media)).toBe(true);
       expect(workspace.sessionClip(track.id, slots[0].id)).toBeNull(); // not read yet
       await until(() => slots.every((clip) => workspace.sessionClip(track.id, clip.id) !== null));
-      expect(workspace.session.value.tracks[track.id]!.clips.map((clip) => clip !== null)).toEqual([true, true]);
+      expect(workspace.cells.session.value.tracks[track.id]!.clips.map((clip) => clip !== null)).toEqual([true, true]);
       return workspace;
     });
     // Launched on the bar at 2 s: the plain clip plays 0.5 for a second, then 0.2 and loops from its start.

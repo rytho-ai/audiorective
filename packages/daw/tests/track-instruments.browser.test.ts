@@ -38,7 +38,7 @@ async function render(
     workletUrl: worklet,
     ...options,
   });
-  expect(workspace.warnings).toEqual([]);
+  expect(workspace.cells.warnings.value).toEqual([]);
   const pending = [...actions].sort((a, b) => a.at - b.at);
   while (pending[0]?.at === 0) pending.shift()!.run(workspace);
   await workspace.play();
@@ -120,7 +120,7 @@ describe("instruments: page-made sound on a MIDI track without a plug-in", () =>
 
   test("Session launches the track's clip and loops it on the bar", async () => {
     const { project, track, instruments } = drums();
-    const x = await render(project, 7, [{ at: 0.5, run: (w) => w.session.value.tracks[track.id]!.clips[0]!.launch() }], { instruments });
+    const x = await render(project, 7, [{ at: 0.5, run: (w) => w.cells.session.value.tracks[track.id]!.clips[0]!.launch() }], { instruments });
     // Arrangement hit at 1 s is held back from bar 1 (2 s); Session hits at beat 1 of each bar: 2.5, 4.5, 6.5 s.
     const hits = onsets(x).filter((t) => t >= 2);
     expect(hits.map((t) => Math.round(t * 1000) / 1000)).toEqual([2.5, 4.5, 6.5]);
@@ -129,7 +129,7 @@ describe("instruments: page-made sound on a MIDI track without a plug-in", () =>
   test("renderMixRange, save and reopen play the instrument again; a track with a plug-in keeps its plug-in", async () => {
     const { project, track, instruments } = drums();
     const synth = project.addTrack("Synth", "midi");
-    project.addWebClapDevice(synth.id, { pluginId, name: "Synth", vendor: "", version: "", bundleUrl: bundle });
+    project.addDevice(synth.id, { kind: "webclap", pluginId, name: "Synth", vendor: "", version: "", bundleUrl: bundle });
     const context = new AudioContext({ sampleRate: RATE });
     const workspace = await Workspace.create(context, project, {
       workletUrl: worklet,
@@ -139,7 +139,7 @@ describe("instruments: page-made sound on a MIDI track without a plug-in", () =>
       workspace.dispose();
       await context.close();
     });
-    expect(workspace.warnings).toEqual([]);
+    expect(workspace.cells.warnings.value).toEqual([]);
     const first = await renderMixRange(workspace, { expectedVersion: project.cells.version.value, range: { startBeat: 0, endBeat: 6 } });
     if (first.status !== "rendered") throw new Error(first.status);
     expect(onsets(Float32Array.from(first.audio.channels[0])).map((t) => Math.round(t * 1000) / 1000)).toEqual([1, 2]);
@@ -181,7 +181,7 @@ describe("instruments: chosen by a function of the track", () => {
       reopened.dispose();
       await second.close();
     });
-    expect(reopened.warnings).toEqual([]);
+    expect(reopened.cells.warnings.value).toEqual([]);
     expect(seen).toContain("Drums:midi");
     const first = await renderMixRange(reopened, { expectedVersion: reopened.project.cells.version.value, range: { startBeat: 0, endBeat: 6 } });
     if (first.status !== "rendered") throw new Error(first.status);
@@ -223,7 +223,7 @@ describe("instruments: releases behave like a device queue", () => {
 
   test("a note starting inside the look-ahead before a Session handover is released at the handover", async () => {
     const { project, track, instruments } = held(3.9, 1.1);
-    const x = await render(project, 4, [{ at: 0.5, run: (w) => w.session.value.tracks[track.id]!.clips[0]!.launch() }], { instruments });
+    const x = await render(project, 4, [{ at: 0.5, run: (w) => w.cells.session.value.tracks[track.id]!.clips[0]!.launch() }], { instruments });
     expect(rms(x, 1.96, 1.99)).toBeGreaterThan(0.05);
     expect(rms(x, 2.1, 4)).toBe(0);
   }, 30_000);
@@ -234,8 +234,8 @@ describe("instruments: releases behave like a device queue", () => {
       project,
       4,
       [
-        { at: 0.75, run: (w) => w.session.value.tracks[track.id]!.clips[0]!.launch() },
-        { at: 1.9, run: (w) => w.session.value.tracks[track.id]!.cancelQueued() },
+        { at: 0.75, run: (w) => w.cells.session.value.tracks[track.id]!.clips[0]!.launch() },
+        { at: 1.9, run: (w) => w.cells.session.value.tracks[track.id]!.cancelQueued() },
       ],
       { instruments },
     );
@@ -244,7 +244,7 @@ describe("instruments: releases behave like a device queue", () => {
 
   test("a handover never makes an earlier note-off later", async () => {
     const { project, track, instruments } = held(1, 2.9);
-    const x = await render(project, 3, [{ at: 1.9, run: (w) => w.session.value.tracks[track.id]!.clips[0]!.launch() }], { instruments });
+    const x = await render(project, 3, [{ at: 1.9, run: (w) => w.cells.session.value.tracks[track.id]!.clips[0]!.launch() }], { instruments });
     expect(rms(x, 1.0, 1.9)).toBeGreaterThan(0.05);
     expect(rms(x, 1.96, 1.995)).toBe(0);
   }, 30_000);

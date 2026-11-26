@@ -22,6 +22,7 @@ export type ClipResetReason = "start" | "stop" | "pause" | "seek" | "detach";
 /** The part of a tick window `schedule` reads (a clock's `SchedulerWindow`). */
 export type ClipWindow = Readonly<{
   beat: { start: number; end: number };
+  /** `current`: the audio-context time of the tick, in seconds. */
   time: { current: number };
   own(event: CancellableEvent, when: number): void;
 }>;

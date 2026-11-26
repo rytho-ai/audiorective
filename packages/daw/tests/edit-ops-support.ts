@@ -28,8 +28,8 @@ export function world() {
     8,
     { name: "Pattern" },
   );
-  const synth = project.addWebClapDevice(keys.id, { pluginId: "a", name: "A", vendor: "v", version: "1", bundleUrl: "/a.wclap" });
-  const other = project.addWebClapDevice(keys.id, { pluginId: "b", name: "B", vendor: "v", version: "1", bundleUrl: "/b.wclap" });
+  const synth = project.addDevice(keys.id, { kind: "webclap", pluginId: "a", name: "A", vendor: "v", version: "1", bundleUrl: "/a.wclap" });
+  const other = project.addDevice(keys.id, { kind: "webclap", pluginId: "b", name: "B", vendor: "v", version: "1", bundleUrl: "/b.wclap" });
   project.setTrackEffects(drums.id, [{ id: "f1", type: "filter", enabled: true, wet: 1, mode: "lowpass", frequency: 1000, q: 1 }]);
   const session = sessionFor(project);
   const verse = session.addScene({ name: "Verse" });
@@ -77,6 +77,7 @@ export function fingerprint(project: Project): string {
       effects: track.effects,
       macros: track.effectMacros,
       automation: track.volumeAutomation,
+      controllers: track.controllerLanes,
       devices: track.devices.map((device) => device.id),
       clips: track.clips.map(clip),
     })),

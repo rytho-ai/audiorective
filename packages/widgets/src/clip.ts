@@ -5,18 +5,19 @@ import type { Peaks } from "./peaks";
 import { defaultRenderer } from "./renderer";
 import type { WaveformPeaks } from "./types";
 
-/** Reusable arrangement clip gestures over caller-owned elements and project data. */
+/** Reusable arrangement clip gestures over caller-owned elements and timeline data. */
 export type ArrangementTimeMap = Readonly<{
   secondsToBeat(seconds: number): number;
   beatToSeconds(beat: number): number;
   snapSeconds(seconds: number): number;
 }>;
 
+/** One committed move: `time` is the new start in the gesture's `timeUnit` (seconds by default). */
 export type ClipMove = Readonly<{ clipId: string; trackId: string; time: number; kind: "pointer" | "keyboard" }>;
 
 export type ClipGestureOptions = Readonly<{
   clipId: string;
-  /** Tracked native origin; undefined disables/cancels. Position or track changes cancel stale previews. */
+  /** Tracked native origin (`time` in `timeUnit`, seconds by default); undefined disables/cancels. Position or track changes cancel stale previews. */
   origin(): Readonly<{ time: number; trackId: string }> | undefined;
   /** Unit of origin.time and onMove.time; default seconds. */
   timeUnit?: "seconds" | "beats";
@@ -170,7 +171,7 @@ export function attachClipGesture(element: HTMLElement, options: ClipGestureOpti
 export type ClipWaveformSource = Readonly<{
   /** Audio that covers the window: PCM, or min/max peaks over `data.duration` seconds. */
   data: PCMData | WaveformPeaks;
-  /** Seconds into `data` where the played window starts. A project clip's `channels` (or its `media.peaks(...)` of the clip's window) already begin at the window, so pass 0 there. */
+  /** Seconds into `data` where the played window starts. Audio that already begins at the window (a pre-trimmed buffer, or peaks computed over the window only) takes 0. */
   sourceOffset: number;
   /** Seconds of `data` that the clip plays, starting at `sourceOffset`. */
   duration: number;
@@ -304,7 +305,7 @@ export interface ClipWaveformHandle {
 export type ClipTrimEdge = "start" | "end";
 
 export type ClipTrimOptions = Readonly<{
-  /** Tracked origin of the clip on the timeline, in `timeUnit`; undefined disables trimming and cancels a drag. A changed origin cancels a stale drag. */
+  /** Tracked origin of the clip on the timeline (`time` and `duration` in `timeUnit`: seconds or beats); undefined disables trimming and cancels a drag. A changed origin cancels a stale drag. */
   origin(): Readonly<{ time: number; duration: number }> | undefined;
   /** Unit of origin, snap, bounds and the committed edges; default seconds. */
   timeUnit?: "seconds" | "beats";
@@ -312,11 +313,11 @@ export type ClipTrimOptions = Readonly<{
   pixelsPerSecond(): number;
   /** Edges that get a handle; default both. */
   edges?: readonly ClipTrimEdge[];
-  /** Round a candidate edge position (in `timeUnit`) to the grid, e.g. `project.tempoMap.snapSeconds`. Alt bypasses it while dragging. */
+  /** Round a candidate edge position (in `timeUnit`) to the grid, e.g. a tempo map's beat-grid snapping function. Alt bypasses it while dragging. */
   snap?(time: number): number;
   /** Limits for the edges in `timeUnit`, such as the recording's extent for audio. Read at the start of each drag or key press. */
   bounds?(): Readonly<{ start?: number; end?: number }>;
-  /** Called once with the edges that changed, as absolute timeline positions in `timeUnit`: the shape `project.resizeClip` takes. */
+  /** Called once with the edges that changed, as absolute timeline positions in `timeUnit`: for the caller to apply to its own clip. */
   onCommit(edges: Readonly<{ start?: number; end?: number }>): void;
 }>;
 

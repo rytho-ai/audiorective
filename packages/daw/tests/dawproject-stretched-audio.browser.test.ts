@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "vitest";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { TimeStretch } from "@audiorective/effects/time-stretch";
 import type { WaveStretchAnchor, WaveStretchProcessor } from "@audiorective/player";
-import { Workspace, encodeWavBytes, openDawProject, openWorkspace, renderMixRange } from "../src";
+import { Project, Workspace, encodeWavBytes, openDawProject, openWorkspace, renderMixRange, saveDawProject } from "../src";
 import type { AudioClip } from "../src";
 
 /**
@@ -100,8 +100,8 @@ class FakeStretch implements WaveStretchProcessor {
 test("without a stretch processor the clip plays by varispeed: every click lands at frame x ratio, and the warning says how to fix the pitch", async () => {
   const workspace = await open(await bitwigFile());
   expect(audioClip(workspace).stretch?.ratio).toBeCloseTo(RATIO, 9);
-  expect(workspace.warnings.filter((warning) => /time-stretched by the file's warp markers/.test(warning))).toHaveLength(1);
-  expect(workspace.warnings.join("\n")).toMatch(/1 audio clip is time-stretched.*changed pitch.*stretch processor.*TimeStretch/s);
+  expect(workspace.cells.warnings.value.filter((warning) => /time-stretched by the file's warp markers/.test(warning))).toHaveLength(1);
+  expect(workspace.cells.warnings.value.join("\n")).toMatch(/1 audio clip is time-stretched.*changed pitch.*stretch processor.*TimeStretch/s);
   const x = await mix(workspace, 6);
   const starts = clickStarts(x, 0.2);
   expect(starts).toHaveLength(4);
@@ -129,7 +129,7 @@ test("a stretch processor renders each stretched clip once with its ratio and an
   expect(processor.calls[0]).toMatchObject({ frames: 176_400, sampleRate: SOURCE_RATE });
   expect(processor.calls[0].ratio).toBeCloseTo(RATIO, 9);
   expect(processor.calls[0].anchors).toEqual([{ sourceFrame: 44_100, outputFrame: 105_840 }]);
-  expect(workspace.warnings.join("\n")).not.toMatch(/stretch/i);
+  expect(workspace.cells.warnings.value.join("\n")).not.toMatch(/stretch/i);
   const clip = audioClip(workspace);
   expect(clip.channels[0]).toHaveLength(211_680);
   expect(clip.channels[0][100_000]).toBeCloseTo(0.3, 6);
@@ -155,7 +155,9 @@ test("an engine failure on one clip leaves its varispeed audio and a warning tha
     },
   };
   const workspace = await open(await bitwigFile(), failing);
-  expect(workspace.warnings.some((warning) => /Audio clip "click44" could not be stretched.*engine broke.*changed pitch/s.test(warning))).toBe(true);
+  expect(
+    workspace.cells.warnings.value.some((warning) => /Audio clip "click44" could not be stretched.*engine broke.*changed pitch/s.test(warning)),
+  ).toBe(true);
   expect(clickStarts(await mix(workspace, 6), 0.2)).toHaveLength(4);
 });
 
@@ -170,7 +172,7 @@ test("workspace.open renders the stretched clips of the file it opens with the p
   });
   // An algorithm other than stretch is varispeed by intent: nothing to render, no warning.
   expect(processor.calls).toHaveLength(0);
-  expect(workspace.warnings.join()).not.toMatch(/stretch processor/);
+  expect(workspace.cells.warnings.value.join()).not.toMatch(/stretch processor/);
   await workspace.open(await bitwigFile());
   expect(processor.calls).toHaveLength(1);
   expect(audioClip(workspace).channels[0][100_000]).toBeCloseTo(0.2, 6);
@@ -184,7 +186,7 @@ test.skipIf(!wasmPath)(
     const bytes = await bitwigFile(undefined, sine);
     const engine = await TimeStretch.load({ wasmUrl: `/@fs${wasmPath}` });
     const stretched = await open(bytes, engine);
-    expect(stretched.warnings.join()).not.toMatch(/stretch/i);
+    expect(stretched.cells.warnings.value.join()).not.toMatch(/stretch/i);
     const rendered = audioClip(stretched);
     expect(rendered.channels[0]).toHaveLength(211_680);
     const kept = frequency(await mix(stretched, 6), START + RATE, START + 4 * RATE, RATE);
@@ -197,3 +199,43 @@ test.skipIf(!wasmPath)(
     expect(Math.abs(lowered - 440 / RATIO) / (440 / RATIO)).toBeLessThan(0.01);
   },
 );
+
+/** A file the app saved after it stretched a clip: 4800 frames at 48 kHz of a sine, stretched by 1.25 into a render that is not flat. */
+function appFile(keepFolder: boolean): { bytes: Uint8Array; render: Float32Array } {
+  const project = new Project({ bpm: 120 });
+  const track = project.addTrack("Take", "audio");
+  const source = Float32Array.from({ length: 4800 }, (_, i) => Math.sin((i / 48) * Math.PI * 2));
+  const clip = project.addAudioClip(track.id, { sampleRate: RATE, channels: [source] }, 1);
+  const render = Float32Array.from({ length: 6000 }, (_, i) => Math.sin(i / 11) * 0.4);
+  project.applyAudioClipStretch(clip, 1.25, { sampleRate: RATE, channels: [render] });
+  const entries = unzipSync(saveDawProject(project));
+  project.dispose();
+  if (!keepFolder) for (const path of Object.keys(entries)) if (path.startsWith("audiorective/")) delete entries[path];
+  return { bytes: zipSync(entries), render };
+}
+
+test("a file the app saved opens with its own render and no stretch processor: the same samples, no warning, the engine never called", async () => {
+  const { bytes, render } = appFile(true);
+  const bare = await open(bytes);
+  expect(bare.cells.warnings.value.join("\n")).not.toMatch(/stretch|pitch|varispeed/i);
+  expect(audioClip(bare).channels[0]).toEqual(render);
+  const processor = new FakeStretch();
+  const engine = await open(bytes, processor);
+  expect(processor.calls).toHaveLength(0);
+  expect(audioClip(engine).channels[0]).toEqual(render);
+});
+
+test("the same file without the Audiorective folder is the standard form: varispeed and a warning without an engine, one render with one", async () => {
+  const { bytes, render } = appFile(false);
+  const bare = await open(bytes);
+  expect(bare.cells.warnings.value.join("\n")).toMatch(/1 audio clip is time-stretched.*changed pitch.*stretch processor/s);
+  expect(audioClip(bare).channels[0]).toHaveLength(render.length);
+  expect(audioClip(bare).channels[0]).not.toEqual(render);
+  const processor = new FakeStretch(0.2);
+  const engine = await open(bytes, processor);
+  expect(processor.calls).toHaveLength(1);
+  expect(processor.calls[0]).toMatchObject({ frames: 4800 });
+  expect(processor.calls[0].ratio).toBeCloseTo(1.25, 9);
+  expect(engine.cells.warnings.value.join("\n")).not.toMatch(/stretch/i);
+  expect(audioClip(engine).channels[0].every((sample) => Math.abs(sample - 0.2) < 1e-6)).toBe(true);
+});

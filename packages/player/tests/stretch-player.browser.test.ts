@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { view, onChange } from "./view";
-import type { PCMData } from "@audiorective/core/peaks";
+import type { PCMData } from "@audiorective/core";
 import { WavePlayer } from "../src/WavePlayer";
 import type { WaveStretchProcessor } from "../src/WavePlayer";
 

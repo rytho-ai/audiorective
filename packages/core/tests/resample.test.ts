@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { resamplePCM } from "../src/resample";
-import type { PCMData } from "../src/peaks";
+import type { PCMData } from "../src/pcm";
 
 const sine = (rate: number, hz: number, seconds: number, amp = 0.5): PCMData => ({
   sampleRate: rate,

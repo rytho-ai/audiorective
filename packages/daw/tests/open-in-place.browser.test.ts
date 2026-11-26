@@ -88,7 +88,7 @@ describe("workspace.open", () => {
   test("restores WebCLAP device state like openWorkspace", async () => {
     const project = new Project({ bpm: 120 });
     const track = project.addTrack("Synth", "midi");
-    project.addWebClapDevice(track.id, { pluginId, name: "Synth", vendor: "", version: "", bundleUrl: bundle });
+    project.addDevice(track.id, { kind: "webclap", pluginId, name: "Synth", vendor: "", version: "", bundleUrl: bundle });
     const source = await Workspace.create(new AudioContext({ sampleRate: RATE }), project, { workletUrl: worklet });
     const host = source.host(project.tracks[0].devices[0].id)!;
     const info = host.parameterInfo[0];
@@ -111,6 +111,50 @@ describe("workspace.open", () => {
     await workspace.sync();
     expect(workspace.host(workspace.project.tracks[0].devices[0].id)).toBeTruthy();
   }, 40_000);
+
+  test("a Project replaces the song with the same guarantees as a file, and ownership follows ownsProject", async () => {
+    const { workspace } = await running(songBytes(120, 2));
+    const first = workspace.project;
+    workspace.loop.setRegion({ startBeat: 0, endBeat: 4 });
+    workspace.loop.setEnabled(true);
+    await workspace.play();
+    await sleep(300);
+    const cells = workspace.cells;
+    const launcher = workspace.cells.session.value;
+    const mine = new Project({ bpm: 90 });
+    mine.addAudioClip(mine.addTrack("Mine", "audio").id, tone(4), 0);
+    // The old song keeps playing until the new one is ready, then everything switches in one step.
+    const opening = workspace.open(mine);
+    expect(workspace.project).toBe(first);
+    await opening;
+    expect(workspace.project).toBe(mine);
+    expect(workspace.cells).toBe(cells);
+    expect(workspace.cells.session.value).not.toBe(launcher);
+    expect(workspace.player.isPlaying.value).toBe(false);
+    expect(workspace.position).toBe(0);
+    expect(workspace.loop.cells.region.value).toBeNull();
+    expect(workspace.loop.cells.enabled.value).toBe(false);
+    expect(workspace.cells.needsSync.value).toBe(false);
+    // The Workspace owned the first song, so it disposed it; the Project passed in stays with the caller.
+    expect(() => first.addTrack("x", "audio")).toThrow("Project is disposed.");
+    await workspace.play();
+    await sleep(300);
+    expect(workspace.position).toBeGreaterThan(0);
+    workspace.dispose();
+    expect(() => mine.addTrack("still mine", "audio")).not.toThrow();
+    mine.dispose();
+  }, 30_000);
+
+  test("a Project given with ownsProject is disposed by the Workspace when the next song replaces it", async () => {
+    const { workspace } = await running(songBytes(120, 1));
+    const handed = new Project({ bpm: 100 });
+    handed.addTrack("A", "audio");
+    await workspace.open(handed, { ownsProject: true });
+    const next = new Project({ bpm: 100 });
+    await workspace.open(next);
+    expect(() => handed.addTrack("x", "audio")).toThrow("Project is disposed.");
+    next.dispose();
+  }, 30_000);
 
   test("a bad file rejects and the current song plays on untouched", async () => {
     const { workspace } = await running(songBytes(120, 2));
@@ -162,14 +206,14 @@ describe("workspace.open", () => {
 
   test("the Session launcher is rebuilt for the new song", async () => {
     const { workspace } = await running(songBytes(120, 1));
-    const launcher = workspace.session.value;
+    const launcher = workspace.cells.session.value;
     const seen: unknown[] = [];
-    const stop = effect(() => void seen.push(workspace.session.value));
+    const stop = effect(() => void seen.push(workspace.cells.session.value));
     cleanups.push(stop);
     await workspace.open(songBytes(120, 2));
-    expect(workspace.session.value).not.toBe(launcher);
-    expect(Object.keys(workspace.session.value.tracks)).toHaveLength(2);
-    expect(seen.at(-1)).toBe(workspace.session.value);
+    expect(workspace.cells.session.value).not.toBe(launcher);
+    expect(Object.keys(workspace.cells.session.value.tracks)).toHaveLength(2);
+    expect(seen.at(-1)).toBe(workspace.cells.session.value);
   });
 
   test("rejects on a disposed Workspace", async () => {

@@ -49,7 +49,7 @@ try {
   const auditionButton = page.getByRole("button", { name: "試聽片段", exact: true });
   await auditionButton.click();
   await page.getByRole("button", { name: "停止片段試聽", exact: true }).waitFor();
-  assert.equal(await page.evaluate(() => window.__daw.workspace.clock.state.value), "stopped");
+  assert.equal(await page.evaluate(() => window.__daw.workspace.transport.state.value), "stopped");
   await page.getByRole("button", { name: "停止片段試聽", exact: true }).click();
   await auditionButton.waitFor();
 
@@ -75,15 +75,18 @@ try {
   assert.deepEqual(await envelope(), beforeDrag, "a drag should commit only after release");
   await page.mouse.up();
   assert.notDeepEqual(await envelope(), beforeDrag, "drag took effect");
-  await gainPoint.press("Enter");
-  assert.equal(await gainPoint.getAttribute("title"), "hold");
+  // The last point has no shape of its own (it is stored as hold), so the shape toggle is tried on the first point.
+  const firstPoint = page.getByRole("slider", { name: "片段增益點 1", exact: true });
+  assert.equal(await firstPoint.getAttribute("title"), "linear");
+  await firstPoint.press("Enter");
+  assert.equal(await firstPoint.getAttribute("title"), "hold");
   await page.getByRole("button", { name: "放大時間", exact: true }).click();
   const beforeUndo = await waveform.boundingBox();
   await page.locator("#undo").click();
-  assert.equal(await gainPoint.getAttribute("title"), "linear");
+  assert.equal(await firstPoint.getAttribute("title"), "linear");
   assert.equal(Math.round((await waveform.boundingBox()).width), Math.round(beforeUndo.width));
   await page.locator("#redo").click();
-  assert.equal(await gainPoint.getAttribute("title"), "hold");
+  assert.equal(await firstPoint.getAttribute("title"), "hold");
   await automationButton.click();
   await gainPoint.waitFor({ state: "detached" });
 
@@ -182,7 +185,7 @@ try {
           sessionPumps.push(
             (async () => {
               await context.suspend(time);
-              workspace.refresh();
+              workspace.transport.refresh();
               await Promise.resolve();
               if (index === 0) sessionClip.launch({ quantize: "4n" });
               await OfflineAudioContext.prototype.resume.call(context);
@@ -194,7 +197,7 @@ try {
       const rendering = context.startRendering();
       if (boundary) {
         await boundary;
-        workspace.refresh();
+        workspace.transport.refresh();
         const deadline = performance.now() + 1000;
         while (starts < 2 && performance.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 5));
         if (starts < 2) throw new Error("File-backed gain fixture did not schedule the second chunk.");
@@ -256,7 +259,7 @@ try {
           sessionPumps.push(
             (async () => {
               await context.suspend(time);
-              runtime.refresh();
+              runtime.transport.refresh();
               await Promise.resolve();
               if (index === 0) sessionClip.launch({ quantize: "4n" });
               await OfflineAudioContext.prototype.resume.call(context);
@@ -332,7 +335,7 @@ try {
       await cancelled;
       context.resume = realResume;
       await context.resume();
-      const cancelledState = [workspace.auditioningClip.value, mean()];
+      const cancelledState = [workspace.cells.auditioningClip.value, mean()];
 
       await workspace.auditionAudioClip(memoryClip.id);
       await waitFor(() => mean() > 0.49);
@@ -352,14 +355,14 @@ try {
         second = value;
         return true;
       });
-      await waitFor(() => workspace.auditioningClip.value === null && Math.abs(mean()) < 0.001);
+      await waitFor(() => workspace.cells.auditioningClip.value === null && Math.abs(mean()) < 0.001);
       await workspace.auditionAudioClip(memoryClip.id);
       await waitFor(() => mean() > 0.49);
       project.removeTrack(track.id);
       await workspace.sync();
       await waitFor(() => Math.abs(mean()) < 0.001);
-      if (workspace.auditioningClip.value !== null) throw new Error("Removing the audition track left it active.");
-      const result = { cancelledState, pcmValue, first, second, reads, position: workspace.position, clock: workspace.clock.state.value };
+      if (workspace.cells.auditioningClip.value !== null) throw new Error("Removing the audition track left it active.");
+      const result = { cancelledState, pcmValue, first, second, reads, position: workspace.position, clock: workspace.transport.state.value };
       return result;
     } finally {
       workspace.dispose();
@@ -434,7 +437,7 @@ try {
       await Promise.all(steps);
       const times = [0.0249, 0.0251, 0.1749, 0.1751, 0.3749, 0.3751, 0.7249, 0.7251, 0.9];
       const samples = times.map((time) => [0, 1].map((channel) => output.getChannelData(channel)[Math.round(time * rate)]));
-      return { samples, allocatedBuffers: buffers.size, mediaReads, position: workspace.position, clock: workspace.clock.state.value };
+      return { samples, allocatedBuffers: buffers.size, mediaReads, position: workspace.position, clock: workspace.transport.state.value };
     } finally {
       workspace.dispose();
       project.dispose();

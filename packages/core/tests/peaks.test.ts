@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { peakFrameRange, summarizePeaks } from "../src/peaks";
-import type { PCMData } from "../src/peaks";
+import type { PCMData } from "../src/pcm";
 
 describe("summarizePeaks", () => {
   test("keeps DC offsets, amplitudes outside unity, and true signed extrema", () => {

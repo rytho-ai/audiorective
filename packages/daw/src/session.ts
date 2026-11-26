@@ -93,6 +93,7 @@ export class ProjectSession {
     });
   }
 
+  /** Rename a scene; the name is trimmed and must not be empty. Does nothing when it is unchanged; throws for an unknown scene. One Undo step. */
   renameScene(sceneId: string, name: string): void {
     assertProjectActive(this.project);
     untracked(() => {

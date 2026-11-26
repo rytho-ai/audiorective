@@ -21,7 +21,7 @@ export type MixerState = Readonly<{
  */
 export type MixerMeter = Readonly<{ source: LevelMeterSource; dispose?(): void }>;
 export type MixerOptions = {
-  /** Project tracked owner getters through readonlyCell(() => ...). */
+  /** Expose tracked owner getters through readonlyCell(() => ...). */
   state: Readable<MixerState>;
   editTrack(id: string, patch: Partial<MixerStripSettings>): void;
   /** Shown only with masterVolume; the caller owns the audio routing. */

@@ -85,13 +85,13 @@ test("N3 real synth note across an unrelated edit, control without edit", async 
     const p = new Project({ bpm: 120 });
     const m = p.addTrack("m", "midi"),
       o = p.addTrack("o", "audio");
-    p.addWebClapDevice(m.id, { pluginId, name: "s", vendor: "v", version: "1", bundleUrl: bundle });
+    p.addDevice(m.id, { kind: "webclap", pluginId, name: "s", vendor: "v", version: "1", bundleUrl: bundle });
     p.addMidiClip(m.id, { notes: [{ pitch: 60, start: 0, duration: 6, velocity: 0.9 }], duration: 8 }, 0);
     const oc = p.addAudioClip(o.id, { sampleRate: RATE, channels: [zeros(480), zeros(480)] }, 30);
     const future = p.addMidiClip(m.id, { notes: [{ pitch: 67, start: 0, duration: 1, velocity: 0.9 }], duration: 2 }, 60);
     const { ws, cap } = await open(p, { workletUrl: worklet });
     await ws.play();
-    const T = Math.round(ws.timeline.beatToTime(0) * RATE);
+    const T = Math.round(ws.transport.timeline.beatToTime(0) * RATE);
     await sleep(900);
     if (mode === "edit") p.moveClip(oc.id, o.id, 31);
     if (mode === "removeMidi") p.removeClip(future.id);
@@ -109,16 +109,16 @@ test("K1 largest sample step caused by each action on a 0.5 DC clip", async () =
   type E = (ws: Workspace, p: Project, a: string, bus: string, clip: string) => void;
   const edits: Record<string, E> = {
     control_none: () => {},
-    mute: (ws, _p, a) => ws.setTrackMuted(a, true),
-    solo_other: (ws, _p, _a, b) => ws.setTrackSolo(b, true),
-    route_to_bus: (ws, _p, a, b) => ws.setTrackRouting(a, { outputBusId: b, sends: [] }),
-    master: (ws) => ws.setMasterVolume(0.5),
+    mute: (ws, _p, a) => ws.project.setTrackMuted(a, true),
+    solo_other: (ws, _p, _a, b) => ws.project.setTrackSolo(b, true),
+    route_to_bus: (ws, _p, a, b) => ws.project.setTrackRouting(a, { outputBusId: b, sends: [] }),
+    master: (ws) => ws.project.setMasterVolume(0.5),
     pause: (ws) => ws.pause(),
     stop: (ws) => ws.stop(),
     seek_to_silence: (ws) => ws.seek(5),
     remove_playing_clip: (_ws, p, _a, _b, c) => p.removeClip(c),
     move_playing_clip_away: (_ws, p, a, _b, c) => p.moveClip(c, a, 10),
-    insert_delay: (ws, _p, a) => ws.setTrackEffects(a, [{ id: "d", type: "delay", enabled: true, wet: 0.5, delayTime: 0.1, feedback: 0 }]),
+    insert_delay: (ws, _p, a) => ws.project.setTrackEffects(a, [{ id: "d", type: "delay", enabled: true, wet: 0.5, delayTime: 0.1, feedback: 0 }]),
   };
 
   for (const [name, edit] of Object.entries(edits)) {
@@ -165,7 +165,7 @@ test("E1 clip on the play position: start offset with and without an envelope st
     const cap = await Capture.on(context, ws.output);
     await sleep(70);
     await ws.play();
-    const T = Math.round(ws.timeline.beatToTime(0) * RATE);
+    const T = Math.round(ws.transport.timeline.beatToTime(0) * RATE);
     await sleep(500);
     ws.stop();
     await sleep(20);
@@ -234,7 +234,8 @@ test("opening a file requires an app resolver to fetch its bundle", async () => 
   const context = new AudioContext();
   const p = new Project();
   const t = p.addTrack("Inst", "midi");
-  p.addWebClapDevice(t.id, {
+  p.addDevice(t.id, {
+    kind: "webclap",
     pluginId: "x.y",
     name: "Evil",
     vendor: "",
@@ -293,7 +294,7 @@ test("a live media failure reports once and the export aborts before writing a Z
   expect(ws.cells.error.value).toContain(`Audio clip ${clip.id} could not read its media`);
   expect(errors.filter(Boolean)).toHaveLength(1);
   expect(media.failures).toBe(1);
-  expect(ws.warnings).toEqual([]);
+  expect(ws.cells.warnings.value).toEqual([]);
   ws.stop();
   let bytes = 0;
   let aborted = false;

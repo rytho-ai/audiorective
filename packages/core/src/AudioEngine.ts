@@ -77,6 +77,7 @@ function resolvePathLatency(proc: AudioProcessor): number {
   return best;
 }
 
+/** Owns one `AudioContext`, its registered processors and the engine-level graphs; `createEngine` builds one. Dispose it to close an owned context and dispose every registered processor. */
 export class AudioEngine {
   private readonly _context: AudioContext;
   private _processors: AudioProcessor[] = [];
@@ -340,6 +341,7 @@ export interface EngineSetupHelpers {
   defineGraph: AudioEngine["defineGraph"];
 }
 
+/** Builds an `AudioEngine`, runs `setup(context, helpers)` once, registers every `AudioProcessor` in the returned object and returns it with the engine as `core`. Throws when setup returns a `core` key. `options.signal` aborting disposes the engine. */
 export function createEngine<T extends Record<string, unknown>>(
   setup: (context: AudioContext, helpers: EngineSetupHelpers) => ValidSetupReturn<T>,
   options?: { context?: AudioContext; signal?: AbortSignal },

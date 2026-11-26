@@ -8,7 +8,7 @@ Reactive primitives for Web Audio. Bridges audio parameter automation and UI fra
 
 Audio state is the single source of truth. UI frameworks observe and mutate directly. No state duplication.
 
-For data-only waveform summaries and WAV encoding of PCM, use the [`@audiorective/core/peaks`](#pcm-peak-summaries) entry (`summarizePeaks`, `encodeWav`, `resamplePCM`). It requires neither Web Audio nor a DOM.
+For data-only waveform summaries use the [`@audiorective/core/peaks`](#pcm-peak-summaries) entry (`summarizePeaks`, `peakFrameRange`, `PeakSummary`). WAV encoding and resampling of PCM (`encodeWav`, `encodeWavBytes`, `resamplePCM`, the `PCMData` type) come from the root. None of them requires Web Audio or a DOM, and the root loads in plain Node.js.
 
 For reactive curves, transport beat loops, native parameter scheduling and domain adapters, use the optional
 [`@audiorective/core/automation`](./automation) entry.
@@ -608,10 +608,11 @@ analyser.readFrequencies(bins); // bins[i] = 0–255
 
 ## PCM peak summaries
 
-`@audiorective/core/peaks` is a pure PCM entry for browsers, Node.js, and Workers. It imports no audio-runtime implementation and creates no nodes or DOM. The root entry also exports these functions and types.
+`@audiorective/core/peaks` is a pure PCM entry for browsers, Node.js, and Workers. It imports no audio-runtime implementation and creates no nodes or DOM. It exports `summarizePeaks`, `peakFrameRange` and `PeakSummary`, and only the entry does: the root does not. `PCMData`, which they take, is exported from the root.
 
 ```typescript
-import { summarizePeaks, peakFrameRange, type PCMData } from "@audiorective/core/peaks";
+import type { PCMData } from "@audiorective/core";
+import { summarizePeaks, peakFrameRange } from "@audiorective/core/peaks";
 
 const pcm: PCMData = {
   channels: [Float32Array.of(0.25, 0.75, 0.5)],
@@ -633,7 +634,7 @@ const tail = peakFrameRange(summary, 1);
 
 ### Encode WAV
 
-`encodeWav(pcm, { bitDepth? })` returns a `Blob` (`audio/wav`) of any `PCMData`. It is pure like `summarizePeaks` (browsers, Node.js, workers), exported from the root and from `@audiorective/core/peaks`. `bitDepth` is `16` (default, signed integer), `24` (signed integer) or `32` (IEEE float, format 3, every sample kept as is). Integer depths clamp to [-1, 1] and add no dither. Samples are interleaved little-endian after a 44-byte header, for any channel count; with more than two channels no speaker mask is written. A sample rate that is not an integer rounds to the nearest. `encodeWavBytes(pcm, options)` returns the same file as a `Uint8Array` for Node.js, workers and archives.
+`encodeWav(pcm, { bitDepth? })` returns a `Blob` (`audio/wav`) of any `PCMData`. It is pure like `summarizePeaks` (browsers, Node.js, workers) and exported from the root only. `bitDepth` is `16` (default, signed integer), `24` (signed integer) or `32` (IEEE float, format 3, every sample kept as is). Integer depths clamp to [-1, 1] and add no dither. Samples are interleaved little-endian after a 44-byte header, for any channel count; with more than two channels no speaker mask is written. A sample rate that is not an integer rounds to the nearest. `encodeWavBytes(pcm, options)` returns the same file as a `Uint8Array` for Node.js, workers and archives.
 
 ```typescript
 import { encodeWav } from "@audiorective/core";
@@ -646,7 +647,7 @@ A WAV file holds under 4 GiB of samples; longer audio throws and must be split.
 
 ### Resample PCM
 
-`resamplePCM(pcm, targetRate, { quality? })` returns `PCMData` at `targetRate`, pure like `encodeWav` (browsers, Node.js, workers; root and `@audiorective/core/peaks`). It is a polyphase Kaiser-windowed sinc, not the browser's linear resampler: content above `min(source, target) / 2` is removed, and a tone below the cutoff keeps its level within 0.1 dB with THD+N under -80 dB. Output sample `n` is the input at time `n / targetRate`, so frame 0 stays frame 0 and a click at input time `t` lands at `round(t * targetRate)`; the length is `round(frames * targetRate / sampleRate)`. The signal beyond both ends counts as silence. Equal rates return a copy. `quality` is `"standard"` (default, 32 zero crossings per side, about -90 dB), `"high"` (64) or `"fast"` (12, for previews). A 4-minute stereo 44.1 kHz file to 48 kHz takes about 2 s in Node (`"high"` about 4 s); run longer material in a worker.
+`resamplePCM(pcm, targetRate, { quality? })` returns `PCMData` at `targetRate`, pure like `encodeWav` (browsers, Node.js, workers; root entry). It is a polyphase Kaiser-windowed sinc, not the browser's linear resampler: content above `min(source, target) / 2` is removed, and a tone below the cutoff keeps its level within 0.1 dB with THD+N under -80 dB. Output sample `n` is the input at time `n / targetRate`, so frame 0 stays frame 0 and a click at input time `t` lands at `round(t * targetRate)`; the length is `round(frames * targetRate / sampleRate)`. The signal beyond both ends counts as silence. Equal rates return a copy. `quality` is `"standard"` (default, 32 zero crossings per side, about -90 dB), `"high"` (64) or `"fast"` (12, for previews). A 4-minute stereo 44.1 kHz file to 48 kHz takes about 2 s in Node (`"high"` about 4 s); run longer material in a worker.
 
 | Error                                                                        | Fix                                               |
 | ---------------------------------------------------------------------------- | ------------------------------------------------- |
@@ -1419,7 +1420,8 @@ signals/src/
 ├── ParamSync.ts         # per-context RAF sync loop
 ├── Spatial.ts           # AudioProcessor wrapping a PannerNode
 ├── Analyser.ts          # AudioProcessor wrapping an AnalyserNode (spectrum/waveform tap)
-├── peaks.ts             # pure PCM summaries and frame/time bin ranges
+├── pcm.ts               # the PCMData type
+├── peaks.ts             # pure PCM summaries and frame/time bin ranges (the `core/peaks` entry)
 ├── contracts.ts         # CancellableEvent, BeatTiming and EventTransform contracts (beat and seconds event forms) + applyEventTransforms, resolveHitEdit, withCancel; hash.ts: hash01
 ├── types.ts             # SignalAccessor, ComputedAccessor, Readable, ParamBind, etc.
 └── index.ts             # public exports
@@ -1441,7 +1443,6 @@ export { createEngine, cell, readonlyCell, defineGraph };
 export { batch, untracked, effect, computed };
 export { loadAudioBuffer, registerWorklet, reverseBuffer, renderOffline, playSound, assertSound, noteNumber };
 export { applyEventTransforms, resolveHitEdit, withCancel, hash01 };
-export { summarizePeaks, peakFrameRange };
 export { encodeWav, encodeWavBytes, resamplePCM };
 
 // Constants
@@ -1496,7 +1497,6 @@ export type {
   GraphSink,
   GraphSnapshot,
   PCMData,
-  PeakSummary,
   EncodeWavOptions,
   ResamplePCMOptions,
   ResampleQuality,

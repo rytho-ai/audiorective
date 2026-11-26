@@ -36,7 +36,7 @@ async function render(
     workletUrl: worklet,
     ...options,
   });
-  expect(workspace.warnings).toEqual([]);
+  expect(workspace.cells.warnings.value).toEqual([]);
   const pending = [...actions].sort((a, b) => a.at - b.at);
   while (pending[0]?.at === 0) pending.shift()!.run(workspace);
   await workspace.play();
@@ -117,7 +117,7 @@ function scenes() {
 describe("arrangement off: a Session-only Workspace", () => {
   test("only launched clips sound; tracks with nothing launched stay silent", async () => {
     const { project, drums, instruments } = scenes();
-    const x = await render(project, 6, [{ at: 0.2, run: (w) => w.session.value.tracks[drums.id]!.clips[1]!.launch() }], {
+    const x = await render(project, 6, [{ at: 0.2, run: (w) => w.cells.session.value.tracks[drums.id]!.clips[1]!.launch() }], {
       instruments,
       arrangement: false,
     });
@@ -150,7 +150,7 @@ describe("arrangement off: a Session-only Workspace", () => {
   test("session.playChain plays Project clips for their lengths, back to back, then stops", async () => {
     const { project, drums } = scenes();
     // Only the drums have a sound, and the Pad track has no Session clips, so its long Arrangement clip does not set a scene's length.
-    const x = await render(project, 13, [{ at: 0.2, run: (w) => w.session.value.playChain([0, 0, 1, 2]) }], {
+    const x = await render(project, 13, [{ at: 0.2, run: (w) => w.cells.session.value.playChain([0, 0, 1, 2]) }], {
       instruments: { [drums.id]: { sound: click } },
       arrangement: false,
     });

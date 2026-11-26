@@ -65,10 +65,8 @@ test("clip gain automation retains source coordinates across stretch, trim, move
   const bytes = await saveDawProject(project);
   const restored = openDawProject(bytes).project;
   const moved = restored.tracks[0].clips.find((clip) => clip.id === tail.id);
-  // The file holds the original audio and its warp, not the render: the clip's place, window, stretch and gain come back; its audio is varispeed.
-  expect(moved).toMatchObject({ id: tail.id, time: tail.time, duration: tail.duration, gainAutomation: tail.gainAutomation });
-  expect(moved?.kind === "audio" && moved.stretch?.ratio).toBeCloseTo(2, 9);
-  expect(moved?.kind === "audio" && moved.stretch?.source).toMatchObject({ sourceOffset: 0.5, sourceLength: 2 });
+  // The reopened clip has the same place, window, stretch, gain and rendered samples, with no engine.
+  expect(moved).toEqual(tail);
 
   const files = unzipSync(bytes);
   const data = JSON.parse(new TextDecoder().decode(files["audiorective/state.json"]));

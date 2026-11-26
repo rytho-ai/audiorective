@@ -6,10 +6,10 @@ import {
   registerWorklet,
   untracked,
   type BeatTiming,
+  type PCMData,
   type Cell,
   type ReadonlyCell,
 } from "@audiorective/core";
-import type { PCMData } from "@audiorective/core/peaks";
 import { AUDIO_RECORDER_WORKLET, AUDIO_RECORDER_WORKLET_NAME } from "./recording/audio-recorder.worklet";
 export * from "./MicrophoneInput";
 export * from "./placement";

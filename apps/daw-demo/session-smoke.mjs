@@ -38,28 +38,28 @@ try {
   await page.locator("#launch-quantum").selectOption("bar");
   // A launch exactly on a boundary starts at once, so let the transport leave beat 0 before queueing a scene.
   await page.locator("#play").click();
-  await page.waitForFunction(() => window.__daw.workspace.clock.state.value === "playing" && window.__daw.workspace.position > 0.1);
+  await page.waitForFunction(() => window.__daw.workspace.transport.state.value === "playing" && window.__daw.workspace.position > 0.1);
   const intro = page.getByRole("button", { name: "場景 Intro" });
   await intro.click();
-  await page.waitForFunction(() => window.__daw.workspace.session.value.queued.value[0]?.beat === 4);
+  await page.waitForFunction(() => window.__daw.workspace.cells.session.value.queued.value[0]?.beat === 4);
   assert.equal(await intro.getAttribute("data-clip-state"), "queued");
   await page.getByRole("button", { name: "取消排隊" }).click();
   assert.equal(await intro.getAttribute("data-clip-state"), "idle");
   await page.locator("#launch-quantum").selectOption("beat");
   await intro.click();
-  await page.waitForFunction(() => window.__daw.workspace.session.value.playing.value.length > 1);
+  await page.waitForFunction(() => window.__daw.workspace.cells.session.value.playing.value.length > 1);
   assert.equal(await intro.getAttribute("aria-pressed"), "true");
   if (process.env.DAW_SESSION_SCREENSHOT) await page.screenshot({ path: process.env.DAW_SESSION_SCREENSHOT });
   const returns = page.getByRole("button", { name: "回到編曲", exact: true });
   await returns.click();
   await page.waitForFunction(
-    () => !window.__daw.workspace.session.value.playing.value.length && !window.__daw.workspace.session.value.queued.value.length,
+    () => !window.__daw.workspace.cells.session.value.playing.value.length && !window.__daw.workspace.cells.session.value.queued.value.length,
   );
   assert.equal(await intro.getAttribute("aria-pressed"), "false");
   await page.locator("#launch-mode").selectOption("one-shot");
   await intro.click();
   await page.waitForFunction(() => {
-    const session = window.__daw.workspace.session.value;
+    const session = window.__daw.workspace.cells.session.value;
     const clips = session.queued.value.length ? session.queued.value.map(({ clip }) => clip) : session.playing.value;
     return clips.length > 1 && clips.every((clip) => clip.options.value.loop === false);
   });
@@ -93,7 +93,7 @@ try {
     const bassA = slot(bass, first, 0.17, 0.3);
     const bassB = slot(bass, second, 0.13, 0.45);
     const workspace = await Workspace.create(context, project, { destination: context.destination });
-    const session = () => workspace.session.value;
+    const session = () => workspace.cells.session.value;
     const clipOf = (track, slot) => workspace.sessionClip(track.id, slot.id);
     session().quantize.value = "4n"; // one beat
     const whenOf = (track) => session().queued.value.find((change) => change.track.name === track.id)?.when;
@@ -106,7 +106,7 @@ try {
       await context.suspend(time);
       // Explicitly pump the existing Workspace clock during accelerated offline rendering.
       // Clock.refresh() cancels at once but refills in a microtask, so wait for that tick before act().
-      workspace.refresh();
+      workspace.transport.refresh();
       await Promise.resolve();
       act();
       await offlineResume();
@@ -210,13 +210,13 @@ try {
     const loop = slot(right, 0.33, 0.3);
     const workspace = await Workspace.create(context, project, { destination: context.destination });
     await workspace.play();
-    const session = () => workspace.session.value;
+    const session = () => workspace.cells.session.value;
     session().quantize.value = "4n";
     const finiteClip = workspace.sessionClip(left.id, finite.id);
     finiteClip.configure({ loop: false });
     const step = async (time, fn) => {
       await context.suspend(time);
-      workspace.refresh();
+      workspace.transport.refresh();
       await Promise.resolve(); // the refill tick runs in a microtask
       const value = fn();
       await resume();
@@ -280,13 +280,13 @@ try {
     await workspace.play();
     const step = async (time, fn) => {
       await context.suspend(time);
-      workspace.refresh();
+      workspace.transport.refresh();
       await Promise.resolve(); // the refill tick runs in a microtask
       const value = fn();
       await resume();
       return value;
     };
-    const session = workspace.session.value;
+    const session = workspace.cells.session.value;
     const clipA = workspace.sessionClip(left.id, a.id);
     const clipB = workspace.sessionClip(right.id, b.id);
     // Two independent queues coexist; withdrawing one leaves the other.

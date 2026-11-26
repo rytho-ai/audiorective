@@ -35,7 +35,7 @@ async function render(
     workletUrl: worklet,
     ...options,
   });
-  expect(workspace.warnings).toEqual([]);
+  expect(workspace.cells.warnings.value).toEqual([]);
   const pending = [...actions].sort((a, b) => a.at - b.at);
   while (pending[0]?.at === 0) pending.shift()!.run(workspace);
   await workspace.play();
@@ -118,7 +118,7 @@ describe("MIDI clip windows in the Arrangement", () => {
   test("a note crossing the window start sounds from it; a note crossing its end is cut with no hung note", async () => {
     const project = new Project({ bpm: 120 });
     const track = project.addTrack("Synth", "midi");
-    project.addWebClapDevice(track.id, { pluginId, name: "Synth", vendor: "", version: "", bundleUrl: bundle });
+    project.addDevice(track.id, { kind: "webclap", pluginId, name: "Synth", vendor: "", version: "", bundleUrl: bundle });
     const clip = project.addMidiClip(track.id, { duration: 16, notes: [{ pitch: 48, velocity: 0.9, start: 0, duration: 16 }] }, 0);
     cleanups.push(() => project.dispose());
     const held = await render(project, 8, [], { workletUrl: worklet });
@@ -157,7 +157,7 @@ describe("MIDI clip windows in the Session", () => {
     cleanups.push(() => project.dispose());
     return { project, track, clip, instruments: { [track.id]: { sound: click } } };
   }
-  const launch = (trackId: string) => ({ at: 0.2, run: (w: Workspace) => w.session.value.tracks[trackId]!.clips[0]!.launch() });
+  const launch = (trackId: string) => ({ at: 0.2, run: (w: Workspace) => w.cells.session.value.tracks[trackId]!.clips[0]!.launch() });
 
   test("a slot clip with a sourceOffset plays exactly its window on every pass", async () => {
     const { project, track, instruments } = slotClip({ sourceOffset: 4, duration: 4 });

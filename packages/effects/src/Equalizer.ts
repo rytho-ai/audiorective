@@ -3,7 +3,6 @@ import { Effect, type EffectOptions } from "./Effect";
 import { Filter } from "./Filter";
 import { mixFrequencyResponse } from "./internal/frequency-response";
 import { normalizeEqualizerBands, type EqualizerBand } from "./equalizer-bands";
-export { normalizeEqualizerBands, type EqualizerBand };
 
 export interface EqualizerOptions extends EffectOptions {
   bands: readonly EqualizerBand[];
@@ -15,6 +14,7 @@ export class Equalizer extends Effect<Record<string, SchedulableParam>> {
   private readonly filters: readonly Filter[];
   private magnitudes = new Float32Array(0);
   private phases = new Float32Array(0);
+  /** Per-band `frequency` (Hz), `gain` (dB) and `q` params, in band order; `setBands` rebuilds them. */
   readonly bands: readonly Readonly<{
     frequency: Filter["params"]["frequency"];
     gain: Filter["params"]["gain"];

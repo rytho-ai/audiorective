@@ -115,12 +115,12 @@ async function run(seconds: number, gap: number, tempoEveryBeats: number) {
     workspace.dispose();
     await context.close();
   });
-  expect(workspace.warnings).toEqual([]);
+  expect(workspace.cells.warnings.value).toEqual([]);
   await context.resume();
   const capture = await LiveCapture.on(context, workspace.output, 1);
   const began = performance.now();
   await workspace.play();
-  const startTime = workspace.timeline.beatToTime(0);
+  const startTime = workspace.transport.timeline.beatToTime(0);
   await sleep((startTime - context.currentTime + seconds + 0.3) * 1000);
   workspace.stop();
   const wall = (performance.now() - began) / 1000;

@@ -4,7 +4,6 @@ import {
   createOpfsAudioMediaWriter,
   exportAudioFallbackTo,
   portabilityReport,
-  openWorkspaceBlob,
   openWorkspace,
   saveWorkspace,
   saveWorkspaceTo,
@@ -44,7 +43,8 @@ const options = {
   },
 };
 const addDefaultSynth = (project: Project, trackId: string) =>
-  project.addWebClapDevice(trackId, {
+  project.addDevice(trackId, {
+    kind: "webclap",
     pluginId: "com.oxo.music.oxosynth2",
     name: "Oxo Synth2",
     vendor: "chab (Oxo Music)",
@@ -352,7 +352,7 @@ function bindSession(): void {
   sessionView?.dispose();
   detachRangeAuditionView?.();
   const current = workspace;
-  detachRangeAuditionView = effect(() => renderRangeAuditionButton(current.auditioningRange.value !== null));
+  detachRangeAuditionView = effect(() => renderRangeAuditionButton(current.cells.auditioningRange.value !== null));
   const quantize = (): Quantize => {
     const choice = $<HTMLSelectElement>("launch-quantum").value;
     return choice === "now" ? "none" : choice === "bar" ? "1m" : "4n";
@@ -491,7 +491,7 @@ async function replaceProject(next: Workspace): Promise<void> {
 
 async function open(file: File, recovered = false): Promise<void> {
   if (!canReplaceProject()) return;
-  const next = await openWorkspaceBlob(context, file, options);
+  const next = await openWorkspace(context, file, options);
   if (!canReplaceProject()) {
     next.dispose();
     next.project.dispose();
@@ -499,7 +499,7 @@ async function open(file: File, recovered = false): Promise<void> {
   }
   await replaceProject(next);
   status(
-    `${recovered ? "已復原" : "已開啟"} ${workspace.project.title} · ${workspace.project.tracks.length} 軌${workspace.warnings.length ? ` · ${workspace.warnings.join(" ")}` : ""}`,
+    `${recovered ? "已復原" : "已開啟"} ${workspace.project.title} · ${workspace.project.tracks.length} 軌${workspace.cells.warnings.value.length ? ` · ${workspace.cells.warnings.value.join(" ")}` : ""}`,
   );
 }
 
@@ -718,7 +718,7 @@ function syncLoopUi(): void {
   $("loop").classList.toggle("on", looping);
   $("loop").setAttribute("aria-pressed", String(looping));
   studio.refreshLoopBand();
-  renderRangeAuditionButton(workspace.auditioningRange.value !== null);
+  renderRangeAuditionButton(workspace.cells.auditioningRange.value !== null);
 }
 
 function seekIntoLoop(): void {
@@ -761,7 +761,7 @@ $("loop").addEventListener("click", () => {
 });
 $("audition-range").addEventListener("click", async () => {
   try {
-    if (workspace.auditioningRange.value) {
+    if (workspace.cells.auditioningRange.value) {
       workspace.stopRangeAudition();
       return;
     }
@@ -781,7 +781,7 @@ $("export-audio").addEventListener("click", () =>
   }),
 );
 $("portability").addEventListener("click", () => {
-  const report = portabilityReport(workspace.project, workspace.warnings);
+  const report = portabilityReport(workspace.project, workspace.cells.warnings.value);
   $("portability-details").textContent =
     `標準資料：${report.standardContent.join("、")}。${report.pluginDependencies.length ? `插件依賴：${report.pluginDependencies.join("；")}。` : ""}${report.limitations.join(" ")}`;
   $<HTMLDialogElement>("portability-dialog").showModal();
@@ -917,8 +917,8 @@ function animate(): void {
     const position = workspace.position;
     $("time").textContent = `${Math.floor(position / 60)}:${(position % 60).toFixed(1).padStart(4, "0")}`;
     studio.setPlayhead(position);
-    const session = workspace.session.value;
-    if (workspace.clock.state.value === "playing" && !session.playing.value.length && !session.queued.value.length) {
+    const session = workspace.cells.session.value;
+    if (workspace.transport.state.value === "playing" && !session.playing.value.length && !session.queued.value.length) {
       const range = looping ? loopRange() : undefined;
       if (looping && !range) {
         looping = false;
@@ -941,7 +941,11 @@ Workspace.create(context, demoProject(), options)
     studio.selectedClipId = created.project.tracks[0]?.clips[0]?.id;
     renderTracks();
     animate();
-    status(created.warnings.length ? `工程已載入，但有裝置問題：${created.warnings.join(" ")}` : "工程已就緒 · 試著播放、編輯、存檔並重開");
+    status(
+      created.cells.warnings.value.length
+        ? `工程已載入，但有裝置問題：${created.cells.warnings.value.join(" ")}`
+        : "工程已就緒 · 試著播放、編輯、存檔並重開",
+    );
     void refreshCheckpoints().catch(() => undefined);
   })
   .catch(handleError);
@@ -985,6 +989,6 @@ Object.assign(window, {
     get samples() {
       return samples;
     },
-    api: { openWorkspace, openWorkspaceBlob, saveWorkspace, saveWorkspaceTo, exportAudioFallbackTo, portabilityReport },
+    api: { openWorkspace, saveWorkspace, saveWorkspaceTo, exportAudioFallbackTo, portabilityReport },
   },
 });

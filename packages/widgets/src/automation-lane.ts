@@ -13,7 +13,7 @@ type LaneLabels = Readonly<{
 }>;
 
 export interface AutomationLaneOptions {
-  /** Positive length in timeUnit at mount. Tracked changes cancel previews; later non-positive/non-finite lengths disable input until valid. */
+  /** Positive length in timeUnit (seconds or beats) at mount. Tracked changes cancel previews; later non-positive/non-finite lengths disable input until valid. */
   readonly duration: () => number;
   readonly maxValue: number;
   readonly defaultValue: number;

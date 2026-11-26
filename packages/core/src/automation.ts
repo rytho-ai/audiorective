@@ -3,6 +3,7 @@ import type { SignalAccessor } from "./types";
 
 /** Shape describes the segment leaving this point. Time is in caller-chosen units. */
 export interface AutomationPoint {
+  /** Position on the curve in its own unit (seconds, or beats when played through an `AutomationClip`); 0 or more, unique per curve. */
   readonly time: number;
   readonly value: number;
   readonly shape: "linear" | "hold";
@@ -47,6 +48,7 @@ function sample(points: readonly AutomationPoint[], time: number): number {
 
 /** Immutable reactive snapshots through `.value`; `$` exposes the raw signal for advanced use. */
 export class AutomationCurve {
+  /** Raw signal of the points: `$()` reads (tracked), `$(points)` writes with the same validation as `.value =`. */
   readonly $: SignalAccessor<readonly AutomationPoint[]>;
 
   constructor(points: readonly AutomationPoint[]) {
@@ -67,7 +69,7 @@ export class AutomationCurve {
     this.$(points);
   }
 
-  /** Constant before the first point and after the last; finite negative queries are allowed. */
+  /** Value at `time` (seconds, or beats when the clip plays it in beats); constant before the first point and after the last; finite negative queries are allowed. */
   valueAt(time: number): number {
     if (!Number.isFinite(time)) throw new RangeError("AutomationCurve sample time must be finite.");
     return sample(this.value, time);
@@ -81,6 +83,7 @@ export class AutomationCurve {
  */
 export interface AutomationTarget {
   program(points: readonly AutomationPoint[], when: number): void;
+  /** Cancels future events and holds the value at absolute audio `time` (seconds). */
   hold(time: number): void;
 }
 
@@ -139,6 +142,7 @@ export class AutomationBinding {
 
   constructor(
     readonly context: Pick<BaseAudioContext, "currentTime">,
+    /** The curve this binding plays; edits reprogram the running automation. */
     readonly curve: AutomationCurve,
     private readonly target: AutomationTarget,
   ) {

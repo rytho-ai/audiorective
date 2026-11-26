@@ -37,7 +37,7 @@ function fixture(): Ctx {
   const beatClip = watch(project.addMidiClip(trackId, { duration: 1, notes: [] }, 8), touchedClip);
   const audioClipId = project.addAudioClip(audioTrackId, { sampleRate: 8000, channels: [new Float32Array(800)] }, 0).id;
   const busId = project.addTrack("Bus", "bus").id;
-  const deviceId = project.addWebClapDevice(trackId, { pluginId: "q", name: "Q", vendor: "v", version: "1", bundleUrl: "/q" }).id;
+  const deviceId = project.addDevice(trackId, { kind: "webclap", pluginId: "q", name: "Q", vendor: "v", version: "1", bundleUrl: "/q" }).id;
   const session = watch(sessionFor(project), touchedSession);
   const sceneId = session.addScene({ name: "Intro" }).id;
   session.setMidiClip({ trackId, sceneId }, { duration: 1, notes: [] });
@@ -64,9 +64,20 @@ const rows: Array<{ name: string; read: (ctx: Ctx) => unknown; mutate: (ctx: Ctx
     mutate: (c) => c.project.setVolumeAutomation(c.trackId, [{ time: 0, value: 1, shape: "linear" }]),
   },
   {
-    name: "Project.tracks (addWebClapDevice)",
+    name: "Project.tracks (setControllerLane)",
+    read: (c) => c.project.tracks[0].controllerLanes,
+    mutate: (c) =>
+      c.project.setControllerLane(c.trackId, {
+        expression: "channelController",
+        channel: 0,
+        controller: 64,
+        points: [{ time: 0, value: 127, shape: "hold" }],
+      }),
+  },
+  {
+    name: "Project.tracks (addDevice)",
     read: (c) => c.project.tracks[0].devices,
-    mutate: (c) => void c.project.addWebClapDevice(c.trackId, { pluginId: "p", name: "P", vendor: "v", version: "1", bundleUrl: "/p" }),
+    mutate: (c) => void c.project.addDevice(c.trackId, { kind: "webclap", pluginId: "p", name: "P", vendor: "v", version: "1", bundleUrl: "/p" }),
   },
   { name: "Project.tracks (removeTrack)", read: (c) => c.project.tracks, mutate: (c) => c.project.removeTrack(c.audioTrackId) },
   { name: "Project.tracks (removeClip)", read: (c) => c.project.tracks[1].clips, mutate: (c) => c.project.removeClip(c.audioClipId) },
@@ -165,7 +176,7 @@ const rows: Array<{ name: string; read: (ctx: Ctx) => unknown; mutate: (ctx: Ctx
     name: "Project.tracks (moveDevice)",
     read: (c) => c.project.tracks[0].devices,
     mutate: (c) => {
-      c.project.addWebClapDevice(c.trackId, { pluginId: "r", name: "R", vendor: "v", version: "1", bundleUrl: "/r" });
+      c.project.addDevice(c.trackId, { kind: "webclap", pluginId: "r", name: "R", vendor: "v", version: "1", bundleUrl: "/r" });
       c.project.moveDevice(c.deviceId, 1);
     },
   },

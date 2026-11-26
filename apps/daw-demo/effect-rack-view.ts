@@ -44,7 +44,7 @@ export function mountEffectRackView(root: HTMLElement, workspace: Workspace, tra
   };
   const edit = (next: readonly RackEffect[]) => {
     try {
-      workspace.setTrackEffects(trackId, next);
+      workspace.project.setTrackEffects(trackId, next);
     } catch (error) {
       report(error);
     }
@@ -160,7 +160,7 @@ export function mountEffectRackView(root: HTMLElement, workspace: Workspace, tra
           },
           set value(value: number) {
             try {
-              workspace.setTrackMacroValue(trackId, macro.id, value);
+              workspace.project.setTrackMacroValue(trackId, macro.id, value);
             } catch (error) {
               report(error);
             }

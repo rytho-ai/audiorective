@@ -1,8 +1,10 @@
 import { XMLSerializer } from "@xmldom/xmldom";
 import type { Element } from "@xmldom/xmldom";
 import type { TempoMap } from "../tempo-map";
+import { foldSteps, leavingShapes, type PointShape } from "./point-shape";
 import { identityWarpPoints, readWarpPoints, warpTolerance, warpVerdict } from "./nested-audio";
-import type { ClipLink, Snapshot, SourceXml, TrackLink } from "./source-xml";
+import { controllerFromNormalized, type ControllerExpression } from "../controller-lane";
+import { unmodeledPoints, type ClipLink, type Snapshot, type SourceXml, type TrackLink } from "./source-xml";
 
 /** The elements the model would write for the current project, by entity key (`clip:clip3`, `volume:track1`, ...). */
 export type FreshIndex = Map<string, Element>;
@@ -338,6 +340,7 @@ export function applySourcePatch({ source, index, entries, mediaEntries, preserv
     for (const [clipId, clip] of source.clips) if (clip.trackId === trackId) source.clips.delete(clipId);
     source.tracks.delete(trackId);
     source.automation.delete(trackId);
+    source.controllerLanes.delete(trackId);
     source.sends.delete(trackId);
   };
   const addTrack = (trackId: string) => {
@@ -627,6 +630,58 @@ export function applySourcePatch({ source, index, entries, mediaEntries, preserv
   };
   const firstNamed = (element: Element, tag: string): Element | undefined => element.getElementsByTagName(tag)[0] ?? undefined;
   /**
+   * Write the model's moving gain curve (`fresh`: points in source seconds, `interpolation` how each value arrives) into the nested clip's own
+   * `Points`, in that element's time unit (a unit it does not state is the timeline's, as Bitwig writes it; the unit is stated on a rewritten curve,
+   * because Bitwig reads a curve without one in seconds). A curve that already means the same stays as the file wrote it; otherwise only the points
+   * that differ are new elements. `start` is the clip's place in seconds, where a curve in beats runs at the tempo of its first beat.
+   */
+  const writeMovingCurve = (curve: Element, fresh: Element, start: number, timeline: "seconds" | "beats") => {
+    const stated = curve.getAttribute("timeUnit") ?? (curve.parentNode as Element | null)?.getAttribute?.("timeUnit") ?? timeline;
+    const inBeatsUnit = stated === "beats";
+    const startBeat = tempoMap.secondsToBeat(start);
+    const secondsPerBeat = inBeatsUnit ? Math.round((tempoMap.beatToSeconds(startBeat + 1) - tempoMap.beatToSeconds(startBeat)) * 1e12) / 1e12 : 1;
+    type Meaning = { time: number; value: number; shape: PointShape };
+    const meaningOf = (points: Element[], scale: number): Meaning[] => {
+      const raw = points
+        .map((point) => ({
+          time: Number(point.getAttribute("time")) * scale,
+          value: Number(point.getAttribute("value")),
+          shape: (point.getAttribute("interpolation") === "hold" ? "hold" : "linear") as PointShape,
+        }))
+        .sort((a, b) => a.time - b.time);
+      const folded = foldSteps(raw) ?? raw.filter((point, i) => raw[i + 1]?.time !== point.time);
+      const leaving = leavingShapes(folded.map((point) => point.shape));
+      return folded.map((point, i) => ({ time: point.time, value: point.value, shape: leaving[i] }));
+    };
+    const wanted = meaningOf(kidsOf(fresh, "RealPoint"), 1);
+    const have = meaningOf(kidsOf(curve, "RealPoint"), secondsPerBeat);
+    if (
+      have.length === wanted.length &&
+      have.every(
+        (point, i) =>
+          Math.abs(point.time - wanted[i].time) <= 1e-6 && Math.abs(point.value - wanted[i].value) <= 1e-6 && point.shape === wanted[i].shape,
+      )
+    )
+      return;
+    const old = kidsOf(curve, "RealPoint");
+    for (const point of old) remove(point);
+    for (const [i, point] of kidsOf(fresh, "RealPoint").entries()) {
+      const time = inBeatsUnit ? Math.round((Number(point.getAttribute("time")) / secondsPerBeat) * 1e12) / 1e12 : Number(point.getAttribute("time"));
+      const value = Number(point.getAttribute("value"));
+      const interpolation = point.getAttribute("interpolation") ?? "linear";
+      const same = old.findIndex(
+        (item) =>
+          Math.abs(Number(item.getAttribute("time")) - time) <= 1e-6 &&
+          Math.abs(Number(item.getAttribute("value")) - value) <= 1e-6 &&
+          // Nothing arrives at the first point, so its `interpolation` says nothing (Bitwig writes `linear`).
+          (i === 0 || (item.getAttribute("interpolation") ?? "linear") === interpolation),
+      );
+      if (same >= 0) curve.appendChild(old.splice(same, 1)[0]);
+      else curve.appendChild(create("RealPoint", { time: fmt(time), value: fmt(value), interpolation }));
+    }
+    if (!curve.hasAttribute("timeUnit")) curve.setAttribute("timeUnit", stated);
+  };
+  /**
    * Write the values of the model's clip (`fresh`, in seconds) into a clip that keeps Bitwig's nested form: place and length on the outer and
    * inner clip, name, fades, the file window, the gain curve. Only a value that changed is written. False, with nothing written, for a clip this
    * form cannot say (a loop, another file, a moving gain), which the caller writes in the model's own form instead.
@@ -648,11 +703,16 @@ export function applySourcePatch({ source, index, entries, mediaEntries, preserv
     )
       return false;
     let gain = 1;
+    let movingPoints: Element | undefined;
     const freshPoints = firstNamed(fresh, "Points");
     if (freshPoints) {
       const values = kidsOf(freshPoints, "RealPoint").map((point) => Number(point.getAttribute("value")));
-      if (!values.length || values.some((value) => value !== values[0])) return false;
-      gain = values[0];
+      if (!values.length) return false;
+      if (values.some((value) => value !== values[0])) {
+        // A moving curve stays in this form where the reader models it: unstretched audio that starts at the file's start.
+        if (freshWarps || Number(fresh.getAttribute("playStart") ?? 0) !== 0) return false;
+        movingPoints = freshPoints;
+      } else gain = values[0];
     }
     const t = Number(fresh.getAttribute("time"));
     const d = Number(fresh.getAttribute("duration"));
@@ -785,7 +845,22 @@ export function applySourcePatch({ source, index, entries, mediaEntries, preserv
       setNumber(outer, "loopEnd", plan.outerStart + plan.length, lengthTolerance);
     }
     let curve = nested.gain;
-    if (!curve && gain !== 1) {
+    if (movingPoints) {
+      if (!curve) {
+        const parent = audio.parentNode as Element;
+        let lanes = parent;
+        if (parent.tagName !== "Lanes") {
+          lanes = create("Lanes", { id: freshId(`nested-content`) });
+          parent.insertBefore(lanes, audio);
+          lanes.appendChild(audio);
+        }
+        curve = create("Points", { unit: "linear", id: freshId(`nested-gain`) });
+        curve.appendChild(create("Target", { expression: "gain" }));
+        lanes.appendChild(curve);
+        nested.gain = curve;
+      }
+      writeMovingCurve(curve, movingPoints, t, unit);
+    } else if (!curve && gain !== 1) {
       const parent = audio.parentNode as Element;
       let lanes = parent;
       if (parent.tagName !== "Lanes") {
@@ -925,8 +1000,12 @@ export function applySourcePatch({ source, index, entries, mediaEntries, preserv
     if (before.children !== after.children) {
       source.gainCurves.delete(clipId);
       const oldNotes = Array.from(link.element.getElementsByTagName("Note"));
+      // Controller `Points` the model could not read stay in the clip's content.
+      const unread = Array.from(link.element.getElementsByTagName("Points")).filter((points) => unmodeledPoints.has(points));
       for (const child of kids(link.element)) remove(child);
       for (const child of kids(fresh)) link.element.appendChild(adopt(child));
+      const content = kid(link.element, "Lanes");
+      if (content) for (const points of unread) content.appendChild(points);
       carryNoteAttributes(oldNotes, link.element);
     }
   }
@@ -965,6 +1044,62 @@ export function applySourcePatch({ source, index, entries, mediaEntries, preserv
       if (target && volumeId) target.setAttribute("parameter", volumeId);
       laneOf(trackId, true)!.appendChild(element);
       source.automation.set(trackId, element);
+    }
+  }
+  // --- MIDI controller lanes of a track ---------------------------------------------------------------------------------------------
+  for (const key of new Set([...base.keys(), ...cur.keys()])) {
+    const parts = /^ctl:(.*):([A-Za-z]+:\d+:\d+)$/.exec(key);
+    if (!parts || !changed(key)) continue;
+    const [, trackId, laneKey] = parts;
+    if (!source.tracks.get(trackId)) continue;
+    const links = source.controllerLanes.get(trackId);
+    const link = links?.get(laneKey);
+    const fresh = index.get(key);
+    if (!fresh) {
+      remove(link?.points);
+      links?.delete(laneKey);
+    } else if (link?.points.parentNode) {
+      // The lane stays where and how the file wrote it: its own `Points`, its time unit, and IntegerPoint when it used them.
+      const expression = kid(fresh, "Target")!.getAttribute("expression") as ControllerExpression;
+      const integer = kidsOf(link.points, "IntegerPoint").length > 0 && kidsOf(link.points, "RealPoint").length === 0;
+      const old = [...kidsOf(link.points, "RealPoint"), ...kidsOf(link.points, "IntegerPoint")];
+      for (const point of old) remove(point);
+      // A point the edit left alone keeps its own element, so the file's own digits stay.
+      const meaning = (point: Element) => {
+        const at = Number(point.getAttribute("time"));
+        const value = Number(point.getAttribute("value"));
+        return {
+          beat: link.unit === "beats" ? at : tempoMap.secondsToBeat(at),
+          value: point.tagName === "IntegerPoint" ? value : controllerFromNormalized(expression, value),
+          shape: point.tagName === "IntegerPoint" ? "hold" : (point.getAttribute("interpolation") ?? "linear"),
+        };
+      };
+      for (const point of kidsOf(fresh, "RealPoint")) {
+        const beat = Number(point.getAttribute("time"));
+        const value = controllerFromNormalized(expression, Number(point.getAttribute("value")));
+        const shape = point.getAttribute("interpolation");
+        const same = old.findIndex((item) => {
+          const was = meaning(item);
+          return Math.abs(was.beat - beat) < 1e-9 && was.value === value && was.shape === shape;
+        });
+        if (same >= 0) {
+          link.points.appendChild(old.splice(same, 1)[0]);
+          continue;
+        }
+        const time = link.unit === "beats" ? beat : Math.round(tempoMap.beatToSeconds(beat) * 1e12) / 1e12;
+        if (integer) link.points.appendChild(create("IntegerPoint", { time: String(time), value: String(value) }));
+        else {
+          const next = adopt(point);
+          next.setAttribute("time", String(time));
+          link.points.appendChild(next);
+        }
+      }
+    } else {
+      const element = adopt(fresh);
+      laneOf(trackId, true)!.appendChild(element);
+      const next = source.controllerLanes.get(trackId) ?? new Map();
+      next.set(laneKey, { points: element, unit: "beats" as const });
+      source.controllerLanes.set(trackId, next);
     }
   }
   if (changed("markers") || (source.markersInBeats && (changed("tempo") || changed("tempoauto")))) {

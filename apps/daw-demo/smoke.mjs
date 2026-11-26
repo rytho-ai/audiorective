@@ -98,18 +98,18 @@ try {
   await rangeAudition.click();
   await page.waitForFunction(() => {
     const { workspace } = window.__daw;
-    const range = workspace.auditioningRange.value;
+    const range = workspace.cells.auditioningRange.value;
     return range?.start === 2 && range.end === 5 && range.trackIds.length > 1 && workspace.position === 2;
   });
   assert.equal(await rangeAudition.getAttribute("aria-pressed"), "true");
   await rangeAudition.click();
-  await page.waitForFunction(() => window.__daw.workspace.auditioningRange.value === null);
+  await page.waitForFunction(() => window.__daw.workspace.cells.auditioningRange.value === null);
   assert.equal(await rangeAudition.getAttribute("aria-pressed"), "false");
   await page.evaluate(() => window.__daw.workspace.seek(4.9));
   await page.locator("#play").click();
   await page.waitForFunction(() => {
     const workspace = window.__daw.workspace;
-    return workspace.clock.state.value === "playing" && workspace.position >= 2 && workspace.position < 2.8;
+    return workspace.transport.state.value === "playing" && workspace.position >= 2 && workspace.position < 2.8;
   });
   await page.locator("#stop").click();
   await page.locator("#loop").click();
@@ -204,7 +204,7 @@ try {
     const workspace = window.__daw.workspace;
     const synth = workspace.host(workspace.project.tracks[0].devices[0].id);
     const others = workspace.project.tracks.slice(1).map((track) => ({ id: track.id, volume: track.volume }));
-    for (const track of others) workspace.setTrackVolume(track.id, 0);
+    for (const track of others) workspace.project.setTrackVolume(track.id, 0);
     const analyser = workspace.context.createAnalyser();
     analyser.fftSize = 2048;
     workspace.output.connect(analyser);
@@ -221,7 +221,7 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 80));
     const frozen = workspace.position;
     workspace.stop();
-    for (const track of others) workspace.setTrackVolume(track.id, track.volume);
+    for (const track of others) workspace.project.setTrackVolume(track.id, track.volume);
     analyser.disconnect();
     const [first] = synth.parameterInfo;
     const param = synth.params[String(first.id)];
@@ -316,12 +316,12 @@ try {
   await page.mouse.click(rulerBox.x + pixelsPerSecond * 2, rulerY);
   assert.ok(Math.abs((await page.evaluate(() => window.__daw.workspace.position)) - 2) < 0.26, "ruler click did not seek");
   await page.locator("#play").click();
-  await page.waitForFunction(() => window.__daw.workspace.clock.state.value === "playing");
+  await page.waitForFunction(() => window.__daw.workspace.transport.state.value === "playing");
   await page.mouse.move(rulerBox.x + pixelsPerSecond, rulerY);
   await page.mouse.down();
   await page.mouse.move(rulerBox.x + pixelsPerSecond * 3, rulerY, { steps: 8 });
   await page.mouse.up();
-  await page.waitForFunction(() => window.__daw.workspace.clock.state.value === "playing");
+  await page.waitForFunction(() => window.__daw.workspace.transport.state.value === "playing");
   assert.ok((await page.evaluate(() => window.__daw.workspace.position)) >= 2.75, "ruler drag did not resume at the new position");
   await page.evaluate(() => window.__daw.workspace.stop());
 
@@ -610,7 +610,7 @@ try {
       changed: !same(before, after),
       saved: same(after, reopened.project.tracks[0].devices[0].state),
       restored: same(after, restored),
-      warnings: reopened.warnings,
+      warnings: reopened.cells.warnings.value,
       archiveSize: bytes.length,
     };
     reopened.dispose();
@@ -714,11 +714,11 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 80));
     analyser.getFloatTimeDomainData(frame);
     const before = Math.max(...frame.map(Math.abs));
-    workspace.setTrackMuted(track.id, true);
+    workspace.project.setTrackMuted(track.id, true);
     await new Promise((resolve) => setTimeout(resolve, 120));
     analyser.getFloatTimeDomainData(frame);
     const muted = Math.max(...frame.map(Math.abs));
-    workspace.setTrackMuted(track.id, false);
+    workspace.project.setTrackMuted(track.id, false);
     await new Promise((resolve) => setTimeout(resolve, 80));
     analyser.getFloatTimeDomainData(frame);
     const unmuted = Math.max(...frame.map(Math.abs));
@@ -750,7 +750,7 @@ try {
     const source = await window.__daw.workspace.constructor.create(context, project);
     const archive = await window.__daw.api.saveWorkspace(source);
     source.dispose();
-    const opened = await window.__daw.api.openWorkspaceBlob(context, new Blob([archive]), { destination: context.destination });
+    const opened = await window.__daw.api.openWorkspace(context, new Blob([archive]), { destination: context.destination });
     const clip = opened.project.tracks[0].clips[0];
     const analyser = context.createAnalyser();
     analyser.fftSize = 2048;
@@ -851,7 +851,7 @@ try {
     const workspace = window.__daw.workspace;
     const tracks = workspace.project.tracks;
     const volumes = tracks.slice(0, -1).map((track) => [track.id, track.volume]);
-    for (const [id] of volumes) workspace.setTrackVolume(id, 0);
+    for (const [id] of volumes) workspace.project.setTrackVolume(id, 0);
     const analyser = workspace.context.createAnalyser();
     analyser.fftSize = 2048;
     workspace.output.connect(analyser);
@@ -865,7 +865,7 @@ try {
       for (const sample of samples) peak = Math.max(peak, Math.abs(sample));
     }
     workspace.stop();
-    for (const [id, volume] of volumes) workspace.setTrackVolume(id, volume);
+    for (const [id, volume] of volumes) workspace.project.setTrackVolume(id, volume);
     analyser.disconnect();
     return peak;
   });
@@ -899,7 +899,7 @@ try {
     const playingPlacement = workspace.takePosition(playingAnchor, { startTime: playingAnchor.audioTime + 0.2 }, 0.05);
     project.moveClip(project.tracks[0].clips[0].id, project.tracks[0].id, 0.25);
     await workspace.flush();
-    const keptHost = workspace.host(project.tracks[0].devices[0].id) === host && workspace.clock.state.value === "playing";
+    const keptHost = workspace.host(project.tracks[0].devices[0].id) === host && workspace.transport.state.value === "playing";
     workspace.stop();
 
     const track = project.addTrack("Automation check", "audio");
@@ -910,7 +910,7 @@ try {
       { time: 0.75, value: 0, shape: "hold" },
     ]);
     await workspace.sync();
-    for (const other of project.tracks) if (other.id !== track.id) workspace.setTrackVolume(other.id, 0);
+    for (const other of project.tracks) if (other.id !== track.id) workspace.project.setTrackVolume(other.id, 0);
     const analyser = workspace.context.createAnalyser();
     analyser.fftSize = 2048;
     workspace.output.connect(analyser);
@@ -949,11 +949,11 @@ try {
     await workspace.play();
     await waitUntil(0.4);
     const linear = sample();
-    workspace.setTrackMuted(track.id, true);
+    workspace.project.setTrackMuted(track.id, true);
     // Allow the mute ramp and the analyser's 2048-frame window to settle.
     await new Promise((resolve) => setTimeout(resolve, 100));
     const muted = sample();
-    workspace.setTrackMuted(track.id, false);
+    workspace.project.setTrackMuted(track.id, false);
     await new Promise((resolve) => setTimeout(resolve, 100));
     const unmuted = sample();
     workspace.stop();
@@ -989,20 +989,20 @@ try {
     await workspace.flush();
     workspace.seek(0);
     await workspace.play();
-    const origin = workspace.timeline.beatToTime(0);
-    const step = workspace.timeline.beatToTime(4) - origin;
-    const end = workspace.timeline.beatToTime(8) - origin;
+    const origin = workspace.transport.timeline.beatToTime(0);
+    const step = workspace.transport.timeline.beatToTime(4) - origin;
+    const end = workspace.transport.timeline.beatToTime(8) - origin;
     workspace.pause();
     workspace.seek(4);
     await workspace.play();
-    const beatAfterSeek = workspace.timeline.timeToBeat(workspace.context.currentTime);
+    const beatAfterSeek = workspace.transport.timeline.timeToBeat(workspace.context.currentTime);
     const positionAfterSeek = workspace.position;
     const host = workspace.host(project.tracks[0].devices[0].id);
     const beforeEdit = workspace.position;
     project.setTempoChanges([{ beat: 4, bpm: 90 }]);
     await workspace.flush();
     const afterEdit = workspace.position;
-    const keptHost = workspace.host(project.tracks[0].devices[0].id) === host && workspace.clock.state.value === "playing";
+    const keptHost = workspace.host(project.tracks[0].devices[0].id) === host && workspace.transport.state.value === "playing";
     project.setTempoChanges([{ beat: 4, bpm: 60 }]);
     await workspace.flush();
     workspace.stop();
@@ -1084,7 +1084,7 @@ try {
   await page.locator("#play").click();
   await page.waitForFunction(() => {
     const workspace = window.__daw.workspace;
-    return workspace.clock.state.value === "playing" && workspace.position >= 4 && workspace.position < 4.7;
+    return workspace.transport.state.value === "playing" && workspace.position >= 4 && workspace.position < 4.7;
   });
   await page.locator("#stop").click();
   await page.locator("#loop").click();
@@ -1109,7 +1109,7 @@ try {
       workspace.seek(2.9);
       await workspace.play();
       await new Promise((resolve) => setTimeout(resolve, 300));
-      const expected = workspace.timeline.beatToTime(6);
+      const expected = workspace.transport.timeline.beatToTime(6);
       workspace.pause();
       return { captured, expected };
     } finally {
@@ -1269,7 +1269,7 @@ try {
   const keptRackTransport = await page.evaluate(() => {
     const workspace = window.__daw.workspace;
     const { id, host } = window.rackHost;
-    const kept = workspace.clock.state.value === "playing" && !!host && workspace.host(id) === host;
+    const kept = workspace.transport.state.value === "playing" && !!host && workspace.host(id) === host;
     workspace.stop();
     return kept;
   });

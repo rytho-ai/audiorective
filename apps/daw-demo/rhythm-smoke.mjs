@@ -91,7 +91,7 @@ try {
       const detach = workspace.transport.attach(sequencer);
       await workspace.play();
       const planned = context.suspend(0.14).then(async () => {
-        workspace.refresh();
+        workspace.transport.refresh();
         await Promise.resolve(); // the refill tick runs in a microtask
         return resume();
       });

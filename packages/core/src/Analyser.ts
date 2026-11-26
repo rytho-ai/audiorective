@@ -31,6 +31,7 @@ export interface AnalyserOptions {
  * ```
  */
 export class Analyser extends AudioProcessor {
+  /** The underlying `AnalyserNode`, for `getByteFrequencyData` and the other native readers; it is both `input` and `output`. */
   readonly node: AnalyserNode;
 
   constructor(context: BaseAudioContext, options: AnalyserOptions = {}) {

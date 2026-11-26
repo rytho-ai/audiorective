@@ -33,7 +33,7 @@ The host loads two things over HTTP from the app's origin: the worklet module (`
 
 1. Copy the worklet into `public/`: `cp node_modules/@audiorective/host/dist/webclap-worklet.js public/webclap-worklet.js`. Do not import it through Vite: the package exports only `@audiorective/host/webclap`, and Vite's dependency pre-bundling moves `webclap.js`, so the default location beside it no longer exists.
 2. Put each bundle directory in `public/`, for example `public/plugin/oxo-synth2.wclap/module.wasm` (plus its `ui/` folder when it has an editor).
-3. Pass the root-relative URLs: `workletUrl: "/webclap-worklet.js"` to `WebClapHost.load` or `WorkspaceOptions`, and `url: "/plugin/oxo-synth2.wclap"` as the bundle (`bundleUrl` on `addWebClapDevice`, and `resolveBundle` when opening a file). Under a Vite `base`, prefix both with `import.meta.env.BASE_URL`.
+3. Pass the root-relative URLs: `workletUrl: "/webclap-worklet.js"` to `WebClapHost.load` or `WorkspaceOptions`, and `url: "/plugin/oxo-synth2.wclap"` as the bundle (`bundleUrl` on `addDevice` and `addWebClapDevice`, and `resolveBundle` when opening a file). Under a Vite `base`, prefix both with `import.meta.env.BASE_URL`.
 4. Serve `.wasm` as `application/wasm` (Vite's dev and preview servers do). A module that declares shared memory also needs a cross-origin isolated page: send `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` (in Vite, `server.headers` and `preview.headers`).
 
 Keep the copied worklet in step with the installed package version, for example with a `predev` and `prebuild` copy script.

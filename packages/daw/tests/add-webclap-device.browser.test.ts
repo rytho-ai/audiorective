@@ -58,7 +58,7 @@ test("addWebClapDevice reads the identity from the bundle, plays, saves and reop
   cleanups.push(() => {
     reopened.dispose();
   });
-  expect(reopened.warnings).toEqual([]);
+  expect(reopened.cells.warnings.value).toEqual([]);
   expect(reopened.project.tracks[0].devices[0]).toMatchObject({
     pluginId: device.pluginId,
     name: device.name,

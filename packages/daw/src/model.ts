@@ -19,6 +19,7 @@ import {
 import type { PCMData } from "@audiorective/core";
 import { batch, Cell, readonlyCell, ReadonlyCell, untracked } from "@audiorective/core";
 import { AutomationCurve, type AutomationPoint } from "@audiorective/core/automation";
+import { controllerLaneKey, normalizeControllerLane, type ControllerLane } from "./controller-lane";
 import { compileMidiPlaybackEvents, MidiClip as MidiNotes } from "@audiorective/midi";
 import type { MidiNote, MidiPlaybackEvent, MidiTake, NoteInit } from "@audiorective/midi";
 import { AudioMedia } from "./media";
@@ -114,6 +115,7 @@ export interface AudioClipBase extends AudioSourceSpan {
   readonly id: string;
   /** Position on the project timeline, in seconds. */
   readonly time: number;
+  /** Length on the project timeline, in seconds (after any stretch); greater than 0. */
   readonly duration: number;
   readonly envelope?: ClipEnvelope;
   readonly gainAutomation?: AudioClipGainAutomation;
@@ -133,8 +135,15 @@ export function audioClipSourceDuration(clip: AudioClip): number {
   return clip.stretch ? audioFrameCount(clip.stretch.source) / clip.sampleRate : clip.duration;
 }
 
+/** The `ClipTimeMap` between the clip's recording window and its place on the timeline, in clip-local seconds (0 is the clip's start); it includes stretch anchors, and without a stretch it is the identity. */
 export function audioClipTimeMap(clip: AudioClip): ClipTimeMap {
   return new ClipTimeMap(audioClipSourceDuration(clip), clip.duration, clip.stretch?.anchors ?? [], clip.sampleRate);
+}
+
+/** The curve with its last point's `shape` set to `"hold"`: nothing follows it, so it has no shape of its own (a DAWproject file cannot carry one either). Frozen. */
+function holdAtEnd(points: readonly AutomationPoint[]): readonly AutomationPoint[] {
+  const last = points.at(-1);
+  return Object.freeze(last && last.shape !== "hold" ? [...points.slice(0, -1), Object.freeze({ ...last, shape: "hold" as const })] : points);
 }
 
 export function normalizeClipGainAutomation(automation: AudioClipGainAutomation | undefined): AudioClipGainAutomation | undefined {
@@ -147,7 +156,7 @@ export function normalizeClipGainAutomation(automation: AudioClipGainAutomation 
   )
     throw new RangeError("Audio clip gain automation needs a non-negative source start and non-negative finite gains.");
   if (!automation.points.length) return;
-  return Object.freeze({ sourceStart: automation.sourceStart, points: new AutomationCurve(automation.points).value });
+  return Object.freeze({ sourceStart: automation.sourceStart, points: holdAtEnd(new AutomationCurve(automation.points).value) });
 }
 
 /** The whole recording behind a PCM window, found from the window's first channel. */
@@ -246,6 +255,25 @@ function validPcm(audio: ProjectAudio): boolean {
   );
 }
 
+/**
+ * The backing buffers of audio that only stands in for a stretch's render: the varispeed audio a reader gives a clip it could not render. Pieces cut
+ * from such a clip share its buffer; a copy of one is marked by `copyVarispeed`. A save stores no render for a clip that plays this audio.
+ */
+const varispeedBuffers = new WeakSet<object>();
+
+/** Codec access: `clip` plays stand-in varispeed audio, not a render. */
+export function markVarispeed(clip: AudioClip): void {
+  for (const channel of clip.channels ?? []) varispeedBuffers.add(channel.buffer);
+}
+
+/** Codec access: whether `clip` plays stand-in varispeed audio, not a render. */
+export const isVarispeed = (clip: AudioClip): boolean => !!clip.channels && varispeedBuffers.has(clip.channels[0].buffer);
+
+/** A copy of a clip plays the same stand-in audio, so it is marked like the clip. */
+function copyVarispeed(from: AudioClip, to: AudioClip): void {
+  if (isVarispeed(from)) markVarispeed(to);
+}
+
 /** A copy of a clip shares the original window of its stretch instead of copying it, so the copy still names the original recording. */
 function sharedStretch(stretch: AudioClipStretch | undefined): AudioClipStretch | undefined {
   if (stretch && !stretch.source.media) adoptedWindows.add(stretch.source.channels[0]);
@@ -304,7 +332,7 @@ function snapshotAudioClip(clip: AudioClip, recordings: Map<readonly Float32Arra
       ? Object.freeze({ ...clip.stretch, source: recorded(snapshotAudioSource(clip.stretch.source, recordings)) })
       : clip.stretch;
   if (clip.media && stretch === clip.stretch) return clip;
-  return Object.freeze({
+  const copy: AudioClip = Object.freeze({
     kind: "audio",
     id: clip.id,
     time: clip.time,
@@ -315,6 +343,8 @@ function snapshotAudioClip(clip: AudioClip, recordings: Map<readonly Float32Arra
     ...(clip.gainAutomation ? { gainAutomation: clip.gainAutomation } : {}),
     ...(clip.loop ? { loop: clip.loop } : {}),
   });
+  copyVarispeed(clip, copy);
+  return copy;
 }
 
 const midiClipTimes = new WeakMap<MidiClip, Cell<number>>();
@@ -348,6 +378,7 @@ export type ProjectMidiData = Readonly<{
  * clip operations (`resizeClip`, `splitClip`, `setClipSourceRange`, ...), which replace the clip.
  */
 export class MidiClip {
+  /** Always `"midi"`; tells a MIDI clip from an audio clip (`"audio"`). */
   readonly kind = "midi" as const;
   /** The note model: `clip.midi.notes.value`, `clip.midi.edit(draft => ...)`, `clip.midi.setNotes(notes)`. */
   readonly midi: MidiNotes;
@@ -362,6 +393,7 @@ export class MidiClip {
 
   /** `shared` makes this clip another placement of that note list (`data.notes` and `data.events` are then ignored: the group shares both): edits to either clip are edits to both. */
   constructor(
+    /** The clip's unique ID within its Project (for example `"clip-3"`); never reused after the clip is removed. */
     readonly id: string,
     time: number,
     data: ProjectMidiData,
@@ -467,6 +499,8 @@ export type WebClapDevice = Readonly<{
   state: Uint8Array;
 }>;
 export type ProjectDevice = WebClapDevice;
+/** What `project.addDevice` takes: a device without the parts the Project assigns, `id` and `state` optional. */
+export type NewDevice = Omit<WebClapDevice, "id" | "state"> & { id?: string; state?: Uint8Array };
 export type ProjectTrack = Readonly<{
   id: string;
   name: string;
@@ -478,6 +512,11 @@ export type ProjectTrack = Readonly<{
   solo: boolean;
   pan: number;
   volumeAutomation: readonly AutomationPoint[];
+  /**
+   * MIDI controller movement of a MIDI track (sustain, mod wheel, any controller, pitch bend, pressure, program), one lane per (expression, channel,
+   * controller), points in project beats. It plays in Arrangement alongside the track's clips; empty for other tracks. Set with `setControllerLane`.
+   */
+  controllerLanes: readonly ControllerLane[];
   devices: readonly ProjectDevice[];
   effects: readonly RackEffect[];
   effectMacros: readonly RackMacroSettings[];
@@ -487,6 +526,7 @@ export type ProjectTrack = Readonly<{
 /** Everything a Project persists: its structural revision plus each MIDI clip's notes, which the clip's `midi` model owns. */
 export type ProjectContent = Readonly<{
   revision: number;
+  /** Each MIDI clip's notes by clip ID, with the clip's `duration` in beats. */
   midi: ReadonlyMap<string, Readonly<{ notes: readonly MidiNote[]; duration: number }>>;
 }>;
 
@@ -692,7 +732,7 @@ const clipFrameTolerance = (clip: ProjectClip) => (clip.kind === "audio" ? 1 / c
 /** Whether two plain data values have the same content (key order included, which the Project's own normalisers keep stable). */
 const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
 /** The mixer-facing fields of a track that an edit records for Undo (routing has its own record). */
-const trackShellKeys = ["name", "volume", "muted", "solo", "pan", "effects", "effectMacros"] as const;
+const trackShellKeys = ["name", "volume", "muted", "solo", "pan", "effects", "effectMacros", "controllerLanes"] as const;
 type TrackShellKey = (typeof trackShellKeys)[number];
 /** Whether `a` and `b` hold the same value for every one of `keys`; false when either track is missing. */
 const sameShellKeys = (a: ProjectTrack | undefined, b: ProjectTrack | undefined, keys: readonly TrackShellKey[]) =>
@@ -1918,6 +1958,7 @@ export class Project {
       solo: options.solo ?? false,
       pan: options.pan ?? 0,
       volumeAutomation: Object.freeze([]),
+      controllerLanes: Object.freeze([]),
       devices: Object.freeze([]),
       effects: Object.freeze([]),
       effectMacros: Object.freeze([]),
@@ -2093,17 +2134,22 @@ export class Project {
     });
   }
 
-  /** Add a WebCLAP plug-in to the end of a track's device chain. `bundleUrl` is where the bundle loads from, `state` the plug-in's saved bytes (default empty); `id` defaults to `deviceN`. */
-  addWebClapDevice(trackId: string, details: Omit<WebClapDevice, "kind" | "id" | "state"> & { id?: string; state?: Uint8Array }): WebClapDevice {
+  /**
+   * Add a device to the end of a track's device chain. `device.kind` says which kind: `"webclap"` is a WebCLAP plug-in, with `bundleUrl` where the bundle loads from,
+   * `state` the plug-in's saved bytes (default empty) and `id` defaulting to `deviceN`. Returns the stored device.
+   */
+  addDevice(trackId: string, device: NewDevice): ProjectDevice {
     assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.id === trackId);
     if (!track) throw new Error("Project device needs an existing track.");
+    const details = device;
+    if (details?.kind !== "webclap") throw new Error('Project device needs a kind of "webclap".');
     if (!details.pluginId || !details.name || typeof details.bundleUrl !== "string" || (details.state && !(details.state instanceof Uint8Array)))
       throw new Error("Project WebCLAP device needs an ID, name, bundle URL and byte state.");
     for (const value of [details.pluginId, details.name, details.vendor ?? "", details.version ?? ""]) validateXmlText(value);
     const id = this.reserve(details.id, "device");
     importedBundles.get(this)?.delete(id);
-    const device: WebClapDevice = Object.freeze({
+    const stored: WebClapDevice = Object.freeze({
       kind: "webclap",
       id,
       pluginId: details.pluginId,
@@ -2113,8 +2159,8 @@ export class Project {
       bundleUrl: details.bundleUrl,
       state: new Uint8Array(details.state ?? []),
     });
-    this.replace(track, { devices: Object.freeze([...track.devices, device]) });
-    return device;
+    this.replace(track, { devices: Object.freeze([...track.devices, stored]) });
+    return stored;
   }
 
   /** Replace a device's saved plug-in state with `bytes` (the plug-in's own binary format). */
@@ -2176,7 +2222,7 @@ export class Project {
     this.replace(track, { devices: Object.freeze(devices) });
   }
 
-  /** Replace a track's volume automation. Each point has a `time` in project seconds (0 or more, unique), a linear-gain `value` (0 or more) and a `shape` of "linear" or "hold"; an empty list clears it. */
+  /** Replace a track's volume automation. Each point has a `time` in project seconds (0 or more, unique), a linear-gain `value` (0 or more) and a `shape` of "linear" (ramp to the next point) or "hold" (keep the value until the next point); the last point's shape is stored as "hold". An empty list clears it. */
   setVolumeAutomation(trackId: string, points: readonly AutomationPoint[]): void {
     assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.id === trackId);
@@ -2193,8 +2239,34 @@ export class Project {
       )
     )
       throw new RangeError("Project automation needs finite unique times and non-negative values.");
-    if (sameJson(track.volumeAutomation, sorted)) return;
-    this.replace(track, { volumeAutomation: Object.freeze(sorted) });
+    const next = holdAtEnd(sorted);
+    if (sameJson(track.volumeAutomation, next)) return;
+    this.replace(track, { volumeAutomation: next });
+  }
+
+  /**
+   * Replace one MIDI controller lane of a MIDI track: the lane `{ expression, channel, controller }` takes `points` (project beats, 0 or more; integer values in the
+   * controller's range, 0 to 127 or 0 to 16383 for `pitchBend`; shape `"linear"` or `"hold"`). An empty `points` removes the lane; a lane that does not exist yet is
+   * added after the others. See `ControllerLane` for the units and the step rule.
+   */
+  setControllerLane(trackId: string, lane: ControllerLane): void {
+    assertProjectActive(this);
+    const track = this.s.tracks.find((item) => item.id === trackId);
+    if (!track) throw new Error("Project controller lane needs an existing track.");
+    if (track.kind !== "midi") throw new Error("Project controller lane needs a MIDI track.");
+    const next = normalizeControllerLane(lane, true);
+    const key = controllerLaneKey(next);
+    const at = track.controllerLanes.findIndex((item) => controllerLaneKey(item) === key);
+    const lanes = [...track.controllerLanes];
+    if (!next.points.length) {
+      if (at < 0) return;
+      lanes.splice(at, 1);
+    } else if (at < 0) lanes.push(next);
+    else {
+      if (sameJson(track.controllerLanes[at], next)) return;
+      lanes[at] = next;
+    }
+    this.replace(track, { controllerLanes: Object.freeze(lanes) });
   }
 
   /** Add an in-memory audio clip to an audio track at `time` in project seconds (0 or more). `audio.channels` are PCM at `audio.sampleRate`; `options` sets name, envelope, stretch and gain automation. */
@@ -2376,6 +2448,7 @@ export class Project {
       const copy = clip.media
         ? this.addAudioMediaClip(target, clip.media, time, { ...options, startFrame: clip.startFrame, frameCount: clip.frameCount })
         : this.addAudioClip(target, clip, time, options);
+      copyVarispeed(clip, copy);
       return clip.loop ? this.looped(copy, clip.loop, clip.duration) : copy;
     }
     const copy = this.addMidiClip(

@@ -79,7 +79,8 @@ export async function exportAudioFallbackTo(
     const offline = context;
     const ticks = new ManualTickSource();
     render = await Workspace.create(offline as unknown as AudioContext, renderProject, { ...workspace.deviceOptions, tickSource: ticks });
-    if (render.warnings.length) throw new Error(`Workspace audio fallback has unresolved devices: ${render.warnings.join(" ")}`);
+    if (render.cells.warnings.value.length)
+      throw new Error(`Workspace audio fallback has unresolved devices: ${render.cells.warnings.value.join(" ")}`);
     const stemTracks = renderProject.tracks.length <= 15 ? renderProject.tracks : [];
     const buses = [
       { path: "mix.wav", node: render.output },

@@ -18,7 +18,43 @@
         {
           "expectation": 0,
           "label": "No second engine for File > Open",
-          "none": ["openWorkspace(Blob)?\\s*\\(", "Workspace\\.create\\s*\\("]
+          "none": ["openWorkspace\\s*\\(", "Workspace\\.create\\s*\\("]
+        }
+      ]
+    },
+    {
+      "id": "O2-new-song",
+      "prompt": "A browser DAW page already runs a song on `context`, an AudioContext, with the same bindings as a file-open handler would keep (a mixer, a Loop toggle, an error banner, a track list that follows the engine's song). Write the File > New handler: it replaces the song with a fresh empty one at 120 BPM that has one MIDI track called \"Keys\", without rebuilding any of those bindings. The page keeps its own reference to the new song's data object and disposes it itself when the page closes.",
+      "hostDeclarations": "declare const workspace: import(\"@audiorective/daw\").Workspace;\ndeclare const context: AudioContext;\ndeclare function showError(message: string): void;",
+      "expectations": [
+        "Builds the new song as a Project (import from @audiorective/daw/project or the daw root) with a 120 BPM tempo and a MIDI track named Keys.",
+        "Hands that Project to the engine that is already running instead of creating a second engine, and does not tear down the page's bindings.",
+        "Does not hand ownership of the new Project to the engine (the page disposes it itself), and does not dispose the song it replaces by hand.",
+        "Reports a failed replace with the page's error display."
+      ],
+      "checks": [
+        {
+          "expectation": 1,
+          "label": "No second engine for File > New",
+          "none": ["openWorkspace\\s*\\(", "Workspace\\.create\\s*\\(", "\\.project\\s*="]
+        }
+      ]
+    },
+    {
+      "id": "O3-fader-drag",
+      "prompt": "A browser DAW page has an open song as `project` and its running engine as `workspace`. Wire a fader `<input type=\"range\" min=\"0\" max=\"1\" step=\"0.01\">` for the track with id `trackId`: while the user drags it the playing track's level must follow, and an Undo step is recorded once when the drag ends, not on every move.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;\ndeclare const trackId: string;\ndeclare const fader: HTMLInputElement;",
+      "expectations": [
+        "Changes the level with the Project's own track-volume method while dragging, without a second state store for the fader value.",
+        "Groups the finished drag into one Undo step with project.edit or a history step, and does not call sync() or stop the transport.",
+        "Does not set an AudioParam or output node gain by hand."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "Project mixer method, no Workspace method",
+          "all": ["setTrackVolume"],
+          "none": ["workspace\\.setTrackVolume", "\\.gain\\.(value|setValueAtTime|setTargetAtTime)"]
         }
       ]
     }

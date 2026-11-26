@@ -3,6 +3,7 @@ import type { AudioClip, Project, ProjectClip } from "./model";
 import type { BeatRange, SecondsRange, TimeRange } from "./project-edits";
 import { TempoMap, type TempoChange } from "./tempo-map";
 import { unityClipEnvelope } from "./clip-envelope";
+import { controllerPointsAfterDelete } from "./controller-lane";
 
 const EPSILON = 1e-9;
 /** Keeps a value step in a linear automation curve from becoming a long ramp. */
@@ -174,5 +175,10 @@ export function rippleDelete(project: Project, range: TimeRange, options?: { cro
     const points = track.volumeAutomation.length ? removedAutomation(track.volumeAutomation, startSeconds, endSeconds) : undefined;
     if (points && !same(points, track.volumeAutomation)) project.setVolumeAutomation(track.id, points);
   }
+  for (const track of project.tracks)
+    for (const lane of track.controllerLanes) {
+      const points = controllerPointsAfterDelete(lane.expression, lane.points, startBeat, endBeat);
+      if (!same(points, lane.points)) project.setControllerLane(track.id, { ...lane, points });
+    }
   if (!same(tempoChanges, before.changes)) project.setTempoChanges(tempoChanges);
 }

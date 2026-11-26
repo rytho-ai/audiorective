@@ -103,7 +103,7 @@ test("clip gain and its curve are also written as a standard gain curve, and Aud
   expect(back.kind === "audio" && back.envelope?.gain).toBe(0.5);
   expect(backCurved.kind === "audio" && backCurved.gainAutomation?.points).toEqual([
     { time: 0, value: 0.2, shape: "linear" },
-    { time: 1, value: 1, shape: "linear" },
+    { time: 1, value: 1, shape: "hold" }, // the last point of a curve is always stored as "hold"
   ]);
   // Without Audiorective's details a flat curve is the clip's gain and a moving one is the clip's gain automation.
   const files = unzipSync(bytes);
@@ -115,7 +115,7 @@ test("clip gain and its curve are also written as a standard gain curve, and Aud
   // The standard curve carries the clip gain in its values: 0.2 x 0.5 and 1 x 0.5.
   expect(curvedBack.kind === "audio" && curvedBack.gainAutomation?.points).toEqual([
     { time: 0, value: 0.1, shape: "linear" },
-    { time: 1, value: 0.5, shape: "linear" },
+    { time: 1, value: 0.5, shape: "hold" },
   ]);
   expect(foreign.warnings.join()).not.toContain("gain curve");
   project.dispose();

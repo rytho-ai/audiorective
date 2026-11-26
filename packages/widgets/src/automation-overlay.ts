@@ -8,12 +8,15 @@ export interface AutomationOverlayOptions {
   points: { readonly value: readonly AutomationPoint[] };
   /** One owner edit after release or a key edit; Escape, pointercancel, capture loss and detach cancel previews. */
   onCommit(points: readonly AutomationPoint[]): void;
+  /** Maps a view time (seconds on the waveform) to the curve's own time unit. */
   fromView(time: number): number;
+  /** Maps a curve time (its own unit) to view seconds. */
   toView(time: number): number;
   /** Interior times where the view-to-source slope changes. Affects drawing only. */
   viewBreakpoints?: readonly number[];
   maxValue: number;
   defaultValue: number;
+  /** Rounds a candidate curve time (seconds or beats, the curve's own unit) to the grid. */
   snap?(time: number): number;
   label?: string;
   /** True cancels editing and yields input to other tools. Default false. */

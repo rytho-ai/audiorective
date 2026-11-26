@@ -34,12 +34,14 @@ export class LinearBarRuler implements Ruler<LinearBarWindow, LinearBarPoint> {
     this._beatsPerBar = beatsPerBar(options.numerator, options.denominator);
   }
 
+  /** Zero-based bar and beat-in-bar of axis `beat` for this ruler's meter. */
   at(beat: number): LinearBarPoint {
     const bar = Math.floor(beat / this._beatsPerBar);
     const beatInBar = beat - bar * this._beatsPerBar;
     return { bar, beatInBar, numerator: this._numerator, denominator: this._denominator };
   }
 
+  /** The reading at the window's start beat plus `grid(division)` points over its beat range. */
   read(window: Pick<CoreTickWindow, "beat">, timeline: BeatTiming): LinearBarWindow {
     const point = this.at(window.beat.start);
     return {

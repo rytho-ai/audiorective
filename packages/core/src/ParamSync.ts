@@ -16,6 +16,7 @@ interface ParamEntry {
 
 const paramSyncInstances = new WeakMap<BaseAudioContext, ParamSync>();
 
+/** Reads native `AudioParam` values back into their `SchedulableParam` signals on a timer, so the UI follows ramps the audio thread runs. */
 export class ParamSync {
   private readonly _params = new Map<SchedulableParam, ParamEntry>();
   private _rafId: number | null = null;

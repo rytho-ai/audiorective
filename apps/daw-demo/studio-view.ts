@@ -14,14 +14,8 @@ import {
 } from "@audiorective/daw";
 import type { MidiNote } from "@audiorective/midi";
 import { mountPianoRoll, pianoRollModel, type PianoRollHandle, type ClipPianoRollModel } from "@audiorective/widgets/piano-roll";
-import { attachClipGesture } from "@audiorective/widgets/clip";
-import {
-  attachTimeRangeGesture,
-  attachTimelineZoom,
-  type ClipGestureHandle,
-  type TimelineRange,
-  type TimelineZoomHandle,
-} from "@audiorective/widgets/arrangement";
+import { attachClipGesture, type ClipGestureHandle } from "@audiorective/widgets/clip";
+import { attachTimeRangeGesture, attachTimelineZoom, type TimelineRange, type TimelineZoomHandle } from "@audiorective/widgets/arrangement";
 import { mountWaveform, type WaveformPeaks } from "@audiorective/widgets/waveform";
 import { EditHistory } from "./edit-history";
 import { mountEffectRackView } from "./effect-rack-view";
@@ -332,7 +326,7 @@ export class StudioView {
       if (event.code === "Space" && !event.repeat) {
         event.preventDefault();
         const workspace = this.actions.workspace();
-        if (workspace.clock.state.value === "playing") workspace.pause();
+        if (workspace.transport.state.value === "playing") workspace.pause();
         else this.actions.play().catch(this.actions.error);
       }
     });
@@ -557,7 +551,7 @@ export class StudioView {
     const mute = button(
       "M",
       () => {
-        this.workspace.setTrackMuted(track.id, !track.muted);
+        this.workspace.project.setTrackMuted(track.id, !track.muted);
         this.render();
       },
       "靜音",
@@ -568,7 +562,7 @@ export class StudioView {
     const solo = button(
       "S",
       () => {
-        this.workspace.setTrackSolo(track.id, !track.solo);
+        this.workspace.project.setTrackSolo(track.id, !track.solo);
         this.render();
       },
       "獨奏",
@@ -585,7 +579,7 @@ export class StudioView {
     volume.className = "track-volume";
     volume.setAttribute("aria-label", `${track.name} 音量`);
     volume.addEventListener("input", () => {
-      this.workspace.setTrackVolume(track.id, Number(volume.value));
+      this.workspace.project.setTrackVolume(track.id, Number(volume.value));
       readout.textContent = `${Math.round(Number(volume.value) * 100)}%`;
     });
     const readout = document.createElement("span");
@@ -808,7 +802,7 @@ export class StudioView {
     });
     ruler.addEventListener("pointermove", (event) => {
       if (!scrub || event.pointerId !== scrub.pointerId || Math.abs(event.clientX - scrub.startX) < 3) return;
-      if (!scrub.pausedForDrag && workspace.clock.state.value === "playing") {
+      if (!scrub.pausedForDrag && workspace.transport.state.value === "playing") {
         workspace.pause();
         scrub.pausedForDrag = true;
       }
@@ -1134,7 +1128,7 @@ export class StudioView {
     const root = $("editor-panel");
     root.replaceChildren();
     const clip = this.selectedClip();
-    const auditionId = this.workspace.auditioningClip.value;
+    const auditionId = this.workspace.cells.auditioningClip.value;
     if (auditionId !== null && auditionId !== clip?.id) this.workspace.stopClipAudition();
     if (!clip) {
       root.innerHTML = '<div class="empty-state"><strong>選取片段</strong><span>下方會顯示音符或波形。</span></div>';
@@ -1322,7 +1316,7 @@ export class StudioView {
         "試聽片段",
         async () => {
           try {
-            if (workspace.auditioningClip.value === clip.id) workspace.stopClipAudition();
+            if (workspace.cells.auditioningClip.value === clip.id) workspace.stopClipAudition();
             else await workspace.auditionAudioClip(clip.id);
           } catch (error) {
             this.actions.error(error);
@@ -1332,7 +1326,7 @@ export class StudioView {
       );
       audition.dataset.testid = "audition-clip";
       this.stopAuditionView = effect(() => {
-        const active = workspace.auditioningClip.value === clip.id;
+        const active = workspace.cells.auditioningClip.value === clip.id;
         audition.textContent = active ? "停止片段試聽" : "試聽片段";
         audition.setAttribute("aria-pressed", String(active));
       });
@@ -1432,12 +1426,12 @@ export class StudioView {
         return { tracks: workspace.project.tracks, masterVolume: workspace.project.masterVolume };
       }),
       editTrack(id, patch) {
-        if (patch.pan !== undefined) workspace.setTrackPan(id, patch.pan);
-        if (patch.volume !== undefined) workspace.setTrackVolume(id, patch.volume);
-        if (patch.muted !== undefined) workspace.setTrackMuted(id, patch.muted);
-        if (patch.solo !== undefined) workspace.setTrackSolo(id, patch.solo);
+        if (patch.pan !== undefined) workspace.project.setTrackPan(id, patch.pan);
+        if (patch.volume !== undefined) workspace.project.setTrackVolume(id, patch.volume);
+        if (patch.muted !== undefined) workspace.project.setTrackMuted(id, patch.muted);
+        if (patch.solo !== undefined) workspace.project.setTrackSolo(id, patch.solo);
       },
-      editMaster: (gain) => workspace.setMasterVolume(gain),
+      editMaster: (gain) => workspace.project.setMasterVolume(gain),
       meter: (id) => {
         const node = id === null ? workspace.output : workspace.trackMixerOutput(id);
         if (!node) return;
@@ -1479,7 +1473,7 @@ export class StudioView {
     }
     const write = (routing: TrackRouting, redraw = true) => {
       try {
-        workspace.setTrackRouting(id, routing);
+        workspace.project.setTrackRouting(id, routing);
       } catch (error) {
         this.actions.error(error);
         redraw = true;
@@ -1738,12 +1732,14 @@ export class StudioView {
         if (!bundleUrl || !pluginId || !["http:", "https:"].includes(url.protocol)) throw new Error("請輸入 Bundle URL 與 CLAP ID。");
         const { name, vendor, version } = await this.actions.inspectWebClap(bundleUrl, pluginId);
         if (workspace !== this.workspace) return;
-        const device = workspace.project.addWebClapDevice(track.id, { bundleUrl, pluginId, name, vendor, version });
+        const device = workspace.project.addDevice(track.id, { kind: "webclap", bundleUrl, pluginId, name, vendor, version });
         await workspace.sync();
         if (workspace !== this.workspace) return;
         this.renderDevices();
         const host = workspace.host(device.id);
-        this.actions.status(host ? `已加入 ${host.descriptor.name}` : `無法載入 ${pluginId}：${workspace.warnings.at(-1) ?? "請確認 bundle"}`);
+        this.actions.status(
+          host ? `已加入 ${host.descriptor.name}` : `無法載入 ${pluginId}：${workspace.cells.warnings.value.at(-1) ?? "請確認 bundle"}`,
+        );
       } catch (error) {
         this.actions.error(error);
       } finally {

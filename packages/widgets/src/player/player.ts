@@ -13,6 +13,7 @@ function describe(reason: unknown): string {
   return message ? `Playback could not start: ${message}` : "Playback could not start.";
 }
 
+/** Mounts play/pause, optional volume and a timeline for a borrowed player into `root`; returns a handle whose `dispose` removes it. */
 export function mountPlayer(root: HTMLElement, options: PlayerOptions): PlayerHandle {
   const { player } = options;
   const timeline = player.timeline;

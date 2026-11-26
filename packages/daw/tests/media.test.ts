@@ -44,7 +44,8 @@ describe("file-backed audio", () => {
       },
       0,
     );
-    const device = project.addWebClapDevice(midi.id, {
+    const device = project.addDevice(midi.id, {
+      kind: "webclap",
       pluginId: "example.synth",
       name: "Synth",
       vendor: "Example",

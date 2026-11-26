@@ -46,7 +46,10 @@ export class ProjectSelection {
     createSelection = (project) => new ProjectSelection(project);
   }
 
-  private constructor(readonly project: Project) {
+  private constructor(
+    /** The Project this selection follows; it drops anything that leaves it. */
+    readonly project: Project,
+  ) {
     this.state = readonlyCell(this.store);
     // Detached: the selection lives as long as its Project, even if first requested inside an effect that later re-runs.
     untracked(() =>
@@ -102,6 +105,7 @@ export class ProjectSelection {
     });
   }
 
+  /** Select a track by ID, or clear the track with `null`. Throws if the ID is not a track of the Project. */
   selectTrack(trackId: string | null): void {
     untracked(() => {
       if (trackId !== null && !this.project.tracks.some(({ id }) => id === trackId)) throw new Error("ProjectSelection needs an existing track.");

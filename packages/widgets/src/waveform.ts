@@ -10,16 +10,8 @@ export type {
   WaveformData,
   WaveformPeaks,
   WaveformViewport,
-  WaveformPluginContext,
-  WaveformPlugin,
   WaveformOptions,
   WaveformHandle,
-  PluginAttachment,
-  PluginTarget,
-  WidgetPlugin,
-  WidgetPluginContext,
-  TimeViewPlugin,
-  TimeViewPluginContext,
   Unsubscribe,
   Selection,
   SnapMode,
@@ -39,6 +31,7 @@ function hasFinitePeaks(peaks: Peaks): boolean {
   return true;
 }
 const format = (t: number) => `${Math.floor(t / 60)}:${(t % 60).toFixed(2).padStart(5, "0")}`;
+/** Mounts a waveform view into `root`; returns a handle whose `dispose` removes it. */
 export function mountWaveform(root: HTMLElement, options: WaveformOptions = {}): WaveformHandle {
   const container = document.createElement("section");
   container.className = "ar-widget ar-waveform";

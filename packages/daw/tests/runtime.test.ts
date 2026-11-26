@@ -150,7 +150,7 @@ async function setup(options: { withDevice?: boolean } = {}) {
   const project = new Project({ bpm: 120 });
   const track = project.addTrack("Keys", "midi");
   const device = options.withDevice
-    ? project.addWebClapDevice(track.id, { pluginId: "fake.synth", name: "Synth", vendor: "t", version: "1", bundleUrl: "/fake.wasm" })
+    ? project.addDevice(track.id, { kind: "webclap", pluginId: "fake.synth", name: "Synth", vendor: "t", version: "1", bundleUrl: "/fake.wasm" })
     : undefined;
   const workspace = await Workspace.create(context(), project);
   const clock = fakes.clocks[fakes.clocks.length - 1];
@@ -291,17 +291,23 @@ describe("workspace automatic application", () => {
     project.dispose();
   });
 
-  test("Workspace mixer writes apply immediately and Project mixer edits apply once without refreshing Arrangement", async () => {
+  test("a Project mixer edit reaches the strips in the same task turn, with no Arrangement refresh and no second application", async () => {
     const { project, track, workspace, clock } = await setup();
     const masterGain = vi.mocked(workspace.output.gain.setValueAtTime);
     const strip = fakes.channels.at(-1) as unknown as { params: { gain: { value: number }; pan: { value: number } } };
     masterGain.mockClear();
     const refreshes = clock.refresh.mock.calls.length;
-    workspace.setTrackVolume(track.id, 0.4);
-    workspace.setTrackPan(track.id, -1);
+    project.setTrackVolume(track.id, 0.4);
+    project.setTrackPan(track.id, -1);
+    // Applied by microtasks of the turn that made the edit: nothing waits for flush() or a later task.
+    let laterTask = false;
+    setTimeout(() => (laterTask = true), 0);
+    await Promise.resolve().then(() => undefined);
+    await Promise.resolve().then(() => undefined);
+    await Promise.resolve().then(() => undefined);
+    expect(laterTask).toBe(false);
     expect(strip.params.gain.value).toBe(0.4);
     expect(strip.params.pan.value).toBe(-1);
-    await workspace.flush();
     project.setTrackVolume(track.id, 0.6);
     await workspace.flush();
     expect(strip.params.gain.value).toBe(0.6);
@@ -311,12 +317,53 @@ describe("workspace automatic application", () => {
     project.dispose();
   });
 
-  test("Workspace effect methods do not trigger a second application; a direct Project edit applies once", async () => {
+  test("a fader and a rack edit still reach a live track while a track-list change waits for sync()", async () => {
+    const { project, track, workspace } = await setup();
+    const strip = fakes.channels.at(-1) as unknown as { params: { gain: { value: number } } };
+    project.addTrack("New", "audio");
+    await workspace.flush();
+    expect(workspace.cells.needsSync.value).toBe(true);
+    project.setTrackVolume(track.id, 0.3);
+    await workspace.flush();
+    expect(strip.params.gain.value).toBe(0.3);
+    expect(workspace.cells.needsSync.value).toBe(true);
+    workspace.dispose();
+    project.dispose();
+  });
+
+  test("a burst of Project fader edits is applied in order and none is dropped", async () => {
+    const { project, track, workspace } = await setup();
+    const strip = fakes.channels.at(-1) as unknown as { params: { gain: { value: number } } };
+    const seen: number[] = [];
+    let current = strip.params.gain.value;
+    Object.defineProperty(strip.params.gain, "value", {
+      get: () => current,
+      set: (value: number) => {
+        current = value;
+        seen.push(value);
+      },
+    });
+    for (let step = 1; step <= 30; step++) {
+      project.setTrackVolume(track.id, 1 - step * 0.02);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    }
+    await workspace.flush();
+    expect(current).toBeCloseTo(0.4, 10);
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen).toEqual([...seen].sort((a, b) => b - a));
+    workspace.dispose();
+    project.dispose();
+  });
+
+  test("a Project effect edit is applied to the rack once", async () => {
     const { project, track, workspace } = await setup();
     const setEffects = fakes.racks[0].setEffects;
     const applications = setEffects.mock.calls.length;
     const filter = (frequency: number) => [{ id: "f", type: "filter", enabled: true, wet: 1, mode: "lowpass", frequency, q: 1 }] as const;
-    workspace.setTrackEffects(track.id, filter(800));
+    project.setTrackEffects(track.id, filter(800));
+    await workspace.flush();
     expect(setEffects.mock.calls.length).toBe(applications + 1);
     await workspace.flush();
     expect(setEffects.mock.calls.length).toBe(applications + 1);
@@ -347,13 +394,13 @@ describe("workspace automatic application", () => {
     project.dispose();
   });
 
-  test("replacing the project reapplies; dispose drops pending work and flush still resolves", async () => {
+  test("opening another project builds it; dispose drops pending work and flush still resolves", async () => {
     const { project, workspace, clock } = await setup();
     const other = new Project({ bpm: 90 });
     other.addTrack("Other", "audio");
-    workspace.project = other;
-    await workspace.flush();
-    expect(workspace.cells.needsSync.value).toBe(true);
+    await workspace.open(other);
+    expect(workspace.project).toBe(other);
+    expect(workspace.cells.needsSync.value).toBe(false);
     await workspace.sync();
     project.setTempoChanges([{ beat: 1, bpm: 50 }]);
     other.setTempoChanges([{ beat: 1, bpm: 50 }]);
@@ -450,7 +497,7 @@ describe("workspace addWebClapDevice", () => {
     const calls = () => fakes.hosts.reduce((sum, host) => sum + host.loadState.mock.calls.length, 0);
     const before = calls();
     const other = project.edit("Add B", () =>
-      project.addWebClapDevice(track.id, { pluginId: "fake.synth", name: "B", vendor: "t", version: "1", bundleUrl: "/fake.wasm" }),
+      project.addDevice(track.id, { kind: "webclap", pluginId: "fake.synth", name: "B", vendor: "t", version: "1", bundleUrl: "/fake.wasm" }),
     );
     await workspace.flush();
     expect(other.state.length).toBe(0);
@@ -496,10 +543,10 @@ describe("workspace composition", () => {
   test("file warnings and options warnings lead the workspace's own warnings", async () => {
     const source = new Project();
     const track = source.addTrack("Keys", "midi");
-    source.addWebClapDevice(track.id, { pluginId: "fake.synth", name: "Synth", vendor: "t", version: "1", bundleUrl: "/fake.wasm" });
+    source.addDevice(track.id, { kind: "webclap", pluginId: "fake.synth", name: "Synth", vendor: "t", version: "1", bundleUrl: "/fake.wasm" });
     const bytes = saveDawProject(source);
     const workspace = await openWorkspace(context(), bytes, { warnings: ["caller note"] });
-    expect(workspace.warnings.slice(0, 1)).toEqual(["caller note"]);
+    expect(workspace.cells.warnings.value.slice(0, 1)).toEqual(["caller note"]);
     workspace.dispose();
     workspace.project.dispose();
   });
@@ -531,20 +578,11 @@ describe("workspace readers are tracked", () => {
     mutate: (ctx: { project: Project; workspace: Workspace; device: { id: string } }) => Promise<void>;
   }> = [
     {
-      name: "warnings getter",
-      read: (workspace) => workspace.warnings,
-      mutate: async ({ project, workspace }) => {
-        const track = project.addTrack("Orphan", "midi");
-        project.addWebClapDevice(track.id, { pluginId: "x", name: "NoBundle", vendor: "t", version: "1", bundleUrl: "" });
-        await workspace.sync();
-      },
-    },
-    {
       name: "cells.warnings",
       read: (workspace) => workspace.cells.warnings.value,
       mutate: async ({ project, workspace }) => {
         const track = project.addTrack("Orphan", "midi");
-        project.addWebClapDevice(track.id, { pluginId: "x", name: "NoBundle", vendor: "t", version: "1", bundleUrl: "" });
+        project.addDevice(track.id, { kind: "webclap", pluginId: "x", name: "NoBundle", vendor: "t", version: "1", bundleUrl: "" });
         await workspace.sync();
       },
     },
@@ -583,13 +621,13 @@ describe("workspace readers are tracked", () => {
 
   test("warnings are a frozen snapshot that replaces on every write", async () => {
     const { project, workspace } = await setup();
-    const before = workspace.warnings;
+    const before = workspace.cells.warnings.value;
     expect(Object.isFrozen(before)).toBe(true);
     const track = project.addTrack("Orphan", "midi");
-    project.addWebClapDevice(track.id, { pluginId: "x", name: "NoBundle", vendor: "t", version: "1", bundleUrl: "" });
+    project.addDevice(track.id, { kind: "webclap", pluginId: "x", name: "NoBundle", vendor: "t", version: "1", bundleUrl: "" });
     await workspace.sync();
-    expect(workspace.warnings).not.toBe(before);
-    expect(workspace.warnings).toEqual(["Device NoBundle has no WebCLAP bundle."]);
+    expect(workspace.cells.warnings.value).not.toBe(before);
+    expect(workspace.cells.warnings.value).toEqual(["Device NoBundle has no WebCLAP bundle."]);
     expect(before).toEqual([]);
     workspace.dispose();
     project.dispose();
@@ -604,15 +642,9 @@ describe("workspace commands do not subscribe a calling effect", () => {
     { name: "auditionAudioClip", run: (c) => settle(c.workspace.auditionAudioClip(c.clipId)) },
     { name: "auditionRange", run: (c) => settle(c.workspace.auditionRange({ start: 0, end: 0.5 })) },
     { name: "prepareAudioClipStretch", run: (c) => settle(c.workspace.prepareAudioClipStretch(c.clipId, 1)) },
-    { name: "setTrackVolume", run: (c) => c.workspace.setTrackVolume(c.track.id, 0.4) },
-    { name: "setMasterVolume", run: (c) => c.workspace.setMasterVolume(0.4) },
-    { name: "setTrackMuted", run: (c) => c.workspace.setTrackMuted(c.track.id, true) },
-    { name: "setTrackSolo", run: (c) => c.workspace.setTrackSolo(c.track.id, true) },
-    { name: "setTrackPan", run: (c) => c.workspace.setTrackPan(c.track.id, 0.3) },
     { name: "seek", run: (c) => c.workspace.seek(1) },
     { name: "takeAnchor", run: (c) => c.workspace.takeAnchor(1) },
     { name: "play", run: (c) => void c.workspace.play().catch(() => undefined) },
-    { name: "refreshArrangement", run: (c) => c.workspace.refreshArrangement() },
   ];
   test.each(commands)("$name", async ({ run }) => {
     const base = await setup();
@@ -651,7 +683,7 @@ describe("workspace.sessionClip is a tracked reader", () => {
     const seen: Array<unknown> = [];
     const stop = effect(() => void seen.push(workspace.sessionClip(track.id, first.id)));
     expect(seen).toHaveLength(1);
-    expect(seen[0]).toBe(workspace.session.value.tracks[track.id]!.clips[0]);
+    expect(seen[0]).toBe(workspace.cells.session.value.tracks[track.id]!.clips[0]);
     session.setAudioClip({ trackId: track.id, sceneId: scene.id }, { sampleRate: 100, channels: [new Float32Array(100)] });
     expect(seen.length).toBeGreaterThan(1);
     expect(workspace.sessionClip(track.id, "missing")).toBeNull();
@@ -678,11 +710,12 @@ describe("workspace.position is a tracked reader", () => {
 });
 
 describe("workspace observable state lives in cells", () => {
-  test("session and auditions are the same read-only cells as their getters", async () => {
+  test("session and auditions are only on workspace.cells, read-only", async () => {
     const { workspace, project } = await setup();
-    expect(workspace.cells.session).toBe(workspace.session);
-    expect(workspace.cells.auditioningClip).toBe(workspace.auditioningClip);
-    expect(workspace.cells.auditioningRange).toBe(workspace.auditioningRange);
+    expect("session" in workspace).toBe(false);
+    expect("auditioningClip" in workspace).toBe(false);
+    expect("auditioningRange" in workspace).toBe(false);
+    expect("warnings" in workspace).toBe(false);
     expect(workspace.cells.auditioningClip.value).toBeNull();
     expect(workspace.cells.auditioningRange.value).toBeNull();
     workspace.dispose();
@@ -748,7 +781,7 @@ describe("project ownership", () => {
     project.dispose();
   });
 
-  test("ownsProject hands the project over, and replacing it releases the claim", async () => {
+  test("ownsProject hands the project over; open disposes the Project it replaces only if the Workspace owned it", async () => {
     const owned = new Project();
     const first = await Workspace.create(context(), owned, { ownsProject: true });
     const disposeOwned = vi.spyOn(owned, "dispose");
@@ -757,24 +790,23 @@ describe("project ownership", () => {
     const original = new Project();
     const second = await Workspace.create(context(), original, { ownsProject: true });
     const replacement = new Project();
-    second.project = replacement;
     const disposeOriginal = vi.spyOn(original, "dispose");
     const disposeReplacement = vi.spyOn(replacement, "dispose");
+    // A Project passed to open stays with the caller by default, and the Project it replaces was the Workspace's own.
+    await second.open(replacement);
+    expect(disposeOriginal).toHaveBeenCalledTimes(1);
     second.dispose();
-    expect(disposeOriginal).not.toHaveBeenCalled();
     expect(disposeReplacement).not.toHaveBeenCalled();
+    const third = await Workspace.create(context(), new Project());
+    const handedOver = new Project();
+    const disposeHandedOver = vi.spyOn(handedOver, "dispose");
+    await third.open(handedOver, { ownsProject: true });
+    third.dispose();
+    expect(disposeHandedOver).toHaveBeenCalledTimes(1);
+    await expect(Workspace.create(context(), replacement).then((fourth) => fourth.open(replacement))).rejects.toThrow(
+      "Workspace open needs a Project other than the one already open; call sync() to rebuild it.",
+    );
     original.dispose();
     replacement.dispose();
-  });
-});
-
-describe("workspace cell aliases", () => {
-  test("session, auditioningClip and auditioningRange are the same cell objects as workspace.cells", async () => {
-    const { project, workspace } = await setup();
-    expect(workspace.session).toBe(workspace.cells.session);
-    expect(workspace.auditioningClip).toBe(workspace.cells.auditioningClip);
-    expect(workspace.auditioningRange).toBe(workspace.cells.auditioningRange);
-    workspace.dispose();
-    project.dispose();
   });
 });

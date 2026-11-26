@@ -68,6 +68,7 @@ export class CycleBarRuler implements Ruler<CycleBarWindow, CycleBarPoint> {
     this._from = options.from ?? 0;
   }
 
+  /** Cycle, bar, beat-in-bar and phase (0 up to 1) at absolute `beat`; reads the beat modulo the region length. */
   at(beat: number): CycleBarPoint {
     const rel = beat - this._from;
     const cycle = Math.floor(rel / this._regionLength);
@@ -78,6 +79,7 @@ export class CycleBarRuler implements Ruler<CycleBarWindow, CycleBarPoint> {
     return { cycle, barInCycle, beatInBar, phase };
   }
 
+  /** The window's start reading plus `grid(division)` points and the cycle-relative `spans` of its beat range. */
   read(window: Pick<CoreTickWindow, "beat">, timeline: BeatTiming): CycleBarWindow {
     const point = this.at(window.beat.start);
     return {

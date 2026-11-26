@@ -1,8 +1,4 @@
-/** Planar PCM samples, with one equally sized Float32Array per channel. */
-export interface PCMData {
-  readonly channels: readonly Float32Array[];
-  readonly sampleRate: number;
-}
+import type { PCMData } from "./pcm";
 
 /** Extrema across all channels in fixed source-frame bins. */
 export interface PeakSummary {
@@ -85,8 +81,3 @@ export function peakFrameRange(
     endTime: endFrame / summary.sampleRate,
   };
 }
-
-export { encodeWav, encodeWavBytes } from "./wav";
-export type { EncodeWavOptions } from "./wav";
-export { resamplePCM } from "./resample";
-export type { ResamplePCMOptions, ResampleQuality } from "./resample";

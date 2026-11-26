@@ -1,4 +1,4 @@
-import type { PCMData } from "./peaks";
+import type { PCMData } from "./pcm";
 
 /** Sample format of an encoded WAV: 16- or 24-bit signed integer, or 32-bit IEEE float. */
 export interface EncodeWavOptions {

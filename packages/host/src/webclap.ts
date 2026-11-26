@@ -58,6 +58,7 @@ const modules = new WeakMap<AudioContext, Map<string, Promise<void>>>();
  * Each CLAP parameter is a `Param<number>` in `params`, keyed by its CLAP id (`host.params["7"].value`); writes reach the plug-in and the plug-in's own changes update the Param.
  */
 export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: ReadonlyCell<readonly WebClapParameter[]> }> {
+  /** CLAP parameters as `Param<number>`s keyed by CLAP id (string or number); an unknown id is `undefined`. */
   declare readonly params: WebClapParamAccess;
   /** The AudioWorkletNode that runs the plug-in. */
   readonly node: AudioWorkletNode;

@@ -69,6 +69,7 @@ const ranges = {
   eq: {},
 } satisfies Record<RackEffect["type"], Partial<Record<RackMacroParameter, readonly [number, number]>>>;
 
+/** The `[min, max]` a macro can drive for one rack slot's parameter (`wet` is 0 to 1; Filter `frequency` 20 to 20000 Hz and `q` 0.1 to 20; Delay `delayTime` 0.01 to 1 s and `feedback` 0 to 0.95), or `undefined` when the slot's type has no such parameter. */
 export function rackMacroRange(slot: RackEffect, parameter: RackMacroParameter): readonly [number, number] | undefined {
   if (parameter === "wet") return [0, 1];
   const parameters: Partial<Record<RackMacroParameter, readonly [number, number]>> = ranges[slot.type];

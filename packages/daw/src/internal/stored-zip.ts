@@ -19,11 +19,15 @@ export function crc32(previous: number, bytes: Uint8Array): number {
   return value >>> 0;
 }
 
+/** General purpose bit 11: the name is UTF-8. Set only when the name has a non-ASCII byte, so ASCII names stay as every reader expects. */
+const utf8Flag = (name: Uint8Array): number => (name.some((byte) => byte > 0x7f) ? 0x800 : 0);
+
 function localHeader(name: Uint8Array, crc: number, size: number): Uint8Array {
   const bytes = new Uint8Array(30 + name.length);
   const view = new DataView(bytes.buffer);
   view.setUint32(0, 0x04034b50, true);
   view.setUint16(4, 20, true);
+  view.setUint16(6, utf8Flag(name), true);
   view.setUint16(10, 0, true); // stored, no data descriptor
   view.setUint16(12, 0x21, true); // 1980-01-01
   view.setUint32(14, crc, true);
@@ -40,6 +44,7 @@ function centralHeader(name: Uint8Array, crc: number, size: number, offset: numb
   view.setUint32(0, 0x02014b50, true);
   view.setUint16(4, 20, true);
   view.setUint16(6, 20, true);
+  view.setUint16(8, utf8Flag(name), true);
   view.setUint16(14, 0x21, true);
   view.setUint32(16, crc, true);
   view.setUint32(20, size, true);

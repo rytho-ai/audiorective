@@ -6,6 +6,7 @@ export type TransportState = "stopped" | "playing" | "paused";
  * dependency between the window shape and the rulers that enrich it.
  */
 export interface CoreTickWindow {
+  /** Audio-context times in seconds: when the transport started, now, and the end of the look-ahead window. */
   time: {
     started: number;
     current: number;
@@ -18,6 +19,7 @@ export interface CoreTickWindow {
   generation: number;
   transport: {
     state: TransportState;
+    /** Seconds the transport has played since it started (pause-aware). */
     position: number;
   };
 }

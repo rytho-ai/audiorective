@@ -5,7 +5,7 @@ import { cell, untracked, type Cell, type Readable } from "@audiorective/core";
 import type { MidiNote, NoteDraft } from "@audiorective/midi";
 import type { StepGridLane, StepGridSequencer, StepGridStep } from "./step-grid-types";
 
-/** The notes a step grid edits: a `MidiClip` (or a DAW clip's `midi`) satisfies it. */
+/** The notes a step grid edits: any object with tracked `notes` and the edit methods below, such as a `MidiClip` from `@audiorective/midi`. */
 export interface StepGridNoteSource {
   /** Tracked notes; external changes redraw the grid. */
   readonly notes: Readable<readonly MidiNote[]>;

@@ -48,12 +48,12 @@ async function live(project: Project, options: WorkspaceOptions, seconds: number
     workspace.dispose();
     await context.close();
   });
-  expect(workspace.warnings).toEqual([]);
+  expect(workspace.cells.warnings.value).toEqual([]);
   await context.resume();
   const capture = await LiveCapture.on(context, workspace.output);
   prepare?.(workspace);
   await workspace.play();
-  const startTime = workspace.timeline.beatToTime(0);
+  const startTime = workspace.transport.timeline.beatToTime(0);
   await sleep((startTime - context.currentTime + seconds + 0.2) * 1000);
   workspace.stop();
   const { first, data, dropouts } = await capture.stop();
@@ -202,7 +202,7 @@ describe("offline render equals the realtime output", () => {
       cleanups.push(() => project.dispose());
       const seconds = 4;
       const run = await live(project, { ...midiTrackOptions(project), arrangement: false }, seconds, (workspace) =>
-        workspace.session.value.playChain([0, 1]),
+        workspace.cells.session.value.playChain([0, 1]),
       );
       const rendered = await renderSession(run.workspace, { scenes: [a, b], tailSeconds: 0 });
       if (rendered.status !== "rendered") throw new Error(rendered.status);

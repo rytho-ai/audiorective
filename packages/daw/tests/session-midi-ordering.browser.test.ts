@@ -37,7 +37,7 @@ async function render(
   const workspace = open
     ? await open(context as unknown as AudioContext, all)
     : await Workspace.create(context as unknown as AudioContext, project, all);
-  expect(workspace.warnings).toEqual([]);
+  expect(workspace.cells.warnings.value).toEqual([]);
   const pending = [...actions].sort((a, b) => a.at - b.at);
   while (pending[0]?.at === 0) pending.shift()!.run(workspace);
   await workspace.play();
@@ -89,7 +89,7 @@ const tone = (() => {
   return buffer;
 })();
 
-const slot = (workspace: Workspace, trackId: string, index: number) => workspace.session.value.tracks[trackId]!.clips[index]!;
+const slot = (workspace: Workspace, trackId: string, index: number) => workspace.cells.session.value.tracks[trackId]!.clips[index]!;
 
 /** 120 BPM: a beat is 0.5 s, a bar 2 s. */
 function oneTrack(notes: Array<{ pitch: number; velocity: number; start: number; duration: number }>, sound: SoundFactory | AudioBuffer = click) {
@@ -124,7 +124,7 @@ describe("Session MIDI ordering and restarts", () => {
       12,
       [
         { at: 0.1, run: (w) => slot(w, track.id, 0).launch() },
-        { at: 3, run: (w) => w.session.value.stopAll() },
+        { at: 3, run: (w) => w.cells.session.value.stopAll() },
         {
           at: 3.5,
           run: () =>

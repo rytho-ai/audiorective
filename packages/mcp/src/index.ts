@@ -70,6 +70,7 @@ export class PageBridge {
     });
   }
 
+  /** Starts the WebSocket server on `options.port` (default 7777) bound to `options.host` (default `127.0.0.1`); rejects when the port is taken. */
   static listen(options: Pick<AudiorectiveMcpOptions, "port" | "host" | "timeoutMs" | "waitMs"> = {}): Promise<PageBridge> {
     return new Promise((resolve, reject) => {
       const wss = new WebSocketServer({ port: options.port ?? 7777, host: options.host ?? "127.0.0.1" });
@@ -82,11 +83,13 @@ export class PageBridge {
     });
   }
 
+  /** The port the server listens on (useful when `port: 0` picked a free one). */
   get port(): number {
     const address = this.wss.address();
     return typeof address === "object" && address ? address.port : 0;
   }
 
+  /** True while a page is connected. */
   get connected(): boolean {
     return this.page !== undefined && this.page.readyState === this.page.OPEN;
   }
@@ -156,14 +159,17 @@ export class PageBridge {
     });
   }
 
+  /** Asks the connected page for its tool list; rejects when no page is connected or it does not answer within `timeoutMs` ms. */
   async list(): Promise<BridgeToolInfo[]> {
     return (await this.request({ method: "list" })) as BridgeToolInfo[];
   }
 
+  /** Calls tool `name` on the connected page with `args`; rejects when no page is connected or it does not answer within `timeoutMs` ms. */
   async call(name: string, args: unknown): Promise<BridgeToolResult> {
     return (await this.request({ method: "call", name, args })) as BridgeToolResult;
   }
 
+  /** Terminates the page socket and closes the server; resolves once the server is closed. */
   close(): Promise<void> {
     for (const entry of this.pending.values()) clearTimeout(entry.timer);
     this.pending.clear();

@@ -4,6 +4,7 @@ import "./step-grid.contracts.typecheck";
 import "./meter-mixer.contracts.typecheck";
 import "./automation-editors.contracts.typecheck";
 import "./arrangement.contracts.typecheck";
+import "./removed-forms.typecheck";
 import type { Lane, StepSequencer } from "@audiorective/sequencer";
 import type { StepGridLane, StepGridPlugin, StepGridSequencer } from "../src";
 

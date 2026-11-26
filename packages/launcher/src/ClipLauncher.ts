@@ -69,7 +69,9 @@ const semis = (st: number) => 2 ** (st / 12);
 // ---------------------------------------------------------------- events
 /** Tells that something happened; the state itself is in the cells. "started" and "ended" are dispatched on the first clock tick at or after `when` (up to ~25 ms later), never before. */
 export class ClipEvent extends Event {
+  /** What happened: queued, started, ended, cancelled or skipped. */
   declare readonly type: ClipEventType;
+  /** The track the event belongs to. */
   readonly track: Track;
   /** The clip queued, started, ended, cancelled or skipped; null for a queued or cancelled stop. */
   readonly clip: Clip | null;
@@ -208,6 +210,7 @@ type Commit = { kind: "start"; inst: Inst; when: number } | { kind: "stop"; targ
 type Item = { when: number; rank: number; seq: number; owner: Inst | null; run: () => void };
 
 // ---------------------------------------------------------------- Scene / Track / Clip
+/** One row of clip slots across all tracks; `launchScene(index)` starts its clips together on one boundary. */
 export class Scene {
   private readonly label: Cell<string>;
   /** Tracked. */
@@ -229,7 +232,9 @@ export class Scene {
   }
 }
 
+/** One slot on a track: a looped or one-shot sound source, pattern or scheduler with its launch options; `track.clips[i]` is scene `i`. */
 export class Clip {
+  /** The track this clip sits on. */
   readonly track: Track;
   /** Slot in `track.clips`; the scene this clip belongs to. Follows `insertScene`, `removeScene` and `moveScene`. */
   index: number;
@@ -409,7 +414,9 @@ function validate(c: ClipSettings): void {
 
 /** Plays one clip at a time. */
 export class Track {
+  /** The key this track has in `launcher.tracks`. */
   readonly name: string;
+  /** The launcher that owns this track. */
   readonly launcher: ClipLauncher;
   /** Where the track's sound arrives; joined to the context destination until `connect` reroutes it. */
   readonly output: GainNode;
@@ -1858,6 +1865,7 @@ export class ClipLauncher extends EventTarget implements Scheduler {
     this.finishCommand();
   }
 
+  /** Listens for `ClipEvent`s of the given type (`queued`, `started`, `ended`, `cancelled`, `skipped`); `started` and `ended` arrive on the first clock tick at or after `event.when`. */
   addEventListener(
     type: ClipEventType,
     listener: (this: ClipLauncher, event: ClipEvent) => unknown,
@@ -1869,6 +1877,7 @@ export class ClipLauncher extends EventTarget implements Scheduler {
     this.listeners.push([type, listener as EventListenerOrEventListenerObject, options]);
     super.addEventListener(type, listener as EventListenerOrEventListenerObject, options);
   }
+  /** Removes a listener added with `addEventListener`; unknown listeners are ignored. */
   removeEventListener(
     type: ClipEventType,
     listener: (this: ClipLauncher, event: ClipEvent) => unknown,

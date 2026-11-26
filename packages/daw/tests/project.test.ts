@@ -155,7 +155,7 @@ describe("project tempo map", () => {
       .replace('<Clip time="2" duration="4" contentTimeUnit="beats">', '<Clip time="1" duration="3" contentTimeUnit="seconds">')
       .replace('<Note time="0" duration="4"', '<Note time="0" duration="3"')
       .replace('<Note time="2" duration="1"', '<Note time="1" duration="1"')
-      .replace('<IntegerPoint time="2"', '<IntegerPoint time="1"');
+      .replace('<RealPoint time="2"', '<RealPoint time="1"');
     files["project.xml"] = bytes.encode(xml);
     const opened = openDawProject(zipSync(files));
     expect(opened.warnings.some((warning) => warning.includes("no matching Audiorective event details"))).toBe(true);
@@ -258,7 +258,12 @@ describe("project tempo map", () => {
     expect(opened.project.tracks[0].clips[0].time).toBe(4);
     const snapshot = opened.project.snapshot();
     expect(snapshot.tempoMap.secondsToBeat(4)).toBe(6);
-    const changed = { ...files, "project.xml": bytes.encode(xml.replace('interpolation="hold"', 'interpolation="linear"')) };
+    const changed = {
+      ...files,
+      "project.xml": bytes.encode(
+        xml.replace('<RealPoint time="4" value="60" interpolation="hold"/>', '<RealPoint time="4" value="60" interpolation="linear"/>'),
+      ),
+    };
     // A ramp is not a step: the file keeps it, the model plays the starting tempo, and the open says so.
     const ramped = openDawProject(zipSync(changed));
     expect(ramped.warnings.join()).toContain("Tempo automation with ramps or in seconds");
@@ -295,7 +300,7 @@ describe("DAWproject native slice", () => {
   test("round trips ordered Filter and Delay settings and rejects missing state", () => {
     const project = new Project();
     const track = project.addTrack("Keys", "midi");
-    project.addWebClapDevice(track.id, { pluginId: "test.synth", name: "Synth", vendor: "Test", version: "1", bundleUrl: "./synth" });
+    project.addDevice(track.id, { kind: "webclap", pluginId: "test.synth", name: "Synth", vendor: "Test", version: "1", bundleUrl: "./synth" });
     const effects = [
       { id: "filter", type: "filter", enabled: false, wet: 0.8, frequency: 480, mode: "highpass", q: 0.8 },
       { id: "delay", type: "delay", enabled: true, wet: 0.25, delayTime: 0.45, feedback: 0.4 },
@@ -494,7 +499,8 @@ describe("DAWproject native slice", () => {
   test("preserves WebCLAP device identity, bundle location and state in a project round trip", () => {
     const project = new Project({ title: "Synth" });
     const track = project.addTrack("Keys", "midi");
-    const device = project.addWebClapDevice(track.id, {
+    const device = project.addDevice(track.id, {
+      kind: "webclap",
       pluginId: "com.example.synth",
       name: "Synth",
       vendor: "Example",

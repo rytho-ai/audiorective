@@ -47,7 +47,7 @@ async function setup(tracks = 1) {
     project.dispose();
     await context.close();
   });
-  expect(workspace.warnings).toEqual([]);
+  expect(workspace.cells.warnings.value).toEqual([]);
   return { project, workspace, drums, extra, scene, slot, stored, placed, instruments };
 }
 
@@ -104,7 +104,7 @@ async function live(project: Project, instruments: Record<string, { sound: Sound
     instruments,
     arrangement: false,
   });
-  workspace.session.value.playChain(scenes.map((id) => sessionFor(project).scenes.findIndex((scene) => scene.id === id)));
+  workspace.cells.session.value.playChain(scenes.map((id) => sessionFor(project).scenes.findIndex((scene) => scene.id === id)));
   await workspace.play();
   ticks.tick();
   await workspace.renderSettled();

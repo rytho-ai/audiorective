@@ -7,6 +7,7 @@ import type { RackEffect, RackMacroSettings } from "./rack-preset";
 import type { TrackRack } from "./track-rack";
 import type { AudioTrackSession } from "./audio-track-session";
 import type { AudioClipGainAutomation, ProjectTrack } from "./model";
+import type { ControllerLane } from "./controller-lane";
 import type { WidthPath } from "./width-path";
 
 /** Seconds of media decoded and scheduled as one chunk. */
@@ -33,6 +34,8 @@ export type AudioClipWindow = {
 export type TrackRuntime = {
   kind: ProjectTrack["kind"];
   clips: ProjectTrack["clips"];
+  /** The track's MIDI controller lanes: Arrangement plays them beside its clips. */
+  controllerLanes: readonly ControllerLane[];
   deviceKeys: readonly string[];
   deviceStates: Map<string, Uint8Array>;
   channel: Channel;

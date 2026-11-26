@@ -72,7 +72,7 @@ try {
     const input = project.addTrack("Sine", "audio");
     const result = project.addTrack("Frequency return", "bus", { busRole: "effect", solo: true });
     project.setTrackRouting(input.id, { outputBusId: null, sends: [{ busId: result.id, gain: 1 }] });
-    const device = project.addWebClapDevice(result.id, { pluginId, name: "Signalsmith Frequency Shifter", bundleUrl });
+    const device = project.addDevice(result.id, { kind: "webclap", pluginId, name: "Signalsmith Frequency Shifter", bundleUrl });
     const sampleRate = context.sampleRate;
     const channel = Float32Array.from({ length: sampleRate * 5 }, (_, frame) => 0.15 * Math.sin((frame * 2 * Math.PI * 440) / sampleRate));
     project.addAudioClip(input.id, { sampleRate, channels: [channel, channel] }, 0);
@@ -111,7 +111,7 @@ try {
       const missingIndex = await failedLoad({ pluginIndex: 99 });
       workspace = await Workspace.create(context, project, { destination: analyser, workletUrl });
       const host = workspace.host(device.id);
-      if (!host) throw new Error(workspace.warnings.join(" "));
+      if (!host) throw new Error(workspace.cells.warnings.value.join(" "));
       const { id: mixId } = host.parameterInfo.find(({ name }) => name === "mix");
       const mix = host.params[String(mixId)];
       await workspace.play();
@@ -150,7 +150,7 @@ try {
         replay,
         wetMixRestored: restoredHost.params[String(mixId)].value,
         stateBytes,
-        warnings: reopened.warnings,
+        warnings: reopened.cells.warnings.value,
       };
     } finally {
       reopened?.dispose();

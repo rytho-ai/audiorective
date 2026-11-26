@@ -2,6 +2,7 @@ import type { MidiSink } from "./midi-sink";
 import { fadeSeconds, minLead, playbackLead, stopSource, VoiceGain } from "./internal/playback-gain";
 import type { TickWindow, Timeline } from "@audiorective/clock";
 import { AutomationBinding, AutomationCurve, audioParamTarget, type AutomationPoint } from "@audiorective/core/automation";
+import { controllerMessagesIn } from "./controller-lane";
 import { loopWrapMessages, type LoopFold, type LoopSegment } from "./arrangement-loop";
 import { clipGainAt } from "./clip-envelope";
 import { scheduleClipEnvelope } from "./schedule-clip-envelope";
@@ -119,6 +120,14 @@ export class ClipScheduler {
             send(event.data, timeline.beatToTime(segment.transportStart + beat - segment.beatStart));
           }
         }
+        // Controller lanes: a segment that begins a run (the start, a seek or a loop wrap) first sets each lane to the value in force there.
+        const begins =
+          segment.cycle < 0
+            ? Math.abs(segment.transportStart - fold.originTransport) < 1e-9
+            : !!fold.region && segment.beatStart <= fold.region.startBeat + 1e-9;
+        for (const lane of runtime.controllerLanes)
+          for (const { beat, data } of controllerMessagesIn(lane, segment.beatStart, segment.beatEnd, begins))
+            send(data, timeline.beatToTime(segment.transportStart + beat - segment.beatStart));
       }
     }
   }

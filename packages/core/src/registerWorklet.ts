@@ -1,3 +1,4 @@
+/** Thrown by `registerWorklet` when the context has no `audioWorklet` (insecure origin or an old browser). */
 export class WorkletUnavailableError extends Error {
   constructor(name: string) {
     super(`registerWorklet: this AudioContext has no audioWorklet, so "${name}" cannot be loaded. Run in a browser with AudioWorklet support.`);

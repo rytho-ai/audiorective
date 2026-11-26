@@ -1,6 +1,7 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { WavePlayer, type WaveStretchProcessor } from "@audiorective/player";
-import { mountWaveformSelector, type WaveformRenderer } from "../src";
+import { mountWaveformSelector } from "../src";
+import type { WaveformRenderer } from "../src/waveform";
 import { bandsFile, cleanup, drag, element, host, own } from "./helpers";
 
 // A deterministic shape adapter checks publication/interaction; pitch DSP has its own real-WASM suite.

@@ -37,6 +37,7 @@ export class Convolver extends Effect<{}, { buffer: ReadonlyCell<AudioBuffer | n
     else if (opts.url) void this.load(opts.url).catch(() => {});
   }
 
+  /** The impulse response in use, or null before one loads; assigning replaces it and marks the effect ready. */
   get buffer(): AudioBuffer | null {
     return this._buffer.value;
   }

@@ -19,7 +19,9 @@ type Step = TempoChange & Readonly<{ seconds: number }>;
  * `tests/tempo-agreement.test.ts`, which feeds the same schedule to a clock `Timeline`.
  */
 export class TempoMap {
+  /** The tempo in quarter-note beats per minute before the first change; positive and finite. */
   readonly initialBpm: number;
+  /** The tempo changes ordered by beat, each from a positive project beat on (a change at beat 0 is `initialBpm`); frozen. */
   readonly changes: readonly TempoChange[];
   private readonly steps: readonly Step[];
 
@@ -61,23 +63,27 @@ export class TempoMap {
     return this.steps[lo];
   }
 
+  /** The tempo in BPM in force at a project beat (0 or more); a change applies from its own beat. Throws `RangeError` for a negative or non-finite beat. */
   bpmAtBeat(beat: number): number {
     if (!Number.isFinite(beat) || beat < 0) throw new RangeError("Project beat needs a finite non-negative value.");
     return this.at(beat, "beat").bpm;
   }
 
+  /** Project seconds (from the song start) at which a project beat (0 or more) falls, through every tempo change before it. Throws `RangeError` for a negative or non-finite beat. */
   beatToSeconds(beat: number): number {
     if (!Number.isFinite(beat) || beat < 0) throw new RangeError("Project beat needs a finite non-negative value.");
     const step = this.at(beat, "beat");
     return step.seconds + ((beat - step.beat) * 60) / step.bpm;
   }
 
+  /** The project beat (fractional, 0 or more) at a project time in seconds from the song start; the inverse of `beatToSeconds`. Throws `RangeError` for negative or non-finite seconds. */
   secondsToBeat(seconds: number): number {
     if (!Number.isFinite(seconds) || seconds < 0) throw new RangeError("Project time needs finite non-negative seconds.");
     const step = this.at(seconds, "seconds");
     return step.beat + ((seconds - step.seconds) * step.bpm) / 60;
   }
 
+  /** Project seconds of the nearest multiple of `beats` (default 1, a quarter note; positive) to a time in seconds, never below 0; halves round up. Throws `RangeError` for a non-positive interval. */
   snapSeconds(seconds: number, beats = 1): number {
     if (!Number.isFinite(beats) || beats <= 0) throw new RangeError("Project snap needs a positive beat interval.");
     return this.beatToSeconds(Math.max(0, Math.round(this.secondsToBeat(Math.max(0, seconds)) / beats) * beats));

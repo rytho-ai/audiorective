@@ -1,0 +1,26 @@
+[
+  {
+    "pattern": "*.dispose",
+    "reason": "Teardown is named `dispose` everywhere and means one thing: release resources, safe to call twice (documented once on AudioProcessor and Param). `[Symbol.dispose]()` (key `*.Symbol.dispose`) calls it for the `using` protocol."
+  },
+  {
+    "pattern": "*.context",
+    "reason": "The AudioContext the object was built with; the name and the `BaseAudioContext` type say it all."
+  },
+  {
+    "pattern": "*.input",
+    "reason": "Web Audio connection point named like AudioNode input; the contract (`undefined` when there is none) is documented on AudioProcessor."
+  },
+  {
+    "pattern": "*.output",
+    "reason": "Web Audio connection point named like AudioNode output; the contract is documented on AudioProcessor."
+  },
+  {
+    "pattern": "*.cells",
+    "reason": "Frozen registry of the owner's ReadonlyCells; the shape is the generic argument and the rule is documented on AudioProcessor."
+  },
+  {
+    "pattern": "effects/*.type",
+    "reason": "Static class-name discriminant (`\"Compressor\"`, `\"Filter\"`\u2026) used to serialize and recreate effects; the literal says it."
+  }
+]

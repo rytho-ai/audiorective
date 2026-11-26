@@ -1,4 +1,4 @@
-import type { PCMData } from "./peaks";
+import type { PCMData } from "./pcm";
 
 /** Resampler quality: the number of zero crossings of the sinc kernel on each side (`fast` 12, `standard` 32, `high` 64). */
 export type ResampleQuality = "fast" | "standard" | "high";

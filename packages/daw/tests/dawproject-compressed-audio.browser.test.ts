@@ -1,15 +1,6 @@
 import { afterEach, expect, test } from "vitest";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
-import {
-  Workspace,
-  openDawProject,
-  openWorkspace,
-  openWorkspaceBlob,
-  renderMixRange,
-  renderStems,
-  saveWorkspace,
-  exportAudioFallbackTo,
-} from "../src";
+import { Workspace, openDawProject, openWorkspace, renderMixRange, renderStems, saveWorkspace, exportAudioFallbackTo } from "../src";
 import type { AudioClip } from "../src";
 import { parseTree, projectXmlOf, treeDifferences } from "./helpers/xml-tree";
 
@@ -97,7 +88,7 @@ test("the browser decodes every format and each click lands on the frame its pla
 
 test("a Blob and workspace.open decode the same way", async () => {
   const bytes = await fixture();
-  const fromBlob = await openWorkspaceBlob(await context(), new Blob([bytes as Uint8Array<ArrayBuffer>]), { workletUrl: worklet });
+  const fromBlob = await openWorkspace(await context(), new Blob([bytes as Uint8Array<ArrayBuffer>]), { workletUrl: worklet });
   cleanups.push(() => fromBlob.dispose());
   expectClicks(await clickFrames(fromBlob));
   // File > Open in place: a Workspace that holds another song decodes the new file before it swaps.
@@ -118,7 +109,7 @@ test("a file the browser cannot decode is named in the warnings and its clip sta
   const workspace = await opened(bytes);
   const broken = workspace.project.tracks.find((track) => track.name === "Broken")!;
   expect(broken.clips).toHaveLength(0);
-  const warning = workspace.warnings.find((text) => text.includes("audio/broken.ogg"));
+  const warning = workspace.cells.warnings.value.find((text) => text.includes("audio/broken.ogg"));
   expect(warning).toContain('Audio file "audio/broken.ogg" that the browser could not decode');
   expect(warning).toContain("Kept in the file unchanged, not played or edited");
   // Not lost: the clip and its file are saved as they were.

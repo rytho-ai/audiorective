@@ -70,7 +70,7 @@ export function mountRhythmView(
           leases.delete(lane.id);
         }
         previous?.lease.release();
-        workspace.clock.refresh();
+        workspace.transport.refresh();
       } catch (error) {
         select.value = previous?.id ?? "";
         onError(error);

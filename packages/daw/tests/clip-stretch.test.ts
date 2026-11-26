@@ -6,7 +6,7 @@ import { AutomationCurve } from "@audiorective/core/automation";
 const original = Float32Array.from({ length: 40 }, (_, index) => index / 40);
 const frames = (count: number) => ({ sampleRate: 100, channels: [new Float32Array(count).fill(0.5)] });
 
-test("retains the original PCM, carries its window through a split and reopens stretched from the original", () => {
+test("retains the original PCM, carries its window through a split and reopens the rendered playback", () => {
   const project = new Project();
   const track = project.addTrack("Track", "audio");
   const clip = project.addAudioClip(track.id, { sampleRate: 100, channels: [original] }, 1, {
@@ -32,16 +32,14 @@ test("retains the original PCM, carries its window through a split and reopens s
   const pair = openDawProject(archive).project;
   const savedTail = pair.tracks[0].clips[1];
   if (savedTail.kind !== "audio") throw new Error("Expected an audio clip.");
-  // The file holds the original audio and the warp, not the render: the clip reopens stretched, with varispeed audio of the same length.
-  expect(savedTail).toMatchObject({ time: 1.3, duration: 0.5 });
   expect(savedTail.stretch?.ratio).toBe(2);
-  expect(savedTail.stretch?.source.channels?.[0]).toEqual(original.subarray(15));
+  // The file holds the render beside the original and the warp, so a reader with no engine plays the same samples.
+  expect(savedTail.channels).toEqual(tail.channels);
   const restored = pair.applyAudioClipStretch(savedTail, 1);
   expect(restored.duration).toBe(0.25);
   expect(restored.stretch).toBeUndefined();
   expect(restored.channels?.[0]).toEqual(original.subarray(15));
 
-  // Without Audiorective's details the warp still says how the clip is stretched.
   const files = unzipSync(archive);
   delete files["audiorective/state.json"];
   const portable = openDawProject(zipSync(files));
@@ -49,7 +47,7 @@ test("retains the original PCM, carries its window through a split and reopens s
   expect(portable.project.tracks[0].clips[1]).toHaveProperty("stretch");
 });
 
-test("writes the original file-backed window, which a stretched clip reads into memory when reopened", async () => {
+test("streams the original file-backed window even when the current rendered clip is PCM", async () => {
   const bytes = new Uint8Array(original.length * 4);
   for (const [index, sample] of original.entries()) new DataView(bytes.buffer).setFloat32(index * 4, sample, true);
   const media = new AudioMedia(new Blob([bytes]), 100, 1, original.length);
@@ -71,8 +69,11 @@ test("writes the original file-backed window, which a stretched clip reads into 
   const reopened = (await openDawProjectBlob(new Blob(chunks as Uint8Array<ArrayBuffer>[]))).project;
   const stretched = reopened.tracks[0].clips[0];
   if (stretched.kind !== "audio") throw new Error("Expected an audio clip.");
+  // The reopened clip plays the render the file holds, read from the archive without an engine.
+  expect(stretched.channels).toEqual(rendered.channels);
   const restored = reopened.applyAudioClipStretch(stretched, 1);
   expect(restored.duration).toBe(0.2);
+  // A stretched clip's original is read into memory when the file is reopened.
   expect(restored.channels?.[0]).toEqual(original.subarray(10, 30));
 });
 
@@ -113,9 +114,8 @@ test("warp windows preserve source history, anchor interpolation and gain after 
   expect(project.duplicateClip(tail.id, 3)).toMatchObject(properties);
   const reopened = openDawProject(saveDawProject(project)).project;
   const reopenedTail = reopened.tracks[0].clips[1];
+  expect(reopenedTail).toEqual(tail);
   if (reopenedTail.kind !== "audio") throw new Error("Expected audio clip.");
-  expect(reopenedTail).toMatchObject(properties);
-  expect(reopenedTail.stretch?.source.channels?.[0]).toEqual(pcm.subarray(50));
   const restored = reopened.applyAudioClipStretch(reopenedTail, 1);
   expect(restored.channels?.[0]).toEqual(pcm.subarray(50));
   expect(restored.duration).toBe(1.5);

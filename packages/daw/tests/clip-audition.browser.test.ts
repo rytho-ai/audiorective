@@ -49,11 +49,11 @@ test("a range plays that part of the whole recording, outside the clip's window 
   const workspace = await setup(project);
   const played = recordPlayed();
   await workspace.auditionAudioClip(clip.id, { range: { start: 0.5, end: 2.5 } });
-  expect(workspace.auditioningClip.value).toBe(clip.id);
+  expect(workspace.cells.auditioningClip.value).toBe(clip.id);
   expect(played).toHaveLength(1);
   expect(played[0]).toEqual(original.slice(RATE / 2, 2.5 * RATE));
   workspace.stopClipAudition();
-  expect(workspace.auditioningClip.value).toBeNull();
+  expect(workspace.cells.auditioningClip.value).toBeNull();
 });
 
 test("without a range the clip's own window plays", async () => {
@@ -100,7 +100,7 @@ test("an invalid range throws a RangeError and leaves no audition", async () => 
     { start: 0, end: Number.NaN },
   ])
     await expect(workspace.auditionAudioClip(clip.id, { range })).rejects.toThrow(message);
-  expect(workspace.auditioningClip.value).toBeNull();
+  expect(workspace.cells.auditioningClip.value).toBeNull();
   await expect(workspace.auditionAudioClip("nope", { range: { start: 0, end: 1 } })).rejects.toThrow("Workspace audition needs an audio clip.");
 });
 
@@ -110,14 +110,14 @@ test("a new audition replaces the running one, and stop cancels it", async () =>
   const workspace = await setup(project);
   const played = recordPlayed();
   await workspace.auditionAudioClip(clip.id, { range: { start: 0, end: 1 } });
-  expect(workspace.auditioningClip.value).toBe(clip.id);
+  expect(workspace.cells.auditioningClip.value).toBe(clip.id);
   await workspace.auditionAudioClip(other.id);
-  expect(workspace.auditioningClip.value).toBe(other.id);
+  expect(workspace.cells.auditioningClip.value).toBe(other.id);
   await workspace.auditionAudioClip(clip.id, { range: { start: 2, end: 3 } });
-  expect(workspace.auditioningClip.value).toBe(clip.id);
+  expect(workspace.cells.auditioningClip.value).toBe(clip.id);
   expect(played).toHaveLength(3);
   workspace.stopClipAudition();
-  expect(workspace.auditioningClip.value).toBeNull();
+  expect(workspace.cells.auditioningClip.value).toBeNull();
 });
 
 test("editing the audited clip stops its range audition", async () => {
@@ -125,5 +125,5 @@ test("editing the audited clip stops its range audition", async () => {
   const workspace = await setup(project);
   await workspace.auditionAudioClip(clip.id, { range: { start: 0, end: 3 } });
   project.setClipSourceRange(clip.id, { start: 0, end: 1 });
-  await vi.waitFor(() => expect(workspace.auditioningClip.value).toBeNull());
+  await vi.waitFor(() => expect(workspace.cells.auditioningClip.value).toBeNull());
 });

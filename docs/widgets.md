@@ -124,12 +124,12 @@ const mixer = mountMixer(root, {
     return { tracks: workspace.project.tracks, masterVolume: workspace.project.masterVolume };
   }),
   editTrack(id, patch) {
-    if (patch.volume !== undefined) workspace.setTrackVolume(id, patch.volume);
-    if (patch.pan !== undefined) workspace.setTrackPan(id, patch.pan);
-    if (patch.muted !== undefined) workspace.setTrackMuted(id, patch.muted);
-    if (patch.solo !== undefined) workspace.setTrackSolo(id, patch.solo);
+    if (patch.volume !== undefined) workspace.project.setTrackVolume(id, patch.volume);
+    if (patch.pan !== undefined) workspace.project.setTrackPan(id, patch.pan);
+    if (patch.muted !== undefined) workspace.project.setTrackMuted(id, patch.muted);
+    if (patch.solo !== undefined) workspace.project.setTrackSolo(id, patch.solo);
   },
-  editMaster: (gain) => workspace.setMasterVolume(gain),
+  editMaster: (gain) => workspace.project.setMasterVolume(gain),
 });
 ```
 
@@ -220,7 +220,7 @@ For a per-step helper, attach a `StepGridPlugin` with `context.onCell(cell => ..
 
 ## Clip Grid
 
-`mountClipGrid(root, { launcher, launch?, cancel?, labels? })` renders buttons for an app-owned scene layout over an `@audiorective/launcher` `ClipLauncher` (or `workspace.session.value`), read through its cells and driven through its commands. Use `setLayout({ tracks, scenes })` (a scene with `index` launches the launcher's scene `index`, so its `emptySlots` rule applies; without it the row launches exactly its `clips`) when the grid changes: `tracks` are `{ track, label }` and each scene is `{ label, clips: [{ track, clip, label }] }` with at most one clip per track, where `track` and `clip` are the launcher's `Track` and `Clip` objects. The widget exposes `data-clip-state` as `idle`, `queued` or `active` for theming and keeps button state in sync with the launcher's `playing` and `queued` cells. The quantize of every launch is `launcher.quantize`, which the app owns. Clip slots may be `null`; omit empty slots from each scene's layout instead of passing `null` as a `ClipGridClip`:
+`mountClipGrid(root, { launcher, launch?, cancel?, labels? })` renders buttons for an app-owned scene layout over an `@audiorective/launcher` `ClipLauncher` (or `workspace.cells.session.value`), read through its cells and driven through its commands. Use `setLayout({ tracks, scenes })` (a scene with `index` launches the launcher's scene `index`, so its `emptySlots` rule applies; without it the row launches exactly its `clips`) when the grid changes: `tracks` are `{ track, label }` and each scene is `{ label, clips: [{ track, clip, label }] }` with at most one clip per track, where `track` and `clip` are the launcher's `Track` and `Clip` objects. The widget exposes `data-clip-state` as `idle`, `queued` or `active` for theming and keeps button state in sync with the launcher's `playing` and `queued` cells. The quantize of every launch is `launcher.quantize`, which the app owns. Clip slots may be `null`; omit empty slots from each scene's layout instead of passing `null` as a `ClipGridClip`:
 
 ```typescript
 const tracks = Object.values(launcher.tracks);

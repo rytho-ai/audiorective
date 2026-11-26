@@ -2,7 +2,13 @@ import type { Readable } from "@audiorective/core";
 import type { WaveLoadProgress } from "@audiorective/player";
 
 /** The playback version a selector currently displays. */
-export type SelectorVersion = Readonly<{ revision: number; sourceRevision: number; buffer: { readonly duration: number }; peaks: WaveformPeaks }>;
+export type SelectorVersion = Readonly<{
+  revision: number;
+  sourceRevision: number;
+  /** The committed audio; `duration` is in seconds. */
+  buffer: { readonly duration: number };
+  peaks: WaveformPeaks;
+}>;
 
 /** Selection boundaries in the currently committed buffer's output seconds. */
 export type Selection = { start: number; end: number };
@@ -27,8 +33,11 @@ export type WaveformSelectorState = {
 /** What the selector reads and drives. `WavePlayer` satisfies it; so can any model that exposes these members. The selector follows the cells. */
 export interface SelectorPlayer extends SelectionModel {
   readonly output: AudioNode;
+  /** Playhead, seconds from the start of the source. */
   readonly position: number;
+  /** Length of the source in seconds. */
   readonly duration: number;
+  /** The decoded source (`duration` in seconds), or null before it loads. */
   readonly sourceBuffer: { readonly duration: number } | null;
   readonly cells: SelectionModel["cells"] & {
     readonly isLooping: Readable<boolean>;
@@ -99,12 +108,13 @@ export interface WaveformSelectorHandle extends PluginTarget<TimeViewPluginConte
 
 export type MountWaveformSelector = (root: HTMLElement, options: WaveformSelectorOptions) => WaveformSelectorHandle;
 
-/** Extrema per bin, shared across channels. Arrays are copied on setData(). */
+/** Extrema per bin, shared across channels. Arrays are copied on setData(). `duration` is the span they cover, in seconds. */
 export type WaveformPeaks = {
   min: Float32Array;
   max: Float32Array;
   duration: number;
 };
+/** Peaks with their `duration` in seconds, or an AudioBuffer. */
 export type WaveformData = { peaks: Float32Array; duration: number } | WaveformPeaks | AudioBuffer;
 /** Drawing uses the full scrolling content in CSS pixels, with a linear time axis. */
 export type WaveformRenderFrame = Readonly<{
@@ -122,6 +132,7 @@ export interface WaveformRendererInstance {
 }
 /** Mount drawing once. The widget owns the container and calls dispose on cleanup. */
 export type WaveformRenderer = (container: HTMLElement) => WaveformRendererInstance;
+/** The visible window: `duration` is the full length in seconds; scroll and zoom are in pixels. */
 export type WaveformViewport = Readonly<{
   duration: number;
   pixelsPerSecond: number;
@@ -153,8 +164,10 @@ export interface PluginTarget<Context extends WidgetPluginContext> {
 /** Compatibility interface. Use TimeViewPluginContext to read the time unit. */
 export interface WaveformPluginContext extends WidgetPluginContext {
   readonly surface: HTMLElement;
+  /** Length of the displayed data in seconds. */
   readonly duration: number;
   getViewport(): WaveformViewport;
+  /** Pixel x of view `time` (seconds). */
   timeToX(time: number): number;
   clientXToTime(clientX: number): number;
   scrollBy(pixels: number): void;
@@ -162,6 +175,7 @@ export interface WaveformPluginContext extends WidgetPluginContext {
   /** Mount a full-size overlay; position children using timeToX(). */
   mountOverlay(element: HTMLElement): Unsubscribe;
   onViewportChange(listener: (viewport: WaveformViewport) => void): Unsubscribe;
+  /** Calls `listener` with the new data length in seconds whenever the data changes. */
   onDataChange(listener: (duration: number) => void): Unsubscribe;
 }
 /** Times use the view's unit. The horizontal coordinate is in scrolling content pixels. */
@@ -181,6 +195,7 @@ export type WaveformOptions = {
 export interface WaveformHandle extends PluginTarget<TimeViewPluginContext> {
   /** Replace the data and reset zoom, scroll and plugin selections. */
   setData(data: WaveformData | null): void;
+  /** Moves the external playhead to `seconds` in the view, or hides it with null. */
   setPlayhead(seconds: number | null): void;
   getViewport(): WaveformViewport;
   /** A factor of 1 fits the entire source; zoom preserves the viewport center. */
@@ -196,6 +211,7 @@ export type SnapMode = "off" | "beat" | "downbeat";
 export type SelectionCommit = Readonly<{
   selection: Selection | null;
   kind: "pointer" | "keyboard" | "programmatic" | "click";
+  /** Seconds in the view where a `click` landed; absent for other kinds. */
   time?: number;
 }>;
 export type SelectionPluginOptions = {

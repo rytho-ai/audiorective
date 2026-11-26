@@ -37,6 +37,7 @@ export type {
   BusRole,
   TrackRouting,
   ProjectSend,
+  NewDevice,
   ProjectDevice,
   WebClapDevice,
 } from "./model";
@@ -106,6 +107,8 @@ export type {
   SetTrackSoloEdit,
   SetTrackVolumeEdit,
   SetVolumeAutomationEdit,
+  SetControllerLaneEdit,
+  ControllerPointEdit,
   SplitClipEdit,
   TimeRange,
   VolumePointEdit,
@@ -127,6 +130,8 @@ export type {
 export { rackMacroRange } from "./rack-preset";
 export { TempoMap } from "./tempo-map";
 export type { TempoChange } from "./tempo-map";
+export { controllerMax, controllerSampleBeats, controllerExpressions } from "./controller-lane";
+export type { ControllerLane, ControllerPoint, ControllerExpression } from "./controller-lane";
 export { MeterMap } from "./meter-map";
 export type { TimeSignatureChange } from "./meter-map";
 export { AudioMedia, AudioMediaWriter } from "./media";

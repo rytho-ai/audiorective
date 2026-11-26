@@ -133,10 +133,19 @@ export function warpKnots(input: {
   for (const position of tempoBreaks) if (position > start && position < start + length) locals.add(position - start);
   const origin = elapsed(start);
   const all: WarpKnot[] = [];
+  const last = Math.max(...locals);
   for (const local of [...locals].sort((a, b) => a - b)) {
     const content = contentAt(points, from + local, 1e-9);
     if (content === undefined) return undefined;
-    all.push({ output: elapsed(start + local) - origin, content });
+    const knot = { output: elapsed(start + local) - origin, content };
+    // A warp marker and a tempo change at the same beat are one place: the file states the marker's beat to 12 digits and the tempo change is
+    // exact, so the two knots differ by rounding noise only. The later one is dropped (the clip's end is kept over a marker that touches it).
+    const previous = all[all.length - 1];
+    if (previous && knot.output - previous.output <= tolerance && Math.abs(knot.content - previous.content) <= tolerance) {
+      if (local === last && all.length > 1) all[all.length - 1] = knot;
+      continue;
+    }
+    all.push(knot);
   }
   for (let i = 1; i < all.length; i++) if (!(all[i].output > all[i - 1].output) || !(all[i].content > all[i - 1].content)) return undefined;
   const kept: WarpKnot[] = [all[0]];

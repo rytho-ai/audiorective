@@ -17,6 +17,7 @@ export interface AutomationClipOptions {
 /** Structural clock scheduler window; applications attach the clip instead of calling schedule. */
 export interface AutomationClipWindow {
   beat: { start: number; end: number };
+  /** `current`: the audio-context time of the tick, in seconds. */
   time: { current: number };
   own(event: CancellableEvent, when: number): void;
 }
@@ -79,6 +80,7 @@ export class AutomationClip {
   private readonly onAbort = () => this.dispose();
 
   constructor(
+    /** The curve this clip plays; edits reprogram the running automation. */
     readonly curve: AutomationCurve,
     options: AutomationClipOptions,
   ) {

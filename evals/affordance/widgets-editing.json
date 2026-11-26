@@ -1,0 +1,96 @@
+{
+  "area": "widgets-editing",
+  "description": "API-shape experiment for widget-level editing: a multi-source sample audition board with source-time mapping and automation, and a piano roll with app-controlled editing plus a launcher scene grid. Expectations describe behaviour, not names.",
+  "tasks": [
+    {
+      "id": "P1-sample-board",
+      "prompt": "A browser sample-audition board on `context`. In `row` it shows three players side by side with the toolkit's player widget: `wave` (a long loop that the page plays stretched to 0.8x speed, so a second of the source is not a second of output), `oneShot` (a decoded one-shot) and `streamed` (a streamed long file). (1) Give every player's waveform a dark theme: keep the toolkit's normal drawing and only tint it. (2) Clicking the `wave` waveform shows both numbers, the source second under the click and the output second under it, and seeks playback to that place. (3) While `wave` plays (not looping) its sound must dip to 0.3 between source seconds 4 and 6 through `gain` (the node the page routes it through), following the source seconds even though the output is stretched. (4) A new sample may start loading into `wave` while the old one is still loading; a Cancel button must stop the load so a late decode never shows up or sets an error. (5) Under the `wave` waveform draw a peak bar chart of its source audio at 256 frames per bar; clicking bar `n` shows its frame range and time range.",
+      "hostDeclarations": "declare const context: AudioContext;\ndeclare const wave: import(\"@audiorective/player\").WavePlayer;\ndeclare const oneShot: import(\"@audiorective/core\").BufferPlayer;\ndeclare const streamed: import(\"@audiorective/core\").FilePlayer;\ndeclare const row: HTMLElement;\ndeclare const gain: GainNode;",
+      "expectations": [
+        "Mounts one player widget per source type using the toolkit's adapters for the wave player, the buffer player and the file player.",
+        "The custom waveform drawing reuses the toolkit's default drawing and only tints it.",
+        "The two numbers come from the player's own mapping between source and output seconds, and the seek goes to the output second of the click.",
+        "The dip is a source-time automation attached to the player (non-looping), driven by the player's playback and not by output seconds or a timer.",
+        "Cancel uses the player's own load cancellation so a superseded load publishes neither audio nor error.",
+        "The bars come from a peak summary of the source audio at 256 frames per peak and the click maps a bar to its frame range with the toolkit."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "Three adapters",
+          "all": ["fromWavePlayer", "fromBufferPlayer", "fromFilePlayer", "mountPlayer"]
+        },
+        {
+          "expectation": 1,
+          "label": "Default renderer reused",
+          "all": ["defaultRenderer"]
+        },
+        {
+          "expectation": 2,
+          "label": "Source and output mapping",
+          "all": ["outputToSource", "sourceToOutput"]
+        },
+        {
+          "expectation": 3,
+          "label": "Source automation",
+          "all": ["attachSourceAutomation", "AutomationBinding"]
+        },
+        {
+          "expectation": 4,
+          "label": "Cancel load",
+          "all": ["cancelLoad"]
+        },
+        {
+          "expectation": 5,
+          "label": "Peak frame range",
+          "all": ["summarizePeaks", "peakFrameRange"]
+        }
+      ]
+    },
+    {
+      "id": "G1-piano-roll-edit",
+      "prompt": "A browser editor with `clip`, a MIDI clip from the toolkit, shown in `host` with the toolkit's piano roll, and a scene launcher `launcher` shown in `gridHost`. (1) A double-click on an empty spot must not add a note by itself: the app gets the proposed note and decides, snapping it to a quarter of a beat, half a beat long, velocity 0.8, and adding it to the clip as one Undo-able edit of your own. (2) Deleting selected notes (keyboard) must ask the user (`confirm`) and then delete through your code. (3) A velocity lane shows under the roll. (4) The app has a list of notes next to the roll (`onNoteListClick(handler)` calls `handler(noteId)`); clicking one highlights that note in the roll without changing the roll's selection. (5) The clip plays only beats 4 to 12 of its content; the roll shows the rest dimmed and follows when that window changes. (6) Below, a grid of the launcher's scenes with one `Launch` button per scene: pressing a scene button must apply the launcher's own rule for tracks that are empty in that scene (the launcher stops those tracks), not just start the clips that exist.",
+      "hostDeclarations": "declare const clip: import(\"@audiorective/midi\").MidiClip;\ndeclare const launcher: import(\"@audiorective/launcher\").ClipLauncher;\ndeclare const host: HTMLElement;\ndeclare const gridHost: HTMLElement;\ndeclare function onNoteListClick(handler: (noteId: string) => void): void;",
+      "expectations": [
+        "The roll reports a proposed new note to the app instead of adding it, and the app adds a snapped note (quarter-beat snap, half a beat, velocity 0.8) through the clip's edit.",
+        "Deletion is reported to the app, which confirms and then deletes through the clip's edit.",
+        "The velocity lane is enabled on the roll.",
+        "The note list highlights the roll's active note through the roll's own handle, without changing its selection.",
+        "The playing window (beats 4 to 12) is given to the roll's model so the rest is dimmed, and follows changes.",
+        "Each scene row in the grid launches the scene by its slot index so the launcher's empty-slot rule applies."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "Add callback",
+          "all": ["onNoteAdd"]
+        },
+        {
+          "expectation": 1,
+          "label": "Delete callback",
+          "all": ["onNoteDelete"]
+        },
+        {
+          "expectation": 2,
+          "label": "Velocity lane",
+          "all": ["velocityLane\\s*:\\s*true"]
+        },
+        {
+          "expectation": 3,
+          "label": "Active note",
+          "all": ["setActiveNote"]
+        },
+        {
+          "expectation": 4,
+          "label": "Window",
+          "all": ["window"]
+        },
+        {
+          "expectation": 5,
+          "label": "Scene index",
+          "all": ["mountClipGrid", "index\\s*:"]
+        }
+      ]
+    }
+  ]
+}

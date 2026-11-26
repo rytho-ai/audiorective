@@ -55,7 +55,7 @@ export async function renderSnapshotFrames(
     });
     creating.then((created) => (signal?.aborted ? created.dispose() : undefined)).catch(() => undefined);
     render = await hold(creating);
-    if (render.warnings.length) throw new Error(`${name} has unresolved devices: ${render.warnings.join(" ")}`);
+    if (render.cells.warnings.value.length) throw new Error(`${name} has unresolved devices: ${render.cells.warnings.value.join(" ")}`);
     render.seek(from / sampleRate);
     await hold(render.play());
     ticks.tick();

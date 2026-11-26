@@ -40,9 +40,9 @@ export function mountStudioSession(
         const run = async () => {
           await workspace.flush();
           if (generation !== request) return;
-          if (workspace.clock.state.value !== "playing") await workspace.play();
-          if (generation !== request || workspace.clock.state.value !== "playing") return;
-          const current = workspace.session.value;
+          if (workspace.transport.state.value !== "playing") await workspace.play();
+          if (generation !== request || workspace.transport.state.value !== "playing") return;
+          const current = workspace.cells.session.value;
           current.quantize.value = options.quantize();
           for (const track of Object.values(current.tracks))
             for (const clip of track.clips) if (clip && clip.options.value.loop !== options.loop()) clip.configure({ loop: options.loop() });
@@ -61,7 +61,7 @@ export function mountStudioSession(
     return identities.get(item);
   };
   const stopLayout = effect(() => {
-    const launcher = workspace.session.value;
+    const launcher = workspace.cells.session.value;
     const song = sessionFor(workspace.project);
     type SceneSlots = ClipGridLayout["scenes"][number]["clips"][number][];
     const scenes = song.scenes.map(({ name }, index) => ({ label: name, index, clips: [] as SceneSlots }));

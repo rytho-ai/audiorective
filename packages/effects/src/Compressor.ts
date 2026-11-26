@@ -16,7 +16,7 @@ export interface CompressorOptions extends EffectOptions {
   /** Output gain after compression, dB. Default 0. */
   makeup?: number;
   /** Detector lookahead, seconds; the effect declares it as latency. Default 0. */
-  lookahead?: number;
+  lookAhead?: number;
 }
 
 type P = {
@@ -42,7 +42,7 @@ export class Compressor extends Effect<P, { reduction: ReadonlyCell<number> }> {
       attack: opts.attack ?? 0.003,
       release: opts.release ?? 0.25,
       makeup: opts.makeup ?? 0,
-      lookahead: opts.lookahead ?? 0,
+      lookahead: opts.lookAhead ?? 0,
     });
     super(
       ctx,

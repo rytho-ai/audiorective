@@ -51,7 +51,9 @@ export class ClipTimeMap {
   private readonly points: readonly [number, number][];
 
   constructor(
+    /** Seconds of the recording the map covers (the source end of the last segment). */
     readonly sourceDuration: number,
+    /** Seconds the clip plays for on the timeline (the output end of the last segment). */
     readonly outputDuration: number,
     anchors: readonly ClipStretchAnchor[],
     sampleRate: number,
@@ -63,10 +65,12 @@ export class ClipTimeMap {
     ];
   }
 
+  /** Seconds on the clip's timeline (0 up to `outputDuration`) where a second of the recording (0 up to `sourceDuration`) plays, linear between anchors; a value outside the range is extended along the first or last segment. */
   sourceToOutput(seconds: number): number {
     return interpolate(this.points, seconds, 0);
   }
 
+  /** Seconds of the recording (0 up to `sourceDuration`) that plays at a second of the clip's timeline (0 up to `outputDuration`); the inverse of `sourceToOutput`. */
   outputToSource(seconds: number): number {
     return interpolate(this.points, seconds, 1);
   }

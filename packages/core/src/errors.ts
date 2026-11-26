@@ -1,3 +1,4 @@
+/** Thrown when an API needs a browser `AudioContext` and none exists (Node, SSR, server render); construct engines on the client only. */
 export class EngineEnvironmentError extends Error {
   constructor(message: string) {
     super(message);
@@ -5,6 +6,7 @@ export class EngineEnvironmentError extends Error {
   }
 }
 
+/** Thrown when delay compensation needs the latency of a processor that no `defineGraph` or `connect` edge has placed in a graph. */
 export class LatencyUnknownError extends Error {
   constructor(processorName: string) {
     super(

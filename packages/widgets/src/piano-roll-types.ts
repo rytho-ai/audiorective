@@ -20,11 +20,13 @@ export type PianoRollRenderFrame = Readonly<{
   notes: readonly MidiNote[];
   width: number;
   height: number;
+  /** Length of the content in beats. */
   duration: number;
   /** The part of the content that plays, in beats, when the model has one. */
   window?: MidiRange;
   pitches: PitchRange;
   viewport: PianoRollViewport;
+  /** Pixel x of `time` in beats. */
   timeToX(time: number): number;
   pitchToY(pitch: number): number;
   readonly editable: boolean;
@@ -66,10 +68,12 @@ export type PianoRollOptions = {
   onCommit?: (commit: SelectionCommit) => void;
 };
 export interface PianoRollHandle extends PluginTarget<TimeViewPluginContext> {
+  /** Moves the external playhead to `time` in beats, or hides it with null. */
   setPlayhead(time: number | null): void;
   /** Tell the view which note the app has selected, so Delete and a chord's velocity drag act on it. */
   setActiveNote(noteId: string | null): void;
   setZoom(factor: number): void;
+  /** Scrolls so `time` (beats) is at the left edge of the view. */
   scrollTo(time: number): void;
   setPitchRange(pitches: PitchRange): void;
   getViewport(): PianoRollViewport;

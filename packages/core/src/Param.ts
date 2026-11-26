@@ -2,12 +2,19 @@ import { signal, effect as alienEffect, getActiveSub, setActiveSub } from "alien
 import { subscribeTo } from "./subscribe";
 import type { ParamOptions, SignalAccessor } from "./types";
 
+/** A reactive value with the same `.value` shape as a native `AudioParam`; `min`, `max`, `step`, `label` and `display` are metadata for UIs. */
 export class Param<T> {
+  /** Raw alien-signals accessor: `$()` reads (tracked), `$(next)` writes. */
   readonly $: SignalAccessor<T>;
+  /** Display name for a UI control; undefined when not given. */
   readonly label?: string;
+  /** Lower bound for a UI control, in the param's own unit. Not enforced: a write below it is stored as is. */
   readonly min?: number;
+  /** Upper bound for a UI control, in the param's own unit. Not enforced: a write above it is stored as is. */
   readonly max?: number;
+  /** Increment for a UI control, in the param's own unit; undefined means continuous. */
   readonly step?: number;
+  /** Formats a value for display (for example `v => `${v} dB``); undefined means show the raw value. */
   readonly display?: (value: T) => string;
   private _stopEffect?: () => void;
 
@@ -40,6 +47,7 @@ export class Param<T> {
     }
   }
 
+  /** Current value; reading inside an effect or computed tracks it. Assigning notifies subscribers and runs the `bind` setter. */
   get value(): T {
     return this.$();
   }

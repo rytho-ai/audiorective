@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { unzipSync } from "fflate";
-import { openWorkspaceBlob, saveWorkspace } from "../src";
+import { openWorkspace, saveWorkspace } from "../src";
 import type { AudioClip } from "../src";
 import { parseTree, projectXmlOf, treeDifferences } from "./helpers/xml-tree";
 
@@ -19,16 +19,16 @@ test.skipIf(!file)(
     const bytes = new Uint8Array(await response.arrayBuffer());
     const context = new AudioContext({ sampleRate: 48_000 });
     const started = performance.now();
-    const workspace = await openWorkspaceBlob(context, new Blob([bytes as Uint8Array<ArrayBuffer>]));
+    const workspace = await openWorkspace(context, new Blob([bytes as Uint8Array<ArrayBuffer>]));
     const seconds = ((performance.now() - started) / 1000).toFixed(1);
     const clips = workspace.project.tracks.flatMap((track) => track.clips).filter((clip): clip is AudioClip => clip.kind === "audio");
     const decoded = clips.filter((clip) => !clip.media);
     const files = new Set(Object.keys(unzipSync(bytes)).filter((name) => name.endsWith(".ogg")));
-    const refused = workspace.warnings.filter((warning) => /could not decode/.test(warning));
+    const refused = workspace.cells.warnings.value.filter((warning) => /could not decode/.test(warning));
     console.log(
       `Studio One export in a browser Workspace at 48 kHz: ${clips.length} audio clips, ${decoded.length} decoded to PCM (${files.size} Ogg files in the archive), opened in ${seconds} s.`,
     );
-    console.log(`${workspace.warnings.length} warnings; ${refused.length} name a file the browser could not decode.`);
+    console.log(`${workspace.cells.warnings.value.length} warnings; ${refused.length} name a file the browser could not decode.`);
     for (const warning of refused) console.log(`  - ${warning.slice(0, 300)}`);
     expect(clips.length).toBeGreaterThan(0);
     expect(decoded.length).toBe(clips.length);

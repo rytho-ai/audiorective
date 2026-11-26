@@ -59,6 +59,7 @@ export default defineConfig({
             { label: "Choosing Playback", slug: "docs/choosing-playback" },
             { label: "Server-rendered Frameworks", slug: "docs/client-boundary" },
             { label: "Rules in depth", slug: "docs/rules-in-depth" },
+            { label: "Vocabulary", slug: "docs/vocabulary" },
           ],
         },
         {

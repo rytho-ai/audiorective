@@ -30,12 +30,12 @@ try {
       const clip = project.addAudioClip(track.id, { sampleRate: 48000, channels: [samples] }, 0);
       const context = new AudioContext({ sampleRate: 48000 });
       const workspace = await Workspace.create(context, project);
-      workspace.setMasterVolume(0.3);
+      workspace.project.setMasterVolume(0.3);
       project.setAudioClipGainAutomation(clip.id, [
         { time: 0, value: 0.25, shape: "hold" },
         { time: 0.05, value: 1, shape: "hold" },
       ]);
-      const report = window.__daw.api.portabilityReport(workspace.project, workspace.warnings);
+      const report = window.__daw.api.portabilityReport(workspace.project, workspace.cells.warnings.value);
       const parts = [];
       const { AudioRecorder } = await import(recorderModule);
       const originalRecord = AudioRecorder.prototype.record;
@@ -85,7 +85,7 @@ try {
         { id: "filter", type: "filter", enabled: true, wet: 1, mode: "lowpass", frequency: 100, q: 0.7 },
         { id: "delay", type: "delay", enabled: true, wet: 1, delayTime: 0.25, feedback: 0 },
       ];
-      workspace.setTrackEffects(track.id, effects);
+      workspace.project.setTrackEffects(track.id, effects);
       const restored = await window.__daw.api.openWorkspace(context, await window.__daw.api.saveWorkspace(workspace));
       const reopenedMaster = restored.project.masterVolume;
       let effectOutput;
@@ -146,7 +146,8 @@ try {
     const project = new original.project.constructor({ title: "Plugin export probe" });
     const track = project.addTrack("Synth", "midi");
     const device = original.project.tracks[0].devices[0];
-    project.addWebClapDevice(track.id, {
+    project.addDevice(track.id, {
+      kind: "webclap",
       pluginId: device.pluginId,
       name: device.name,
       vendor: device.vendor,

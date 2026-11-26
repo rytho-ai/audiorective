@@ -143,8 +143,8 @@ export type Step = {
 export type TransportHandle = Readonly<{ refresh(): void; detach(): void }>;
 
 /**
- * The part of a transport window `schedule` reads. Internal to transports: `clock.attach(sequencer)` and `workspace.transport.attach(sequencer)`
- * pass it; applications never build one.
+ * The part of a transport window `schedule` reads. Internal to transports: `clock.attach(sequencer)`
+ * passes it; applications never build one.
  */
 export type StepWindow = Readonly<{
   beat: { start: number; end: number };
@@ -354,7 +354,7 @@ const stepKey = (hit: StepEvent): string => `${hit.laneId}:${hit.loop}:${hit.cou
 /**
  * Looping lanes of steps over a borrowed beat transport: `new StepSequencer({ kick: "X...X...", hat: { pattern: "xx", rate: "8n" } }, options)`.
  *
- * Every lane loops forever on its own length at its own rate (polymeter). `clock.attach(sequencer)` or `workspace.transport.attach(sequencer)`
+ * Every lane loops forever on its own length at its own rate (polymeter). `clock.attach(sequencer)`
  * is all the wiring a live edit needs: each committed change re-queues the transport's look-ahead. Hits reach `onHit`, `hit` events, a
  * per-lane `sound` and the optional `transform`.
  */
@@ -584,8 +584,7 @@ export class StepSequencer extends EventTarget {
   }
 
   /**
-   * Register this window's hits with `window.own`. Called by the transport a sequencer is attached to (`clock.attach`,
-   * `workspace.transport.attach`) with the window and the Timeline it came from; applications do not call it.
+   * Register this window's hits with `window.own`. Called by the transport a sequencer is attached to (`clock.attach`) with the window and the Timeline it came from; applications do not call it.
    */
   schedule(window: StepWindow, timing: BeatTiming): void {
     untracked(() => {
@@ -754,7 +753,7 @@ export class StepSequencer extends EventTarget {
   }
 
   /**
-   * Called by `clock.attach(sequencer)` (or `workspace.transport.attach`) with a handle to that transport. Every committed edit (a step, a
+   * Called by `clock.attach(sequencer)` with a handle to that transport. Every committed edit (a step, a
    * lane's pattern, `rate`, `swing`, `direction`, `muted`, `solo`, `sound`) then calls `handle.refresh()`, which retracts the pending hits and
    * queues them again; several edits in one task re-queue once. Returns the cleanup the transport runs on detach.
    */

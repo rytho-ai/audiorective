@@ -329,10 +329,11 @@ The piano roll does not provide multi-note editing, auto-scroll, keyboard note m
 
 ## Add a time-based overlay or interaction
 
-`view.attach(plugin)` uses the shared [`TimeViewPlugin` contract](./widgets-advanced.md#write-a-visual-plugin) for piano roll, waveform, and waveform selector. The piano-roll entry exports `TimeViewPlugin`, `TimeViewPluginContext`, and `PluginAttachment`. `ctx.timeUnit` is `"beats"` here.
+`view.attach(plugin)` uses the shared [`TimeViewPlugin` contract](./widgets-advanced.md#write-a-visual-plugin) for piano roll, waveform, and waveform selector. The widgets root exports `TimeViewPlugin`, `TimeViewPluginContext`, and `PluginAttachment`. `ctx.timeUnit` is `"beats"` here.
 
 ```typescript
-import { mountPianoRoll, type TimeViewPlugin } from "@audiorective/widgets/piano-roll";
+import { mountPianoRoll } from "@audiorective/widgets/piano-roll";
+import type { TimeViewPlugin } from "@audiorective/widgets";
 
 function markerAt(time: number): TimeViewPlugin {
   return {

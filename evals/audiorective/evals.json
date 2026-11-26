@@ -425,7 +425,7 @@
       "expected_output": "Project owns clips and WebCLAP device state, Workspace owns browser playback and captures live state when saving, and the app owns AudioContext and editor view.",
       "files": [],
       "expectations": [
-        "Imports Project from @audiorective/daw/project and Workspace from @audiorective/daw/runtime (or the @audiorective/daw root) and uses addWebClapDevice on a MIDI track with the Oxo Synth2 CLAP ID and a bundle URL",
+        "Imports Project from @audiorective/daw/project and Workspace from @audiorective/daw/runtime (or the @audiorective/daw root) and adds the plug-in to a MIDI track with workspace.addWebClapDevice (or project.addDevice with kind webclap) with the Oxo Synth2 CLAP ID and a bundle URL",
         "Creates Workspace with the caller-owned AudioContext, destination and a served WebCLAP worklet URL, then uses its play/stop or seek methods",
         "Passes the project MidiClip's clip.midi (a @audiorective/midi MidiClip) to pianoRollModel and a piano-roll widget, and keeps the view separate from the audio runtime",
         "Mounts the loaded host's editor in an iframe or reads and writes host.params[String(id)].value, while preserving state through saveWorkspace and openWorkspace from @audiorective/daw",
@@ -443,7 +443,7 @@
         "Uses Project.moveClip, duplicateClip and removeClip with the clip time unit and matching track kinds",
         "Stores named section markers through Project.setMarkers and renders Project.markers on the shared time axis",
         "Does not call a commit step; edits Project directly and explains that light clip/mixer/automation edits apply automatically without reloading hosts, while a track or device topology change sets workspace.cells.needsSync and needs an explicit await workspace.sync()",
-        "Uses Workspace.setTrackMuted, setTrackSolo and setTrackPan for live changes and saves via saveWorkspace",
+        "Uses project.setTrackMuted, setTrackSolo and setTrackPan (the running Workspace applies them; no Workspace mixer methods) for live changes and saves via saveWorkspace",
         "Renders one shared time axis with per-track lanes and keeps selection and zoom in the UI rather than duplicating clip or mixer state",
         "Explains that DAWproject standard Channel fields carry mute, normalized pan and solo, while WebCLAP bundle lookup remains private",
         "Disposes borrowed editor views and the Workspace and Project on teardown"
@@ -499,7 +499,7 @@
         "Creates AudioMediaWriter or createOpfsAudioMediaWriter (imported from daw/runtime) and passes writeChunk as AudioRecorder.record({ onChunk })",
         "Finishes with the span from record({ onChunk }) (or stop({ result: \"span\" }) for early completion), when reading optional span.dropouts, handles its absence on a healthy take (ignoring this optional metadata is also valid), passes that completed span to writer.finish, then calls Project.addAudioMediaClip at a Workspace.takePosition-derived project second.",
         "Splits or trims the media clip with Project methods without converting all media into Float32Array channels",
-        "Saves to a WritableStream with saveWorkspaceTo and reopens a Blob/File with openWorkspaceBlob",
+        "Saves to a WritableStream with saveWorkspaceTo and reopens a Blob/File with openWorkspace",
         "Passes the AudioMedia.peaks result ({ min, max, duration }) directly as waveform data (or makes an equivalent valid peak projection), and disposes caller-owned temporary media only after clips and undo state release it; does not nest that summary inside a Float32Array peaks field.",
         "Does not claim the download fallback or saveWorkspace is bounded-memory for the final ZIP"
       ]
@@ -564,7 +564,7 @@
       "expected_output": "Sets ordered built-in rack slots through Workspace and binds reusable parameter controls to authored settings without creating another audio owner.",
       "files": [],
       "expectations": [
-        "Uses workspace.setTrackEffects with ordered Filter and Delay slot settings, stable IDs and the supported enablement/bypass state (enabled in current Project slots).",
+        "Uses project.setTrackEffects with ordered Filter and Delay slot settings, stable IDs and the supported enablement/bypass state (enabled in current Project slots).",
         "Uses mountParameter with rotary and log for cutoff, and a vertical control for mix",
         "Meters genuine post-insert audio with an analyser and mountLevelMeter using a documented tap: workspace.trackEffectOutput (pre-mixer), workspace.trackMixerOutput (post-fader), or the final workspace.output for the output meter; then cleans up views and only its own analyser connection without interrupting playback.",
         "Saves and reopens the rack through Workspace's DAWproject API and identifies the built-in inserts as Audiorective-specific"
@@ -577,7 +577,7 @@
       "files": [],
       "expectations": [
         "Uses mountPlayer(root, { player: workspace.player }) without adapting Clock state, polling the playhead or copying duration into a new cell",
-        "Routes Workspace output to the caller's AudioContext destination on both Workspace.create and openWorkspaceBlob or openWorkspace",
+        "Routes Workspace output to the caller's AudioContext destination on both Workspace.create and openWorkspace",
         "Disposes the old controls before remounting for the reopened Workspace and tears down the old Workspace and Project separately"
       ]
     },
@@ -589,7 +589,7 @@
       "expectations": [
         "Mounts mountAutomationLane over the track volumeAutomation points and commits a final drag with Project.setVolumeAutomation and uses workspace.flush when a follow-up depends on runtime application",
         "Synchronizes the lane with accepted or externally changed owner points through a reactive source or explicit refresh, and disposes the view on teardown",
-        "Uses Workspace.setMasterVolume instead of setting output.gain directly and explains that the mixed WAV includes master gain while per-track stems are tapped earlier"
+        "Uses project.setMasterVolume instead of setting output.gain directly and explains that the mixed WAV includes master gain while per-track stems are tapped earlier"
       ]
     },
     {
@@ -609,9 +609,9 @@
       "expected_output": "Uses the existing Workspace transport and the borrowed Clip Grid widget for a live quantized audio session.",
       "files": [],
       "expectations": [
-        "Calls Workspace.play before launching, sets workspace.session.value.quantize to \"4n\" (or passes quantize: \"4n\"), and starts both clips together with session.value.launchScene([drumClip, bassClip]) or launchScene(index) on the Project's scene",
+        "Calls Workspace.play before launching, sets workspace.cells.session.value.quantize to \"4n\" (or passes quantize: \"4n\"), and starts both clips together with session.value.launchScene([drumClip, bassClip]) or launchScene(index) on the Project's scene",
         "Switches only Bass with its own slot clip's launch() (found with workspace.sessionClip) and returns it to Arrangement with session.value.tracks[bassId].stop()",
-        "Uses workspace.session.value to drive mountClipGrid without creating another Clock or audio graph, cancels everything queued with session.value.cancelQueued(), and cancels only Bass with session.value.tracks[bassId].cancelQueued()",
+        "Uses workspace.cells.session.value to drive mountClipGrid without creating another Clock or audio graph, cancels everything queued with session.value.cancelQueued(), and cancels only Bass with session.value.tracks[bassId].cancelQueued()",
         "Puts the Drum and Bass clips in scenes with sessionFor(project) (addScene, setAudioClip), not on the timeline, and says the scenes and slot clips are saved in the DAWproject while what is launched or queued is not"
       ]
     },
@@ -622,7 +622,7 @@
       "files": [],
       "expectations": [
         "Creates an effect bus via Project.addTrack, puts one fully wet delay on the return and waits with workspace.flush before using the live bus",
-        "Uses Workspace.setTrackRouting with outputBusId null and one post-fader send per source and explains that live routing preserves transport",
+        "Uses project.setTrackRouting with outputBusId null and one post-fader send per source and explains that live routing preserves transport",
         "Wires mountMixer to reactive state and Workspace edit actions, supplying level readers through meter(id) from trackMixerOutput and the master output (the caller creates and disconnects its own analysers), with proper destruction",
         "Uses DAWproject save and reopen for routes and avoids claiming untested third-party compatibility"
       ]
@@ -659,7 +659,7 @@
       "expectations": [
         "Uses one borrowed analyser with mountSpectrum and documents caller cleanup",
         "Passes actual linear magnitudes from Filter.getFrequencyResponse into mountEqEditor with no magnitude-only wet/dry interpolation",
-        "Binds Workspace rendering to trackFilterResponse and edits to setTrackEffects, so settings remain project-owned",
+        "Binds Workspace rendering to trackFilterResponse and edits to project.setTrackEffects, so settings remain project-owned",
         "Keeps the standalone UI independent of Workspace and disposes both mounted views"
       ]
     },
@@ -694,7 +694,7 @@
       "files": [],
       "expectations": [
         "Uses Equalizer with frequency, gain and q for each peaking band and passes linear magnitudes to mountEqEditor",
-        "Uses one eq RackEffect with a stable ID and Workspace.setTrackEffects for saved edits",
+        "Uses one eq RackEffect with a stable ID and project.setTrackEffects for saved edits",
         "Reads the actual slot response using Workspace.trackFilterResponse and retains all band values when bypassed",
         "Explains Audiorective BuiltinDevice persistence without claiming that third-party DAWs support the same editable slot"
       ]
@@ -752,7 +752,7 @@
       "expectations": [
         "Makes the hit a one-shot with sessionClip(hitTrack, hitClip).configure({ loop: false }) while the bass keeps the default loop, and launches both on one boundary with session.value.launchScene([hit, bass])",
         "Withdraws only the pending replacement with that track's cancelQueued() and describes the playing one-shot and loop continuing",
-        "Says that the one-shot track returns to Arrangement at the audio end and observes workspace.session to show remaining active clips"
+        "Says that the one-shot track returns to Arrangement at the audio end and observes workspace.cells.session to show remaining active clips"
       ]
     },
     {
@@ -774,7 +774,7 @@
       "files": [],
       "expectations": [
         "Passes pluginId to WebClapHost.load and describes index selection as the fallback",
-        "Stores the bundle URL and exact pluginId with Project.addWebClapDevice on an effect bus, routes a source send and uses saveWorkspace/openWorkspace",
+        "Stores the bundle URL and exact pluginId with project.addDevice({ kind: \"webclap\", ... }) on an effect bus, routes a source send and uses saveWorkspace/openWorkspace",
         "Passes an explicit resolveBundle using the trusted bundle for the saved CLAP ID and checks for unresolved devices after reopen",
         "Separates the tested WASM32 imported memory support from claiming that every native CLAP binary runs in the browser"
       ]
@@ -797,10 +797,10 @@
       "expected_output": "Uses a track rack with macro Params, native automation fanout, whole-rack preset recall and Project-owned track settings.",
       "files": [],
       "expectations": [
-        "Declares two distinct macro IDs with nonoverlapping slot parameter targets and reads or writes workspace.trackMacroValue(trackId, id) or setTrackMacroValue",
+        "Declares two distinct macro IDs with nonoverlapping slot parameter targets and reads workspace.trackMacroValue(trackId, id) or writes project.setTrackMacroValue",
         "Targets AutomationBinding at workspace.trackMacroAutomation(trackId, id) and uses positive endpoints for exponential mappings",
         "Uses Project.setTrackRackPreset with the entire rack (effects and macros) and explains that a recalled position and mapping are distinct from the authored automation curve",
-        "Uses Workspace.setTrackMacroValue (or Project.setTrackMacroValue) to retain track macro positions in saved projects"
+        "Uses project.setTrackMacroValue to retain track macro positions in saved projects"
       ]
     },
     {
@@ -847,7 +847,7 @@
       "expectations": [
         "Edits Project directly for the tempo change and clip move and does not call a commit method (none exists) or sync() for them",
         "Treats the added track and device as a structural edit: reads workspace.cells.needsSync and calls await workspace.sync() (for example behind a rebuild action), noting that sync stops transport and reloads hosts",
-        "Observes workspace.cells.error (a read-only cell) in an effect or framework binding to show failed applications instead of relying on unhandled rejections, and reads workspace.warnings or workspace.cells.warnings (a frozen array, never mutated in place) for unresolved-device notices",
+        "Observes workspace.cells.error (a read-only cell) in an effect or framework binding to show failed applications instead of relying on unhandled rejections, and reads workspace.cells.warnings (a frozen array, never mutated in place) for unresolved-device notices",
         "Uses await workspace.flush() where it must wait for the runtime, and knows saveWorkspace() already waits for pending edits through workspace.checkpoint()",
         "Does not poll Project.cells.revision or write its own debounce around Project edits"
       ]

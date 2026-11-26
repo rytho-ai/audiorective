@@ -76,6 +76,8 @@ type Sample = {
   /** Parts of the open warning: what the file keeps beyond the model. */
   kept: string[];
   tracks: number;
+  /** How many MIDI controller lanes of tracks the model reads (the rest of the file's lanes are in `kept`). */
+  lanes?: number;
   /** Edit one clip. Returns the path of its Clip element and the paths outside it that follow from the edit. */
   edit(project: Project): { clip: string; also?: string[]; verify(reopened: Project): void };
 };
@@ -100,8 +102,10 @@ const samples: Sample[] = [
   {
     name: "bitwig-5.3-canon-in-d.dawproject",
     valid: true,
-    kept: ["Device Vst3Plugin", "Disabled send"],
+    // The Piano's CC 6, 7, 10, 91, 93, 100 and 101 lanes are read; its CC 121 (reset all controllers) lane is a channel-mode message and stays in the file.
+    kept: ["Device Vst3Plugin", "Disabled send", 'Controller lane with channelController controller "121"'],
     tracks: 3,
+    lanes: 7,
     edit(project) {
       const clip = midiClips(project)[0];
       project.moveClip(clip.id, project.tracks[0].id, clip.time + 4);
@@ -114,8 +118,9 @@ const samples: Sample[] = [
   {
     name: "bitwig-5.3-sugar-plum-celesta.dawproject",
     valid: true,
-    kept: ["Device BuiltinDevice"],
+    kept: ["Device BuiltinDevice", 'Controller lane with channelController controller "121"'],
     tracks: 2,
+    lanes: 4,
     edit(project) {
       project.setClipName(midiClips(project)[0].id, "Celesta take 2");
       return {
@@ -171,6 +176,7 @@ describe.each(samples)("sample $name", (sample) => {
     const { project, warnings } = openDawProject(source);
     expect(project.tracks).toHaveLength(sample.tracks);
     for (const part of sample.kept) expect(warnings.join("\n")).toContain(part);
+    expect(project.tracks.reduce((sum, track) => sum + track.controllerLanes.length, 0)).toBe(sample.lanes ?? 0);
     const saved = saveDawProject(project);
     expect(differences(parse(xmlOf(source)), parse(xmlOf(saved)))).toEqual([]);
     // Every other archive entry of the source is still there, byte for byte; the codec adds only its own sidecar.

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
-import { encodeWav, encodeWavBytes } from "../src/peaks";
-import { encodeWav as rootEncodeWav } from "../src";
+import { encodeWav, encodeWavBytes } from "../src/wav";
+import * as root from "../src";
+import * as peaks from "../src/peaks";
 
 type Decoded = {
   format: number;
@@ -52,8 +53,10 @@ const pcm = {
 };
 
 describe("encodeWav", () => {
-  test("is exported from the root and the pure entry", () => {
-    expect(rootEncodeWav).toBe(encodeWav);
+  test("is exported from the root only, not from the peaks entry", () => {
+    expect(root.encodeWav).toBe(encodeWav);
+    expect(root.encodeWavBytes).toBe(encodeWavBytes);
+    expect(Object.keys(peaks).sort()).toEqual(["peakFrameRange", "summarizePeaks"]);
   });
 
   test("defaults to 16-bit PCM with a canonical header", async () => {

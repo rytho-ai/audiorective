@@ -1,7 +1,14 @@
 import { effect } from "./detached-effect";
 import type { Readable } from "@audiorective/core";
 
-export type SampleRow = Readonly<{ id: string; name: string; status: "loading" | "ready" | "error"; duration?: number; error?: string }>;
+export type SampleRow = Readonly<{
+  id: string;
+  name: string;
+  status: "loading" | "ready" | "error";
+  /** Seconds; absent until decoded. */
+  duration?: number;
+  error?: string;
+}>;
 export type SampleBrowserState = Readonly<{ rows: readonly SampleRow[]; previewId: string | null; previewPlaying: boolean }>;
 
 export type SampleBrowserOptions = {

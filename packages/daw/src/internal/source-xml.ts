@@ -29,6 +29,8 @@ export type ClipLink = {
 };
 /** A gain `Points` the source keeps in its audio clip's content lanes: its time unit and, for beats, the seconds one beat lasts in its content. */
 export type GainCurveLink = { points: Element; unit: "seconds" | "beats"; secondsPerBeat: number };
+/** A controller lane's `Points` in the source: its time unit (`seconds` lanes convert through the tempo map). */
+export type ControllerLink = { points: Element; unit: "seconds" | "beats" };
 export type Snapshot = Readonly<{ attrs: Record<string, string>; xml: string; children: string; childXml: Record<string, string> }>;
 export type SourceXml = {
   project: Document;
@@ -48,6 +50,8 @@ export type SourceXml = {
   sends: Map<string, Map<string, Element>>;
   /** The Points of a track's volume automation. */
   automation: Map<string, Element>;
+  /** The track-level `Points` of each controller lane the model read, by track ID and lane key. */
+  controllerLanes: Map<string, Map<string, ControllerLink>>;
   markers?: Element;
   /** The source's markers are in beats; the model's are in seconds. */
   markersInBeats?: boolean;
@@ -63,5 +67,8 @@ export type SourceXml = {
   /** `key -> serialized` of what the model would write right after opening: a later difference is an edit. */
   baseline?: Map<string, Snapshot>;
 };
+
+/** `Points` inside a MIDI clip that the model does not carry (an expression or unit it cannot read): a save that rewrites the clip keeps them. */
+export const unmodeledPoints = new WeakSet<object>();
 
 export const sourceXml = new WeakMap<object, SourceXml>();

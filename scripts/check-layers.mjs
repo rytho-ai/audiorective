@@ -45,6 +45,7 @@ const DAW_PROJECT = [
   "meter-map.ts",
   "midi-file.ts",
   "clip-envelope.ts",
+  "controller-lane.ts",
   "project-persistence.ts",
   "extensions.ts",
   "project-edits.ts",

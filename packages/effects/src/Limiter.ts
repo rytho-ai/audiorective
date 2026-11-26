@@ -8,10 +8,10 @@ export interface LimiterOptions extends EffectOptions {
   /** Seconds to let go of the reduction. Default 0.05. */
   release?: number;
   /** Peak-detection window, seconds; the effect declares it as latency. Default 0.005. */
-  lookahead?: number;
+  lookAhead?: number;
 }
 
-/** Brickwall: infinite ratio, hard knee, windowed-peak detection over `lookahead`. The worklet loads asynchronously; only the `1 − wet` dry share passes until ready (`wet: 1` is silent). */
+/** Brickwall: infinite ratio, hard knee, windowed-peak detection over `lookAhead`. The worklet loads asynchronously; only the `1 − wet` dry share passes until ready (`wet: 1` is silent). */
 export class Limiter extends Effect<{ threshold: SchedulableParam; release: SchedulableParam }, { reduction: ReadonlyCell<number> }> {
   static override readonly type: string = "Limiter";
   private readonly core: DynamicsCore;
@@ -24,7 +24,7 @@ export class Limiter extends Effect<{ threshold: SchedulableParam; release: Sche
       attack: 0.001,
       release: opts.release ?? 0.05,
       makeup: 0,
-      lookahead: opts.lookahead ?? 0.005,
+      lookahead: opts.lookAhead ?? 0.005,
     });
     super(
       ctx,

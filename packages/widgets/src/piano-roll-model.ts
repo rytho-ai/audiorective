@@ -11,8 +11,8 @@ export interface PianoRollModelOptions {
   duration?: number | (() => number);
   /**
    * The part of the content the clip plays, in content beats: a `{ start, end }` range or a getter for it (`null` for none). Notes entirely outside it are
-   * drawn dimmed and the window is shaded; editing still edits the content. Use `{ start: clip.sourceOffset, end: clip.sourceOffset + clip.duration }`
-   * for a `MidiClip` of `@audiorective/daw`. Default: no window, nothing dimmed.
+   * drawn dimmed and the window is shaded; editing still edits the content. For a clip that plays beats 8 to 16 of its notes, pass
+   * `{ start: 8, end: 16 }`, or `() => ({ start: first, end: first + length })` when the window moves. Default: no window, nothing dimmed.
    */
   window?: MidiRange | null | (() => MidiRange | null);
 }

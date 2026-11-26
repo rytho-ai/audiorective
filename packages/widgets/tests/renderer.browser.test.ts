@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { userEvent } from "vitest/browser";
 import { WavePlayer } from "@audiorective/player";
-import { mountWaveformSelector, type WaveformRenderer as SelectorRenderer, type WaveformRenderFrame as SelectorFrame } from "../src";
+import { mountWaveformSelector } from "../src";
+import type { WaveformRenderer as SelectorRenderer, WaveformRenderFrame as SelectorFrame } from "../src/waveform";
 import {
   createSelectionPlugin,
   mountWaveform,

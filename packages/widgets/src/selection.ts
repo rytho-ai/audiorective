@@ -19,6 +19,7 @@ type Gesture = {
   moved: boolean;
   original: Selection | null;
 };
+/** Creates the waveform selection plugin: drag to select, snapping per `options.snap`; pass it in the waveform's `plugins`. */
 export function createSelectionPlugin(options: SelectionPluginOptions = {}): SelectionPlugin {
   let range: Selection | null = null,
     context: WaveformPluginContext | null = null;

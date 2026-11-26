@@ -1,6 +1,7 @@
 import { AutomationCurve, type AutomationPoint } from "@audiorective/core/automation";
 import type { BusRole, Project, ProjectClip, ProjectMarker, ProjectTrack, TrackKind } from "./model";
 import { unityClipEnvelope } from "./clip-envelope";
+import { controllerExpressions, controllerMax, controllerPointsAfterInsert, type ControllerExpression } from "./controller-lane";
 import type { RackEffect, RackPreset } from "./rack-preset";
 import { sessionFor } from "./session";
 import { TempoMap, type TempoChange } from "./tempo-map";
@@ -191,6 +192,20 @@ export type SetAudioClipGainAutomationEdit = Readonly<{
 export type VolumePointEdit = Readonly<{ value: number; shape?: "linear" | "hold" }> & EditPosition;
 /** Replace a track's volume automation (positions unique); an empty list clears it. */
 export type SetVolumeAutomationEdit = Readonly<{ type: "setVolumeAutomation"; trackId: EditTrackRef; points: readonly VolumePointEdit[] }>;
+/** A point of a MIDI controller lane: a project position (`atBeat` or `atSeconds`), an integer `value` in the controller's range (0 to 127, or 0 to 16383 for pitchBend), `shape` "linear" (default) or "hold". Points at one position are a step. */
+export type ControllerPointEdit = Readonly<{ value: number; shape?: "linear" | "hold" }> & EditPosition;
+/**
+ * Replace one MIDI controller lane of a MIDI track, the lane `{ expression, channel, controller }`; an empty list removes it. `controller` is the controller number
+ * (`channelController`) or the key (`polyPressure`) and is left out for the other expressions.
+ */
+export type SetControllerLaneEdit = Readonly<{
+  type: "setControllerLane";
+  trackId: EditTrackRef;
+  expression: ControllerExpression;
+  channel: number;
+  controller?: number;
+  points: readonly ControllerPointEdit[];
+}>;
 /** Delete a half-open range from the whole song, closing the gap (beats or seconds). `crossfade`: `true` for 5 ms, a length in seconds, or `false` (default) for none. */
 export type RippleDeleteEdit = Readonly<{
   type: "rippleDelete";
@@ -315,6 +330,7 @@ export type ProjectEditOperation =
   | SetAudioClipEnvelopeEdit
   | SetAudioClipGainAutomationEdit
   | SetVolumeAutomationEdit
+  | SetControllerLaneEdit
   | AddNotesEdit
   | RemoveNotesEdit
   | EditNotesEdit
@@ -633,6 +649,10 @@ function copyRange(ctx: Ctx, op: CopyRangeEdit): void {
         insertedAutomation(track.volumeAutomation, { start: startSeconds, end: endSeconds, at: atSeconds, atAfter }, copiedSeconds, laterSeconds),
       );
 
+  for (const track of project.tracks)
+    for (const lane of track.controllerLanes)
+      project.setControllerLane(track.id, { ...lane, points: controllerPointsAfterInsert(lane.expression, lane.points, start, end, at) });
+
   const markers = project.markers.flatMap((marker) => {
     const beat = before.secondsToBeat(marker.time);
     const moved = beat >= at - EPSILON ? { time: laterSeconds(marker.time), name: marker.name } : marker;
@@ -848,6 +868,7 @@ export const PROJECT_EDIT_FIELDS: Readonly<Record<ProjectEditOperation["type"], 
   setAudioClipEnvelope: ["clip", "gain", "fadeIn", "fadeOut"],
   setAudioClipGainAutomation: ["clip", "points"],
   setVolumeAutomation: ["trackId", "points"],
+  setControllerLane: ["trackId", "expression", "channel", "controller", "points"],
   addNotes: ["clip", "notes"],
   removeNotes: ["clip", "noteIds"],
   editNotes: ["clip", "notes"],
@@ -902,6 +923,7 @@ export const EDIT_OPERATION_FOR_METHOD: Readonly<Record<string, ProjectEditOpera
   "Project.setAudioClipEnvelope": "setAudioClipEnvelope",
   "Project.setAudioClipGainAutomation": "setAudioClipGainAutomation",
   "Project.setVolumeAutomation": "setVolumeAutomation",
+  "Project.setControllerLane": "setControllerLane",
   "Project.addTrack": "addTrack",
   "Project.removeTrack": "removeTrack",
   "Project.setTrackName": "setTrackName",
@@ -947,7 +969,7 @@ export const EDIT_METHODS_NOT_OFFERED: Readonly<Record<string, string>> = {
   "Project.addAudioMediaClip": "needs file-backed audio media, which JSON cannot carry",
   "Project.addMidiTake": "takes a recorded `MidiTake` object from the recorder; `addMidiClip` covers JSON notes",
   "Project.applyAudioClipStretch": "needs rendered PCM; the app's stretch pipeline calls it",
-  "Project.addWebClapDevice": "needs a plug-in bundle and its state bytes",
+  "Project.addDevice": "needs a plug-in bundle and its state bytes",
   "Project.setDeviceState": "needs the plug-in's binary state",
   "ProjectSession.setAudioClip": "needs PCM audio, which JSON cannot carry",
   "Project.applyEdits": "is the tool itself",
@@ -1272,6 +1294,30 @@ function volumeAutomationOp(ctx: Ctx, op: SetVolumeAutomationEdit): void {
   ctx.project.setVolumeAutomation(trackId, points);
 }
 
+function controllerLaneOp(ctx: Ctx, op: SetControllerLaneEdit): void {
+  const trackId = trackRef(ctx, op.trackId, "setControllerLane trackId");
+  const rec = op as unknown as Rec;
+  if (!controllerExpressions.includes(op.expression))
+    fail("invalid-operation", `setControllerLane needs expression as one of ${controllerExpressions.join(", ")}.`);
+  const channel = requiredNumber(rec, "channel", { min: 0, max: 15, integer: true });
+  const numbered = op.expression === "channelController" || op.expression === "polyPressure";
+  if (!numbered && op.controller !== undefined) fail("invalid-operation", `setControllerLane takes no controller for ${op.expression}.`);
+  const controller = numbered
+    ? requiredNumber(rec, "controller", { min: 0, max: op.expression === "channelController" ? 119 : 127, integer: true })
+    : 0;
+  const max = controllerMax(op.expression);
+  const points = listFor(rec, "points").map((point, index) => {
+    const where = `setControllerLane points[${index}]`;
+    onlyFields(point, ["atBeat", "atSeconds", "value", "shape"], where);
+    return {
+      time: positionOf(ctx.project, point, where).beat,
+      value: numberFor(where, "value", point.value, { min: 0, max, integer: true }),
+      shape: shapeOf(point, where),
+    };
+  });
+  ctx.project.setControllerLane(trackId, { expression: op.expression, channel, controller, points });
+}
+
 function addTrackOp(ctx: Ctx, op: AddTrackEdit): void {
   const as = claimName(ctx, op);
   const rec = op as unknown as Rec;
@@ -1396,6 +1442,7 @@ const RUNNERS: Runners = {
   setAudioClipEnvelope: envelopeOp,
   setAudioClipGainAutomation: gainAutomationOp,
   setVolumeAutomation: volumeAutomationOp,
+  setControllerLane: controllerLaneOp,
   addNotes: (ctx, op) => addNotesOp(ctx.project, op, ctx.copies, ctx.createdNotes),
   removeNotes: (ctx, op) => removeNotesOp(ctx.project, op, ctx.copies),
   editNotes: (ctx, op) => editNotesOp(ctx.project, op, ctx.copies),

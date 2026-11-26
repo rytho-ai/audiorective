@@ -20,7 +20,7 @@ try {
   await page.waitForFunction(() => window.__daw?.workspace);
   await page.locator("#play").click();
   await page.waitForFunction(() => window.__daw.workspace.player.isPlaying.value);
-  const clockGeneration = await page.evaluate(() => window.__daw.workspace.timeline.generation);
+  const clockGeneration = await page.evaluate(() => window.__daw.workspace.transport.timeline.generation);
   await page.locator("#toggle-lower").click();
   await page.locator("#tab-mixer").click();
   await page.getByRole("button", { name: "＋ 效果回送" }).click();
@@ -35,7 +35,7 @@ try {
     const drums = project.tracks.find((track) => track.name === "Drums");
     const atmosphere = project.tracks.find((track) => track.name === "Atmosphere");
     return {
-      generation: workspace.timeline.generation,
+      generation: workspace.transport.timeline.generation,
       playing: workspace.player.isPlaying.value,
       drumGain: drums.routing.sends[0].gain,
       output: atmosphere.routing.outputBusId,
@@ -84,7 +84,7 @@ try {
   const macroRoundTrip = await page.evaluate(async (id) => {
     const { workspace, project } = window.__daw;
     const track = project.tracks.find((item) => item.id === id);
-    const snapshot = { generation: workspace.timeline.generation, playing: workspace.player.isPlaying.value };
+    const snapshot = { generation: workspace.transport.timeline.generation, playing: workspace.player.isPlaying.value };
     const archive = await window.__daw.api.saveWorkspace(workspace);
     const reopened = await window.__daw.api.openWorkspace(workspace.context, archive, workspace.options);
     try {
@@ -136,14 +136,14 @@ try {
     const render = await window.__daw.api.openWorkspace(context, saved, { destination: context.destination });
     const active = render.project;
     await render.play();
-    const generation = render.timeline.generation;
+    const generation = render.transport.timeline.generation;
     const dryNode = render.trackMixerOutput(drums.id);
     const checkpoints = [];
     function step(time, action) {
       return context.suspend(time).then(async () => {
         await action();
         checkpoints.push({
-          generation: render.timeline.generation,
+          generation: render.transport.timeline.generation,
           sameNode: render.trackMixerOutput(drums.id) === dryNode,
           playing: render.player.isPlaying.value,
         });
@@ -151,8 +151,14 @@ try {
       });
     }
     const steps = [
-      step(0.4, () => render.setTrackSolo(wet.id, true)),
-      step(0.8, () => render.setTrackRouting(drums.id, { outputBusId: null, sends: [{ busId: wet.id, gain: 0.25 }] })),
+      step(0.4, async () => {
+        active.setTrackSolo(wet.id, true);
+        await render.flush();
+      }),
+      step(0.8, async () => {
+        active.setTrackRouting(drums.id, { outputBusId: null, sends: [{ busId: wet.id, gain: 0.25 }] });
+        await render.flush();
+      }),
       step(1.2, () => {
         active.removeTrack(wet.id);
         return render.flush();

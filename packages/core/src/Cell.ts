@@ -3,7 +3,9 @@ import { produce, type Draft } from "immer";
 import { subscribeTo } from "./subscribe";
 import type { ComputedAccessor, SignalAccessor } from "./types";
 
+/** A writable observable value: `.value` reads (tracked) and writes, `subscribe` listens, `update` edits through immer. */
 export class Cell<T> {
+  /** Raw alien-signals accessor: `$()` reads (tracked), `$(next)` writes. */
   readonly $: SignalAccessor<T>;
 
   constructor(initial: T) {
@@ -14,6 +16,7 @@ export class Cell<T> {
   readonly subscribe = (listener: (value: T) => void, options?: { immediate?: boolean }): (() => void) =>
     subscribeTo(() => this.$(), listener, options);
 
+  /** Current value; reading inside an effect or computed tracks it. Assigning notifies subscribers when the value changed. */
   get value(): T {
     return this.$();
   }
@@ -28,6 +31,7 @@ export class Cell<T> {
   }
 }
 
+/** Creates a writable `Cell` holding `initial`. */
 export function cell<T>(initial: T): Cell<T> {
   return new Cell(initial);
 }
@@ -37,6 +41,7 @@ export function cell<T>(initial: T): Cell<T> {
  * The owner keeps the writable `Cell` private and changes it through its own methods.
  */
 export class ReadonlyCell<T> {
+  /** Raw alien-signals accessor: `$()` reads (tracked); it takes no argument. */
   readonly $: ComputedAccessor<T>;
   // Keeps the type nominal: a writable Cell is not assignable where a ReadonlyCell is declared.
   declare private readonly _readonly: true;
@@ -51,6 +56,7 @@ export class ReadonlyCell<T> {
   readonly subscribe = (listener: (value: T) => void, options?: { immediate?: boolean }): (() => void) =>
     subscribeTo(() => this.$(), listener, options);
 
+  /** Current value; reading inside an effect or computed tracks it. There is no setter. */
   get value(): T {
     return this.$();
   }

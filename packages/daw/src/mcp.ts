@@ -296,6 +296,24 @@ export const EDIT_OP_SPECS: Readonly<Record<ProjectEditOperation["type"], OpSpec
     },
     required: ["trackId", "points"],
   },
+  setControllerLane: {
+    summary:
+      "Replace one MIDI controller lane of a MIDI track (sustain, mod wheel, any controller, pitch bend, pressure, program): the lane is { expression, channel, controller }; an empty list removes it. Points are project positions, atBeat or atSeconds, value an integer (0 to 127; 0 to 16383 for pitchBend, centre 8192). Two points at one position are a step; shape hold keeps the value to the next point. Plays in Arrangement with the track's clips.",
+    properties: {
+      trackId: TRACK,
+      expression: { enum: ["channelController", "pitchBend", "channelPressure", "polyPressure", "programChange"], description: "The MIDI message." },
+      channel: NUM("MIDI channel 0 to 15.", { minimum: 0, maximum: 15 }),
+      controller: NUM("The controller number 0 to 119 for channelController, the key 0 to 127 for polyPressure; leave out otherwise.", {
+        minimum: 0,
+        maximum: 127,
+      }),
+      points: {
+        type: "array",
+        items: POSITIONED({ value: NUM("Integer in the controller's range.", { minimum: 0, maximum: 16383 }), shape: SHAPE }, ["value"]),
+      },
+    },
+    required: ["trackId", "expression", "channel", "points"],
+  },
   addNotes: {
     summary: "Add notes to a MIDI clip (timeline or slot); the receipt's createdNotes lists their IDs.",
     properties: { clip: CLIP, notes: NEW_NOTES },
@@ -572,6 +590,12 @@ const gainCurve: CurveShape = {
   row: (point) => ({ atSourceSeconds: point.time, value: point.value, shape: point.shape }),
 };
 
+/** A controller lane point as `setControllerLane` takes it: its beat, the seconds it falls at now, the value and shape. */
+const controllerCurve = (project: Project): CurveShape => {
+  const position = (point: CurvePoint) => ({ atBeat: point.time, atSeconds: project.tempoMap.beatToSeconds(point.time) });
+  return { position, row: (point) => ({ ...position(point), value: point.value, shape: point.shape }) };
+};
+
 /** One owner's curve as `{ <key>, points }`, or `{ <key>, count, first, last }` (positions only) when it is long. */
 function curveRows(key: string, id: string, points: readonly CurvePoint[], shape: CurveShape) {
   if (points.length <= AUTOMATION_SUMMARY_LIMIT) return { [key]: id, points: points.map(shape.row) };
@@ -615,6 +639,13 @@ function projectView(workspace: Workspace) {
     const volumeAutomation = project.tracks
       .filter((track) => track.volumeAutomation.length)
       .map((track) => curveRows("trackId", track.id, track.volumeAutomation, volumeCurve(project)));
+    const controllerLanes = project.tracks.flatMap((track) =>
+      track.controllerLanes.map((lane) => {
+        const { expression, channel, controller } = lane;
+        const { trackId: _id, ...rest } = curveRows("trackId", track.id, lane.points, controllerCurve(project));
+        return { trackId: track.id, expression, channel, controller, ...rest };
+      }),
+    );
     const everyClip = [
       ...project.tracks.flatMap((track) => track.clips),
       ...sessionFor(project).scenes.flatMap((scene) =>
@@ -682,6 +713,7 @@ function projectView(workspace: Workspace) {
       ...(routing.length ? { routing } : {}),
       ...(trackEffects.length ? { trackEffects } : {}),
       ...(volumeAutomation.length ? { volumeAutomation } : {}),
+      ...(controllerLanes.length ? { controllerLanes } : {}),
       clips,
       ...(clipEnvelopes.length ? { clipEnvelopes } : {}),
       ...(clipGainAutomation.length ? { clipGainAutomation } : {}),
@@ -901,19 +933,27 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
     {
       name: "read_automation",
       description:
-        "List the points of one automation curve in the shape the replace ops take: `{ trackId }` returns a track's volume curve as rows `atBeat, atSeconds, value, shape` (send them to setVolumeAutomation); `{ clipId }` returns an audio clip's gain curve as rows `atSourceSeconds, value, shape` (send them to setAudioClipGainAutomation). read_project shows only a count with the first and last position for a curve of more than 32 points. Optional `range` keeps the points inside it: for a track { startBeat, endBeat } or { startSeconds, endSeconds } in project time, for a clip { startSeconds, endSeconds } in seconds of the recording (half-open). A range gives only part of the curve: replace a curve only with its full list.",
+        "List the points of one automation curve in the shape the replace ops take: `{ trackId }` returns a track's volume curve as rows `atBeat, atSeconds, value, shape` (send them to setVolumeAutomation); `{ trackId, expression, channel, controller? }` returns that MIDI controller lane of the track in the same rows (send them to setControllerLane); `{ clipId }` returns an audio clip's gain curve as rows `atSourceSeconds, value, shape` (send them to setAudioClipGainAutomation). read_project shows only a count with the first and last position for a curve of more than 32 points. Optional `range` keeps the points inside it: for a track { startBeat, endBeat } or { startSeconds, endSeconds } in project time, for a clip { startSeconds, endSeconds } in seconds of the recording (half-open). A range gives only part of the curve: replace a curve only with its full list.",
       inputSchema: {
         type: "object",
         properties: {
           trackId: { type: "string" },
           clipId: { type: "string" },
+          expression: {
+            enum: ["channelController", "pitchBend", "channelPressure", "polyPressure", "programChange"],
+            description: "With trackId: read a MIDI controller lane instead of the volume curve.",
+          },
+          channel: { type: "integer", minimum: 0, maximum: 15 },
+          controller: { type: "integer", minimum: 0, maximum: 127, description: "The controller number (channelController) or key (polyPressure)." },
           range: { description: "Half-open; beats or seconds of the project for a track, seconds of the recording for a clip.", type: "object" },
         },
         additionalProperties: false,
       },
       call: guard((args) => {
-        const unknown = Object.keys(args).find((key) => key !== "trackId" && key !== "clipId" && key !== "range");
-        if (unknown !== undefined) return fail(`Unknown field "${unknown}"; allowed: trackId, clipId, range.`);
+        const unknown = Object.keys(args).find((key) => !["trackId", "clipId", "range", "expression", "channel", "controller"].includes(key));
+        if (unknown !== undefined) return fail(`Unknown field "${unknown}"; allowed: trackId, clipId, range, expression, channel, controller.`);
+        if (args.clipId !== undefined && (args.expression !== undefined || args.channel !== undefined || args.controller !== undefined))
+          return fail(`"expression", "channel" and "controller" name a controller lane of a track: give them with "trackId".`);
         if ((args.trackId === undefined) === (args.clipId === undefined)) return fail(`Give exactly one of "trackId" and "clipId".`);
         const project = workspace.project;
         const version = untracked(() => project.cells.version.value);
@@ -933,6 +973,29 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
                   : { start: range.startSeconds, end: range.endSeconds };
               keep = (time) => time >= seconds.start && time < seconds.end;
             }
+            if (args.expression !== undefined) {
+              const lane = track.controllerLanes.find(
+                (item) => item.expression === args.expression && item.channel === args.channel && item.controller === (args.controller ?? 0),
+              );
+              if (!lane)
+                return fail(
+                  `Track "${trackId}" has no controller lane ${String(args.expression)} channel ${String(args.channel)}${args.controller === undefined ? "" : ` controller ${String(args.controller)}`}. read_project lists controllerLanes.`,
+                );
+              const laneShape = controllerCurve(project);
+              const inside = lane.points.filter((point) => keep(project.tempoMap.beatToSeconds(point.time)));
+              return toon({
+                trackId,
+                expression: lane.expression,
+                channel: lane.channel,
+                controller: lane.controller,
+                version,
+                total: lane.points.length,
+                count: inside.length,
+                points: inside.map(laneShape.row),
+              });
+            }
+            if (args.channel !== undefined || args.controller !== undefined)
+              return fail(`"channel" and "controller" need "expression" to name a controller lane.`);
             const shape = volumeCurve(project);
             const shown = track.volumeAutomation.filter((point) => keep(point.time));
             return toon({ trackId, version, total: track.volumeAutomation.length, count: shown.length, points: shown.map(shape.row) });
@@ -964,8 +1027,8 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
         `Operations run in order and the whole request is all-or-nothing: a step that cannot run returns status "rejected" with its opIndex and a code, and nothing changes.`,
         `Positions: atBeat is project beats (quarter notes from the start), atSeconds is project seconds; give atBeat or atSeconds where an operation takes a position (both are accepted when they name the same moment, within 1e-6 s, so a row from read_project goes back unchanged). resizeClip start/end are absolute project beats for every clip; note start/duration, sourceOffset and setClipLoop beats are CONTENT beats (what read_notes shows); setClipSourceRange is content beats for MIDI and seconds of the recording for audio. Volumes, sends and gains are linear gain (0 or more, 1 is unity); pan is -1 (left) to 1 (right).`,
         `Naming results: give an operation that makes clips, tracks or scenes \`as: "name"\`; later steps select clips as { fromCopy: "name", trackName? } and tracks and scenes as { fromCopy: "name" } in trackId or sceneId. The receipt lists created, changed and removed clip IDs, createdNotes, copies, createdTracks and createdScenes, changedTracks and removedTracks, changedScenes and removedScenes, and song (any of tempo, timeSignature, markers, title, masterVolume).`,
-        `Set-style operations (setTempoChanges, setTimeSignatureChanges, setMarkers, setVolumeAutomation, setTrackEffects, ...) REPLACE the whole list: read the current one from read_project (read_automation for a curve of more than 32 points) and send the full new list; a row from read_project goes back unchanged.`,
-        `Field shapes: clip = { clipId } or { fromCopy, trackId?, trackName?, name? }; trackId, sceneId, afterSceneId, busId, outputBusId = an ID string or { fromCopy } (outputBusId also null); slot = { sceneId, trackId }; notes = [{ pitch 0-127, start, duration, velocity? 0-1 }] in content beats; editNotes notes = [{ id, pitch?, start?, duration?, velocity? }]; range = { startBeat, endBeat } (rippleDelete also { startSeconds, endSeconds }); moveClip position = { atBeat } or { byBeats }; setClipLoop loop = null, { startBeat, endBeat } (MIDI) or { startSeconds, endSeconds } (audio); routing = { outputBusId, sends: [{ busId, gain }] }; tempo changes = [{ beat, bpm }]; time signature changes = [{ beat, numerator, denominator }]; markers = [{ name, atBeat and/or atSeconds }]; volume points = [{ atBeat and/or atSeconds, value, shape? "linear"|"hold" }]; clip gain points = [{ atSourceSeconds, value, shape? }]; effects and preset as read_project shows trackEffects.`,
+        `Set-style operations (setTempoChanges, setTimeSignatureChanges, setMarkers, setVolumeAutomation, setControllerLane, setTrackEffects, ...) REPLACE the whole list: read the current one from read_project (read_automation for a curve of more than 32 points) and send the full new list; a row from read_project goes back unchanged.`,
+        `Field shapes: clip = { clipId } or { fromCopy, trackId?, trackName?, name? }; trackId, sceneId, afterSceneId, busId, outputBusId = an ID string or { fromCopy } (outputBusId also null); slot = { sceneId, trackId }; notes = [{ pitch 0-127, start, duration, velocity? 0-1 }] in content beats; editNotes notes = [{ id, pitch?, start?, duration?, velocity? }]; range = { startBeat, endBeat } (rippleDelete also { startSeconds, endSeconds }); moveClip position = { atBeat } or { byBeats }; setClipLoop loop = null, { startBeat, endBeat } (MIDI) or { startSeconds, endSeconds } (audio); routing = { outputBusId, sends: [{ busId, gain }] }; tempo changes = [{ beat, bpm }]; time signature changes = [{ beat, numerator, denominator }]; markers = [{ name, atBeat and/or atSeconds }]; volume points = [{ atBeat and/or atSeconds, value, shape? "linear"|"hold" }]; controller lane points = [{ atBeat and/or atSeconds, value (integer), shape? }]; clip gain points = [{ atSourceSeconds, value, shape? }]; effects and preset as read_project shows trackEffects.`,
         `Operations (fields ending in ? are optional):`,
         ...PROJECT_EDIT_TYPES.map((type) => opLine(type, EDIT_OP_SPECS[type])),
         `Unknown fields are rejected with the allowed list.`,

@@ -102,36 +102,42 @@ export class SchedulableParam extends Param<number> {
     this._signal(this._audioParam.value);
   }
 
+  /** Sets the value to `value` at AudioContext time `time` (seconds); returns this. */
   setValueAtTime(value: number, time: number): this {
     this._settleAt = 0;
     this._audioParam.setValueAtTime(value, time);
     return this;
   }
 
+  /** Ramps linearly to `value`, arriving at AudioContext time `endTime` (seconds); returns this. */
   linearRampToValueAtTime(value: number, endTime: number): this {
     this._settleAt = 0;
     this._audioParam.linearRampToValueAtTime(value, endTime);
     return this;
   }
 
+  /** Ramps exponentially to `value`, arriving at `endTime` (AudioContext seconds); `value` must be non-zero and share the current value's sign; returns this. */
   exponentialRampToValueAtTime(value: number, endTime: number): this {
     this._settleAt = 0;
     this._audioParam.exponentialRampToValueAtTime(value, endTime);
     return this;
   }
 
+  /** From `startTime` (AudioContext seconds) the value approaches `target` exponentially with `timeConstant` seconds; returns this. */
   setTargetAtTime(target: number, startTime: number, timeConstant: number): this {
     this._settleAt = 0;
     this._audioParam.setTargetAtTime(target, startTime, timeConstant);
     return this;
   }
 
+  /** Drops every scheduled change at or after `cancelTime` (AudioContext seconds); the value stays where it is now; returns this. */
   cancelScheduledValues(cancelTime: number): this {
     this._settleAt = 0;
     this._audioParam.cancelScheduledValues(cancelTime);
     return this;
   }
 
+  /** Drops scheduled changes after `cancelTime` (AudioContext seconds) and holds the value the automation had reached then; returns this. */
   cancelAndHoldAtTime(cancelTime: number): this {
     this._settleAt = 0;
     this._audioParam.cancelAndHoldAtTime(cancelTime);

@@ -45,7 +45,7 @@ describe("Compressor", () => {
     expect(fx.cells.reduction.value).toBeLessThan(-10);
   });
   it("wet = 0 bypasses (dry aligned through the compensated graph)", async () => {
-    const { buf } = await renderNoise((ctx) => new Compressor(ctx, { threshold: -40, ratio: 20, lookahead: 0.002, wet: 0 }), 0.5);
+    const { buf } = await renderNoise((ctx) => new Compressor(ctx, { threshold: -40, ratio: 20, lookAhead: 0.002, wet: 0 }), 0.5);
     let peak = 0;
     const d = buf.getChannelData(0);
     for (let i = 1000; i < d.length; i++) peak = Math.max(peak, Math.abs(d[i]!));

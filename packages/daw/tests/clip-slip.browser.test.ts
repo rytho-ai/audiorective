@@ -35,7 +35,7 @@ async function render(
     workletUrl: worklet,
     ...options,
   });
-  expect(workspace.warnings).toEqual([]);
+  expect(workspace.cells.warnings.value).toEqual([]);
   const pending = [...actions].sort((a, b) => a.at - b.at);
   while (pending[0]?.at === 0) pending.shift()!.run(workspace);
   await workspace.play();
@@ -105,11 +105,11 @@ describe("setClipSourceRange on looped and stretched clips plays the new part", 
     project.removeClip(clip.id);
     project.setClipSourceRange(slot.id, { start: 0, end: 4 });
     project.edit("Slip", () => void project.setClipSourceRange(slot.id, { start: 8, end: 12 }));
-    const played = await render(project, 9, [{ at: 0.2, run: (w) => w.session.value.launchScene(0) }], { instruments });
+    const played = await render(project, 9, [{ at: 0.2, run: (w) => w.cells.session.value.launchScene(0) }], { instruments });
     // Launched on the bar at 2 s, the slot loops the same range.
     expect(rounded(onsets(played))).toEqual([2.5, 4.5, 6.5, 8.5]);
     project.undo();
-    const before = await render(project, 9, [{ at: 0.2, run: (w) => w.session.value.launchScene(0) }], { instruments });
+    const before = await render(project, 9, [{ at: 0.2, run: (w) => w.cells.session.value.launchScene(0) }], { instruments });
     expect(rounded(onsets(before))).toEqual([2, 4, 6, 8]);
   }, 60_000);
 

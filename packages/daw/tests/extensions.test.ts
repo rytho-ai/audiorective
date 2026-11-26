@@ -1,7 +1,6 @@
 import { unzipSync, zipSync } from "fflate";
 import { describe, expect, test } from "vitest";
 import { Project, defineExtension, defineOperation, openDawProject, openDawProjectBlob, saveDawProject, saveDawProjectTo } from "../src";
-import { keepsFileBackedEntries } from "../src/dawproject";
 
 const chainDef = defineExtension({ id: "groovebox.chain", defaultValue: (): number[] => [] });
 
@@ -296,7 +295,6 @@ describe("extension and operation edge cases", () => {
     const entries = unzipSync(saveDawProject(project));
     entries["audio/extra.wav"] = new Uint8Array(64).fill(7);
     const { project: opened } = await openDawProjectBlob(new Blob([zipSync(entries)]));
-    expect(keepsFileBackedEntries(opened)).toBe(true);
     expect(() => saveDawProject(opened)).toThrow("Project file-backed audio needs saveDawProjectTo().");
     const chunks: Uint8Array[] = [];
     await saveDawProjectTo(opened, new WritableStream({ write: (chunk) => void chunks.push(chunk) }));

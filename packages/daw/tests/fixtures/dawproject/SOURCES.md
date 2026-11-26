@@ -23,6 +23,14 @@ Made by the maintainer in Bitwig Studio 6.1.7 (licensed) from content generated 
 
 The browser test and one node test open `b-bitwig-native.dawproject` with its tempo changed from 100 to 120 BPM (two attributes in `project.xml`, edited in the test) to get Warps that are the identity.
 
+## Bitwig Studio 6.1.7 controller lanes
+
+Made by the maintainer in Bitwig Studio 6.1.7 (licensed); licence: the same as the repository. Used by `tests/dawproject-controller-lanes.test.ts`. Script and report: `blueprints/probes/bitwig-roundtrip-001/` (section E).
+
+| File                                       | Written by          | Content                                                                                                                                                                                                                                                                               |
+| ------------------------------------------ | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bitwig-6.1.7-controller-lanes.dawproject` | Bitwig Studio 6.1.7 | this repository's rich MIDI song (6 MIDI tracks, tempo 96) after CC64, Modulation (CC1) and Pitch Bend were drawn on the Keys track and the project was exported as DAWproject: three `Points unit="normalized"` beside the track's `Clips`, 14 `RealPoint`s in absolute beats (4 KB) |
+
 ## Studio One quirks (synthetic)
 
 Written for this repository with `fflate` from the structure a PreSonus Studio One 7.0.2 export has (attribute order, `<Project version="0.1">`, a `Track` of `contentType="tracks"` holding the master `Channel`, notes without `channel`); licence: the same as the repository. One quirk per file, used by `tests/dawproject-studio-one.test.ts`. The real export (27.7 MB, PreSonus demo song "Get Some Air", from https://github.com/zarfld/dawproject_c, GPL-3.0 repository, PreSonus copyright) is not stored here: `pnpm --filter @audiorective/daw probe:studio-one` downloads it and checks its SHA-256.
@@ -35,3 +43,19 @@ Written for this repository with `fflate` from the structure a PreSonus Studio O
 | `studio-one-note-without-channel.dawproject`  | `<Note>` without `channel`                                                                    |
 | `studio-one-volume-step.dawproject`           | a volume lane with two points at one time (a dip: 0.7 to 0 at beat 8, back to 0.7 at beat 12) |
 | `studio-one-clip-without-duration.dawproject` | an audio `Clip` with `playStart` and `playStop` and no `duration` (a 10 ms WAV)               |
+
+## Bitwig Studio 6.1.7 point interpolation
+
+Made by the maintainer in Bitwig Studio 6.1.7 (licensed) from a song this repository built; licence: the same as the repository. Used by `tests/dawproject-point-interpolation.test.ts`, `tests/dawproject-nested-gain-curve.test.ts` and `tests/dawproject-nested-gain-curve.browser.test.ts` (its clip gain curve is Bitwig's nested form). Script and report: `blueprints/probes/bitwig-roundtrip-001/` (section F).
+
+| File                                    | Written by          | Content                                                                                                                                                                                                                                                                                       |
+| --------------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bitwig-6.1.7-interpolation.dawproject` | Bitwig Studio 6.1.7 | two audio tracks with a 12 s sine each; the first has a volume curve (0.2 held, a jump to 0.8 at 4 s, a ramp to 0.5 at 8 s), the second the same curve as clip gain, and the project has a tempo step 120 to 90 at beat 32. Bitwig writes every point `linear` and a hold as a repeated value |
+
+## Audiorective legacy interpolation
+
+Written by this repository's own writer at commit 278ee19 (`audiorective/state.json` version 3, where a point's `interpolation` is the model's `shape`, how the value leaves it) from a small song: 1 s of 440 Hz at 8 kHz with a mixed hold/linear clip gain curve, a mixed volume curve, and a MIDI clip with pedal and mod-wheel events. Made by the maintainer's tooling for this repository; licence: the same as the repository. Used by `tests/dawproject-legacy-interpolation.test.ts`.
+
+| File                                                   | Written by                     | Content                                                                                                   |
+| ------------------------------------------------------ | ------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| `audiorective-legacy-leaving-interpolation.dawproject` | Audiorective writer of 278ee19 | tracks `Voice` (clip `Tone` with gain points, volume points) and `Keys` (clip `Pedal`); sidecar version 3 |

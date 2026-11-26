@@ -65,8 +65,9 @@ export type ParsedMidi = Readonly<{
 export interface Instrument {
   /** Start `note` (0-127) at audio-context time `options.when` (default now) with `options.velocity` 0..1 (default 1) on `options.channel` 0-15 (default 0). */
   noteOn(note: number, options?: Readonly<{ velocity?: number; when?: number; channel?: number }>): unknown;
-  /** Release `note` at audio-context time `when` (default now). */
-  /** `since` is when the note-on this release answers started: an instrument that tracks its voices releases only the voices that began at or before it, so a note of the same pitch another clip started later keeps sounding. */
+  /**
+   * Release `note` at audio-context time `when` (default now). `since` is when the note-on this release answers started: an instrument that tracks its voices releases only the voices that began at or before it, so a note of the same pitch another clip started later keeps sounding.
+   */
   noteOff(note: number, when?: number, since?: number): unknown;
 }
 

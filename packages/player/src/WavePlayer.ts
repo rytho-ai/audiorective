@@ -6,10 +6,11 @@ import {
   readonlyCell,
   untracked,
   type Cell,
+  type PCMData,
   type ReadonlyCell,
   type SchedulableParam,
 } from "@audiorective/core";
-import { summarizePeaks, type PCMData, type PeakSummary } from "@audiorective/core/peaks";
+import { summarizePeaks, type PeakSummary } from "@audiorective/core/peaks";
 import type { AutomationBinding } from "@audiorective/core/automation";
 import { loadSource, type WaveLoadProgress, type WaveSourceLoader } from "./source";
 export type { WaveLoadProgress, WaveSourceLoader } from "./source";
@@ -30,6 +31,7 @@ export interface WavePlayerOptions {
 export type Quantize = "none" | `${number}m` | `${number}n`;
 /** The part of a clock's `SchedulerHandle` a player reads; `clock.attach(player)` supplies it. */
 export type PlayerTransport = Readonly<{
+  /** `timeToBeat` takes audio-context time in seconds; `beatToTime` returns it. */
   timeline: { timeToBeat(time: number): number; beatToTime(beat: number): number };
   state: Readonly<{ value: "stopped" | "playing" | "paused" }>;
   meter: Readonly<{ value: readonly [number, number] }>;

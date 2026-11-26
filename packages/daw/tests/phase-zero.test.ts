@@ -132,7 +132,13 @@ test("disposed projects reject editing and both save paths", async () => {
 test("a plug-in on an effects bus is playable again after save and open", () => {
   const project = new Project();
   const bus = project.addTrack("Return", "bus", { busRole: "effect" });
-  const device = project.addWebClapDevice(bus.id, { pluginId: "example.fx", name: "Fx", bundleUrl: "/fx.wclap", state: new Uint8Array([1, 2]) });
+  const device = project.addDevice(bus.id, {
+    kind: "webclap",
+    pluginId: "example.fx",
+    name: "Fx",
+    bundleUrl: "/fx.wclap",
+    state: new Uint8Array([1, 2]),
+  });
   const { project: opened, warnings } = openDawProject(saveDawProject(project));
   expect(warnings).toEqual([]);
   const reopened = opened.tracks.find(({ kind }) => kind === "bus")!;

@@ -408,7 +408,7 @@ describe("mixer", () => {
       name: "track volume step",
       expect: "clean",
       setup: () => audioSong(),
-      act: (rig, rep) => rig.workspace.setTrackVolume(rig.ids.a, alternate(rep, 0.4, 1)),
+      act: (rig, rep) => rig.workspace.project.setTrackVolume(rig.ids.a, alternate(rep, 0.4, 1)),
     },
     {
       name: "track volume drag (30 steps, 8 ms)",
@@ -416,13 +416,13 @@ describe("mixer", () => {
       setup: () => audioSong(),
       steps: 30,
       interval: 8,
-      act: (rig, rep, step) => rig.workspace.setTrackVolume(rig.ids.a, alternate(rep, 1 - step * 0.02, 0.4 + step * 0.02)),
+      act: (rig, rep, step) => rig.workspace.project.setTrackVolume(rig.ids.a, alternate(rep, 1 - step * 0.02, 0.4 + step * 0.02)),
     },
     {
       name: "track pan step",
       expect: "clean",
       setup: () => audioSong(),
-      act: (rig, rep) => rig.workspace.setTrackPan(rig.ids.a, alternate(rep, -1, 1)),
+      act: (rig, rep) => rig.workspace.project.setTrackPan(rig.ids.a, alternate(rep, -1, 1)),
     },
     {
       name: "track pan drag (30 steps, 8 ms)",
@@ -430,7 +430,7 @@ describe("mixer", () => {
       setup: () => audioSong(),
       steps: 30,
       interval: 8,
-      act: (rig, rep, step) => rig.workspace.setTrackPan(rig.ids.a, alternate(rep, -1 + step / 15, 1 - step / 15)),
+      act: (rig, rep, step) => rig.workspace.project.setTrackPan(rig.ids.a, alternate(rep, -1 + step / 15, 1 - step / 15)),
     },
     {
       name: "track mute on then off",
@@ -439,7 +439,7 @@ describe("mixer", () => {
       steps: 2,
       interval: 400,
       quiet: true,
-      act: (rig, _rep, step) => rig.workspace.setTrackMuted(rig.ids.a, step === 0),
+      act: (rig, _rep, step) => rig.workspace.project.setTrackMuted(rig.ids.a, step === 0),
     },
     {
       name: "solo on then off (other track silenced)",
@@ -448,13 +448,13 @@ describe("mixer", () => {
       steps: 2,
       interval: 400,
       quiet: true,
-      act: (rig, _rep, step) => rig.workspace.setTrackSolo(rig.ids.a, step === 0),
+      act: (rig, _rep, step) => rig.workspace.project.setTrackSolo(rig.ids.a, step === 0),
     },
     {
       name: "master volume step",
       expect: "clean",
       setup: () => audioSong(),
-      act: (rig, rep) => rig.workspace.setMasterVolume(alternate(rep, 0.4, 1)),
+      act: (rig, rep) => rig.workspace.project.setMasterVolume(alternate(rep, 0.4, 1)),
     },
     {
       name: "master volume drag (30 steps, 8 ms)",
@@ -462,14 +462,14 @@ describe("mixer", () => {
       setup: () => audioSong(),
       steps: 30,
       interval: 8,
-      act: (rig, rep, step) => rig.workspace.setMasterVolume(alternate(rep, 1 - step * 0.02, 0.4 + step * 0.02)),
+      act: (rig, rep, step) => rig.workspace.project.setMasterVolume(alternate(rep, 1 - step * 0.02, 0.4 + step * 0.02)),
     },
     {
       name: "send amount step",
       expect: "clean",
       setup: () => audioSong({ sendTo: true }),
       act: (rig, rep) =>
-        rig.workspace.setTrackRouting(rig.ids.a, { outputBusId: null, sends: [{ busId: rig.ids.fx, gain: alternate(rep, 0.9, 0.1) }] }),
+        rig.workspace.project.setTrackRouting(rig.ids.a, { outputBusId: null, sends: [{ busId: rig.ids.fx, gain: alternate(rep, 0.9, 0.1) }] }),
     },
     {
       name: "send amount drag (30 steps, 8 ms)",
@@ -478,7 +478,7 @@ describe("mixer", () => {
       steps: 30,
       interval: 8,
       act: (rig, rep, step) =>
-        rig.workspace.setTrackRouting(rig.ids.a, {
+        rig.workspace.project.setTrackRouting(rig.ids.a, {
           outputBusId: null,
           sends: [{ busId: rig.ids.fx, gain: alternate(rep, step * 0.03, 0.9 - step * 0.03) }],
         }),
@@ -494,7 +494,7 @@ describe("effects", () => {
       name: "EQ band gain step",
       expect: "clean",
       setup: () => audioSong({ rack: "eq" }),
-      act: (rig, rep) => rig.workspace.setTrackEffects(rig.ids.a, eq(alternate(rep, 9, -9))),
+      act: (rig, rep) => rig.workspace.project.setTrackEffects(rig.ids.a, eq(alternate(rep, 9, -9))),
     },
     {
       name: "EQ band gain drag (20 steps, 10 ms)",
@@ -502,13 +502,13 @@ describe("effects", () => {
       setup: () => audioSong({ rack: "eq" }),
       steps: 20,
       interval: 10,
-      act: (rig, rep, step) => rig.workspace.setTrackEffects(rig.ids.a, eq(alternate(rep, step * 0.6, 12 - step * 0.6))),
+      act: (rig, rep, step) => rig.workspace.project.setTrackEffects(rig.ids.a, eq(alternate(rep, step * 0.6, 12 - step * 0.6))),
     },
     {
       name: "filter cutoff step",
       expect: "clean",
       setup: () => audioSong({ rack: "filter" }),
-      act: (rig, rep) => rig.workspace.setTrackEffects(rig.ids.a, lp(alternate(rep, 1200, 8000))),
+      act: (rig, rep) => rig.workspace.project.setTrackEffects(rig.ids.a, lp(alternate(rep, 1200, 8000))),
     },
     {
       name: "filter cutoff drag (20 steps, 10 ms)",
@@ -516,7 +516,7 @@ describe("effects", () => {
       setup: () => audioSong({ rack: "filter" }),
       steps: 20,
       interval: 10,
-      act: (rig, rep, step) => rig.workspace.setTrackEffects(rig.ids.a, lp(alternate(rep, 8000 - step * 300, 2000 + step * 300))),
+      act: (rig, rep, step) => rig.workspace.project.setTrackEffects(rig.ids.a, lp(alternate(rep, 8000 - step * 300, 2000 + step * 300))),
     },
   ]);
 });
@@ -803,7 +803,7 @@ describe("transport and loop while playing", () => {
 });
 
 describe("session", () => {
-  const scenes = (rig: Rig, rep: number) => rig.workspace.session.value.launchScene(rep % 2 === 0 ? 1 : 0);
+  const scenes = (rig: Rig, rep: number) => rig.workspace.cells.session.value.launchScene(rep % 2 === 0 ? 1 : 0);
   register([
     {
       name: "scene launch (one held note to the next)",
@@ -812,7 +812,7 @@ describe("session", () => {
       hold: 2.2,
       setup: () => sessionSong(),
       warm: async (rig) => {
-        rig.workspace.session.value.launchScene(0);
+        rig.workspace.cells.session.value.launchScene(0);
         await sleep(2600);
       },
       act: scenes,
@@ -825,10 +825,10 @@ describe("session", () => {
       quiet: true,
       setup: () => sessionSong(),
       warm: async (rig) => {
-        rig.workspace.session.value.launchScene(0);
+        rig.workspace.cells.session.value.launchScene(0);
         await sleep(2600);
       },
-      act: (rig) => rig.workspace.session.value.tracks[rig.ids.m].stop(),
+      act: (rig) => rig.workspace.cells.session.value.tracks[rig.ids.m].stop(),
     },
   ]);
 });
@@ -849,7 +849,7 @@ describe("WebCLAP devices", () => {
       setup: () => oxoSong(),
       steps: 30,
       interval: 8,
-      act: (rig, rep, step) => rig.workspace.setTrackVolume(rig.ids.m, alternate(rep, 1 - step * 0.02, 0.4 + step * 0.02)),
+      act: (rig, rep, step) => rig.workspace.project.setTrackVolume(rig.ids.m, alternate(rep, 1 - step * 0.02, 0.4 + step * 0.02)),
     },
     {
       name: "oxo-synth2: add a note to the playing clip",

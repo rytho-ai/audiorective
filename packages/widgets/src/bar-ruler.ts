@@ -1,14 +1,14 @@
 import { untracked } from "@audiorective/core";
 import { effect } from "./detached-effect";
 
-/** The beat-to-seconds functions of a tempo map. A `@audiorective/daw` `TempoMap` (`project.tempoMap`) satisfies it. */
+/** The beat-to-seconds functions of a tempo map: any object with these two methods, such as `{ beatToSeconds: (b) => (b * 60) / bpm, secondsToBeat: (s) => (s * bpm) / 60 }`. */
 export interface BarRulerTempoMap {
   beatToSeconds(beat: number): number;
   secondsToBeat(seconds: number): number;
 }
 
 export type BarRulerOptions = Readonly<{
-  /** The tempo map, or a getter for it. Read in a core effect, so `() => project.tempoMap` redraws after a tempo edit. */
+  /** The tempo map, or a getter for it. Read in a core effect, so `() => song.tempoMap` redraws after a tempo edit. */
   tempoMap: BarRulerTempoMap | (() => BarRulerTempoMap);
   /** `[numerator, denominator]`, or a tracked getter for it. Default `[4, 4]`. Beats are quarter notes on the tempo map; a bar is `numerator * 4 / denominator` of them. */
   signature?: readonly [number, number] | (() => readonly [number, number]);

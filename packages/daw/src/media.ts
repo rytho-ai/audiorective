@@ -33,12 +33,18 @@ export const encodedFileOf = (media: AudioMedia): Readonly<{ blob: Blob; path: s
 export class AudioMedia {
   private disposed = false;
   constructor(
+    /** The bytes: interleaved little-endian float32 frames starting at `byteOffset` (a compressed file for pending media). */
     readonly blob: Blob,
+    /** Hertz; a positive integer. */
     readonly sampleRate: number,
+    /** Channels per frame, an integer from 1 to 32. */
     readonly channelCount: number,
+    /** Sample frames per channel the media holds (1 or more). */
     readonly frameCount: number,
+    /** Bytes in `blob` before the first frame (default 0, for a WAV the header size). */
     readonly byteOffset = 0,
-    private readonly cleanup?: () => Promise<void>,
+    /** Runs once on `dispose()`, for example to delete a temporary file; omitted when nothing needs releasing. */
+    private readonly onDispose?: () => Promise<void>,
   ) {
     if (
       !Number.isInteger(sampleRate) ||
@@ -57,7 +63,7 @@ export class AudioMedia {
 
   /**
    * True for audio an opened DAWproject file stores compressed that the browser has not decoded yet: its clips exist and can be moved, trimmed and saved,
-   * but cannot be read or played. `openWorkspace`, `openWorkspaceBlob` and `workspace.open` decode it before the song starts, so a Workspace never holds a pending clip.
+   * but cannot be read or played. `openWorkspace`, `openWorkspace` and `workspace.open` decode it before the song starts, so a Workspace never holds a pending clip.
    */
   get pending(): boolean {
     return encodedFiles.has(this);
@@ -67,9 +73,10 @@ export class AudioMedia {
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
-    await this.cleanup?.();
+    await this.onDispose?.();
   }
 
+  /** Reads `frameCount` frames (1 or more) starting at the zero-based `startFrame` as one Float32Array per channel. Rejects with `RangeError` outside `0 ..< this.frameCount`, and with an error for disposed or not-yet-decoded media. */
   async readFrames(startFrame: number, frameCount: number): Promise<readonly Float32Array[]> {
     if (this.disposed) throw new Error("AudioMedia is disposed.");
     const encoded = encodedFiles.get(this);
@@ -140,7 +147,9 @@ export class AudioMediaWriter {
   private finished = false;
 
   constructor(
+    /** Hertz of the chunks it will accept; a positive integer. */
     readonly sampleRate: number,
+    /** Channels per chunk, an integer from 1 to 32. */
     readonly channelCount: number,
     private readonly storage: AudioMediaStorage,
   ) {
@@ -148,6 +157,7 @@ export class AudioMediaWriter {
       throw new RangeError("AudioMediaWriter needs a sample rate and 1–32 channels.");
   }
 
+  /** Appends one recorder chunk (equal-length channels, finite samples, consecutive `startFrame`); returns when it is stored. Throws if the writer is closed, a chunk is out of order or an earlier write failed. */
   writeChunk(chunk: AudioMediaChunk): Promise<void> {
     if (this.closed) throw new Error("AudioMediaWriter is closed.");
     if (this.failed) throw this.failed;
@@ -174,6 +184,7 @@ export class AudioMediaWriter {
     return this.pending;
   }
 
+  /** Closes the writer and returns the stored `AudioMedia` once every chunk is written; `span` must match the captured frames (rate, channels, first and last frame) or it throws and aborts the storage. */
   async finish(span: AudioMediaSpan): Promise<AudioMedia> {
     if (this.closed) throw new Error("AudioMediaWriter is closed.");
     this.closed = true;
@@ -196,6 +207,7 @@ export class AudioMediaWriter {
     }
   }
 
+  /** Discards what was written and releases the storage; does nothing after `finish` succeeded. Safe to call twice. */
   async abort(): Promise<void> {
     if (this.finished) return;
     this.closed = true;

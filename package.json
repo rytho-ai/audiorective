@@ -11,7 +11,10 @@
     "check:errors": "node scripts/check-errors.mjs && node --test scripts/check-errors.test.mjs",
     "check:exports": "node --test scripts/check-core-exports.test.mjs",
     "check:declarations": "node scripts/check-declarations.mjs && node --test scripts/check-declarations.test.mjs",
-    "test": "pnpm check:layers && pnpm check:errors && pnpm check:exports && pnpm check:declarations && pnpm -r run test -- --run",
+    "check:jsdoc": "node scripts/check-jsdoc.mjs && node --test scripts/check-jsdoc.test.mjs",
+    "check:single-entry": "node scripts/check-single-entry.mjs && node --test scripts/check-single-entry.test.mjs",
+    "check:vocabulary": "node scripts/check-vocabulary.mjs && node --test scripts/check-vocabulary.test.mjs",
+    "test": "pnpm check:layers && pnpm check:errors && pnpm check:exports && pnpm check:declarations && pnpm check:jsdoc && pnpm check:single-entry && pnpm check:vocabulary && pnpm -r run test -- --run",
     "lint": "oxlint --type-aware",
     "lint-fix": "oxlint --type-aware --fix",
     "format": "prettier . --check",
@@ -26,6 +29,7 @@
     "lefthook": "^2.0.2",
     "oxlint": "^1.25.0",
     "oxlint-tsgolint": "^0.4.0",
-    "prettier": "3.6.2"
+    "prettier": "3.6.2",
+    "typescript": "^5.9.3"
   }
 }

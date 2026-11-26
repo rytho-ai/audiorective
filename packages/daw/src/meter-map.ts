@@ -13,7 +13,9 @@ const validSignature = (numerator: number, denominator: number) =>
  * It is independent of the tempo map: bars and beats do not depend on BPM.
  */
 export class MeterMap {
+  /** The `[numerator, denominator]` in force from beat 0, for example `[4, 4]`; the denominator is a power of two. */
   readonly initial: readonly [number, number];
+  /** The time signature changes ordered by project beat (each beat is greater than 0, no two equal); frozen. */
   readonly changes: readonly TimeSignatureChange[];
   private readonly segments: readonly Segment[];
 

@@ -21,7 +21,9 @@ type SpatialParams = {
   coneOuterGain: Param<number>;
 };
 
+/** Positional audio: an HRTF `PannerNode` whose position, orientation and cone are `params`; `input` feeds the panner and `output` is the panner. */
 export class Spatial extends AudioProcessor<SpatialParams> {
+  /** The underlying HRTF `PannerNode`, for native properties the params do not cover. */
   readonly panner: PannerNode;
   private readonly _input: GainNode;
 

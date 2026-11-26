@@ -3,4 +3,3 @@ export { MidiRecorder } from "./MidiRecorder";
 export type { MidiRecorderState, MidiRecordOptions, Quantize, NoteLength, RecorderTransport, RecorderResetReason } from "./MidiRecorder";
 export { MidiKeyboard } from "./MidiKeyboard";
 export type { MidiKeyboardOptions, MidiSource } from "./MidiKeyboard";
-export type { MidiTake, MidiTakeEvent } from "./midi-data";

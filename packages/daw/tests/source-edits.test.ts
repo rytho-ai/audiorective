@@ -143,7 +143,8 @@ describe("a WebCLAP device in a file opened from a source", () => {
   test("a set device state is saved and reopens", () => {
     const own = new Project({ title: "Synth" });
     const track = own.addTrack("Keys", "midi");
-    own.addWebClapDevice(track.id, {
+    own.addDevice(track.id, {
+      kind: "webclap",
       pluginId: "com.example.synth",
       name: "Synth",
       vendor: "Example",

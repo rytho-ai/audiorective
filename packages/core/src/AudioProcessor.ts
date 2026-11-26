@@ -37,10 +37,13 @@ export type BuildResult<P extends ParamRegistry, C extends CellRegistry> = (stri
     latency?: number | Param<number>;
   };
 
+/** Base class for anything that owns Web Audio nodes: reactive `params` and `cells`, a declared `latency`, `connect`/`disconnect`, and `dispose`. Subclasses pass a build callback to `super()`. */
 export abstract class AudioProcessor<P extends ParamRegistry = ParamRegistry, C extends CellRegistry = CellRegistry> {
   readonly context: BaseAudioContext;
+  /** Frozen registry of the processor's `Param`s, keyed as declared in the build callback. */
   readonly params: Readonly<P>;
   readonly cells: Readonly<C>;
+  /** Processing delay in samples that delay compensation (PDC) adds up along a graph path; 0 unless the build callback declares it. Writable at run time. */
   readonly latency: Param<number>;
   /** Whether the build callback supplied `latency` itself, rather than defaulting to 0. */
   readonly declaredLatency: boolean;
@@ -114,22 +117,27 @@ export abstract class AudioProcessor<P extends ParamRegistry = ParamRegistry, C 
     this.latency = declared instanceof Param ? declared : new Param({ default: declared ?? 0 });
   }
 
+  /** Node the processor's sound leaves from, or undefined for a sink with no audio out. */
   abstract get output(): AudioNode | undefined;
 
+  /** Node that receives sound for `connect(processor)`; undefined (default) for a source. */
   get input(): AudioNode | undefined {
     return undefined;
   }
 
+  /** Derived value that re-evaluates only when the cells and params it read change; read it as `accessor()`. Call it after `super()` returns. */
   protected computed<T>(fn: () => T): ComputedAccessor<T> {
     return alienComputed(fn);
   }
 
+  /** Runs `fn` now and again after any cell or param it read changes; returns a stop function. `dispose()` stops it too. */
   protected effect(fn: () => void): () => void {
     const stop = untracked(() => alienEffect(fn));
     this._effects.push(stop);
     return stop;
   }
 
+  /** Wires the reactive edge list `fn` returns and re-diffs it when what it read changes; pass `{ compensate: false }` to skip delay compensation. The graph is torn down with the processor. */
   protected defineGraph<const E extends EdgeList>(fn: () => readonly [...ValidateEdges<E>], opts?: { compensate?: boolean }): GraphHandle;
   protected defineGraph(fn: () => EdgeList, opts?: { compensate?: boolean }): GraphHandle {
     const handle = defineGraphFn(fn, { context: this.context, compensate: opts?.compensate, owner: this });

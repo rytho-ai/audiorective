@@ -1,7 +1,6 @@
 import { untracked } from "@audiorective/core";
 import { effect } from "./detached-effect";
 import type { ClipGestureHandle } from "./clip";
-export type { ArrangementTimeMap, ClipGestureHandle, ClipGestureOptions, ClipMove } from "./clip";
 export { mountBarRuler } from "./bar-ruler";
 export type { BarRulerHandle, BarRulerOptions, BarRulerTempoMap } from "./bar-ruler";
 
@@ -31,7 +30,7 @@ export interface TimelineZoomHandle {
 export type TimelineRange = readonly [start: number, end: number];
 
 export type TimeRangeGestureOptions = Readonly<{
-  /** Map pointer X to project time, including any duration limits and grid snapping. */
+  /** Map pointer X to timeline time, including any duration limits and grid snapping. */
   timeAt(clientX: number, bypassSnap: boolean): number;
   onPreview(range: TimelineRange | undefined): void;
   onSelect(range: TimelineRange): void;

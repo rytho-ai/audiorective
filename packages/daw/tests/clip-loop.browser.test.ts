@@ -35,7 +35,7 @@ async function render(
     workletUrl: worklet,
     ...options,
   });
-  expect(workspace.warnings).toEqual([]);
+  expect(workspace.cells.warnings.value).toEqual([]);
   const pending = [...actions].sort((a, b) => a.at - b.at);
   while (pending[0]?.at === 0) pending.shift()!.run(workspace);
   await workspace.play();
@@ -290,7 +290,7 @@ describe("looped clips in the Session", () => {
     const scene = session.addScene();
     const clip = session.setAudioClip({ trackId: track.id, sceneId: scene.id }, { sampleRate: RATE, channels: [channel] });
     project.setClipLoop(clip.id, { startSeconds: 1, endSeconds: 2 });
-    const x = await render(project, 9, [{ at: 0.2, run: (w) => w.session.value.tracks[track.id]!.clips[0]!.launch() }], { arrangement: false });
+    const x = await render(project, 9, [{ at: 0.2, run: (w) => w.cells.session.value.tracks[track.id]!.clips[0]!.launch() }], { arrangement: false });
     // Launched on the bar at 2 s: the lead-in (0.6) plays once, then the sine repeats.
     expect(rms(x, 0, 1.9)).toBe(0);
     const lead = rms(x, 2.05, 2.95);
@@ -304,7 +304,7 @@ describe("looped clips in the Session", () => {
     const { project, track, instruments } = sessionMidiLoop([{ start: 0 }, { start: 3 }]);
     const clip = sessionFor(project).clipAt({ trackId: track.id, sceneId: sessionFor(project).scenes[0].id })!;
     project.setClipLoop(clip.id, { startBeat: 0, endBeat: 8 });
-    const x = await render(project, 6, [{ at: 0.2, run: (w) => w.session.value.tracks[track.id]!.clips[0]!.launch() }], {
+    const x = await render(project, 6, [{ at: 0.2, run: (w) => w.cells.session.value.tracks[track.id]!.clips[0]!.launch() }], {
       instruments,
       arrangement: false,
     });
@@ -316,7 +316,7 @@ describe("looped clips in the Session", () => {
     const { project, track, instruments } = sessionMidiLoop([{ start: 0 }, { start: 3 }]);
     const clip = sessionFor(project).clipAt({ trackId: track.id, sceneId: sessionFor(project).scenes[0].id })!;
     project.setClipLoop(clip.id, { startBeat: 0, endBeat: 2 });
-    const x = await render(project, 6, [{ at: 0.2, run: (w) => w.session.value.tracks[track.id]!.clips[0]!.launch() }], {
+    const x = await render(project, 6, [{ at: 0.2, run: (w) => w.cells.session.value.tracks[track.id]!.clips[0]!.launch() }], {
       instruments,
       arrangement: false,
     });

@@ -1,5 +1,4 @@
-import type { BeatTiming } from "@audiorective/core";
-import type { PCMData } from "@audiorective/core/peaks";
+import type { BeatTiming, PCMData } from "@audiorective/core";
 
 /** Where a loop's beats are in seconds: a constant tempo (`bpm`), or a transport's timing (`timeline`, e.g. `clock.timeline`, which follows a tempo curve). */
 export type LoopTiming = { bpm: number; timeline?: never } | { timeline: Pick<BeatTiming, "beatToTime">; bpm?: never };

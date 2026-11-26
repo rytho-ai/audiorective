@@ -41,7 +41,8 @@ describe("track add and remove in project.edit", () => {
     project.setTrackRouting(other.id, { outputBusId: bus.id, sends: [] });
     const clip = project.addMidiClip(lead.id, { notes: [{ pitch: 60, velocity: 0.8, start: 0, duration: 2 }], duration: 4 }, 8);
     project.setVolumeAutomation(lead.id, [{ time: 0, value: 1, shape: "linear" }]);
-    const device = project.addWebClapDevice(lead.id, {
+    const device = project.addDevice(lead.id, {
+      kind: "webclap",
       pluginId: "p",
       name: "Synth",
       vendor: "v",
@@ -67,7 +68,7 @@ describe("track add and remove in project.edit", () => {
     expect(back.clips).toHaveLength(1);
     expect(back.clips[0].id).toBe(clip.id);
     expect(back.clips[0].kind === "midi" && back.clips[0].midi.notes.value).toHaveLength(1);
-    expect(back.volumeAutomation).toEqual([{ time: 0, value: 1, shape: "linear" }]);
+    expect(back.volumeAutomation).toEqual([{ time: 0, value: 1, shape: "hold" }]);
     expect(back.devices).toHaveLength(1);
     expect(back.devices[0]).toMatchObject({ id: device.id, state: new Uint8Array([7]) });
     // The restored clip still plays: its notes are intact and it is not disposed.

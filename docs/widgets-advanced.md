@@ -134,7 +134,7 @@ The widget calls the returned `dispose()` once, including after an initial `rend
 
 ```typescript
 import { MidiClip } from "@audiorective/midi";
-import { mountPianoRoll, pianoRollModel } from "@audiorective/widgets";
+import { mountPianoRoll, pianoRollModel } from "@audiorective/widgets/piano-roll";
 
 const clip = new MidiClip([{ pitch: 60, velocity: 0.8, start: 0, duration: 1 }]);
 const model = pianoRollModel(clip); // or pianoRollModel(clip, { duration: 16 })
@@ -159,7 +159,8 @@ A move or resize gesture previews inside the widget and calls `onNoteEdit({ kind
 Use `view.attach(plugin)` for waveform, piano roll, and waveform selector extensions. All three implement `PluginTarget<TimeViewPluginContext>`. The plugin reads `context.timeUnit` to interpret coordinates. Waveform and selector use seconds, with the selector using the current playback version's output seconds. Piano roll uses beats. The app supplies the appropriate time in each unit.
 
 ```typescript
-import { mountWaveform, type TimeViewPlugin } from "@audiorective/widgets/waveform";
+import { mountWaveform } from "@audiorective/widgets/waveform";
+import type { TimeViewPlugin } from "@audiorective/widgets";
 
 const marker: TimeViewPlugin = {
   attach(context) {

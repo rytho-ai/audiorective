@@ -1,5 +1,6 @@
 import { cell } from "@audiorective/core";
-import { attachClipGesture, attachTimelineZoom, type ClipGestureOptions, type TimelineZoomOptions } from "../src";
+import { attachTimelineZoom, type TimelineZoomOptions } from "../src/arrangement";
+import { attachClipGesture, type ClipGestureOptions } from "../src/clip";
 
 export function arrangementContracts(element: HTMLElement, timeMap: ClipGestureOptions["timeMap"]): void {
   const source = cell<{ time: number; trackId: string } | undefined>({ time: 1, trackId: "a" });

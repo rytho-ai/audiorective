@@ -14,21 +14,12 @@ import { visibleMidiNotes, type MidiNote } from "@audiorective/midi";
 import type { PianoRollOptions, PianoRollHandle, PianoRollRenderer, PianoRollLayout, PitchRange } from "./piano-roll-types";
 export type * from "./piano-roll-types";
 export { pianoRollModel, type PianoRollModelOptions, type ClipPianoRollModel } from "./piano-roll-model";
-export type {
-  PluginAttachment,
-  PluginTarget,
-  TimeViewPlugin,
-  TimeViewPluginContext,
-  WaveformPlugin,
-  WaveformPluginContext,
-  WidgetPlugin,
-  WidgetPluginContext,
-} from "./types";
 const clamp = (n: number, low: number, high: number) => Math.max(low, Math.min(high, n));
 const DEFAULT_VELOCITY = 100 / 127;
 /** Half the width of a velocity handle: bars never sit closer than this to the lane edge. */
 const VELOCITY_INSET = 7;
 const VELOCITY_REACH = 9;
+/** Mounts a piano-roll view into `root`; returns a handle whose `dispose` removes it. */
 export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): PianoRollHandle {
   const container = document.createElement("section");
   container.className = "ar-widget ar-piano-roll";

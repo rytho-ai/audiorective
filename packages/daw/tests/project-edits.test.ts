@@ -388,7 +388,8 @@ describe("project history", () => {
 
   it("does not let a device-state capture invalidate a version or get undone", () => {
     const { project, keys, drumOutro } = song();
-    const device = project.addWebClapDevice(keys.id, {
+    const device = project.addDevice(keys.id, {
+      kind: "webclap",
       pluginId: "p",
       name: "Synth",
       vendor: "v",

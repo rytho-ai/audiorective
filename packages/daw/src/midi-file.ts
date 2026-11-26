@@ -1,4 +1,5 @@
 import { parseMidi, writeMidi, type MidiFileEvent, type MidiWriteTrack } from "@audiorective/midi";
+import { compileControllerLane, controllerMessage } from "./controller-lane";
 import { MidiClip, type Project, type ProjectTrack } from "./model";
 
 /** What `importMidiFile` did. */
@@ -105,7 +106,7 @@ export type MidiFileExportOptions = Readonly<{
 /**
  * The song's MIDI tracks as a Standard MIDI File, format 1: a first track with the title, tempo changes and time signatures, then one track per MIDI track.
  * Each track holds its timeline clips as they play: windows (`sourceOffset`), loops and linked clips are expanded, notes cut at clip edges as playback cuts them,
- * channels and controller, pedal, pitch-bend and program events are kept. Audio and bus tracks, Session slot clips, volume, pan, mute and devices are not exported.
+ * channels and controller, pedal, pitch-bend and program events are kept, and the track's controller lanes are sampled into events as playback sends them. Audio and bus tracks, Session slot clips, volume, pan, mute and devices are not exported.
  * Bytes only: the caller saves them, for example `new Blob([bytes], { type: "audio/midi" })`.
  */
 export function exportMidiFile(project: Project, options: MidiFileExportOptions = {}): Uint8Array {
@@ -119,6 +120,13 @@ export function exportMidiFile(project: Project, options: MidiFileExportOptions 
       end = Math.max(end, clip.time + clip.duration);
       for (const { beat, data } of clip.playbackEvents()) events.push({ beat: clip.time + beat, data });
     }
+    // The track's controller lanes, as the messages playback sends, merged in by beat (a clip's event first at the same beat).
+    for (const lane of track.controllerLanes)
+      for (const { beat, value } of compileControllerLane(lane)) {
+        events.push({ beat, data: controllerMessage(lane, value) });
+        end = Math.max(end, beat);
+      }
+    events.sort((a, b) => a.beat - b.beat);
     tracks.push({ name: track.name, events, end });
   }
   return writeMidi({

@@ -140,7 +140,7 @@ describe("project edits through the audio graph", () => {
     });
     expect(receipt.status).toBe("applied");
     await workspace.flush();
-    expect(workspace.clock.state.value).toBe("playing");
+    expect(workspace.transport.state.value).toBe("playing");
     expect(workspace.cells.needsSync.value).toBe(false);
     expect(workspace.cells.error.value).toBeNull();
     workspace.stop();
@@ -180,7 +180,7 @@ describe("project edits through the audio graph", () => {
     expect(worstDifference(result.audio.channels[0], full.subarray(start, end))).toBeLessThan(1e-6);
     expect(result.peakDbFS).toBeGreaterThan(-20);
     expect(result.loudnessLUFS).toBeLessThan(0);
-    expect(workspace.clock.state.value).toBe("stopped");
+    expect(workspace.transport.state.value).toBe("stopped");
   }, 30_000);
 
   test("renderMixRange hears an earlier delay only through preroll", async () => {

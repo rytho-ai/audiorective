@@ -214,7 +214,8 @@ describe("offline audio fallback export", () => {
   test("an unresolved device fails before any audio is rendered", async () => {
     const project = new Project({ title: "Unresolved", bpm: 120 });
     const track = project.addTrack("Synth", "midi");
-    project.addWebClapDevice(track.id, {
+    project.addDevice(track.id, {
+      kind: "webclap",
       pluginId: "missing.plugin",
       name: "Missing",
       vendor: "x",

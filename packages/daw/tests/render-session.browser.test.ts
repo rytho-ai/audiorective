@@ -61,7 +61,7 @@ async function setup(extra = false) {
     project.dispose();
     await context.close();
   });
-  expect(workspace.warnings).toEqual([]);
+  expect(workspace.cells.warnings.value).toEqual([]);
   return { project, workspace, drums, a, b, c };
 }
 
@@ -77,7 +77,7 @@ async function liveChain(project: Project, instruments: Record<string, { sound: 
     instruments,
     arrangement: false,
   });
-  workspace.session.value.playChain(chain);
+  workspace.cells.session.value.playChain(chain);
   await workspace.play();
   ticks.tick();
   await workspace.renderSettled();

@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { Project, encodeWavBytes, openDawProject, saveDawProject } from "../src";
+import { adoptRenderedStretch } from "../src/model";
+import { renderMatches } from "../src/internal/stretch-render";
 import type { AudioClip } from "../src";
 import { takeOpenedStretches } from "../src/internal/open-stretch";
 import { decodeWav } from "../src/internal/wav";
@@ -55,6 +57,7 @@ function clicks(channel: Float32Array): number[] {
   for (let i = 0; i < channel.length; i++) if (Math.abs(channel[i]) > 0.2 && (out.length === 0 || i - out[out.length - 1] > 2000)) out.push(i);
   return out;
 }
+const renderWavs = (archive: Uint8Array) => Object.keys(unzipSync(archive)).filter((path) => path.startsWith("audiorective/render/"));
 const violations = (archive: Uint8Array) => xsdViolations([{ name: "x", bytes: archive }]);
 
 describe("a clip stretched by Bitwig's warp markers", { timeout: 60_000 }, () => {
@@ -265,7 +268,8 @@ describe("a clip stretched in the app", () => {
     const { project, clip } = stretchedProject();
     const saved = saveDawProject(project);
     const files = unzipSync(saved);
-    expect(Object.keys(files).filter((path) => path.includes(".wav"))).toEqual([`audio/${clip.id}.wav`]);
+    // The original is the file; the render stays in the Audiorective folder, where other DAWs do not look.
+    expect(Object.keys(files).filter((path) => path.includes(".wav"))).toEqual([`audio/${clip.id}.wav`, `audiorective/render/${clip.id}.wav`]);
     expect(Object.keys(files).some((path) => path.startsWith("audiorective/source/"))).toBe(false);
     // The file holds the original frames, not the render.
     expect(decodeWav(files[`audio/${clip.id}.wav`]).channels[0]).toEqual(original);
@@ -337,13 +341,336 @@ describe("a file written before the stretch moved into the warp (the render and 
     again.channels[0].forEach((sample, i) => expect(Math.abs(sample - rendered[i])).toBeLessThan(1e-3));
     expect(again.duration).toBe(0.8);
     expect(takeOpenedStretches(opened.project)).toHaveLength(0);
-    // Saved again it is the new form, and reopens with the same ratio.
+    // Saved again it is the new form with its render beside it, and reopens with the same ratio and the same samples.
     const resaved = saveDawProject(opened.project);
     expect(warpsOf(resaved)).toHaveLength(1);
+    expect(renderWavs(resaved)).toHaveLength(1);
     const reopened = openDawProject(resaved).project;
     expect(only(reopened).stretch?.ratio).toBe(2);
+    expect(only(reopened).channels).toEqual(again.channels);
+    expect(takeOpenedStretches(reopened)).toHaveLength(0);
     reopened.dispose();
     opened.project.dispose();
+    project.dispose();
+  });
+});
+
+describe("the render of a clip stretched in the app travels in the file's own folder", () => {
+  const original = Float32Array.from({ length: 4800 }, (_, i) => Math.sin((i / 48) * Math.PI * 2));
+  /** A render that is not flat, so a wrong sample shows. */
+  const render = (frames: number) => ({ sampleRate: 48_000, channels: [Float32Array.from({ length: frames }, (_, i) => Math.sin(i / 11) * 0.4)] });
+  const stretched = (ratio = 1.25, anchors: Array<{ sourceFrame: number; outputFrame: number }> = []) => {
+    const project = new Project({ bpm: 120 });
+    const track = project.addTrack("Take", "audio");
+    const clip = project.addAudioClip(track.id, { sampleRate: 48_000, channels: [original] }, 1);
+    const done = project.applyAudioClipStretch(clip, ratio, render(Math.round(original.length * ratio)), anchors);
+    return { project, clip: done };
+  };
+  const without = (archive: Uint8Array, drop: (path: string) => boolean) => {
+    const entries = unzipSync(archive);
+    for (const path of Object.keys(entries)) if (drop(path)) delete entries[path];
+    return zipSync(entries);
+  };
+  const waiting = (archive: Uint8Array) => {
+    const { project, warnings } = openDawProject(archive);
+    const clip = only(project);
+    return { project, clip, warnings, queued: takeOpenedStretches(project).length };
+  };
+
+  test("a reader with no engine plays the same samples: no placeholder, no engine call, no warning", () => {
+    const { project, clip } = stretched();
+    const saved = saveDawProject(project);
+    expect(renderWavs(saved)).toEqual([`audiorective/render/${clip.id}.wav`]);
+    const record = JSON.parse(strFromU8(unzipSync(saved)["audiorective/state.json"])).clips[0].render;
+    expect(record).toMatchObject({
+      source: `audio/${clip.id}.wav`,
+      from: 0,
+      length: 4800,
+      frames: 6000,
+      rate: 48_000,
+      channels: 1,
+      ratio: 1.25,
+      anchors: [],
+    });
+    expect(record.hash).toMatch(/^[0-9a-f]{8}$/);
+    const opened = waiting(saved);
+    expect(opened.queued).toBe(0);
+    expect(opened.warnings).toEqual([]);
+    expect(opened.clip.channels).toEqual(clip.channels);
+    expect(opened.clip.stretch?.ratio).toBe(1.25);
+    expect(opened.clip.stretch?.source.channels?.[0]).toEqual(original);
+    // Saved again, the render is stored again and still matches.
+    const again = saveDawProject(opened.project);
+    expect(waiting(again).clip.channels).toEqual(clip.channels);
+    opened.project.dispose();
+    project.dispose();
+  });
+
+  test("anchors travel with the render and an anchored clip reopens with the same samples", () => {
+    const { project, clip } = stretched(1.25, [{ sourceFrame: 2400, outputFrame: 4000 }]);
+    const opened = waiting(saveDawProject(project));
+    expect(opened.queued).toBe(0);
+    expect(opened.clip.stretch?.anchors).toEqual([{ sourceFrame: 2400, outputFrame: 4000 }]);
+    expect(opened.clip.channels).toEqual(clip.channels);
+    opened.project.dispose();
+    project.dispose();
+  });
+
+  test("a warp point the file adds on the same line is the same map; one off the line is not", () => {
+    const render = {
+      path: "audiorective/render/x.wav",
+      offset: 0,
+      frames: 6000,
+      rate: 48_000,
+      channels: 1,
+      source: "audio/x.wav",
+      from: 0,
+      length: 4800,
+    };
+    const stored = { ...render, ratio: 1.25, anchors: [] };
+    const now = { source: "audio/x.wav", from: 0, length: 4800, output: 6000, rate: 48_000, channels: 1 };
+    const hash = () => "";
+    expect(renderMatches(stored, { ...now, anchors: [] }, hash)).toBe(true);
+    // Where the song's tempo changes the writer adds a point; the speed there is the same.
+    expect(renderMatches(stored, { ...now, anchors: [{ sourceFrame: 2400, outputFrame: 3000 }] }, hash)).toBe(true);
+    expect(renderMatches(stored, { ...now, anchors: [{ sourceFrame: 2400, outputFrame: 3100 }] }, hash)).toBe(false);
+    expect(renderMatches({ ...stored, anchors: [{ sourceFrame: 2400, outputFrame: 3000 }] }, { ...now, anchors: [] }, hash)).toBe(true);
+    expect(renderMatches(stored, { ...now, output: 6001, anchors: [] }, hash)).toBe(false);
+    expect(renderMatches(stored, { ...now, from: 1, anchors: [] }, hash)).toBe(false);
+    expect(renderMatches({ ...stored, hash: "00000001" }, { ...now, anchors: [] }, hash)).toBe(false);
+  });
+
+  test("without the Audiorective folder (as Bitwig saves it) the clip is the standard form: a placeholder the engine renders, and it stores no render", () => {
+    const { project, clip } = stretched();
+    const bare = without(saveDawProject(project), (path) => path.startsWith("audiorective/"));
+    const opened = waiting(bare);
+    expect(opened.queued).toBe(1);
+    expect(opened.clip.channels[0]).toHaveLength(clip.channels[0].length);
+    expect(opened.clip.channels).not.toEqual(clip.channels);
+    expect(opened.clip.stretch?.ratio).toBe(1.25);
+    // A clip that only has the varispeed placeholder has no render to store, itself or as a piece or a copy.
+    const [, tail] = opened.project.splitClip(opened.clip.id, 0.05);
+    opened.project.duplicateClip(tail.id, 5);
+    opened.project.duplicateClip(opened.clip.id, 7);
+    expect(renderWavs(saveDawProject(opened.project))).toEqual([]);
+    opened.project.dispose();
+    project.dispose();
+  });
+
+  test("a render the engine made after opening is stored: the placeholder's replacement is a render", () => {
+    const { project } = stretched();
+    const bare = without(saveDawProject(project), (path) => path.startsWith("audiorective/"));
+    const opened = waiting(bare);
+    const made = render(opened.clip.channels[0].length);
+    adoptRenderedStretch(opened.project, opened.clip, made);
+    const saved = saveDawProject(opened.project);
+    expect(renderWavs(saved)).toHaveLength(1);
+    expect(waiting(saved).clip.channels).toEqual(only(opened.project).channels);
+    opened.project.dispose();
+    project.dispose();
+  });
+
+  describe("a render that no longer describes the file is never played", () => {
+    const warped = (xml: string, from: RegExp, to: string) => {
+      expect(xml).toMatch(from);
+      return xml.replace(from, to);
+    };
+    const stale = (archive: Uint8Array) => {
+      const opened = waiting(archive);
+      expect(opened.queued).toBe(1);
+      return opened;
+    };
+
+    test("a warp point moved", () => {
+      const { project, clip } = stretched(1.25, [{ sourceFrame: 2400, outputFrame: 4000 }]);
+      const saved = saveDawProject(project);
+      // The middle warp point plays 0.05 s of the file; Bitwig moved it to 0.04 s.
+      const moved = editXml(saved, (xml) => warped(xml, /contentTime="0\.05"/, 'contentTime="0.04"'));
+      const opened = stale(moved);
+      expect(opened.clip.channels).not.toEqual(clip.channels);
+      opened.project.dispose();
+      project.dispose();
+    });
+
+    test("the end of the window moved", () => {
+      const { project, clip } = stretched();
+      const moved = editXml(saveDawProject(project), (xml) => warped(xml, /contentTime="0\.1"/, 'contentTime="0.09"'));
+      const opened = stale(moved);
+      expect(opened.clip.channels).not.toEqual(clip.channels);
+      opened.project.dispose();
+      project.dispose();
+    });
+
+    test("the tempo changed, so the clip has another length", () => {
+      const { project, clip } = stretched();
+      const slower = editXml(saveDawProject(project), (xml) => warped(xml, /(<Tempo [^>]*value=")120(\.0*)?"/, '$160"'));
+      const opened = stale(slower);
+      expect(opened.clip.channels[0].length).not.toBe(clip.channels[0].length);
+      opened.project.dispose();
+      project.dispose();
+    });
+
+    test("the audio file was replaced by other samples of the same length", () => {
+      const { project, clip } = stretched();
+      const entries = unzipSync(saveDawProject(project));
+      entries[`audio/${clip.id}.wav`] = encodeWavBytes({ sampleRate: 48_000, channels: [original.map((sample) => sample * 0.5)] });
+      const opened = stale(zipSync(entries));
+      opened.project.dispose();
+      project.dispose();
+    });
+
+    test("a stale render is dropped from the file by the next save, and a damaged record is ignored", () => {
+      const { project, clip } = stretched();
+      const saved = saveDawProject(project);
+      const entries = unzipSync(saved);
+      const state = JSON.parse(strFromU8(entries["audiorective/state.json"]));
+      state.clips[0].render.offset = -3;
+      entries["audiorective/state.json"] = strToU8(JSON.stringify(state));
+      const opened = waiting(zipSync(entries));
+      expect(opened.queued).toBe(1);
+      expect(opened.clip.channels).not.toEqual(clip.channels);
+      expect(renderWavs(saveDawProject(opened.project))).toEqual([]);
+      state.clips[0].render = { path: "audiorective/render/missing.wav" };
+      entries["audiorective/state.json"] = strToU8(JSON.stringify(state));
+      expect(waiting(zipSync(entries)).queued).toBe(1);
+      opened.project.dispose();
+      project.dispose();
+    });
+  });
+
+  test("a Bitwig clip the app rendered with an engine reopens with that render and no engine, and the rest of the file is untouched", () => {
+    const first = openDawProject(B);
+    const placeholder = only(first.project);
+    expect(takeOpenedStretches(first.project)).toHaveLength(1);
+    const made = { sampleRate: RATE, channels: [Float32Array.from({ length: placeholder.channels[0].length }, (_, i) => Math.sin(i / 13) * 0.3)] };
+    adoptRenderedStretch(first.project, placeholder, made);
+    const rendered = only(first.project);
+    const saved = saveDawProject(first.project);
+    const [was, now] = [unzipSync(B), unzipSync(saved)];
+    expect(treeDifferences(parseTree(projectXmlOf(B)), parseTree(projectXmlOf(saved)))).toEqual([]);
+    for (const path of Object.keys(was)) if (path !== "metadata.xml" && path !== "project.xml") expect(now[path], path).toEqual(was[path]);
+    expect(Object.keys(now).filter((path) => !(path in was) && !path.startsWith("audiorective/"))).toEqual([]);
+    expect(renderWavs(saved)).toHaveLength(1);
+    const reopened = waiting(saved);
+    expect(reopened.queued).toBe(0);
+    expect(reopened.warnings.join()).not.toMatch(/Audio clip/);
+    expect(reopened.clip.channels).toEqual(rendered.channels);
+    reopened.project.dispose();
+    first.project.dispose();
+  });
+
+  test("a split and copies of a rendered clip store the render once, and every clip reopens with its own samples", () => {
+    const { project, clip } = stretched();
+    const copy = project.duplicateClip(clip.id, 4);
+    const [, tail] = project.splitClip(clip.id, 0.05);
+    const pieceCopy = project.duplicateClip(tail.id, 6);
+    const saved = saveDawProject(project);
+    expect(renderWavs(saved)).toHaveLength(1);
+    // The one render holds no more than the clip had: header and 6000 frames of float32.
+    expect(unzipSync(saved)[renderWavs(saved)[0]].length).toBe(44 + 6000 * 4);
+    const reopened = openDawProject(saved);
+    expect(takeOpenedStretches(reopened.project)).toHaveLength(0);
+    expect(reopened.warnings).toEqual([]);
+    const clips = audioClips(reopened.project);
+    expect(clips).toHaveLength(4);
+    for (const expected of [clip, copy, tail, pieceCopy]) {
+      const found = clips.find((item) => item.id === expected.id)!;
+      const now = audioClips(project).find((item) => item.id === expected.id)!;
+      expect(found.channels, expected.id).toEqual(now.channels);
+      expect(found.stretch?.source.channels?.[0], expected.id).toEqual(now.stretch?.source.channels?.[0]);
+    }
+    reopened.project.dispose();
+    project.dispose();
+  });
+
+  test("trimming, moving and changing the ratio after the render keep the saved render matching, or re-render", () => {
+    const { project, clip } = stretched();
+    const trimmed = project.resizeClip(clip.id, { start: clip.time + 0.02, end: clip.time + 0.1 });
+    project.moveClip(clip.id, project.tracks[0].id, 3);
+    const opened = waiting(saveDawProject(project));
+    expect(opened.queued).toBe(0);
+    expect(opened.clip.channels).toEqual((trimmed as AudioClip).channels);
+    expect(opened.clip.time).toBe(3);
+    // A new ratio is a new render: the model has the render of the old ratio only until the caller applies the new one.
+    const [kept] = audioClips(opened.project);
+    const again = opened.project.applyAudioClipStretch(kept, 1, undefined, []);
+    expect(again.stretch).toBeUndefined();
+    expect(renderWavs(saveDawProject(opened.project))).toEqual([]);
+    opened.project.dispose();
+    project.dispose();
+  });
+});
+
+describe("a stretched clip's file always reopens", () => {
+  const original = Float32Array.from({ length: 4800 }, (_, i) => Math.sin(i / 7));
+  const inApp =
+    (at: number, ratio: number, anchors: Array<{ sourceFrame: number; outputFrame: number }>, changes: Array<{ beat: number; bpm: number }>) =>
+    () => {
+      const project = new Project({ bpm: 120 });
+      const track = project.addTrack("Take", "audio");
+      project.setTempoChanges(changes);
+      const clip = project.addAudioClip(track.id, { sampleRate: 48_000, channels: [original] }, at);
+      project.applyAudioClipStretch(clip, ratio, { sampleRate: 48_000, channels: [new Float32Array(Math.round(original.length * ratio))] }, anchors);
+      return project;
+    };
+  const fromFile = (archive: Uint8Array) => () => openDawProject(archive).project;
+  const steps = (xml: string, extra: string) =>
+    xml.replace(
+      '<RealPoint value="100.000000" interpolation="linear" time="0.000000"/>',
+      `<RealPoint value="100.000000" interpolation="hold" time="0.000000"/>${extra}`,
+    );
+  const fixtures: Array<[string, () => Project]> = [
+    ["b-bitwig-native", fromFile(B)],
+    [
+      "b-bitwig-native with a middle marker",
+      fromFile(
+        editXml(B, (xml) =>
+          xml.replace(WARPS, '<Warp time="0.0" contentTime="0.0"/><Warp time="4.0" contentTime="1.0"/><Warp time="8.0" contentTime="4.0"/>'),
+        ),
+      ),
+    ],
+    [
+      "b-bitwig-native with a tempo change inside",
+      fromFile(editXml(B, (xml) => steps(xml, '<RealPoint value="200.000000" interpolation="hold" time="5.000000"/>'))),
+    ],
+    [
+      "b-bitwig-native with a tempo change on its marker",
+      fromFile(
+        editXml(B, (xml) =>
+          steps(
+            xml.replace(WARPS, '<Warp time="0.0" contentTime="0.0"/><Warp time="4.0" contentTime="1.0"/><Warp time="8.0" contentTime="4.0"/>'),
+            '<RealPoint value="130.000000" interpolation="hold" time="5.000000"/>',
+          ),
+        ),
+      ),
+    ],
+    ["in app, no tempo change", inApp(1, 1.25, [], [])],
+    ["in app, anchors", inApp(1, 1.25, [{ sourceFrame: 2400, outputFrame: 4000 }], [])],
+    ["in app, tempo change inside", inApp(1, 0.8, [], [{ beat: 2.5, bpm: 117 }])],
+    ["in app, off-grid start and a tempo change on a beat", inApp(1.474, 0.8, [], [{ beat: 3, bpm: 117 }])],
+    [
+      "in app, anchors and two tempo changes",
+      inApp(
+        0.9,
+        2,
+        [{ sourceFrame: 2400, outputFrame: 6000 }],
+        [
+          { beat: 2, bpm: 90 },
+          { beat: 3.5, bpm: 150 },
+        ],
+      ),
+    ],
+  ];
+  test.each(fixtures)("%s: save then open does not throw and keeps the clip", (_name, make) => {
+    const project = make();
+    const before = only(project);
+    const reopened = openDawProject(saveDawProject(project));
+    expect(reopened.warnings.join()).not.toMatch(/Audio clip/);
+    const after = only(reopened.project);
+    expect(after.stretch?.ratio).toBeCloseTo(before.stretch!.ratio, 6);
+    expect(after.time).toBeCloseTo(before.time, 6);
+    expect(after.duration).toBeCloseTo(before.duration, 6);
+    reopened.project.dispose();
     project.dispose();
   });
 });

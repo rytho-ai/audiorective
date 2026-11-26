@@ -13,6 +13,7 @@ export type TransportHandle = Readonly<{
 /** The part of a transport window `schedule` reads. Internal to transports: `clock.attach(launcher)` passes it; applications never build one. */
 export type TransportWindow = Readonly<{
   beat: { start: number; end: number };
+  /** `current`: the audio-context time of the tick, in seconds. */
   time: { current: number };
   own(event: CancellableEvent, when: number): void;
 }>;
@@ -30,8 +31,11 @@ export type TransportChange = Readonly<{
 /** The tempo curve of the transport a launcher follows (a clock's `timeline.bpm`). */
 export type TransportTempo = Readonly<{
   readonly value: number;
+  /** Tempo in BPM at audio-context `time` (seconds). */
   valueAtTime(time: number): number;
+  /** Sets the tempo to `value` BPM at audio-context `time` (seconds). */
   setValueAtTime(value: number, time: number): unknown;
+  /** Drops tempo changes scheduled at or after audio-context `time` (seconds). */
   cancelScheduledValues(time: number): unknown;
 }>;
 
@@ -41,6 +45,7 @@ export type TransportAttachment = Readonly<{
   state: Readonly<{ readonly value: "stopped" | "playing" | "paused" }>;
   meter: Readonly<{ readonly value: readonly [number, number] }>;
   refresh(): void;
+  /** Revokes events scheduled at or after audio-context `time` (seconds). */
   cancelFrom(time: number): void;
   detach(): void;
 }>;

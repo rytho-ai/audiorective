@@ -54,7 +54,7 @@ function build(withDevice: boolean) {
   ]);
   project.setTrackEffects(bus.id, [{ id: "d2", type: "delay", enabled: true, wet: 1, delayTime: 0.33, feedback: 0.3 }]);
   project.setTrackRouting(audio.id, { outputBusId: null, sends: [{ busId: bus.id, gain: 0.5 }] });
-  if (withDevice) project.addWebClapDevice(midi.id, { pluginId, name: "Synth", vendor: "", version: "", bundleUrl: bundle });
+  if (withDevice) project.addDevice(midi.id, { kind: "webclap", pluginId, name: "Synth", vendor: "", version: "", bundleUrl: bundle });
   cleanups.push(() => project.dispose());
   return project;
 }
@@ -71,7 +71,7 @@ async function open(project: Project, withDevice: boolean) {
     workspace.dispose();
     await context.close();
   });
-  expect(workspace.warnings).toEqual([]);
+  expect(workspace.cells.warnings.value).toEqual([]);
   return workspace;
 }
 

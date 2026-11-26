@@ -2,7 +2,7 @@ import { hash01 } from "./hash";
 
 /** A consumer-owned audio event that a scheduler may revoke after a transport or edit change. */
 export interface CancellableEvent {
-  /** `time` is the audio-context time the retraction takes effect (a scheduler's `cancelFrom(time)`, or now for a transport change or refresh); an event that is already sounding may stop at it. Omitted: now. */
+  /** `time` is the audio-context time, in seconds, the retraction takes effect (a scheduler's `cancelFrom(time)`, or now for a transport change or refresh); an event that is already sounding may stop at it. Omitted: now. */
   cancel(time?: number): void;
   onEnded(listener: () => void): void;
 }
@@ -42,13 +42,14 @@ export function withCancel(event: CancellableEvent | null, undo: () => void): Ca
 /** Converts between beats and absolute audio-context time. */
 export type BeatTiming = Readonly<{
   beatToTime(beat: number): number;
+  /** Beat at absolute audio-context `time` (seconds). */
   timeToBeat(time: number): number;
 }>;
 
 /** The one field every scheduler's outgoing event has: the absolute audio-context time it sounds. */
 export type ScheduledEvent = Readonly<{ when: number }>;
 
-/** A scheduled event that also has a length and a level, such as a note or a hit. */
+/** A scheduled event that also has a length (`duration`, seconds) and a level (`velocity`, 0..1), such as a note or a hit. */
 export type TimedEvent = ScheduledEvent & Readonly<{ duration: number; velocity: number }>;
 
 /** The one field every event has inside a transform pipeline: the beat it sounds at, before it is mapped to audio time. */

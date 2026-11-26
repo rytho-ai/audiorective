@@ -94,7 +94,7 @@ Events are `queued`, `started`, `ended`, `cancelled` and `skipped` (a `ClipEvent
 
 ## Standalone vs the DAW
 
-`Workspace.session` is a launcher over the scenes and slot clips a Project saves (`sessionFor(project)`): its clips play through each track's devices and mixer strip, and it is made with `emptySlots: "stop"`, so a scene launch stops the tracks whose slot is empty. See [the DAW Session](./daw.md#session-scenes-and-clip-slots). A grid view over a launcher is `mountClipGrid` in [widgets](./widgets.md).
+`workspace.cells.session` is a launcher over the scenes and slot clips a Project saves (`sessionFor(project)`): its clips play through each track's devices and mixer strip, and it is made with `emptySlots: "stop"`, so a scene launch stops the tracks whose slot is empty. See [the DAW Session](./daw.md#session-scenes-and-clip-slots). A grid view over a launcher is `mountClipGrid` in [widgets](./widgets.md).
 
 ## When not to use it
 

@@ -13,17 +13,18 @@ describe("a moving gain curve from another application's file", () => {
   test("seconds, hold and linear points become the clip's gain automation", () => {
     const { bytes } = foreignGainFile([
       { time: 0, value: 0.2, interpolation: "hold" },
-      { time: 1, value: 0.8, interpolation: "linear" },
+      { time: 1, value: 0.8, interpolation: "hold" },
       { time: 3, value: 0.2, interpolation: "linear" },
     ]);
     const opened = openDawProject(bytes);
     const clip = clipOf(opened.project);
     expect(clip.envelope?.gain ?? 1).toBe(1);
     expect(clip.gainAutomation?.sourceStart).toBe(0);
+    // A point's interpolation is how the value arrives there: 0.2 until second 1, a jump to 0.8, then a ramp down to 0.2 at second 3.
     expect(clip.gainAutomation?.points).toEqual([
       { time: 0, value: 0.2, shape: "hold" },
       { time: 1, value: 0.8, shape: "linear" },
-      { time: 3, value: 0.2, shape: "linear" },
+      { time: 3, value: 0.2, shape: "hold" },
     ]);
     expect(opened.warnings.join()).not.toContain("gain curve");
     opened.project.dispose();
@@ -40,11 +41,11 @@ describe("a moving gain curve from another application's file", () => {
       { timeUnit: "beats", bpm: 120 },
     );
     const opened = openDawProject(bytes);
-    // 120 BPM is half a second per beat; the earlier of the two points at beat 2 gives way to the later one.
+    // 120 BPM is half a second per beat. The pair at beat 2 repeats 0.2 and then jumps to 1 (how Bitwig writes a hold), so 0.2 holds up to there.
     expect(clipOf(opened.project).gainAutomation?.points).toEqual([
-      { time: 0, value: 0.2, shape: "linear" },
+      { time: 0, value: 0.2, shape: "hold" },
       { time: 1, value: 1, shape: "linear" },
-      { time: 3, value: 0.5, shape: "linear" },
+      { time: 3, value: 0.5, shape: "hold" },
     ]);
     opened.project.dispose();
   });
@@ -79,7 +80,7 @@ describe("a moving gain curve from another application's file", () => {
       const saved = projectXml(saveDawProject(opened.project));
       expect(saved).toContain(`<Points id="gain1" timeUnit="${timeUnit}" unit="linear"><Target expression="gain"/>`);
       expect(saved).toContain(
-        `<RealPoint time="0" value="0.5" interpolation="linear"/><RealPoint time="${1 * scale}" value="0.5" interpolation="hold"/><RealPoint time="${3 * scale}" value="0" interpolation="linear"/>`,
+        `<RealPoint time="0" value="0.5" interpolation="linear"/><RealPoint time="${1 * scale}" value="0.5" interpolation="linear"/><RealPoint time="${3 * scale}" value="0" interpolation="hold"/>`,
       );
       // Everything outside the points is as the source wrote it.
       const outside = (text: string) => text.replace(/<Points [\s\S]*?<\/Points>/, "");
