@@ -22,6 +22,7 @@ export class Cell<T> {
     this.$(v);
   }
 
+  /** Changes the value through an immer `recipe` that mutates a draft; the cell gets the new immutable value, and nothing changes when the recipe leaves the draft as is. */
   update(recipe: (draft: Draft<T>) => void): void {
     this.$(produce(this.$(), recipe));
   }

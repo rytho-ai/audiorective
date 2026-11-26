@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { unzipSync, zipSync } from "fflate";
+import { strFromU8, unzipSync, zipSync } from "fflate";
 import type { MidiTake } from "@audiorective/midi";
 import { effect } from "@audiorective/core";
 import { Project, TempoMap, openDawProject, saveDawProject, sessionFor } from "../src";
@@ -259,7 +259,12 @@ describe("project tempo map", () => {
     const snapshot = opened.project.snapshot();
     expect(snapshot.tempoMap.secondsToBeat(4)).toBe(6);
     const changed = { ...files, "project.xml": bytes.encode(xml.replace('interpolation="hold"', 'interpolation="linear"')) };
-    expect(() => openDawProject(zipSync(changed))).toThrow("Project has unsupported tempo interpolation.");
+    // A ramp is not a step: the file keeps it, the model plays the starting tempo, and the open says so.
+    const ramped = openDawProject(zipSync(changed));
+    expect(ramped.warnings.join()).toContain("Tempo automation with ramps or in seconds");
+    expect(ramped.project.tempoMap.changes).toEqual([]);
+    expect(strFromU8(unzipSync(saveDawProject(ramped.project))["project.xml"])).toContain('interpolation="linear"');
+    ramped.project.dispose();
     snapshot.dispose();
     opened.project.dispose();
     project.dispose();
@@ -522,7 +527,12 @@ describe("DAWproject native slice", () => {
     portable.project.dispose();
     const withoutState = { ...files };
     delete withoutState["plugins/device2.bin"];
-    expect(() => openDawProject(zipSync(withoutState))).toThrow("Project device state asset is missing.");
+    // A device whose state file is gone cannot be loaded; it stays in the file and is reported.
+    const stateless = openDawProject(zipSync(withoutState));
+    expect(stateless.project.tracks[0].devices).toEqual([]);
+    expect(stateless.warnings.join()).toContain("CLAP plug-in that is bypassed, has no state file or does not fit its track");
+    expect(strFromU8(unzipSync(saveDawProject(stateless.project))["project.xml"])).toContain('deviceID="com.example.synth"');
+    stateless.project.dispose();
     opened.project.dispose();
     project.dispose();
   });
@@ -686,13 +696,25 @@ describe("DAWproject native slice", () => {
     expect(() => openDawProject(zipSync(entries))).toThrow("Project audio asset is missing.");
     const routing = unzipSync(saveDawProject(project));
     routing["project.xml"] = bytes.encode(text.decode(routing["project.xml"]).replace('destination="masterChannel"', 'destination="otherBus"'));
-    expect(() => openDawProject(zipSync(routing))).toThrow("Project has unsupported track routing.");
+    const rerouted = openDawProject(zipSync(routing));
+    expect(rerouted.warnings.join()).toContain("Output to a channel the model does not carry");
+    expect(strFromU8(unzipSync(saveDawProject(rerouted.project))["project.xml"])).toContain('destination="otherBus"');
+    rerouted.project.dispose();
     const fade = unzipSync(saveDawProject(project));
     fade["project.xml"] = bytes.encode(text.decode(fade["project.xml"]).replace("<Clip ", '<Clip fadeInTime="0.01" '));
     expect(() => openDawProject(zipSync(fade))).toThrow("Clip gain must be non-negative and fades must fit its duration.");
     const tempo = unzipSync(saveDawProject(project));
-    tempo["project.xml"] = bytes.encode(text.decode(tempo["project.xml"]).replace(/(<Tempo [^>]+)\/>/, "$1><Points/></Tempo>"));
-    expect(() => openDawProject(zipSync(tempo))).toThrow("Project XML has unsupported Tempo content.");
+    // Another application's file: it keeps its own XML, extra content included, and this test only checks that.
+    tempo["project.xml"] = bytes.encode(
+      text
+        .decode(tempo["project.xml"])
+        .replace(/(<Tempo [^>]+)\/>/, "$1><Points/></Tempo>")
+        .replace('name="Audiorective"', 'name="Other DAW"'),
+    );
+    const withPoints = openDawProject(zipSync(tempo));
+    expect(withPoints.warnings.join()).toContain("Tempo/Points");
+    expect(strFromU8(unzipSync(saveDawProject(withPoints.project))["project.xml"])).toContain("<Points/>");
+    withPoints.project.dispose();
     const extra = unzipSync(saveDawProject(project));
     extra["plugins/unknown-state.bin"] = new Uint8Array([1]);
     const kept = openDawProject(zipSync(extra)).project;

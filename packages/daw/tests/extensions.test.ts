@@ -253,7 +253,7 @@ describe("extension and operation edge cases", () => {
           const receipt = p.applyEdits({
             expectedVersion: p.cells.version.value,
             label: "inner",
-            ops: [{ type: "renameClip", clip: { clipId: p.tracks[0].clips[0].id }, name: "Verse" }],
+            ops: [{ type: "setClipName", clip: { clipId: p.tracks[0].clips[0].id }, name: "Verse" }],
           });
           return receipt.status;
         },

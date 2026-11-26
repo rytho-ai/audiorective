@@ -16,12 +16,12 @@ const pitches = (clip: { midi: MidiClip["midi"] }) => clip.midi.notes.value.map(
 const asMidi = (clip: unknown) => clip as MidiClip;
 
 describe("linked MIDI clips", () => {
-  it("duplicateClip({ linked }) makes a new clip that shares the notes, and keeps the track argument form", () => {
+  it("duplicateClip({ linked }) makes a new clip that shares the notes, and takes the track in the options", () => {
     const { project, keys, source } = setup();
     const other = project.addTrack("Bass", "midi");
     const copy = asMidi(project.duplicateClip(source.id, 8, { linked: true }));
     const onOther = asMidi(project.duplicateClip(source.id, 0, { trackId: other.id, linked: true }));
-    const plain = asMidi(project.duplicateClip(source.id, 16, keys.id));
+    const plain = asMidi(project.duplicateClip(source.id, 16, { trackId: keys.id }));
     expect(copy.id).not.toBe(source.id);
     expect(project.clipName(copy.id)).toBe("Pattern");
     expect(project.linkedClips(source.id).map(({ id }) => id)).toEqual([copy.id, onOther.id]);
@@ -150,13 +150,13 @@ describe("linked MIDI clips", () => {
     expect("linkedTo" in clips.find(({ id }) => id === solo.id)!).toBe(false);
   });
 
-  it("applyEdits: copyRange makes independent copies, makeClipUnique unlinks, setNoteVelocity reaches every placement", () => {
+  it("applyEdits: copyRange makes independent copies, makeClipUnique unlinks, editNotes reaches every placement", () => {
     const { project, source } = setup();
     const copy = asMidi(project.duplicateClip(source.id, 8, { linked: true }));
     let receipt = project.applyEdits({
       expectedVersion: project.cells.version.value,
       label: "Soften",
-      ops: [{ type: "setNoteVelocity", clip: { clipId: source.id }, noteId: "n1", velocity: 0.1 }],
+      ops: [{ type: "editNotes", clip: { clipId: source.id }, notes: [{ id: "n1", velocity: 0.1 }] }],
     });
     expect(receipt.status).toBe("applied");
     expect(copy.midi.notes.value[0].velocity).toBe(0.1);

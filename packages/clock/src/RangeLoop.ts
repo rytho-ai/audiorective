@@ -5,11 +5,14 @@ export type LoopSlice = Readonly<{ cycle: number; start: number; end: number; wh
 
 /** Map one shared source interval onto a continuously advancing audio clock. */
 export class RangeLoop {
+  /** The source interval `[start, end)` in the caller's unit (beats or seconds) that repeats. */
   readonly range: LoopRange;
+  /** Length of `range` (`end - start`), in the range's unit. */
   readonly duration: number;
 
   constructor(
     range: LoopRange,
+    /** Audio-context time in seconds at which `range.start` sounds for the first pass. */
     readonly when: number,
   ) {
     this.duration = range.end - range.start;

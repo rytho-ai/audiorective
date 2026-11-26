@@ -148,7 +148,7 @@ describe("insertScene and removeScene", () => {
   test("a scene's name can be mirrored in place", () => {
     const { ctx } = rig(1);
     const launcher = new ClipLauncher({ a: [null] }, { context: ctx, scenes: [{ name: "Old" }] });
-    launcher.scenes[0]._rename("New");
+    launcher.scenes[0].rename("New");
     expect(launcher.scenes[0].name).toBe("New");
     launcher.dispose();
   });

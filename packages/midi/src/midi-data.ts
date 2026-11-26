@@ -29,6 +29,22 @@ export type MidiRange = Readonly<{ start: number; end: number }>;
 /** Notes with the clip length they sit in, in beats. */
 export type MidiData = Readonly<{ notes: readonly MidiNote[]; duration: number }>;
 
+/** A channel message other than a note (controller, pitch bend, program change, pressure), `beat` from the file's start. */
+export type MidiFileEvent = Readonly<{ beat: number; data: Uint8Array }>;
+/** One track chunk of a standard MIDI file. */
+export type ParsedMidiTrack = Readonly<{
+  /** Position of the chunk in the file (0 is the first, often a tempo-only conductor track). */
+  index: number;
+  /** The track-name meta event; absent when the track has none. */
+  name?: string;
+  /** This track's notes (the same objects as in `ParsedMidi.notes`), channels kept. */
+  notes: readonly MidiNote[];
+  /** This track's controller, pitch-bend, program-change and pressure messages as raw bytes, in file order. */
+  events: readonly MidiFileEvent[];
+  /** Beats to this track's end-of-track. */
+  end: number;
+}>;
+
 /** A standard MIDI file. */
 export type ParsedMidi = Readonly<{
   /** Every note of every track, in beats from the file's start (ticks / ppq): the file's own tempo is not applied, so the notes follow the transport. */
@@ -41,6 +57,8 @@ export type ParsedMidi = Readonly<{
   tempos: readonly Readonly<{ beat: number; bpm: number }>[];
   /** The file's time signatures from a beat on. */
   signatures: readonly Readonly<{ beat: number; numerator: number; denominator: number }>[];
+  /** Every track chunk in file order, each with its name, notes and non-note channel messages. */
+  tracks: readonly ParsedMidiTrack[];
 }>;
 
 /** What notes play into: a `Sampler` or `WebClapHost` is one; for your own synth, pass an object with these two methods. */
@@ -48,7 +66,8 @@ export interface Instrument {
   /** Start `note` (0-127) at audio-context time `options.when` (default now) with `options.velocity` 0..1 (default 1) on `options.channel` 0-15 (default 0). */
   noteOn(note: number, options?: Readonly<{ velocity?: number; when?: number; channel?: number }>): unknown;
   /** Release `note` at audio-context time `when` (default now). */
-  noteOff(note: number, when?: number): unknown;
+  /** `since` is when the note-on this release answers started: an instrument that tracks its voices releases only the voices that began at or before it, so a note of the same pitch another clip started later keeps sounding. */
+  noteOff(note: number, when?: number, since?: number): unknown;
 }
 
 /** A message other than a note, at a beat from the take's start. */

@@ -64,10 +64,12 @@ export class MicrophoneInput extends AudioProcessor<{}, { state: ReadonlyCell<Mi
     signal?.addEventListener("abort", this.onAbort, { once: true });
   }
 
+  /** The microphone as a node; connect it to a recorder or an effect chain. */
   get output(): AudioNode {
     return this.source;
   }
 
+  /** Stops every track, releases the device and ends monitoring; safe to call twice. */
   override dispose(): void {
     this.abortSignal?.removeEventListener("abort", this.onAbort);
     for (const track of this.stream.getTracks()) {

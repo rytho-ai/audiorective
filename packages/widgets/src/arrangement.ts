@@ -1,12 +1,11 @@
 import { untracked } from "@audiorective/core";
 import { effect } from "./detached-effect";
 import type { ClipGestureHandle } from "./clip";
-export { attachClipGesture } from "./clip";
 export type { ArrangementTimeMap, ClipGestureHandle, ClipGestureOptions, ClipMove } from "./clip";
 export { mountBarRuler } from "./bar-ruler";
 export type { BarRulerHandle, BarRulerOptions, BarRulerTempoMap } from "./bar-ruler";
 
-/** Timeline zoom and range gestures. Clip gestures live in `@audiorective/widgets/clip` and are re-exported here. */
+/** Timeline zoom and range gestures. Clip gestures live in `@audiorective/widgets/clip`. */
 
 export type TimelineZoomOptions = Readonly<{
   viewport: HTMLElement;

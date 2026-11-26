@@ -727,7 +727,8 @@ try {
     analyser.getFloatTimeDomainData(frame);
     const after = Math.max(...frame.map(Math.abs));
     await workspace.play();
-    await new Promise((resolve) => setTimeout(resolve, 40));
+    // play() starts playbackLead (40 ms) ahead; wait well past it before reading the analyser.
+    await new Promise((resolve) => setTimeout(resolve, 120));
     analyser.getFloatTimeDomainData(frame);
     const resumed = Math.max(...frame.map(Math.abs));
     workspace.dispose();

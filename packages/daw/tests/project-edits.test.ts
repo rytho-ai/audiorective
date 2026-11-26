@@ -159,7 +159,7 @@ describe("project.applyEdits", () => {
       label: "Bad",
       ops: [
         copyChorus,
-        { type: "setNoteVelocity", clip: { clipId: keyChorus.id }, noteId: "n1", velocity: 0.9 },
+        { type: "editNotes", clip: { clipId: keyChorus.id }, notes: [{ id: "n1", velocity: 0.9 }] },
         { type: "moveClip", clip: { clipId: "missing" }, position: { byBeats: 1 } },
       ],
     });
@@ -240,7 +240,7 @@ describe("project.applyEdits", () => {
     const receipt = project.applyEdits({
       expectedVersion: version(project),
       label: "Accent copy",
-      ops: [copyChorus, { type: "setNoteVelocity", clip: { fromCopy: "copy", trackId: keys.id }, noteId: "n1", velocity: 0.9 }],
+      ops: [copyChorus, { type: "editNotes", clip: { fromCopy: "copy", trackId: keys.id }, notes: [{ id: "n1", velocity: 0.9 }] }],
     });
     if (receipt.status !== "applied") throw new Error(receipt.reason);
     const copy = clipById(project, receipt.copies.copy.find(({ from }) => from === keyChorus.id)!.id) as MidiClip;
@@ -293,7 +293,7 @@ describe("project history", () => {
       ops: [
         copyChorus,
         { type: "moveClip", clip: { fromCopy: "copy", trackId: vocals.id }, position: { byBeats: 1 } },
-        { type: "setNoteVelocity", clip: { clipId: keyChorus.id }, noteId: "n1", velocity: 0.9 },
+        { type: "editNotes", clip: { clipId: keyChorus.id }, notes: [{ id: "n1", velocity: 0.9 }] },
       ],
     });
     if (receipt.status !== "applied") throw new Error(receipt.reason);
@@ -332,7 +332,7 @@ describe("project history", () => {
     project.applyEdits({
       expectedVersion: version(project),
       label: "Accent",
-      ops: [{ type: "setNoteVelocity", clip: { clipId: keyChorus.id }, noteId: "n1", velocity: 0.9 }],
+      ops: [{ type: "editNotes", clip: { clipId: keyChorus.id }, notes: [{ id: "n1", velocity: 0.9 }] }],
     });
     keyChorus.midi.edit((notes) => {
       notes[0].pitch = 72;
@@ -415,7 +415,7 @@ describe("history under review cases", () => {
     project.applyEdits({
       expectedVersion: version(project),
       label: `Velocity ${velocity}`,
-      ops: [{ type: "setNoteVelocity", clip: { clipId }, noteId: "n1", velocity }],
+      ops: [{ type: "editNotes", clip: { clipId }, notes: [{ id: "n1", velocity }] }],
     });
 
   it("undoes consecutive edits of one MIDI clip", () => {
@@ -440,7 +440,7 @@ describe("history under review cases", () => {
       expectedVersion: version(project),
       label: "Bad",
       ops: [
-        { type: "setNoteVelocity", clip: { clipId: keyChorus.id }, noteId: "n1", velocity: 0.9 },
+        { type: "editNotes", clip: { clipId: keyChorus.id }, notes: [{ id: "n1", velocity: 0.9 }] },
         { type: "moveClip", clip: { clipId: "missing" }, position: { byBeats: 1 } },
       ],
     });
@@ -566,13 +566,15 @@ describe("project.edit", () => {
     expect(() => keyChorus.midi.setNotes([])).not.toThrow();
   });
 
-  it("rejects an async action and a change outside its scope", () => {
+  it("rejects an async action and records a mixer change as an undoable step", () => {
     const { project, drums } = song();
     const before = fingerprint(project);
     expect(() => project.edit("Async", (async () => undefined) as () => unknown)).toThrow(/synchronous/);
-    expect(() => project.edit("Mixer", () => project.setTrackVolume(drums.id, 0.1))).toThrow(/clips, notes, tempo/);
-    expect(project.tracks.find(({ id }) => id === drums.id)?.volume).toBe(1);
     expect(fingerprint(project)).toBe(before);
+    project.edit("Mixer", () => project.setTrackVolume(drums.id, 0.1));
+    expect(project.tracks.find(({ id }) => id === drums.id)?.volume).toBe(0.1);
+    expect(project.undo().status).toBe("applied");
+    expect(project.tracks.find(({ id }) => id === drums.id)?.volume).toBe(1);
   });
 
   it("records no history for an edit that changes nothing", () => {
@@ -796,8 +798,8 @@ describe("clip names", () => {
       expectedVersion: start,
       label: "Rename",
       ops: [
-        { type: "renameClip", clip: { clipId: vocal.id }, name: "Lead" },
-        { type: "renameClip", clip: { clipId: keyChorus.id }, name: "Pad" },
+        { type: "setClipName", clip: { clipId: vocal.id }, name: "Lead" },
+        { type: "setClipName", clip: { clipId: keyChorus.id }, name: "Pad" },
       ],
     });
     if (receipt.status !== "applied") throw new Error(receipt.reason);
@@ -818,7 +820,11 @@ describe("clip names", () => {
     const { project, vocals, vocal } = song();
     const clips = () => project.tracks.find(({ id }) => id === vocals.id)!.clips;
     const before = clips();
-    project.applyEdits({ expectedVersion: version(project), label: "Name", ops: [{ type: "renameClip", clip: { clipId: vocal.id }, name: "Lead" }] });
+    project.applyEdits({
+      expectedVersion: version(project),
+      label: "Name",
+      ops: [{ type: "setClipName", clip: { clipId: vocal.id }, name: "Lead" }],
+    });
     expect(clips()).toBe(before);
     project.undo();
     expect(clips()).toBe(before);
@@ -832,8 +838,8 @@ describe("clip names", () => {
       expectedVersion: version(project),
       label: "Bad",
       ops: [
-        { type: "renameClip", clip: { clipId: keyChorus.id }, name: "Pad" },
-        { type: "renameClip", clip: { clipId: keyChorus.id }, name: "   " },
+        { type: "setClipName", clip: { clipId: keyChorus.id }, name: "Pad" },
+        { type: "setClipName", clip: { clipId: keyChorus.id }, name: "   " },
       ],
     });
     expect(receipt).toMatchObject({ status: "rejected", opIndex: 1 });
@@ -941,10 +947,10 @@ describe("note edits and field checks", () => {
         code: string;
         reason: string;
       };
-    expect(reject({ type: "renameClip", clip: { clipId: keyChorus.id }, name: "x", title: "y" })).toMatchObject({
+    expect(reject({ type: "setClipName", clip: { clipId: keyChorus.id }, name: "x", title: "y" })).toMatchObject({
       status: "rejected",
       code: "invalid-operation",
-      reason: 'renameClip has unknown field "title"; allowed: type, clip, name.',
+      reason: 'setClipName has unknown field "title"; allowed: type, clip, name.',
     });
     expect(reject({ type: "moveClip", clip: { clipId: keyChorus.id }, position: { atBeat: 1, to: 2 } }).reason).toMatch(
       /position has unknown field "to"/,

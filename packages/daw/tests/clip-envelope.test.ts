@@ -14,12 +14,14 @@ test("audio clip fades travel in standard XML and clip gain round-trips with Aud
 
   const bytes = await saveDawProject(project);
   const files = unzipSync(bytes);
-  expect(new TextDecoder().decode(files["project.xml"])).toContain('fadeTimeUnit="seconds" fadeInTime="0.2" fadeOutTime="0.3"');
+  // Bitwig reads a fade as beats, so a fresh file writes beats: 0.2 s and 0.3 s at the default 120 BPM.
+  expect(new TextDecoder().decode(files["project.xml"])).toContain('fadeTimeUnit="beats" fadeInTime="0.4" fadeOutTime="0.6"');
   const restored = openDawProject(bytes).project;
   expect(restored.tracks[0].clips[0]).toEqual(clip);
   delete files["audiorective/state.json"];
   const portable = openDawProject(zipSync(files)).project.tracks[0].clips[0];
-  expect(portable).toMatchObject({ envelope: { gain: 1, fadeIn: 0.2, fadeOut: 0.3 } });
+  // Without Audiorective's details the flat standard gain curve still gives the clip its gain.
+  expect(portable).toMatchObject({ envelope: { gain: 0.75, fadeIn: 0.2, fadeOut: 0.3 } });
 });
 
 test("splitting PCM preserves its backing data and applies existing fades only to retained edges", () => {
@@ -63,7 +65,10 @@ test("clip gain automation retains source coordinates across stretch, trim, move
   const bytes = await saveDawProject(project);
   const restored = openDawProject(bytes).project;
   const moved = restored.tracks[0].clips.find((clip) => clip.id === tail.id);
-  expect(moved).toEqual(tail);
+  // The file holds the original audio and its warp, not the render: the clip's place, window, stretch and gain come back; its audio is varispeed.
+  expect(moved).toMatchObject({ id: tail.id, time: tail.time, duration: tail.duration, gainAutomation: tail.gainAutomation });
+  expect(moved?.kind === "audio" && moved.stretch?.ratio).toBeCloseTo(2, 9);
+  expect(moved?.kind === "audio" && moved.stretch?.source).toMatchObject({ sourceOffset: 0.5, sourceLength: 2 });
 
   const files = unzipSync(bytes);
   const data = JSON.parse(new TextDecoder().decode(files["audiorective/state.json"]));

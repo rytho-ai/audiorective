@@ -34,6 +34,7 @@ import {
   type ProjectOperations,
 } from "./extensions";
 import { TempoMap } from "./tempo-map";
+import { MeterMap, type TimeSignatureChange } from "./meter-map";
 import { rippleDelete as rippleDeleteRange } from "./ripple-delete";
 import type { TempoChange } from "./tempo-map";
 import { ClipTimeMap, normalizeClipAnchors, type ClipStretchAnchor } from "./clip-time-map";
@@ -47,6 +48,7 @@ import {
   type ProjectClipSummary,
   type ProjectEditRun,
   type ProjectEditReceipt,
+  type ProjectEditSongPart,
   type ProjectEditRequest,
   type ProjectOverview,
   type ProjectVersion,
@@ -99,7 +101,7 @@ export type AudioClipGainAutomation = Readonly<{
   points: readonly AutomationPoint[];
 }>;
 
-type AudioClipOptions = {
+export type AudioClipOptions = {
   id?: string;
   name?: string;
   envelope?: ClipEnvelope;
@@ -107,7 +109,7 @@ type AudioClipOptions = {
   gainAutomation?: AudioClipGainAutomation;
 };
 
-interface AudioClipBase extends AudioSourceSpan {
+export interface AudioClipBase extends AudioSourceSpan {
   readonly kind: "audio";
   readonly id: string;
   /** Position on the project timeline, in seconds. */
@@ -244,6 +246,12 @@ function validPcm(audio: ProjectAudio): boolean {
   );
 }
 
+/** A copy of a clip shares the original window of its stretch instead of copying it, so the copy still names the original recording. */
+function sharedStretch(stretch: AudioClipStretch | undefined): AudioClipStretch | undefined {
+  if (stretch && !stretch.source.media) adoptedWindows.add(stretch.source.channels[0]);
+  return stretch;
+}
+
 function normalizeClipStretch(
   stretch: AudioClipStretchInit | undefined,
   sampleRate: number,
@@ -269,7 +277,10 @@ function normalizeClipStretch(
   )
     throw new RangeError("Project clip stretch needs a compatible original audio window and positive ratio.");
   const anchors = normalizeClipAnchors(stretch.anchors ?? [], audioFrameCount(source), outputFrames);
-  return Object.freeze({ ratio, source: recorded(snapshotAudioSource(source)), ...(anchors.length ? { anchors } : {}) });
+  // A window the codec cut out of a recording (`windowOfRecording`) stays a window of it, so a save names the recording's own file.
+  const adopted = !source.media && adoptedWindows.has(source.channels[0]);
+  if (adopted) adoptedWindows.delete(source.channels[0]);
+  return Object.freeze({ ratio, source: recorded(adopted ? source : snapshotAudioSource(source)), ...(anchors.length ? { anchors } : {}) });
 }
 
 /** Copy a source. With a `recordings` cache the whole recording is copied once and the copy stays a window of it. */
@@ -434,6 +445,7 @@ export class MidiClip {
   }
 
   /** Releases this placement; the shared notes are disposed with the last clip that holds them. */
+  /** Release the Project's MIDI clips and history. Safe to call twice; the Project is unusable afterwards. */
   dispose(): void {
     if (this.released) return;
     this.released = true;
@@ -493,6 +505,7 @@ type ProjectState = Readonly<{
   title: string;
   masterVolume: number;
   tempoMap: TempoMap;
+  meterMap: MeterMap;
   tracks: readonly ProjectTrack[];
   markers: readonly ProjectMarker[];
   /** Extension data by extension id, kept as saved even when no definition is loaded. */
@@ -563,6 +576,7 @@ type EditPlacement = Readonly<{
 type EditSide = Readonly<{
   clips: ReadonlyMap<string, EditPlacement>;
   tempoMap: TempoMap;
+  meterMap: MeterMap;
   markers: readonly ProjectMarker[];
   automation: ReadonlyMap<string, readonly AutomationPoint[]>;
   extensions: ReadonlyMap<string, ExtensionRecord>;
@@ -571,11 +585,17 @@ type EditSide = Readonly<{
   session: SessionState;
   /** Each track's device list, by track ID. */
   devices: ReadonlyMap<string, readonly ProjectDevice[]>;
+  /** The tracks in order, by ID. Clips, devices and volume automation are tracked in the maps above; this holds the rest of a track for one that comes back. */
+  tracks: ReadonlyMap<string, ProjectTrack>;
+  routing: ReadonlyMap<string, TrackRouting>;
+  title: string;
+  masterVolume: number;
 }>;
 type EditEntry = {
   readonly label: string;
   readonly ids: readonly string[];
   readonly tempo: boolean;
+  readonly meter: boolean;
   readonly markers: boolean;
   readonly automation: readonly string[];
   readonly extensions: readonly string[];
@@ -583,6 +603,14 @@ type EditEntry = {
   readonly scenes: readonly string[];
   /** IDs of the tracks whose device list (devices added, removed, moved or given another state) this edit changed. */
   readonly devices: readonly string[];
+  /** IDs of the tracks this edit added or removed. */
+  readonly tracks: readonly string[];
+  /** IDs of the tracks that stay and whose routing changed. */
+  readonly routing: readonly string[];
+  /** For each track that stays, the mixer keys (name, volume, mute, solo, pan, inserts, macros) this edit changed; undo and redo touch only those keys. */
+  readonly shells: ReadonlyMap<string, readonly TrackShellKey[]>;
+  readonly title: boolean;
+  readonly masterVolume: boolean;
   /** IDs of the devices this edit gave another state; every other device keeps the state it has now when the step is applied. */
   readonly deviceStates: ReadonlySet<string>;
   before: EditSide;
@@ -661,7 +689,14 @@ const samePlacement = (a: EditPlacement | undefined, b: EditPlacement | undefine
     a.name === b.name &&
     sameNotes(a.notes, b.notes));
 const clipFrameTolerance = (clip: ProjectClip) => (clip.kind === "audio" ? 1 / clip.sampleRate : 1e-9);
-const trackShellKeys = ["id", "name", "kind", "busRole", "routing", "volume", "muted", "solo", "pan", "effects", "effectMacros"] as const;
+/** Whether two plain data values have the same content (key order included, which the Project's own normalisers keep stable). */
+const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+/** The mixer-facing fields of a track that an edit records for Undo (routing has its own record). */
+const trackShellKeys = ["name", "volume", "muted", "solo", "pan", "effects", "effectMacros"] as const;
+type TrackShellKey = (typeof trackShellKeys)[number];
+/** Whether `a` and `b` hold the same value for every one of `keys`; false when either track is missing. */
+const sameShellKeys = (a: ProjectTrack | undefined, b: ProjectTrack | undefined, keys: readonly TrackShellKey[]) =>
+  !!a && !!b && keys.every((key) => a[key] === b[key]);
 
 let captureDeviceHook: (project: Project, deviceId: string, bytes: Uint8Array) => void;
 let borrowSnapshotHook: (project: Project) => Project;
@@ -669,6 +704,7 @@ let extensionRecordsHook: (project: Project, records?: ReadonlyMap<string, Exten
 let sessionBridgeHook: (project: Project) => SessionBridge;
 let restoreScenesHook: (project: Project, scenes: readonly Readonly<{ id?: string; name?: string }>[]) => void;
 let adoptSlotHook: (project: Project, clipId: string, sceneId: string) => void;
+let adoptRenderHook: (project: Project, expected: AudioClip, rendered: ProjectAudio) => void;
 
 /** What `ProjectSession` needs from its Project: reads of the Session grid and the writes that keep ids, names, history and the version in step. */
 export type SessionBridge = Readonly<{
@@ -708,9 +744,9 @@ export class Project {
     sessionBridgeHook = (project) => project.sessionBridge();
     restoreScenesHook = (project, scenes) => project.restoreScenes(scenes);
     adoptSlotHook = (project, clipId, sceneId) => project.adoptSlot(clipId, sceneId);
+    adoptRenderHook = (project, expected, rendered) => project.adoptRenderedStretch(expected, rendered);
   }
 
-  readonly signature: readonly [number, number];
   /** The only store for observable content. Written by `commit`, read tracked by the public getters. */
   private readonly store: Cell<ProjectState>;
   private readonly ids = new Set<string>();
@@ -768,15 +804,15 @@ export class Project {
   constructor(options: ProjectOptions = {}) {
     validateXmlText(options.title ?? "Untitled");
     const bpm = options.bpm ?? 120;
-    this.signature = Object.freeze([...(options.signature ?? [4, 4])] as [number, number]);
+    const signature = Object.freeze([...(options.signature ?? [4, 4])] as [number, number]);
     if (
       !Number.isFinite(bpm) ||
       bpm <= 0 ||
-      !Number.isInteger(this.signature[0]) ||
-      this.signature[0] <= 0 ||
-      !Number.isInteger(this.signature[1]) ||
-      this.signature[1] <= 0 ||
-      (this.signature[1] & (this.signature[1] - 1)) !== 0
+      !Number.isInteger(signature[0]) ||
+      signature[0] <= 0 ||
+      !Number.isInteger(signature[1]) ||
+      signature[1] <= 0 ||
+      (signature[1] & (signature[1] - 1)) !== 0
     )
       throw new RangeError("Project needs positive BPM and a valid time signature.");
     this.store = new Cell<ProjectState>(
@@ -787,6 +823,7 @@ export class Project {
         title: options.title ?? "Untitled",
         masterVolume: 1,
         tempoMap: new TempoMap(bpm),
+        meterMap: new MeterMap(signature),
         tracks: Object.freeze([]),
         markers: Object.freeze([]),
         extensions: new Map(),
@@ -1017,7 +1054,7 @@ export class Project {
     const name = this.s.clipNames.get(clip.id);
     if (clip.kind === "audio") {
       if (linked) throw new Error("Project can link only MIDI clips; an audio clip cannot share content.");
-      const options = { name, envelope: clip.envelope, stretch: clip.stretch, gainAutomation: clip.gainAutomation };
+      const options = { name, envelope: clip.envelope, stretch: sharedStretch(clip.stretch), gainAutomation: clip.gainAutomation };
       const built = clip.media
         ? this.buildMediaClip(clip.media, time, { ...options, startFrame: clip.startFrame, frameCount: clip.frameCount })
         : this.buildAudioClip(clip, time, options);
@@ -1076,7 +1113,7 @@ export class Project {
       } finally {
         rehearsal.dispose();
       }
-      let run: ProjectEditRun = { copies: {}, createdNotes: [] };
+      let run: ProjectEditRun = { copies: {}, createdNotes: [], createdTracks: [], createdScenes: [] };
       if (this.editing) {
         // Inside an open edit the ops join its Undo step; the rehearsal above already proved they apply.
         run = runProjectEdits(this, request.ops);
@@ -1178,12 +1215,17 @@ export class Project {
     return {
       clips,
       tempoMap: state.tempoMap,
+      meterMap: state.meterMap,
       markers: state.markers,
       automation,
       extensions: state.extensions,
       scenes,
       session: state.session,
       devices,
+      tracks: new Map(state.tracks.map((track) => [track.id, track] as const)),
+      routing: new Map(state.tracks.map((track) => [track.id, track.routing] as const)),
+      title: state.title,
+      masterVolume: state.masterVolume,
     };
   }
 
@@ -1205,15 +1247,29 @@ export class Project {
             (result as unknown as Promise<unknown>).then(undefined, () => undefined);
             throw new TypeError("Project edit action must be synchronous.");
           }
-          this.assertEditScope(previous);
           this.editing = undefined;
           const after = this.captureSide();
           for (const clip of editing.retired) if (before.clips.get(clip.id)?.clip !== clip && after.clips.get(clip.id)?.clip !== clip) clip.dispose();
           const ids = [...new Set([...before.clips.keys(), ...after.clips.keys()])].filter(
             (id) => !samePlacement(before.clips.get(id), after.clips.get(id)),
           );
-          const automation = [...after.automation.keys()].filter((id) => before.automation.get(id) !== after.automation.get(id));
+          const trackIds = [...new Set([...before.tracks.keys(), ...after.tracks.keys()])].filter(
+            (id) => before.tracks.has(id) !== after.tracks.has(id),
+          );
+          const routing = [...after.routing.keys()].filter((id) => before.routing.has(id) && before.routing.get(id) !== after.routing.get(id));
+          const automation = [...after.automation.keys()].filter(
+            (id) => before.automation.has(id) && before.automation.get(id) !== after.automation.get(id),
+          );
+          const shells = new Map<string, readonly TrackShellKey[]>();
+          for (const [id, now] of after.tracks) {
+            const was = before.tracks.get(id);
+            const keys = was ? trackShellKeys.filter((key) => was[key] !== now[key]) : [];
+            if (keys.length) shells.set(id, keys);
+          }
+          const title = before.title !== after.title;
+          const masterVolume = before.masterVolume !== after.masterVolume;
           const tempo = before.tempoMap !== after.tempoMap;
+          const meter = before.meterMap !== after.meterMap;
           const markers = before.markers !== after.markers;
           const extensions = [...new Set([...before.extensions.keys(), ...after.extensions.keys()])].filter(
             (id) => before.extensions.get(id) !== after.extensions.get(id),
@@ -1228,7 +1284,21 @@ export class Project {
             const now = after.devices.get(id);
             return now !== undefined && !sameDevices(before.devices.get(id)!, now, true);
           });
-          if (!ids.length && !automation.length && !tempo && !markers && !extensions.length && !scenes.length && !devices.length)
+          if (
+            !ids.length &&
+            !automation.length &&
+            !tempo &&
+            !meter &&
+            !markers &&
+            !extensions.length &&
+            !scenes.length &&
+            !devices.length &&
+            !trackIds.length &&
+            !routing.length &&
+            !shells.size &&
+            !title &&
+            !masterVolume
+          )
             return { result, entry: undefined };
           const deviceStates = new Set<string>();
           for (const [trackId, list] of before.devices) {
@@ -1238,7 +1308,25 @@ export class Project {
               if (other && !sameDevices([device], [other], true)) deviceStates.add(device.id);
             }
           }
-          const entry: EditEntry = { label: label.trim(), ids, tempo, markers, automation, extensions, scenes, devices, deviceStates, before, after };
+          const entry: EditEntry = {
+            label: label.trim(),
+            ids,
+            tempo,
+            meter,
+            markers,
+            automation,
+            extensions,
+            scenes,
+            devices,
+            tracks: trackIds,
+            routing,
+            shells,
+            title,
+            masterVolume,
+            deviceStates,
+            before,
+            after,
+          };
           this.pushHistory(entry);
           return { result, entry };
         } catch (error) {
@@ -1264,16 +1352,6 @@ export class Project {
     );
   }
 
-  private assertEditScope(previous: ProjectState): void {
-    const state = this.s;
-    const unchanged =
-      state.title === previous.title &&
-      state.masterVolume === previous.masterVolume &&
-      state.tracks.length === previous.tracks.length &&
-      state.tracks.every((track, index) => trackShellKeys.every((key) => track[key] === previous.tracks[index][key]));
-    if (!unchanged) throw new Error("Project edit covers clips, notes, tempo, markers, scenes, devices and volume automation only.");
-  }
-
   private pushHistory(entry: EditEntry): void {
     const dropped = this.redoStack;
     this.redoStack = [];
@@ -1296,20 +1374,40 @@ export class Project {
   private appliedReceipt(
     entry: EditEntry | undefined,
     side: "before" | "after",
-    run: ProjectEditRun = { copies: {}, createdNotes: [] },
+    run: ProjectEditRun = { copies: {}, createdNotes: [], createdTracks: [], createdScenes: [] },
   ): ProjectEditReceipt {
-    const { copies, createdNotes } = run;
+    const { copies, createdNotes, createdTracks, createdScenes } = run;
     const version = untracked(() => this.cells.version.value);
-    if (!entry) return { status: "applied", version, created: [], createdNotes, changed: [], removed: [], copies };
+    const none = { changedTracks: [], removedTracks: [], changedScenes: [], removedScenes: [], song: [] };
+    if (!entry)
+      return { status: "applied", version, created: [], createdNotes, createdTracks, createdScenes, changed: [], removed: [], ...none, copies };
     const target = entry[side];
     const source = side === "after" ? entry.before : entry.after;
+    const removedTracks = entry.tracks.filter((id) => !target.tracks.has(id));
+    const addedTracks = new Set(entry.tracks.filter((id) => target.tracks.has(id)));
+    const changedTracks = [...new Set([...entry.shells.keys(), ...entry.routing, ...entry.devices, ...entry.automation])].filter(
+      (id) => target.tracks.has(id) && !addedTracks.has(id),
+    );
+    const song: ProjectEditSongPart[] = [];
+    if (entry.tempo) song.push("tempo");
+    if (entry.meter) song.push("timeSignature");
+    if (entry.markers) song.push("markers");
+    if (entry.title) song.push("title");
+    if (entry.masterVolume) song.push("masterVolume");
     return {
       status: "applied",
       version,
       created: entry.ids.filter((id) => target.clips.has(id) && !source.clips.has(id)),
       createdNotes,
+      createdTracks,
+      createdScenes,
       changed: entry.ids.filter((id) => target.clips.has(id) && source.clips.has(id)),
       removed: entry.ids.filter((id) => !target.clips.has(id)),
+      changedTracks,
+      removedTracks,
+      changedScenes: entry.scenes.filter((id) => target.scenes.has(id) && source.scenes.has(id)),
+      removedScenes: entry.scenes.filter((id) => !target.scenes.has(id)),
+      song,
       copies,
     };
   }
@@ -1370,8 +1468,30 @@ export class Project {
     return (
       entry.ids.every((id) => samePlacement(current.clips.get(id), side.clips.get(id))) &&
       (!entry.tempo || current.tempoMap === side.tempoMap) &&
+      (!entry.meter || current.meterMap === side.meterMap) &&
       (!entry.markers || current.markers === side.markers) &&
       entry.automation.every((id) => current.automation.get(id) === side.automation.get(id)) &&
+      entry.routing.every((id) => current.routing.get(id) === side.routing.get(id)) &&
+      [...entry.shells].every(([id, keys]) => sameShellKeys(current.tracks.get(id), side.tracks.get(id), keys)) &&
+      (!entry.title || current.title === side.title) &&
+      (!entry.masterVolume || current.masterVolume === side.masterVolume) &&
+      entry.tracks.every((id) => {
+        const there = current.tracks.get(id);
+        if (!there) return !side.tracks.has(id);
+        if (!side.tracks.has(id)) return false;
+        // A track this step is about to take away must hold nothing a later change put there.
+        return (
+          [...current.clips.values()].every((placement) => placement.trackId !== id || entry.ids.includes(placement.clip.id)) &&
+          sameDevices(current.devices.get(id) ?? [], side.devices.get(id) ?? [], false) &&
+          [...current.tracks.values()].every(
+            (other) =>
+              other.id === id ||
+              entry.tracks.includes(other.id) ||
+              entry.routing.includes(other.id) ||
+              (other.routing.outputBusId !== id && !other.routing.sends.some(({ busId }) => busId === id)),
+          )
+        );
+      }) &&
       entry.extensions.every((id) => current.extensions.get(id) === side.extensions.get(id)) &&
       entry.scenes.every((id) => current.scenes.get(id) === side.scenes.get(id)) &&
       // A scene moved outside history leaves the order this step captured; undoing would put it back over that move.
@@ -1389,6 +1509,20 @@ export class Project {
   private sideCanApply(entry: EditEntry, side: EditSide): boolean {
     const touched = new Set(entry.ids);
     const tracks = new Map(this.s.tracks.map((track) => [track.id, track]));
+    // A track coming back keeps its ID and its devices' IDs only if nothing else has taken them since, and the buses it uses must exist.
+    for (const id of entry.tracks) {
+      const shell = side.tracks.get(id);
+      if (!shell || tracks.has(id)) continue;
+      if (this.ids.has(id) || (side.devices.get(id) ?? []).some((device) => this.ids.has(device.id))) return false;
+      tracks.set(id, Object.freeze({ ...shell, clips: Object.freeze([]) }));
+    }
+    for (const id of entry.tracks) if (!side.tracks.has(id)) tracks.delete(id);
+    for (const id of entry.shells.keys()) if (!tracks.has(id)) return false;
+    for (const id of new Set([...entry.tracks, ...entry.routing])) {
+      const routing = side.routing.get(id);
+      if (!routing || !tracks.has(id)) continue;
+      if ((routing.outputBusId !== null && !tracks.has(routing.outputBusId)) || routing.sends.some(({ busId }) => !tracks.has(busId))) return false;
+    }
     const current = this.s.session.scenes;
     // A scene or clip coming back keeps its ID only if nothing else has taken it since.
     const here = new Set(current.map((scene) => scene.id));
@@ -1442,8 +1576,36 @@ export class Project {
       if (placement) this.ids.add(id);
       else this.ids.delete(id);
     }
-    const tracks = this.s.tracks.map((track) => {
+    let present: readonly ProjectTrack[] = this.s.tracks;
+    if (entry.tracks.length) {
+      const wanted = new Set(entry.tracks);
+      const next = present.filter((track) => !wanted.has(track.id) || side.tracks.has(track.id));
+      for (const track of present)
+        if (wanted.has(track.id) && !side.tracks.has(track.id)) {
+          this.ids.delete(track.id);
+          for (const device of track.devices) this.ids.delete(device.id);
+        }
+      const order = [...side.tracks.keys()];
+      for (const [index, id] of order.entries()) {
+        if (!wanted.has(id) || next.some((track) => track.id === id)) continue;
+        const shell = side.tracks.get(id)!;
+        const devices = side.devices.get(id) ?? shell.devices;
+        const restored: ProjectTrack = Object.freeze({
+          ...shell,
+          devices,
+          volumeAutomation: side.automation.get(id) ?? shell.volumeAutomation,
+          clips: Object.freeze([]),
+        });
+        const before = order[index - 1];
+        next.splice(before === undefined ? 0 : next.findIndex((track) => track.id === before) + 1, 0, restored);
+        this.ids.add(id);
+        for (const device of devices) this.ids.add(device.id);
+      }
+      present = next;
+    }
+    const tracks = present.map((track) => {
       const touchesAutomation = entry.automation.includes(track.id);
+      const incomingRouting = entry.routing.includes(track.id) ? side.routing.get(track.id) : undefined;
       const incomingDevices = entry.devices.includes(track.id) ? side.devices.get(track.id) : undefined;
       // A plug-in's saved state keeps refreshing while it runs: only a device this step added, removed or gave another state takes the side's bytes.
       const devices = incomingDevices?.map((device) => {
@@ -1462,10 +1624,14 @@ export class Project {
       });
       const outgoing = track.clips.filter((clip) => ids.has(clip.id));
       const sameClips = outgoing.length === incoming.length && outgoing.every((clip) => incoming.includes(clip) && !moved.has(clip.id));
-      if (!touchesAutomation && sameClips && !devices) return track;
+      const shellKeys = entry.shells.get(track.id);
+      const shell = shellKeys ? side.tracks.get(track.id) : undefined;
+      if (!touchesAutomation && sameClips && !devices && !incomingRouting && !shell) return track;
       return Object.freeze({
         ...track,
+        ...(shell && shellKeys ? Object.fromEntries(shellKeys.map((key) => [key, shell[key]])) : {}),
         ...(devices ? { devices } : {}),
+        ...(incomingRouting ? { routing: incomingRouting } : {}),
         clips: sameClips ? track.clips : this.sortClips([...track.clips.filter((clip) => !ids.has(clip.id)), ...incoming]),
         ...(touchesAutomation ? { volumeAutomation: side.automation.get(track.id) ?? track.volumeAutomation } : {}),
       });
@@ -1505,7 +1671,10 @@ export class Project {
       clipNames,
       tracks: Object.freeze(tracks),
       ...(session ? { session } : {}),
+      ...(entry.title ? { title: side.title } : {}),
+      ...(entry.masterVolume ? { masterVolume: side.masterVolume } : {}),
       ...(entry.tempo ? { tempoMap: side.tempoMap } : {}),
+      ...(entry.meter ? { meterMap: side.meterMap } : {}),
       ...(entry.markers ? { markers: side.markers } : {}),
       ...(entry.extensions.length ? { extensions: this.withExtensions(entry.extensions, side.extensions) } : {}),
     });
@@ -1521,27 +1690,32 @@ export class Project {
     return extensions;
   }
 
+  /** True when any clip (timeline or Session slot) plays from a file-backed `AudioMedia` instead of in-memory PCM. Tracked. */
   get hasFileBackedAudio(): boolean {
     const fileBacked = (clip: ProjectClip) => clip.kind === "audio" && !!(clip.media || clip.stretch?.source.media);
     const state = this.store.value;
     return state.tracks.some(({ clips }) => clips.some(fileBacked)) || [...state.session.slots.values()].some(fileBacked);
   }
 
+  /** The tracks in order, each with its clips (timeline only), mixer settings and devices. Tracked. */
   get tracks(): readonly ProjectTrack[] {
     return this.store.value.tracks;
   }
 
+  /** The master level as linear gain: 0 or more, default 1 (unity). Tracked. */
   get masterVolume(): number {
     return this.store.value.masterVolume;
   }
 
-  setMasterVolume(value: number): void {
+  /** Set the master level as linear gain: a finite number, 0 or more (1 is unity). Inside `project.edit` it joins that Undo step. */
+  setMasterVolume(volume: number): void {
     assertProjectActive(this);
-    if (!Number.isFinite(value) || value < 0) throw new RangeError("Project master volume needs a finite non-negative value.");
-    if (value === this.s.masterVolume) return;
-    this.commit({ masterVolume: value });
+    if (!Number.isFinite(volume) || volume < 0) throw new RangeError("Project master volume needs a finite non-negative value.");
+    if (volume === this.s.masterVolume) return;
+    this.commit({ masterVolume: volume });
   }
 
+  /** Beat to seconds conversion for the current tempo changes. Tracked. */
   get tempoMap(): TempoMap {
     return this.store.value.tempoMap;
   }
@@ -1561,21 +1735,48 @@ export class Project {
     return this.store.value.tempoMap.initialBpm;
   }
 
-  /** Replace the tempo map. A change at beat 0 sets the starting tempo; without one the starting tempo stays. */
+  /** The time signature at beat 0. Tracked. */
+  get signature(): readonly [number, number] {
+    return this.store.value.meterMap.initial;
+  }
+
+  /** The time signatures and bar arithmetic (`beatToBar`, `barToBeat`). Tracked. */
+  get meterMap(): MeterMap {
+    return this.store.value.meterMap;
+  }
+
+  /** Replace the time signature changes. Each is `{ beat, numerator, denominator }`: beat 0 or more (unique), an integer numerator and a power-of-two denominator. A change at beat 0 sets the starting signature; without one the starting signature stays. A change starts a new bar where it sits. */
+  setTimeSignatureChanges(changes: readonly TimeSignatureChange[]): void {
+    assertProjectActive(this);
+    const starts = changes.filter(({ beat }) => beat === 0);
+    if (starts.length > 1)
+      throw new RangeError("Project time signatures need unique positive beats, an integer numerator and a power-of-two denominator.");
+    const initial = starts.length ? ([starts[0].numerator, starts[0].denominator] as const) : this.s.meterMap.initial;
+    const meterMap = new MeterMap(
+      initial,
+      changes.filter(({ beat }) => beat !== 0),
+    );
+    const now = this.s.meterMap;
+    if (now.initial[0] === meterMap.initial[0] && now.initial[1] === meterMap.initial[1] && sameJson(now.changes, meterMap.changes)) return;
+    this.commit({ meterMap });
+  }
+
+  /** Replace the tempo changes. Each is `{ beat, bpm }`: beat 0 or more (unique), `bpm` at least 1. A change at beat 0 sets the starting tempo; without one the starting tempo stays. */
   setTempoChanges(changes: readonly TempoChange[]): void {
     assertProjectActive(this);
     const starts = changes.filter(({ beat }) => beat === 0);
     if (starts.length > 1) throw new RangeError("Project tempo changes need unique positive beats and BPM.");
     const bpm = starts[0]?.bpm ?? this.s.tempoMap.initialBpm;
     if (starts.length && (!Number.isFinite(bpm) || bpm < 1)) throw new RangeError("Project BPM must be a finite number of at least 1.");
-    this.commit({
-      tempoMap: new TempoMap(
-        bpm,
-        changes.filter(({ beat }) => beat !== 0),
-      ),
-    });
+    const tempoMap = new TempoMap(
+      bpm,
+      changes.filter(({ beat }) => beat !== 0),
+    );
+    if (this.s.tempoMap.initialBpm === tempoMap.initialBpm && sameJson(this.s.tempoMap.changes, tempoMap.changes)) return;
+    this.commit({ tempoMap });
   }
 
+  /** The markers in time order; each `time` is in project seconds from 0. Tracked. */
   get markers(): readonly ProjectMarker[] {
     return this.store.value.markers;
   }
@@ -1588,7 +1789,7 @@ export class Project {
   private snapshotUntracked(borrowAudio = false): Project {
     assertProjectActive(this);
     const state = this.s;
-    const copy = new Project({ title: state.title, bpm: state.tempoMap.initialBpm, signature: this.signature });
+    const copy = new Project({ title: state.title, bpm: state.tempoMap.initialBpm, signature: state.meterMap.initial });
     const recordings = new Map<readonly Float32Array[], readonly Float32Array[]>();
     // Linked clips stay linked in the copy.
     const shares = new Map<MidiNotes, MidiNotes>();
@@ -1621,6 +1822,7 @@ export class Project {
     copy.commit({
       masterVolume: state.masterVolume,
       tempoMap: state.tempoMap,
+      meterMap: state.meterMap,
       markers: state.markers,
       clipNames: state.clipNames,
       tracks,
@@ -1642,6 +1844,7 @@ export class Project {
     return copy;
   }
 
+  /** Replace all markers. Each has a `time` in project seconds (0 or more, unique) and a non-empty `name`; the list is stored sorted by time. */
   setMarkers(markers: readonly ProjectMarker[]): void {
     assertProjectActive(this);
     if (markers.some((marker) => typeof marker.name !== "string")) throw new RangeError("Project markers need unique non-negative times and names.");
@@ -1649,13 +1852,16 @@ export class Project {
     const sorted = markers.map((marker) => Object.freeze({ time: marker.time, name: marker.name.trim() })).sort((a, b) => a.time - b.time);
     if (sorted.some((marker, index) => !validTime(marker.time) || !marker.name || (index > 0 && sorted[index - 1].time === marker.time)))
       throw new RangeError("Project markers need unique non-negative times and names.");
+    if (sameJson(this.s.markers, sorted)) return;
     this.commit({ markers: Object.freeze(sorted) });
   }
 
+  /** The song title: a non-empty string. Tracked. */
   get title(): string {
     return this.store.value.title;
   }
 
+  /** Set the song title: a non-empty string after trimming, XML-safe characters only. */
   setTitle(title: string): void {
     assertProjectActive(this);
     validateXmlText(title);
@@ -1682,6 +1888,7 @@ export class Project {
     return chosen;
   }
 
+  /** Add a track at the end. `volume` is linear gain, 0 or more (default 1); `pan` is -1 to 1 (default 0); `muted` and `solo` default false; `busRole` (bus tracks only) defaults to "submix"; `id` defaults to `trackN`. */
   addTrack(
     name: string,
     kind: TrackKind,
@@ -1733,13 +1940,16 @@ export class Project {
     });
   }
 
-  setTrackVolume(trackId: string, value: number): void {
+  /** Set a track's level as linear gain: a finite number, 0 or more (default 1 is unity; there is no upper limit). */
+  setTrackVolume(trackId: string, volume: number): void {
     assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.id === trackId);
-    if (!track || !Number.isFinite(value) || value < 0) throw new RangeError("Project track volume needs an existing track and non-negative value.");
-    this.replace(track, { volume: value });
+    if (!track || !Number.isFinite(volume) || volume < 0)
+      throw new RangeError("Project track volume needs an existing track and non-negative value.");
+    this.replace(track, { volume });
   }
 
+  /** Rename a track: a non-empty string after trimming, XML-safe characters only. Names need not be unique. */
   setTrackName(trackId: string, name: string): void {
     assertProjectActive(this);
     validateXmlText(name);
@@ -1748,6 +1958,7 @@ export class Project {
     this.replace(track, { name: name.trim() });
   }
 
+  /** Mute or unmute a track. Mute wins over solo. Default unmuted. */
   setTrackMuted(trackId: string, muted: boolean): void {
     assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.id === trackId);
@@ -1755,6 +1966,7 @@ export class Project {
     this.replace(track, { muted });
   }
 
+  /** Solo or unsolo a track; while any track is soloed the others are silent. Default off. */
   setTrackSolo(trackId: string, solo: boolean): void {
     assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.id === trackId);
@@ -1762,6 +1974,7 @@ export class Project {
     this.replace(track, { solo });
   }
 
+  /** Set a track's stereo position from -1 (left) to 1 (right); 0 is centre, the default. */
   setTrackPan(trackId: string, pan: number): void {
     assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.id === trackId);
@@ -1795,12 +2008,12 @@ export class Project {
     if ((routing.outputBusId !== null && reachesSource(routing.outputBusId)) || targets.some(reachesSource)) {
       throw new Error("Project track routing cannot form a cycle.");
     }
-    this.replace(track, {
-      routing: Object.freeze({
-        outputBusId: routing.outputBusId,
-        sends: Object.freeze(routing.sends.map(({ busId, gain }) => Object.freeze({ busId, gain }))),
-      }),
+    const next = Object.freeze({
+      outputBusId: routing.outputBusId,
+      sends: Object.freeze(routing.sends.map(({ busId, gain }) => Object.freeze({ busId, gain }))),
     });
+    if (sameJson(track.routing, next)) return;
+    this.replace(track, { routing: next });
   }
 
   /** Replace the ordered built-in inserts after the track's WebCLAP devices. */
@@ -1809,7 +2022,9 @@ export class Project {
     const track = this.s.tracks.find((item) => item.id === trackId);
     if (!track) throw new Error("Project effects need an existing track.");
     const checked = normalizeRackEffects(effects);
-    this.replace(track, { effects: checked, effectMacros: retainRackMacroTargets(checked, track.effectMacros) });
+    const effectMacros = retainRackMacroTargets(checked, track.effectMacros);
+    if (sameJson(track.effects, checked) && sameJson(track.effectMacros, effectMacros)) return;
+    this.replace(track, { effects: checked, effectMacros });
   }
 
   /** Apply both the ordered inserts and their macro settings as one Project edit. */
@@ -1821,6 +2036,7 @@ export class Project {
     this.replace(track, { effects, effectMacros: macros });
   }
 
+  /** Set one rack macro of a track to a value from 0 to 1; its mapped effect parameters follow. */
   setTrackMacroValue(trackId: string, macroId: string, value: number): void {
     assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.id === trackId);
@@ -1833,6 +2049,7 @@ export class Project {
     });
   }
 
+  /** Remove a track with its clips, Session slot clips and devices; routes that pointed at a removed bus are cleared. Inside `project.edit` it joins that Undo step. */
   removeTrack(trackId: string): void {
     assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.id === trackId);
@@ -1848,7 +2065,8 @@ export class Project {
     }
     for (const device of track.devices) {
       this.ids.delete(device.id);
-      importedBundles.get(this)?.delete(device.id);
+      // Inside an edit the track may come back with Undo, and its devices are still imported ones then.
+      if (!this.editing) importedBundles.get(this)?.delete(device.id);
     }
     this.ids.delete(track.id);
     const tracks = Object.freeze(
@@ -1875,6 +2093,7 @@ export class Project {
     });
   }
 
+  /** Add a WebCLAP plug-in to the end of a track's device chain. `bundleUrl` is where the bundle loads from, `state` the plug-in's saved bytes (default empty); `id` defaults to `deviceN`. */
   addWebClapDevice(trackId: string, details: Omit<WebClapDevice, "kind" | "id" | "state"> & { id?: string; state?: Uint8Array }): WebClapDevice {
     assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.id === trackId);
@@ -1898,6 +2117,7 @@ export class Project {
     return device;
   }
 
+  /** Replace a device's saved plug-in state with `bytes` (the plug-in's own binary format). */
   setDeviceState(deviceId: string, bytes: Uint8Array): void {
     assertProjectActive(this);
     if (!(bytes instanceof Uint8Array)) throw new TypeError("Project device state needs bytes.");
@@ -1931,6 +2151,7 @@ export class Project {
     );
   }
 
+  /** Remove a device from its track's chain; the devices after it move up one place. */
   removeDevice(deviceId: string): void {
     assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.devices.some((device) => device.id === deviceId));
@@ -1955,6 +2176,7 @@ export class Project {
     this.replace(track, { devices: Object.freeze(devices) });
   }
 
+  /** Replace a track's volume automation. Each point has a `time` in project seconds (0 or more, unique), a linear-gain `value` (0 or more) and a `shape` of "linear" or "hold"; an empty list clears it. */
   setVolumeAutomation(trackId: string, points: readonly AutomationPoint[]): void {
     assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.id === trackId);
@@ -1971,9 +2193,11 @@ export class Project {
       )
     )
       throw new RangeError("Project automation needs finite unique times and non-negative values.");
+    if (sameJson(track.volumeAutomation, sorted)) return;
     this.replace(track, { volumeAutomation: Object.freeze(sorted) });
   }
 
+  /** Add an in-memory audio clip to an audio track at `time` in project seconds (0 or more). `audio.channels` are PCM at `audio.sampleRate`; `options` sets name, envelope, stretch and gain automation. */
   addAudioClip(trackId: string, audio: ProjectAudio, time: number, options: AudioClipOptions = {}): AudioClip {
     assertProjectActive(this);
     const track = this.track(trackId, "audio");
@@ -2007,7 +2231,7 @@ export class Project {
     return { clip, name };
   }
 
-  /** Add file-backed PCM without copying the full take into the project model. */
+  /** Add file-backed PCM without copying the full take into the project model, at `time` in project seconds (0 or more). */
   addAudioMediaClip(
     trackId: string,
     media: AudioMedia,
@@ -2105,6 +2329,7 @@ export class Project {
     );
   }
 
+  /** Move a timeline clip to a track of the same kind at `time`, in the clip's own unit (seconds for audio, beats for MIDI; 0 or more). */
   moveClip(clipId: string, trackId: string, time: number): void {
     assertProjectActive(this);
     if (!validTime(time)) throw new RangeError("Project clip time must be finite and non-negative.");
@@ -2129,13 +2354,12 @@ export class Project {
   }
 
   /**
-   * A copy of a timeline clip at `time`, on the same track or on `trackId`. The third argument is a track ID or `{ trackId?, linked? }`.
+   * A copy of a timeline clip at `time` (the clip's own unit: seconds for audio, beats for MIDI; 0 or more), on the same track or on `options.trackId`.
    * The copy is independent; with `linked: true` it shares the source's MIDI notes instead, so `clip.midi.edit` or `setNotes` on any linked clip
    * changes all of them (one Undo step inside `project.edit`). Only MIDI clips link; `linkedClips` lists a clip's group and `makeClipUnique` leaves it.
    */
-  duplicateClip(clipId: string, time: number, trackIdOrOptions?: string | Readonly<{ trackId?: string; linked?: boolean }>): ProjectClip {
+  duplicateClip(clipId: string, time: number, options: Readonly<{ trackId?: string; linked?: boolean }> = {}): ProjectClip {
     assertProjectActive(this);
-    const options = typeof trackIdOrOptions === "string" ? { trackId: trackIdOrOptions } : (trackIdOrOptions ?? {});
     return untracked(() => this.duplicateClipUntracked(clipId, time, options.trackId, options.linked === true));
   }
 
@@ -2148,7 +2372,7 @@ export class Project {
     const name = this.s.clipNames.get(clipId);
     if (clip.kind === "audio") {
       if (linked) throw new Error("Project can link only MIDI clips; an audio clip cannot share content.");
-      const options = { name, envelope: clip.envelope, stretch: clip.stretch, gainAutomation: clip.gainAutomation };
+      const options = { name, envelope: clip.envelope, stretch: sharedStretch(clip.stretch), gainAutomation: clip.gainAutomation };
       const copy = clip.media
         ? this.addAudioMediaClip(target, clip.media, time, { ...options, startFrame: clip.startFrame, frameCount: clip.frameCount })
         : this.addAudioClip(target, clip, time, options);
@@ -2402,6 +2626,45 @@ export class Project {
   /** Apply a prepared render only to the exact clip revision the processor borrowed. */
   applyAudioClipStretch(expected: AudioClip, ratio: number, rendered?: ProjectAudio, warp: readonly ClipStretchAnchor[] = []): AudioClip {
     assertProjectActive(this);
+    const { where, next } = this.stretchedClip(expected, ratio, rendered, warp);
+    if (next === expected) return expected;
+    this.replaceClip(where, next);
+    return next;
+  }
+
+  /**
+   * Opening a file: swap the varispeed audio of a clip the file stretched for the render the Workspace made, in place. Not an Undo step and not a
+   * new version: the clip is the same clip with better audio.
+   */
+  private adoptRenderedStretch(expected: AudioClip, rendered: ProjectAudio): void {
+    assertProjectActive(this);
+    const stretch = expected.stretch;
+    if (!stretch) throw new Error("Project clip has no stretch to render.");
+    const { where, next } = this.stretchedClip(expected, stretch.ratio, rendered, stretch.anchors ?? []);
+    if (where.track) {
+      const { track, clip } = where;
+      this.commit(
+        {
+          tracks: Object.freeze(
+            this.s.tracks.map((item) =>
+              item === track ? Object.freeze({ ...item, clips: Object.freeze(track.clips.map((c) => (c === clip ? next : c))) }) : item,
+            ),
+          ),
+        },
+        false,
+      );
+      return;
+    }
+    const session = this.s.session;
+    this.commit({ session: Object.freeze({ scenes: session.scenes, slots: new Map(session.slots).set(where.key, next) }) }, false);
+  }
+
+  private stretchedClip(
+    expected: AudioClip,
+    ratio: number,
+    rendered: ProjectAudio | undefined,
+    warp: readonly ClipStretchAnchor[],
+  ): { where: ClipLocation; next: AudioClip } {
     const where = this.locate(expected.id);
     if (where.clip !== expected) throw new Error("Audio clip changed while rendering stretch.");
     const original = expected.stretch?.source ?? audioSource(expected);
@@ -2420,7 +2683,7 @@ export class Project {
           rendered.channels[0].length !== outputFrames))
     )
       throw new RangeError("Project clip stretch needs a positive ratio and matching rendered audio.");
-    if (!usesRender && !expected.stretch) return expected;
+    if (!usesRender && !expected.stretch) return { where, next: expected };
     const playback: AudioClipSource & AudioSourceSpan = !usesRender
       ? original
       : recorded(
@@ -2443,8 +2706,7 @@ export class Project {
       ...(usesRender ? { stretch: Object.freeze({ ratio, source: original, ...(anchors.length ? { anchors } : {}) }) } : {}),
       ...(expected.gainAutomation ? { gainAutomation: expected.gainAutomation } : {}),
     });
-    this.replaceClip(where, next);
-    return next;
+    return { where, next };
   }
 
   /**
@@ -2535,7 +2797,8 @@ export class Project {
       const ratio = clip.stretch.anchors?.length ? (last - first) / (sourceTo - sourceFrom) : clip.stretch.ratio;
       stretch = Object.freeze({
         ratio,
-        source: sliceAudioSource(source, sourceFrom, sourceTo, true),
+        // A window of the original recording, so a save still names the original file.
+        source: sliceAudioSource(source, sourceFrom, sourceTo),
         ...(anchors?.length ? { anchors: Object.freeze(anchors) } : {}),
       });
     }
@@ -2702,7 +2965,7 @@ export class Project {
     });
   }
 
-  /** Split at a local time; the left side keeps the original ID. */
+  /** Split a timeline clip at `offset`, measured from the clip's start in its own unit (seconds for audio, beats for MIDI): `0 < offset < duration`. The left piece keeps the original ID; the right piece gets a new one and the clip's name. */
   splitClip(clipId: string, offset: number): readonly [ProjectClip, ProjectClip] {
     assertProjectActive(this);
     const { track, clip } = this.clipAndTrack(clipId);
@@ -2746,6 +3009,7 @@ export class Project {
     this.edit("Ripple delete", () => untracked(() => rippleDeleteRange(this, range, options)));
   }
 
+  /** Remove a timeline clip by ID (a Session slot clip is removed with `session.clearSlot`). Its name goes with it. */
   removeClip(clipId: string): void {
     assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.clips.some((clip) => clip.id === clipId));
@@ -2793,6 +3057,11 @@ export function restoreScenes(project: Project, scenes: readonly Readonly<{ id?:
 }
 export function adoptSlotClip(project: Project, clipId: string, sceneId: string): void {
   adoptSlotHook(project, clipId, sceneId);
+}
+
+/** Runtime access: swap the varispeed audio of a clip a file stretched for its pitch-preserving render, without an Undo step or a new version. */
+export function adoptRenderedStretch(project: Project, expected: AudioClip, rendered: ProjectAudio): void {
+  adoptRenderHook(project, expected, rendered);
 }
 
 export function captureDeviceState(project: Project, deviceId: string, bytes: Uint8Array): void {

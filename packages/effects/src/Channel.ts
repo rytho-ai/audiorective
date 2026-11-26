@@ -107,6 +107,7 @@ export class Channel extends AudioProcessor<
     pan: SchedulableParam;
     /** Silence the channel and its sends without changing gain. */
     muted: Param<boolean>;
+    /** `false` silences the main `output` (6 ms fade) while sends keep receiving the post-mute signal. Default `true`. */
     outputEnabled: Param<boolean>;
   },
   { level: ReadonlyCell<number> }

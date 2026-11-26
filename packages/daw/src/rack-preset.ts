@@ -18,7 +18,7 @@ export type RackMacroSettings = Readonly<{
 
 export const isMacroValue = (value: number): boolean => Number.isFinite(value) && value >= 0 && value <= 1;
 
-type EffectSlot = Readonly<{ id: string; enabled: boolean; wet: number }>;
+export type EffectSlot = Readonly<{ id: string; enabled: boolean; wet: number }>;
 export type RackFilter = EffectSlot & Readonly<{ type: "filter"; mode: "lowpass" | "highpass"; frequency: number; q: number }>;
 export type RackDelay = EffectSlot & Readonly<{ type: "delay"; delayTime: number; feedback: number }>;
 export type RackEq = EffectSlot & Readonly<{ type: "eq"; bands: readonly EqualizerBand[] }>;

@@ -214,8 +214,8 @@ export class Scene {
   get name(): string {
     return this.label.value;
   }
-  /** @internal Keeps the name of a scene a host mirrors in step with its own. */
-  _rename(name: string): void {
+  /** Sets the display name `name` (any string); `name` is tracked. Use it to keep a scene in step with a host's own record. */
+  rename(name: string): void {
     this.label.value = name;
   }
   /** Slot index; 0 is the first scene. Follows `insertScene`, `removeScene` and `moveScene`. */
@@ -459,6 +459,7 @@ export class Track {
     this.output.connect(node, output, input);
     return node;
   }
+  /** Undo `connect`: detach the output from its current destination; it then plays to no destination until `connect` is called again. */
   disconnect(): void {
     this.output.disconnect();
   }

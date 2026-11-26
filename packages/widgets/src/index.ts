@@ -14,7 +14,8 @@ export { createAutomationOverlay } from "./automation-overlay";
 export type { AutomationOverlayOptions } from "./automation-overlay";
 export { createWarpMarkers } from "./warp-markers";
 export type { WarpMarkerOptions, WaveStretchAnchor } from "./warp-markers";
-export { attachClipGesture, attachTimeRangeGesture, attachTimelineZoom } from "./arrangement";
+export { attachClipGesture } from "./clip";
+export { attachTimeRangeGesture, attachTimelineZoom } from "./arrangement";
 export type {
   ArrangementTimeMap,
   ClipGestureHandle,

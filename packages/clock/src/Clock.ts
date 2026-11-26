@@ -280,20 +280,10 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
    *   nothing is scheduled to sound before `when`, and `position` stays at its start value until `when`.
    * - `offsetBeats` defaults to 0 and may be negative (a count-in before beat 0).
    *
-   * The older `start({ atBeat })` form is the same as `start(undefined, atBeat)`.
    * The V1 tempo-automation caveat applies when the start lands on/after a scheduled tempo event; see the clock design spec's ST-6.
    */
-  start(when?: number, offsetBeats?: number): void;
-  start(options?: { atBeat?: number }): void;
-  start(whenOrOptions?: number | { atBeat?: number }, offsetBeats?: number): void {
-    let when: number | undefined;
-    let atBeat: number;
-    if (typeof whenOrOptions === "object" && whenOrOptions !== null) {
-      atBeat = whenOrOptions.atBeat ?? 0;
-    } else {
-      when = whenOrOptions;
-      atBeat = offsetBeats ?? 0;
-    }
+  start(when?: number, offsetBeats = 0): void {
+    const atBeat = offsetBeats;
     if (when !== undefined && !Number.isFinite(when)) throw new RangeError(`Clock start time must be finite seconds, got ${when}`);
     if (!Number.isFinite(atBeat)) throw new RangeError(`Clock start offset must be finite beats, got ${atBeat}`);
     this._finishRefill();

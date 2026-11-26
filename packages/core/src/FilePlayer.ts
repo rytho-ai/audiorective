@@ -141,10 +141,12 @@ export class FilePlayer extends AudioProcessor<
     return this.audio.currentTime;
   }
 
+  /** The player's output node (after `volume`); connect it like any node. */
   get output(): AudioNode {
     return this._output;
   }
 
+  /** The media URL; assigning a new one stops playback, resets `cells.currentTime` to 0 and `cells.duration` to NaN until metadata loads. Null clears it. */
   get src(): string | null {
     return this._srcCell.value;
   }
@@ -191,10 +193,12 @@ export class FilePlayer extends AudioProcessor<
     await this.audio.play();
   }
 
+  /** Pauses and keeps the playhead where it is; `play()` resumes from there. */
   pause(): void {
     this.audio.pause();
   }
 
+  /** Moves the playhead to `t` seconds, clamped to `0..duration` (to `>= 0` while the duration is unknown). Playing continues. */
   seek(t: number): void {
     const d = this.audio.duration;
     const clamped = Math.max(0, Number.isFinite(d) ? Math.min(d, t) : t);
@@ -202,6 +206,7 @@ export class FilePlayer extends AudioProcessor<
     this._time.value = this.audio.currentTime;
   }
 
+  /** Pauses and returns the playhead to 0 seconds. */
   stop(): void {
     batch(() => {
       this.audio.pause();

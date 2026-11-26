@@ -50,30 +50,33 @@
     "build": "tsdown",
     "test": "vitest run",
     "probe:cubase": "node probes/cubase-export.mjs",
+    "probe:studio-one": "node probes/studio-one-export.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@audiorective/core": "workspace:^",
     "@audiorective/clock": "workspace:^",
+    "@audiorective/core": "workspace:^",
     "@audiorective/effects": "workspace:^",
     "@audiorective/host": "workspace:^",
+    "@audiorective/launcher": "workspace:^",
     "@audiorective/midi": "workspace:^",
+    "@audiorective/player": "workspace:^",
+    "@audiorective/recorder": "workspace:^",
     "@toon-format/toon": "4.4.0",
     "@xmldom/xmldom": "^0.9.8",
-    "fflate": "^0.8.2",
-    "@audiorective/launcher": "workspace:^",
-    "@audiorective/player": "workspace:^",
-    "@audiorective/recorder": "workspace:^"
+    "fflate": "^0.8.2"
   },
   "devDependencies": {
+    "@audiorective/sequencer": "workspace:^",
     "@types/node": "^24.9.1",
     "@vitest/browser": "^4.0.18",
     "@vitest/browser-playwright": "^4.0.18",
+    "midi-file": "1.2.4",
     "playwright": "^1.58.2",
     "tsdown": "^0.15.9",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18",
-    "@audiorective/sequencer": "workspace:^"
+    "xmllint-wasm": "5.3.0"
   },
   "sideEffects": false
 }

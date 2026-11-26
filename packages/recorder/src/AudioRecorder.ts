@@ -247,9 +247,11 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
     };
   }
 
+  /** The node to connect audio into; the recorder captures what arrives here. */
   get input(): GainNode {
     return this.source;
   }
+  /** Always undefined: a recorder is a sink and passes no audio on. */
   get output(): undefined {
     return undefined;
   }
@@ -703,6 +705,7 @@ export class AudioRecorder extends AudioProcessor<{}, AudioRecorderCells> {
     else void session.writeTail.then(reject);
   }
 
+  /** Rejects an active take with an error, detaches from the clock and sets `cells.state` to `"disposed"`; safe to call twice. */
   override dispose(): void {
     if (this.disposed) return;
     this.disposed = true;

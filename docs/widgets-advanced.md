@@ -467,7 +467,7 @@ Pass `renderer: PlayerRenderer` to replace the markup while keeping these intera
 `@audiorective/widgets/arrangement` borrows caller-rendered DOM. The app owns keyed clip elements, lane appearance, selection, compatible-track hit testing and history. The widget owns gesture listeners, capture, local preview and one command per finished edit; it creates no AudioContext, Project or rendering engine.
 
 ```typescript
-import { attachClipGesture } from "@audiorective/widgets/clip"; // also exported from /arrangement
+import { attachClipGesture } from "@audiorective/widgets/clip";
 
 const clipOrigins = new Map<string, { time: number; trackId: string }>();
 let originRevision: number | undefined;
@@ -557,7 +557,7 @@ A bar is `numerator * 4 / denominator` quarter-note beats and a beat tick is one
 
 ## Timeline clips
 
-`@audiorective/widgets/clip` holds the three gestures and drawings an audio clip element needs on a timeline: `attachClipGesture` (move), `attachClipTrim` (edge trim) and `attachClipWaveform` (the played window as a thumbnail). It is the preferred import path for `attachClipGesture`; `@audiorective/widgets/arrangement` re-exports it. Each function borrows a caller-owned element, returns `{ dispose() }`, and stays free of any DAW import: it takes structural contracts, and your code connects them to `Project`.
+`@audiorective/widgets/clip` holds the three gestures and drawings an audio clip element needs on a timeline: `attachClipGesture` (move), `attachClipTrim` (edge trim) and `attachClipWaveform` (the played window as a thumbnail). It is the one import path for `attachClipGesture`. Each function borrows a caller-owned element, returns `{ dispose() }`, and stays free of any DAW import: it takes structural contracts, and your code connects them to `Project`.
 
 ```typescript
 import { cell, effect } from "@audiorective/core";

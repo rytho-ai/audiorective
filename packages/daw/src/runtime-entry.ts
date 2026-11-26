@@ -8,3 +8,5 @@ export type { MixRangeOptions, MixRangeResult, MixSeam } from "./mix-range";
 export { renderSession } from "./render-session";
 export type { RenderSessionOptions, RenderSessionResult } from "./render-session";
 export { createOpfsAudioMediaWriter } from "./opfs-media";
+export { importAudioFiles, renderStems } from "./exchange";
+export type { AudioFileInput, ImportAudioFilesOptions, ImportAudioFilesResult, RenderStemsOptions, StemsResult } from "./exchange";

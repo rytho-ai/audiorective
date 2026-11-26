@@ -171,7 +171,7 @@ Scheduled steps and ramps are visible to `beatToTime` immediately, so scheduling
 ## Transport
 
 ```typescript
-clock.start(); // beat 0 now. Also: clock.start(when, offsetBeats) or clock.start({ atBeat: 16 })
+clock.start(); // beat 0 now. Also: clock.start(when, offsetBeats), e.g. clock.start(undefined, 16)
 clock.pause(); // freezes position; unowned look-ahead audio keeps sounding (an accepted tail, ~lookAhead seconds)
 clock.resume(); // continues from the frozen position, no re-scheduling
 clock.stop(); // resets to beat 0
@@ -227,14 +227,12 @@ clock.start(buffer.when, 8); // beat 8 sounds at `buffer.when`, in step with a b
 - `offsetBeats` may be negative (a count-in before beat 0).
 - A non-finite `when` or `offsetBeats` throws.
 
-`start({ atBeat })` is the same as `start(undefined, atBeat)`.
-
 ### Start with a count-in
 
-`start({ atBeat })` accepts a negative beat. The first window begins at that beat, so beat 0 arrives `-atBeat` beats after the call. A launcher or sequencer whose first boundary is beat 0 then waits that long instead of a full bar:
+`start(undefined, offsetBeats)` accepts a negative beat. The first window begins at that beat, so beat 0 arrives `-atBeat` beats after the call. A launcher or sequencer whose first boundary is beat 0 then waits that long instead of a full bar:
 
 ```typescript
-clock.start({ atBeat: -0.5 }); // beat 0, the first launch boundary, is half a beat away
+clock.start(undefined, -0.5); // beat 0, the first launch boundary, is half a beat away
 ```
 
 ### Own cancellable events when transport edits must cut queued sound
@@ -276,7 +274,7 @@ pair on a stopped clock leaves it stopped rather than starting it mid-segment.
 
 `clock.state` is a `ReadonlyCell<"stopped" | "playing" | "paused">` — the same store as `timeline.state`. Read it with `.value` (tracked) or `$()`; only `start`, `pause`, `resume` and `stop` change it, so it cannot be written from outside.
 
-Every jump (`seek`, `start({ atBeat })`, stop→start) bumps `window.generation` and begins a new continuity segment — windows are non-overlapping only _within_ a segment, so beats may legitimately reappear across a backward seek. Consumers holding derived state (step counters, generator positions) should reset when `generation` changes.
+Every jump (`seek`, `start(when, offsetBeats)`, stop→start) bumps `window.generation` and begins a new continuity segment — windows are non-overlapping only _within_ a segment, so beats may legitimately reappear across a backward seek. Consumers holding derived state (step counters, generator positions) should reset when `generation` changes.
 
 Pausing leaves already-committed **unowned** audio alone: up to `lookAhead` seconds of scheduled events keep sounding after `pause()`. This is an accepted tail. Events registered with `window.own()` are cancelled; a consumer that needs a hard stop registers its own handles without making Clock own audio nodes.
 

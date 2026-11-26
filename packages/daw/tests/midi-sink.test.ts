@@ -55,3 +55,35 @@ describe("SamplerSink with times that differ by float round-off", () => {
     expect(voices.map((v) => v.stopAt)).toEqual([justAfter, 1.5]);
   });
 });
+
+describe("SamplerSink velocity", () => {
+  /** A sampler that records the velocity each note-on gets. */
+  function velocities() {
+    const seen: Array<number | undefined> = [];
+    const sampler = {
+      noteOn(_note: number, options: { velocity?: number }) {
+        seen.push(options.velocity);
+        return { stop() {}, playing: { value: true, subscribe: () => () => {} } };
+      },
+      stopAll() {},
+    };
+    return { sink: new SamplerSink(sampler as never, { currentTime: 0 } as BaseAudioContext), seen };
+  }
+
+  test("a velocity given directly plays at the level its MIDI byte gives, as scheduleMidi does", () => {
+    const { sink, seen } = velocities();
+    sink.noteOn(60, { velocity: 0.8 });
+    sink.scheduleMidi([0x90, 60, Math.round(0.8 * 127)], 0);
+    expect(seen[0]).toBe(Math.round(0.8 * 127) / 127);
+    expect(seen[0]).not.toBe(0.8);
+    expect(seen[0]).toBe(seen[1]);
+  });
+
+  test("a velocity above 0 never rounds to silence or past 127, and an omitted velocity stays the sampler's default", () => {
+    const { sink, seen } = velocities();
+    sink.noteOn(60, { velocity: 0.001 });
+    sink.noteOn(60, { velocity: 3 });
+    sink.noteOn(60);
+    expect(seen).toEqual([1 / 127, 1, undefined]);
+  });
+});

@@ -151,9 +151,9 @@ describe("non-destructive audio clip windows", () => {
     const shrunk = audio(project.resizeClip(stretched.id, { start: 2, end: 5 }));
     expect(shrunk.time).toBe(2);
     expect(shrunk.duration).toBe(3);
-    // Stretched audio is saved as its window alone, so its source is its own recording.
-    expect(shrunk.stretch?.source.sourceOffset).toBe(0);
-    expect(shrunk.stretch?.source.sourceLength).toBeCloseTo(1.5);
+    // The source stays a window of the original recording (a save names the original file): clip seconds 1 to 4 are source seconds 0.5 to 2.
+    expect(shrunk.stretch?.source.sourceOffset).toBeCloseTo(0.5);
+    expect(shrunk.stretch?.source.sourceLength).toBe(3);
     project.dispose();
   });
 
@@ -306,7 +306,7 @@ describe("foreign files that give one window edge", () => {
   });
 
   test("an edge that contradicts the duration still fails", () => {
-    const bytes = edit(saved(), (xml) => xml.replace(/ playStop="[^"]*"/, "").replace(/ duration="1"/, ' duration="9"'));
+    const bytes = edit(saved(), (xml) => xml.replace(/ playStop="[^"]*"/, "").replace(/ duration="[^"]*"/, ' duration="99"'));
     expect(() => openDawProject(bytes)).toThrow();
   });
 });

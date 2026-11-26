@@ -128,7 +128,7 @@ import { saveDawProject } from "../src/dawproject";
 
 const node = () => {
   const target: Record<string, unknown> = {
-    gain: { setValueAtTime: vi.fn(), cancelScheduledValues: vi.fn() },
+    gain: { setValueAtTime: vi.fn(), cancelScheduledValues: vi.fn(), linearRampToValueAtTime: vi.fn() },
     pan: { setValueAtTime: vi.fn() },
     disconnect: vi.fn(),
   };

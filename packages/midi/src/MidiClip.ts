@@ -328,7 +328,7 @@ export class MidiClip {
           rank: own ? 2 : 0,
           send: () => {
             // a cut that arrived while the window was being built has already sent its own note-off
-            if (!sent.done && !sent.cancelOff) sent.cancelOff = cancelOf(sent.instrument.noteOff(sent.pitch, sent.off));
+            if (!sent.done && !sent.cancelOff) sent.cancelOff = cancelOf(sent.instrument.noteOff(sent.pitch, sent.off, sent.on));
           },
         });
       }
@@ -409,14 +409,15 @@ export class MidiClip {
     sent.offSent = true;
     sent.cutAt = null;
     try {
-      sent.cancelOff = cancelOf(sent.instrument.noteOff(sent.pitch, when));
+      sent.cancelOff = cancelOf(sent.instrument.noteOff(sent.pitch, when, sent.on));
     } finally {
       if (final || when <= now) this.finish(sent);
     }
   }
 
   /** Clock scheduler contract: sends the note-off of every note-on already sent, at `max(now, its start)`. */
-  reset(_reason?: ClipResetReason): void {
+  reset(reason?: ClipResetReason): void {
+    void reason; // every reason releases the same notes
     untracked(() => {
       this.pass = null;
       for (const sent of [...this.sent]) this.release(sent, sent.cutAt ?? undefined, true);

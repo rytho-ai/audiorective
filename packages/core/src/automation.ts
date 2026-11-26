@@ -58,6 +58,7 @@ export class AutomationCurve {
     }) as SignalAccessor<readonly AutomationPoint[]>;
   }
 
+  /** The frozen points, sorted by time; assigning validates, sorts and copies them. Tracked. */
   get value(): readonly AutomationPoint[] {
     return this.$();
   }
@@ -139,7 +140,7 @@ export class AutomationBinding {
   constructor(
     readonly context: Pick<BaseAudioContext, "currentTime">,
     readonly curve: AutomationCurve,
-    private readonly _target: AutomationTarget,
+    private readonly target: AutomationTarget,
   ) {
     this._dispose = withoutTracking(() =>
       effect(() => {
@@ -155,6 +156,7 @@ export class AutomationBinding {
     return a ? Math.min(a.to, a.from + Math.max(0, this.context.currentTime - a.when) / a.secondsPerUnit) : this._position;
   }
 
+  /** Plays the curve from `options.from` (curve units, default 0) to `options.to` at audio time `options.when` (default now), converting units with `secondsPerUnit` (default 1). Throws when disposed or an option is not finite. */
   start(options: AutomationStartOptions = {}): void {
     if (this._disposed) throw new Error("AutomationBinding is disposed.");
     const now = this.context.currentTime;
@@ -193,13 +195,13 @@ export class AutomationBinding {
     }
     if (a.to > from) window.push({ time: (a.to - from) * a.secondsPerUnit, value: sample(points, a.to), shape: "hold" });
     try {
-      this._target.program(Object.freeze(window.map((p) => Object.freeze(p))), when);
+      this.target.program(Object.freeze(window.map((p) => Object.freeze(p))), when);
     } catch (error) {
       this._position = this.position;
       this._anchor = undefined;
       // A target may have partially scheduled before failing. Preserve the original error.
       try {
-        this._target.hold(this.context.currentTime);
+        this.target.hold(this.context.currentTime);
       } catch {
         /* best-effort cleanup */
       }
@@ -212,7 +214,7 @@ export class AutomationBinding {
     if (!this._anchor) return;
     this._position = this.position;
     this._anchor = undefined;
-    withoutTracking(() => this._target.hold(this.context.currentTime));
+    withoutTracking(() => this.target.hold(this.context.currentTime));
   }
 
   /** Dispose before the borrowed target/processor. Safe to call repeatedly. */

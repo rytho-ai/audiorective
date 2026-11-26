@@ -1,7 +1,8 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { userEvent } from "vitest/browser";
 import { cell, effect } from "@audiorective/core";
-import { attachClipGesture, attachTimeRangeGesture, attachTimelineZoom } from "../src/arrangement";
+import { attachClipGesture } from "../src/clip";
+import { attachTimeRangeGesture, attachTimelineZoom } from "../src/arrangement";
 import { cleanup, host, own, pointer } from "./helpers";
 
 afterEach(cleanup);

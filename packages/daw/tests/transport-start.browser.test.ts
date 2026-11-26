@@ -357,11 +357,12 @@ test("seek while playing into slow media keeps the transport playing and resumes
   expect(r.changes).not.toContain("resume");
   const x = r.cap.pcm();
   const seek = seekFrame - x.first;
-  const run = runs(x.l).find(({ from }) => from === frames(5.5));
+  const run = runs(x.l).find(({ from, to }) => from >= frames(5.5) && from <= frames(5.5) + frames(0.03) && to > from + frames(0.1)); // a seek while playing fades the new material in over 12 ms, so it is exact from just after that window
   expect(run, "audio resumed at source frame 5.5 s").toBeDefined();
   expect(run!.to).toBeGreaterThan(frames(6));
   expect(run!.at - seek).toBeGreaterThanOrEqual(frames(0.2));
-  expect(level(x.l, seek + frames(0.15), run!.at)).toBe(0);
+  // The new material fades in over 12 ms, so the silence ends where that fade begins.
+  expect(level(x.l, seek + frames(0.15), run!.at - frames(0.03))).toBe(0);
 });
 
 test("repeated seeks during the wait play only the last target", async () => {
@@ -381,7 +382,7 @@ test("repeated seeks during the wait play only the last target", async () => {
   r.ws.pause();
   await sleep(40);
   const froms = runs(r.cap.pcm().l).map(({ from }) => from);
-  expect(froms).toContain(frames(5.5));
+  expect(froms.some((from) => from >= frames(5.5) && from <= frames(5.5) + frames(0.03))).toBe(true); // exact once the 12 ms fade-in has passed
   expect(froms).not.toContain(frames(4.5));
   expect(froms).not.toContain(frames(6.5));
 });
@@ -404,7 +405,9 @@ test("pause during the wait stays paused at the target and plays from it later",
   await sleep(300);
   r.ws.stop();
   await sleep(40);
-  expect(runs(r.cap.pcm().l).find(({ from }) => from === frames(5.5))?.to).toBeGreaterThan(frames(5.7));
+  expect(
+    runs(r.cap.pcm().l).find(({ from, to }) => from >= frames(5.5) && from <= frames(5.5) + frames(0.03) && to > from + frames(0.1))?.to,
+  ).toBeGreaterThan(frames(5.7));
 });
 
 test("stop during the wait stops at zero and nothing sounds", async () => {
@@ -435,7 +438,9 @@ test("play during the wait resolves once audio has resumed at the target", async
   await sleep(300);
   r.ws.stop();
   await sleep(40);
-  expect(runs(r.cap.pcm().l).find(({ from }) => from === frames(5.5))?.to).toBeGreaterThan(frames(5.7));
+  expect(
+    runs(r.cap.pcm().l).find(({ from, to }) => from >= frames(5.5) && from <= frames(5.5) + frames(0.03) && to > from + frames(0.1))?.to,
+  ).toBeGreaterThan(frames(5.7));
 });
 
 test("a failed read during the wait reports once, keeps the transport playing and never retries per tick", async () => {

@@ -1,5 +1,5 @@
 import type { MidiSink } from "./midi-sink";
-import { stopSource } from "./internal/playback-gain";
+import { fadeSeconds, minLead, playbackLead, stopSource, VoiceGain } from "./internal/playback-gain";
 import type { TickWindow, Timeline } from "@audiorective/clock";
 import { AutomationBinding, AutomationCurve, audioParamTarget, type AutomationPoint } from "@audiorective/core/automation";
 import { loopWrapMessages, type LoopFold, type LoopSegment } from "./arrangement-loop";
@@ -34,6 +34,23 @@ export class ClipScheduler {
   /** Devices that were sent MIDI since the last `settled()`. */
   private readonly messaged = new Set<MidiSink>();
   private refolds = 0;
+  /**
+   * The cut of the last live clip edit that faded a sounding source: that source fades out from `at`, and a source that takes over from it starts no
+   * earlier than `at` (advanced to the same place in its clip) and fades in over the same span, so a split, trim or move is a crossfade, not a hard cut.
+   * Seeks, stops and offline renders keep no cut: their start times are exact.
+   */
+  private cut: { at: number; until: number; loose: boolean } | null = null;
+  /** The cut time `cancelAudio` is applying to the handles it cancels right now. */
+  private cutAt: number | undefined;
+  /** Sources a cancel is fading out. A later live edit that lands while they fade lets them fall on from where they are, so the sum of levels stays 1. */
+  private readonly fading = new Set<{ lane: VoiceGain; source: AudioBufferSourceNode }>();
+  private cutLoose = false;
+  /** A seek crossfade is waiting for its media: the next transport start re-arms the cut so the resumed audio fades in. */
+  private seekFade = false;
+  /** Audio clips another clip of the same track starts right after; refreshed every window. */
+  private readonly abutting = new Set<string>();
+  /** Audio clips that start right where another clip of the same track ends (the right half of a split); refreshed every window. */
+  private readonly continued = new Set<string>();
 
   constructor(
     private readonly context: AudioContext,
@@ -62,6 +79,16 @@ export class ClipScheduler {
     const segments = fold.segments(window.beat.start, window.beat.end);
     // Request file-backed chunks before the ordinary MIDI and PCM look-ahead.
     const mediaSegments = fold.segments(window.beat.start, timeline.timeToBeat(window.time.lookAheadEnd + 0.35));
+    this.abutting.clear();
+    this.continued.clear();
+    for (const runtime of tracks)
+      for (const clip of runtime.clips)
+        if (clip.kind === "audio")
+          for (const next of runtime.clips)
+            if (next !== clip && next.kind === "audio" && Math.abs(next.time - (clip.time + clip.duration)) < 1e-3) {
+              this.abutting.add(clip.id);
+              this.continued.add(next.id);
+            }
     for (const runtime of tracks) {
       for (const clip of runtime.clips) {
         if (clip.kind === "audio") {
@@ -191,11 +218,35 @@ export class ClipScheduler {
     for (const handle of this.scheduled.values()) if (edits.has(handle.clipId)) handle.setGainAutomation(edits.get(handle.clipId));
   }
 
-  cancelAudio(clipIds?: ReadonlySet<string>): void {
-    for (const [key, handle] of this.scheduled) {
-      if (clipIds && !clipIds.has(handle.clipId)) continue;
-      this.scheduled.delete(key);
-      handle.cancel();
+  /**
+   * `clipIds` names the clips a live edit replaces; their sounding sources crossfade into the new ones. `crossfade` does the same for every source (a seek
+   * while playing: the new position fades in over the old one fading out, and a source that starts soon after, once its media is read, fades in too).
+   * A stop or pause fades the sources out alone, and an offline render keeps exact start times.
+   */
+  cancelAudio(clipIds?: ReadonlySet<string>, crossfade = false): void {
+    const offline = typeof OfflineAudioContext !== "undefined" && this.context instanceof OfflineAudioContext;
+    this.cut = null;
+    this.cutAt = (clipIds || crossfade) && !offline ? this.context.currentTime + playbackLead : undefined;
+    this.cutLoose = crossfade;
+    this.seekFade = crossfade && !offline;
+    try {
+      if (this.cutAt !== undefined) this.refade(this.cutAt);
+      for (const [key, handle] of this.scheduled) {
+        if (clipIds && !clipIds.has(handle.clipId)) continue;
+        this.scheduled.delete(key);
+        handle.cancel();
+      }
+    } finally {
+      this.cutAt = undefined;
+      this.cutLoose = false;
+    }
+  }
+
+  /** A cut at `at` finds sources still fading out from an earlier one: they fall on from their level there, over a fresh fade, as the new sources fade in. */
+  private refade(at: number): void {
+    for (const voice of this.fading) {
+      if (voice.lane.end <= at) this.fading.delete(voice);
+      else voice.source.stop(voice.lane.fadeOut(at, fadeSeconds));
     }
   }
 
@@ -238,6 +289,53 @@ export class ClipScheduler {
       this.failures.clear();
       this.publishFailures();
     }
+  }
+
+  /** The transport (re)starts at `when` after a seek that crossfaded: sources starting within 0.3 s of it fade in. */
+  armSeekFade(when: number): void {
+    if (!this.seekFade) return;
+    this.seekFade = false;
+    this.cut = { at: when, until: when + 0.3, loose: true };
+  }
+
+  /** When a source started at `start` for `length` seconds ends, counting a stop time. */
+  private endOf(clip: AudioClip, start: number, length: number, stop: number | null): number | null {
+    // A clip another clip continues from (a split) ends without a fade: the next one starts there.
+    if (this.abutting.has(clip.id)) return null;
+    return stop === null ? start + length : Math.min(start + length, Math.max(start, stop));
+  }
+
+  /** The live cut still in force, if any. */
+  private activeCut(): { at: number; loose: boolean } | null {
+    return this.cut && this.context.currentTime < this.cut.until ? this.cut : null;
+  }
+
+  /**
+   * Where a source planned for `when` really starts, and how far into its clip. A source that is late (its time has passed, or the cut of a live edit
+   * lies ahead) starts at the cut or now, advanced by the lateness so it stays on the clip's timeline; after a live cut it also fades in.
+   */
+  private join(
+    when: number,
+    offset: number,
+    clipId?: string,
+  ): {
+    start: number;
+    offset: number;
+    fadeIn: boolean;
+    /** The level a continuing piece starts at, and when it reaches full. */ ramp?: { from: number; until: number };
+  } {
+    const now = this.context.currentTime;
+    const cut = this.activeCut();
+    // Under a live cut, a source that is late starts a little ahead of now, not at it: a start in the past is applied when the message arrives, out of step with the fade it follows.
+    const start = Math.max(when, cut ? Math.max(cut.at, now + minLead) : now);
+    // A source that joins its clip part-way (offset > 0) has no start of its own to be hard: after a stall, when the refill came later than the cut, it
+    // still replaces the audio the cut faded out, so it fades in too instead of stepping to full level.
+    const fadeIn = cut !== null && (when <= cut.at + 1e-6 || offset > 0 || (cut.loose && when <= now + 0.1));
+    // The second half of a split begins inside the crossfade, where the source it replaces is still fading out: it joins the ramp where it stands
+    // (not from silence, not at full), so the levels of the old source and the two halves keep adding up to one across the seam.
+    const inside = cut !== null && clipId !== undefined && this.continued.has(clipId) && when > cut.at + 1e-6 && when < cut.at + fadeSeconds - 1e-6;
+    const ramp = inside ? { from: (when - cut.at) / fadeSeconds, until: cut.at + fadeSeconds } : undefined;
+    return { start, offset: offset + Math.max(0, start - when), fadeIn: fadeIn || inside, ramp };
   }
 
   scheduleAudioClipWindow(
@@ -330,6 +428,8 @@ export class ClipScheduler {
     when: number,
     offset: number,
     length: number,
+    /** A source that takes over from a faded one: fades in from `when`, and out before `end` so a clip trimmed at the playhead does not stop hard. */
+    fadeIn: { end: number | null; ramp?: { from: number; until: number } } | false = false,
   ): { setAutomation(automation: AudioClipGainAutomation | undefined): void; stop(): void; dispose(): void } {
     let output: AudioNode = source;
     let envelopeGain: GainNode | undefined;
@@ -340,6 +440,21 @@ export class ClipScheduler {
       output = source.connect(envelopeGain);
     }
     const cancellation = this.context.createGain();
+    const lane = new VoiceGain(cancellation.gain, when);
+    if (fadeIn) {
+      // Silent until the fade begins: the source may start a sample before the first gain event takes hold, and the default gain of 1 would let that sample through.
+      const from = fadeIn.ramp?.from ?? 0;
+      lane.setInitialValue(from);
+      lane.setValueAtTime(from, when);
+      // Too short to fade both ways: the source it replaces is still fading out, which covers it.
+      if (fadeIn.ramp) lane.linearRampToValueAtTime(1, fadeIn.ramp.until);
+      else if (fadeIn.end === null) lane.linearRampToValueAtTime(1, when + fadeSeconds);
+      else if (fadeIn.end - when >= 2 * fadeSeconds) {
+        lane.linearRampToValueAtTime(1, when + fadeSeconds);
+        lane.setValueAtTime(1, fadeIn.end - fadeSeconds);
+        lane.linearRampToValueAtTime(0, fadeIn.end);
+      }
+    }
     output.connect(cancellation).connect(destination);
     let timeMap: ReturnType<typeof audioClipTimeMap> | undefined;
     let gain: GainNode | undefined;
@@ -372,7 +487,14 @@ export class ClipScheduler {
     };
     return {
       setAutomation,
-      stop: () => stopSource(this.context, source, cancellation.gain, when),
+      stop: () => {
+        // A batch of cancellations that overruns its lead moves the cut forward for the sources still to come, and the sources they are replaced by follow it.
+        const at = this.cutAt === undefined ? undefined : (this.cutAt = Math.max(this.cutAt, this.context.currentTime + minLead));
+        if (!stopSource(this.context, source, lane, when, at)) return;
+        for (const voice of this.fading) if (voice.lane.end <= this.context.currentTime) this.fading.delete(voice);
+        this.fading.add({ lane, source });
+        if (at !== undefined) this.cut = { at, until: at + (this.cutLoose ? 0.3 : 0.5), loose: this.cutLoose };
+      },
       dispose() {
         binding?.dispose();
         envelopeGain?.disconnect();
@@ -416,11 +538,10 @@ export class ClipScheduler {
         source = this.context.createBufferSource();
         source.buffer = buffer;
         source.onended = end;
-        const start = Math.max(when, this.context.currentTime);
-        const adjustedOffset = offset + Math.max(0, start - when);
+        const { start, offset: adjustedOffset, fadeIn } = this.join(when, offset, clip.id);
         const length = buffer.duration - adjustedOffset;
         if (length <= 0 || (stopTime !== null && stopTime <= start)) return end();
-        stage = this.connectClipSource(source, destination, clip, start, index * audioChunkSeconds + adjustedOffset, length);
+        stage = this.connectClipSource(source, destination, clip, start, index * audioChunkSeconds + adjustedOffset, length, fadeIn && { end: null });
         stage.setAutomation(automation);
         source.start(start, adjustedOffset, length);
         naturalEnd = start + length;
@@ -498,8 +619,7 @@ export class ClipScheduler {
       .then((buffer) => {
         if (cancelled) return end();
         this.recovered(clip);
-        const start = Math.max(when, this.context.currentTime);
-        const localOffset = offset + Math.max(0, start - when);
+        const { start, offset: localOffset, fadeIn } = this.join(when, offset, clip.id);
         const length = clip.duration - localOffset;
         if (length <= 0 || (stopTime !== null && stopTime <= start)) return end();
         source = this.context.createBufferSource();
@@ -508,7 +628,7 @@ export class ClipScheduler {
         source.loopStart = (plan.loopStart - bufferStart) / rate;
         source.loopEnd = (plan.loopEnd - bufferStart) / rate;
         source.onended = end;
-        stage = this.connectClipSource(source, destination, clip, start, localOffset, length);
+        stage = this.connectClipSource(source, destination, clip, start, localOffset, length, fadeIn && { end: null });
         stage.setAutomation(automation);
         source.start(start, (audioLoopSourceFrame(plan, Math.round(localOffset * rate)) - bufferStart) / rate, length);
         naturalEnd = start + length;
@@ -596,10 +716,18 @@ export class ClipScheduler {
   scheduleAudio(clip: PcmAudioClip, destination: AudioNode, when: number, offset: number, stopAt: number | null = null): AudioHandle {
     const source = this.context.createBufferSource();
     source.buffer = this.bufferFor(clip);
-    const start = Math.max(when, this.context.currentTime);
-    const adjustedOffset = Math.min(clip.duration, offset + Math.max(0, start - when));
+    const { start, offset: late, fadeIn, ramp } = this.join(when, offset, clip.id);
+    const adjustedOffset = Math.min(clip.duration, late);
     const length = Math.max(0, clip.duration - adjustedOffset);
-    const stage = this.connectClipSource(source, destination, clip, start, adjustedOffset, length);
+    const stage = this.connectClipSource(
+      source,
+      destination,
+      clip,
+      start,
+      adjustedOffset,
+      length,
+      fadeIn && { end: this.endOf(clip, start, length, stopAt), ramp },
+    );
     stage.setAutomation(clip.gainAutomation);
     let ended = false;
     const listeners = new Set<() => void>();

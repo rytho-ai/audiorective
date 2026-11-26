@@ -47,6 +47,7 @@ export class TempoParam extends Param<number> {
     }) as SignalAccessor<number>;
   }
 
+  /** Set the tempo to `value` BPM at audio-context `time` (seconds). */
   setValueAtTime(value: number, time: number): this {
     this._cutSynthetic(time);
     this._curve.setValueAtTime(value, time);
@@ -54,6 +55,7 @@ export class TempoParam extends Param<number> {
     return this;
   }
 
+  /** Remove every scheduled tempo event at or after audio-context `time` (seconds). */
   cancelScheduledValues(time: number): this {
     this._cutSynthetic(time);
     this._curve.cancelScheduledValues(time);
@@ -61,6 +63,7 @@ export class TempoParam extends Param<number> {
     return this;
   }
 
+  /** Cancel events at or after `time` (seconds) and hold the tempo the curve has reached there. */
   cancelAndHoldAtTime(time: number): this {
     this._cutSynthetic(time);
     this._curve.cancelAndHoldAtTime(time);

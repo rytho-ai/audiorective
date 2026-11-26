@@ -126,7 +126,7 @@ describe("Timeline — seek", () => {
     expect(timeline.timeToBeat(5)).toBeCloseTo(64);
   });
 
-  test("start() and start({ atBeat }) also bump generation", () => {
+  test("_start() and _start(atBeat) also bump generation", () => {
     const ctx = makeContext(0);
     const timeline = new Timeline({ audioContext: ctx, bpm: 120 });
     const gen0 = timeline.generation;

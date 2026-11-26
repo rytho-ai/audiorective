@@ -21,6 +21,7 @@ export class AudioBufferCache {
     this.ctx = ctx;
   }
 
+  /** Fetches and decodes `url` once per cache; later calls share the same promise. A failed load is dropped so a retry fetches again. */
   load(url: string): Promise<AudioBuffer> {
     let pending = this.cache.get(url);
     if (!pending) {

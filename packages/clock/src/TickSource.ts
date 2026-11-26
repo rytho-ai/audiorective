@@ -1,3 +1,4 @@
+/** Drives the Clock tick loop: `start(onTick)` begins calling `onTick` repeatedly, `stop()` ends it. */
 export interface TickSource {
   start(onTick: () => void): void;
   stop(): void;

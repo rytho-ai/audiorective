@@ -32,7 +32,7 @@ test("refresh after start but before its first window keeps beat zero instead of
 
 test.each([8, -4])("first refresh retains a nonzero requested start beat %s", async (atBeat) => {
   const { context, clock, windows } = rig();
-  clock.start({ atBeat });
+  clock.start(undefined, atBeat);
   context.currentTime = 0.015;
   await clock.refresh();
   expect(windows[0]!.beat.start).toBe(atBeat);
@@ -157,7 +157,7 @@ test("stop inside the first callback fulfils a cancelled refill and a later star
   await completion;
   expect(clock.state.value).toBe("stopped");
   expect(windows).toHaveLength(1);
-  clock.start({ atBeat: 8 });
+  clock.start(undefined, 8);
   context.currentTime = 0.03;
   await clock.refresh();
   expect(windows.map((w) => w.beat.start)).toEqual([0, 8]);

@@ -20,6 +20,7 @@ export class ParamSync {
   private readonly _params = new Map<SchedulableParam, ParamEntry>();
   private _rafId: number | null = null;
 
+  /** The shared instance for `ctx`; one rAF loop per context serves every registered param. */
   static for(ctx: BaseAudioContext): ParamSync {
     let instance = paramSyncInstances.get(ctx);
     if (!instance) {
@@ -31,20 +32,24 @@ export class ParamSync {
 
   private constructor() {}
 
+  /** Starts mirroring `param`'s native AudioParam value into its signal at most every `intervalMs` milliseconds (default `DEFAULT_SYNC_INTERVAL_MS`, 100). */
   register(param: SchedulableParam, intervalMs = DEFAULT_SYNC_INTERVAL_MS): void {
     this._params.set(param, { intervalMs, lastSyncTime: 0 });
     if (this._params.size === 1) this._start();
   }
 
+  /** Stops mirroring `param`; the loop ends with the last one. */
   unregister(param: SchedulableParam): void {
     this._params.delete(param);
     if (this._params.size === 0) this._stop();
   }
 
+  /** Number of registered params. */
   get size(): number {
     return this._params.size;
   }
 
+  /** True while the rAF loop is active (at least one param is registered). */
   get running(): boolean {
     return this._rafId !== null;
   }

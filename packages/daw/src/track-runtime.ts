@@ -7,6 +7,7 @@ import type { RackEffect, RackMacroSettings } from "./rack-preset";
 import type { TrackRack } from "./track-rack";
 import type { AudioTrackSession } from "./audio-track-session";
 import type { AudioClipGainAutomation, ProjectTrack } from "./model";
+import type { WidthPath } from "./width-path";
 
 /** Seconds of media decoded and scheduled as one chunk. */
 export const audioChunkSeconds = 2;
@@ -49,6 +50,12 @@ export type TrackRuntime = {
   input: AudioNode;
   session?: AudioTrackSession;
   hosts: Map<string, WebClapHost>;
+  /** The wired device chain: its edges and the gate that feeds the rack, so a changed chain can fade in over the one it replaces. */
+  chain?: { gate: GainNode; edges: ReadonlyArray<readonly [AudioNode, AudioNode]> };
+  /** How many channels the track's own sources carry, as last measured in the graph (instrument sounds and buses; audio tracks read it from their clips). */
+  sourceWidth?: 1 | 2;
+  /** The stereo way into the strip, built the first time a device change switches the track between mono and stereo. */
+  widthPath?: WidthPath;
   /** Where the track's MIDI plays: its first WebCLAP device, or its `instruments` sampler. */
   midi?: MidiSink;
   /** The sampler built from `WorkspaceOptions.instruments`, when the track plays one. */

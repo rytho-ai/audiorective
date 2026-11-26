@@ -173,6 +173,16 @@ const rows: Array<{ name: string; read: (ctx: Ctx) => unknown; mutate: (ctx: Ctx
   { name: "Project.bpm (setTempoChanges)", read: (c) => c.project.bpm, mutate: (c) => c.project.setTempoChanges([{ beat: 0, bpm: 90 }]) },
   { name: "Project.tempoMap", read: (c) => c.project.tempoMap, mutate: (c) => c.project.setTempoChanges([{ beat: 4, bpm: 60 }]) },
   {
+    name: "Project.signature (setTimeSignatureChanges)",
+    read: (c) => c.project.signature,
+    mutate: (c) => c.project.setTimeSignatureChanges([{ beat: 0, numerator: 3, denominator: 4 }]),
+  },
+  {
+    name: "Project.meterMap",
+    read: (c) => c.project.meterMap,
+    mutate: (c) => c.project.setTimeSignatureChanges([{ beat: 8, numerator: 3, denominator: 4 }]),
+  },
+  {
     name: "Project.clipName (setClipName)",
     read: (c) => c.project.clipName(c.audioClipId) ?? null,
     mutate: (c) => c.project.setClipName(c.audioClipId, "Hook"),

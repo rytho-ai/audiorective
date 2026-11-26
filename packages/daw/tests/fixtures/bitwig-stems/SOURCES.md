@@ -1,0 +1,7 @@
+# Bitwig Studio stem excerpts
+
+`click-a.wav`, `click-b.wav` and `master.wav` (92,824 bytes each, 278,472 in all) are excerpts of the three stems Bitwig Studio 6.1.7 exported from a project the maintainer built from generated content (a click on each of two audio tracks; probe `blueprints/probes/bitwig-roundtrip-001`, originals `files/stems/01 Click A.wav`, `02 Click B.wav` and `Master.wav`). Licence: written for this repository, same licence as the repository.
+
+Evidence of the writer: each file's `LIST/INFO` chunk holds `ISFT` = `Bitwig Studio 6.1.7`, and it carries Bitwig's `BWBM` chunk and a `JUNK` chunk before `fmt `. Format: PCM 24-bit, 2 channels, 44,100 Hz.
+
+How they were cut: every chunk (`JUNK`, `fmt `, `LIST`, `BWBM`) is kept byte for byte, so the header fields are Bitwig's. Only the `data` chunk is shortened, to frames 52,920 to 68,354 (15,435 frames, 0.35 s, starting at 1.2 s of the original), the same frames in all three files so they keep their common start; the `data` chunk size and the RIFF size were rewritten to match. In the originals the clicks are at 0.5 s and 1.5 s (Click A), 1.25 s and 2.25 s (Click B); the excerpt keeps Click A's second click and Click B's first click, which are at frames 13,230 and 2,205 of the excerpt (Master has both). The first click of Click A and the second of Click B are not in the excerpts: the whole-file clicks would not fit under the size budget.

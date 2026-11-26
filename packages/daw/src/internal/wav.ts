@@ -123,11 +123,12 @@ export function mediaFromWav(blob: Blob, header: Uint8Array): AudioMedia {
   return new AudioMedia(blob, sampleRate, channels, bytes / channels / 4, 44);
 }
 
+/** Reads the WAV files DAWs write: 8, 16, 24 and 32-bit integer PCM and 32 or 64-bit float, also in a WAVE_FORMAT_EXTENSIBLE header. */
 export function decodeWav(bytes: Uint8Array): ProjectAudio {
-  if (bytes.length < 44) throw new Error("Project audio needs an IEEE float32 WAV asset.");
+  const unsupported = () => new Error("Project audio needs a PCM or IEEE float WAV asset.");
+  if (bytes.length < 44) throw unsupported();
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (readAscii(view, 0, 4) !== "RIFF" || readAscii(view, 8, 4) !== "WAVE" || view.getUint32(4, true) + 8 > bytes.length)
-    throw new Error("Project audio needs an IEEE float32 WAV asset.");
+  if (readAscii(view, 0, 4) !== "RIFF" || readAscii(view, 8, 4) !== "WAVE" || view.getUint32(4, true) + 8 > bytes.length) throw unsupported();
   let format = 0,
     channels = 0,
     sampleRate = 0,
@@ -138,28 +139,42 @@ export function decodeWav(bytes: Uint8Array): ProjectAudio {
     const name = readAscii(view, at, 4);
     const size = view.getUint32(at + 4, true);
     const body = at + 8;
-    if (body + size > bytes.length) throw new Error("Project audio needs an IEEE float32 WAV asset.");
+    // A data chunk may be cut short by a writer that never came back to fix its size; take what is there.
+    if (body + size > bytes.length && name !== "data") throw unsupported();
     if (name === "fmt " && size >= 16) {
       format = view.getUint16(body, true);
       channels = view.getUint16(body + 2, true);
       sampleRate = view.getUint32(body + 4, true);
       bits = view.getUint16(body + 14, true);
+      if (format === 0xfffe && size >= 26) format = view.getUint16(body + 24, true);
     }
     if (name === "data") {
       dataAt = body;
-      dataSize = size;
+      dataSize = Math.min(size, bytes.length - body);
     }
     at = body + size + (size & 1);
   }
-  if (format !== 3 || bits !== 32 || channels < 1 || channels > 32 || sampleRate <= 0 || dataAt < 0 || dataSize % (channels * 4) !== 0)
-    throw new Error("Project audio needs an IEEE float32 WAV asset.");
-  const frames = dataSize / channels / 4;
+  const width = bits >> 3;
+  const supported = (format === 1 && (bits === 8 || bits === 16 || bits === 24 || bits === 32)) || (format === 3 && (bits === 32 || bits === 64));
+  if (!supported || channels < 1 || channels > 32 || sampleRate <= 0 || dataAt < 0) throw unsupported();
+  const frames = Math.floor(dataSize / channels / width);
   const pcm = Array.from({ length: channels }, () => new Float32Array(frames));
   let at = dataAt;
   for (let frame = 0; frame < frames; frame++)
     for (const channel of pcm) {
-      channel[frame] = view.getFloat32(at, true);
-      at += 4;
+      channel[frame] =
+        format === 3
+          ? bits === 32
+            ? view.getFloat32(at, true)
+            : view.getFloat64(at, true)
+          : bits === 16
+            ? view.getInt16(at, true) / 32768
+            : bits === 24
+              ? ((view.getUint8(at) | (view.getUint8(at + 1) << 8) | (view.getInt8(at + 2) << 16)) as number) / 8388608
+              : bits === 32
+                ? view.getInt32(at, true) / 2147483648
+                : (view.getUint8(at) - 128) / 128;
+      at += width;
     }
   return { sampleRate, channels: pcm };
 }

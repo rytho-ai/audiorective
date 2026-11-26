@@ -185,6 +185,7 @@ export class AudioEngine {
     return ctx.currentTime - this.latency.value / ctx.sampleRate - outputLatency;
   }
 
+  /** Same as core's `defineGraph` with this engine's context; the engine disposes the graph with itself. */
   defineGraph(fn: () => EdgeList, opts?: Omit<GraphOptions, "context">): GraphHandle {
     const token = {};
     const inner = defineGraphFn(fn, {
@@ -228,6 +229,7 @@ export class AudioEngine {
     return resolvePathLatency(proc);
   }
 
+  /** Resolves once the context is `running` (at once if it is); rejects if the engine is disposed first. Pair with `resume()` or `autoStart` from a user gesture. */
   untilReady(): Promise<void> {
     const state = this._peek();
     if (state === "running") return Promise.resolve();
@@ -258,12 +260,14 @@ export class AudioEngine {
     this._setState("running");
   }
 
+  /** Disposes `processor` with the engine; returns it. A processor registered after disposal is disposed at once. */
   register<T extends AudioProcessor>(processor: T): T {
     if (this._disposed) processor.dispose();
     else this._processors.push(processor);
     return processor;
   }
 
+  /** Calls `resume()` on the first of `options.events` (default `click`, `keydown`, `touchstart`) fired on `target` while the context is not running, and re-arms if it suspends again. Returns a function that removes it. */
   autoStart(target: EventTarget, options?: { events?: readonly string[] }): () => void {
     const events = options?.events ?? DEFAULT_AUTO_START_EVENTS;
     let gestureCleanup: (() => void) | null = null;

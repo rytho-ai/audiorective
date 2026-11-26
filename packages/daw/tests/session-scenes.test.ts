@@ -343,8 +343,8 @@ describe("slot clips are ordinary clips by id", () => {
       expectedVersion: project.cells.version.value,
       label: "Tweak",
       ops: [
-        { type: "renameClip", clip: { clipId: hook.id }, name: "Tweaked" },
-        { type: "setNoteVelocity", clip: { clipId: hook.id }, noteId, velocity: 0.3 },
+        { type: "setClipName", clip: { clipId: hook.id }, name: "Tweaked" },
+        { type: "editNotes", clip: { clipId: hook.id }, notes: [{ id: noteId, velocity: 0.3 }] },
       ],
     });
     expect(receipt.status).toBe("applied");

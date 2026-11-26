@@ -16,7 +16,13 @@ export default defineConfig({
             "@audiorective/daw/mcp": entry("mcp"),
           },
         },
-        test: { name: "node", environment: "node", include: ["tests/**/*.test.ts"], exclude: ["tests/**/*.browser.test.ts"] },
+        test: {
+          name: "node",
+          environment: "node",
+          setupFiles: ["tests/setup/xsd-validation.ts"],
+          include: ["tests/**/*.test.ts"],
+          exclude: ["tests/**/*.browser.test.ts"],
+        },
       },
       {
         test: {

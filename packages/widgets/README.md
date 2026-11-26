@@ -2,7 +2,7 @@
 
 Framework-independent browser widgets for plain playback controls, waveform selection, MIDI views and arrangement clip gestures.
 
-`@audiorective/widgets/clip` provides `attachClipGesture` (snapped moves and keyboard nudges), `attachClipTrim` (edge trims) and `attachClipWaveform` (a clip's played window); `@audiorective/widgets/arrangement` re-exports `attachClipGesture` and provides `attachTimelineZoom` for continuous anchored timeline zoom. They borrow caller-owned DOM and project state. See [Widgets](../../docs/widgets.md) for common mounts and [Widgets: advanced](../../docs/widgets-advanced.md#arrangement-gestures) for live clip origins, gesture cancellation and tracked timeline zoom.
+`@audiorective/widgets/clip` provides `attachClipGesture` (snapped moves and keyboard nudges), `attachClipTrim` (edge trims) and `attachClipWaveform` (a clip's played window); `@audiorective/widgets/arrangement` provides `attachTimelineZoom` for continuous anchored timeline zoom. They borrow caller-owned DOM and project state. See [Widgets](../../docs/widgets.md) for common mounts and [Widgets: advanced](../../docs/widgets-advanced.md#arrangement-gestures) for live clip origins, gesture cancellation and tracked timeline zoom.
 
 ## Plain player
 

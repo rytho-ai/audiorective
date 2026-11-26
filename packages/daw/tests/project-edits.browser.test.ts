@@ -227,7 +227,7 @@ describe("project edits through the audio graph", () => {
     const receipt = project.applyEdits({
       expectedVersion: project.cells.version.value,
       label: "Name",
-      ops: [{ type: "renameClip", clip: { clipId: clip.id }, name: "Bed" }],
+      ops: [{ type: "setClipName", clip: { clipId: clip.id }, name: "Bed" }],
     });
     if (receipt.status !== "applied") throw new Error(receipt.reason);
     expect(await workspace.editStatus(receipt.version)).toBe("applied");

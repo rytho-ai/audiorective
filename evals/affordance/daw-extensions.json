@@ -18,7 +18,7 @@
         {
           "expectation": 0,
           "label": "No markers, clip names or local storage as the chain store",
-          "none": ["setMarkers", "setClipName", "renameClip", "localStorage"]
+          "none": ["setMarkers", "setClipName", "localStorage"]
         },
         {
           "expectation": 4,

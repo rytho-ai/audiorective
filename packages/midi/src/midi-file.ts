@@ -1,7 +1,7 @@
 /** Standard MIDI file decoding into beats (ticks / ppq), adapted from tactus-ui-dev core/midi.ts.
  * Track/channel/pitch pairing uses the reference FIFO policy.
  */
-import type { MidiNote, ParsedMidi } from "./midi-data";
+import type { MidiFileEvent, MidiNote, ParsedMidi, ParsedMidiTrack } from "./midi-data";
 
 const fail = (): never => {
   throw new Error("Invalid MIDI file.");
@@ -9,7 +9,21 @@ const fail = (): never => {
 const freeze = <T extends object>(v: T): Readonly<T> => Object.freeze(v);
 type RawTempo = { tick: number; usPerQuarter: number };
 type RawSignature = { tick: number; numerator: number; denominator: number };
-/** Parses a standard MIDI file (type 0 or 1). Notes are in beats and velocity 0..1; the file's own tempo is not applied. Throws `Invalid MIDI file.` on malformed bytes. */
+/** Meta text as UTF-8, or Latin-1 when the bytes are not valid UTF-8; control characters are dropped. */
+function metaText(bytes: Uint8Array): string {
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    text = String.fromCharCode(...bytes);
+  }
+  return [...text]
+    .filter((char) => char.charCodeAt(0) > 31 && char.charCodeAt(0) !== 127)
+    .join("")
+    .trim();
+}
+
+/** Parses a standard MIDI file (type 0 or 1). Notes are in beats and velocity 0..1; the file's own tempo is not applied. `tracks` keeps each track's name, notes and non-note channel messages. Throws `Invalid MIDI file.` on malformed bytes. */
 export function parseMidi(input: ArrayBuffer | Uint8Array): ParsedMidi {
   const bytes = input instanceof Uint8Array ? input : new Uint8Array(input),
     view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -27,6 +41,7 @@ export function parseMidi(input: ArrayBuffer | Uint8Array): ParsedMidi {
     signatures: RawSignature[] = [];
   type Raw = { tick: number; on: boolean; pitch: number; velocity: number; channel: number; track: number };
   const raws: Raw[] = [];
+  const trackInfo: { name?: string; events: { tick: number; data: Uint8Array }[]; endTick: number }[] = [];
   let at = 8 + headerLength,
     endTick = 0;
   for (let track = 0; track < tracks; track++) {
@@ -36,6 +51,8 @@ export function parseMidi(input: ArrayBuffer | Uint8Array): ParsedMidi {
     at += 8;
     let tick = 0,
       status = 0;
+    const info: (typeof trackInfo)[number] = { events: [], endTick: 0 };
+    trackInfo.push(info);
     const byte = () => {
       if (at >= stop) fail();
       return bytes[at++];
@@ -71,6 +88,7 @@ export function parseMidi(input: ArrayBuffer | Uint8Array): ParsedMidi {
           if (!us) fail();
           tempos.push({ tick, usPerQuarter: us });
         }
+        if (type === 0x03 && info.name === undefined) info.name = metaText(bytes.subarray(at, at + length));
         if (type === 0x58) {
           if (length < 2 || !bytes[at] || bytes[at + 1] > 7) fail();
           signatures.push({ tick, numerator: bytes[at], denominator: 2 ** bytes[at + 1] });
@@ -94,28 +112,33 @@ export function parseMidi(input: ArrayBuffer | Uint8Array): ParsedMidi {
           b = size === 2 ? byte() : 0;
         if (a > 127 || b > 127) fail();
         if (kind === 0x80 || kind === 0x90) raws.push({ tick, on: kind === 0x90 && b > 0, pitch: a, velocity: b, channel, track });
+        else info.events.push({ tick, data: new Uint8Array(size === 2 ? [event, a, b] : [event, a]) });
       }
     }
+    info.endTick = tick;
     endTick = Math.max(endTick, tick);
     at = stop;
   }
   tempos.sort((a, b) => a.tick - b.tick);
   signatures.sort((a, b) => a.tick - b.tick);
+  const meters = signatures.filter((t, i) => i === signatures.length - 1 || signatures[i + 1].tick !== t.tick);
   const map = tempos.filter((t, i) => i === tempos.length - 1 || tempos[i + 1].tick !== t.tick);
   const open = new Map<string, Raw[]>(),
     notes: MidiNote[] = [];
   let id = 0;
-  const close = (on: Raw, tick: number) =>
-    notes.push(
-      freeze({
-        id: `note-${id++}`,
-        pitch: on.pitch,
-        velocity: on.velocity / 127,
-        start: on.tick / ppq,
-        duration: (tick - on.tick) / ppq,
-        channel: on.channel,
-      }),
-    );
+  const byTrack = trackInfo.map(() => [] as MidiNote[]);
+  const close = (on: Raw, tick: number) => {
+    const note = freeze({
+      id: `note-${id++}`,
+      pitch: on.pitch,
+      velocity: on.velocity / 127,
+      start: on.tick / ppq,
+      duration: (tick - on.tick) / ppq,
+      channel: on.channel,
+    });
+    notes.push(note);
+    byTrack[on.track].push(note);
+  };
   for (const raw of raws.sort((a, b) => a.tick - b.tick)) {
     const key = `${raw.track}/${raw.channel}/${raw.pitch}`;
     if (raw.on) {
@@ -128,12 +151,23 @@ export function parseMidi(input: ArrayBuffer | Uint8Array): ParsedMidi {
     }
   }
   for (const q of open.values()) for (const on of q) close(on, endTick);
-  notes.sort((a, b) => a.start - b.start || a.pitch - b.pitch);
+  const bySort = (a: MidiNote, b: MidiNote) => a.start - b.start || a.pitch - b.pitch;
+  notes.sort(bySort);
+  const parsedTracks: ParsedMidiTrack[] = trackInfo.map((info, index) =>
+    freeze({
+      index,
+      ...(info.name ? { name: info.name } : {}),
+      notes: freeze(byTrack[index].sort(bySort)),
+      events: freeze(info.events.map((event): MidiFileEvent => freeze({ beat: event.tick / ppq, data: event.data }))),
+      end: info.endTick / ppq,
+    }),
+  );
   return freeze({
     ppq,
     tempos: freeze(map.map((t) => freeze({ beat: t.tick / ppq, bpm: 60_000_000 / t.usPerQuarter }))),
-    signatures: freeze(signatures.map((s) => freeze({ beat: s.tick / ppq, numerator: s.numerator, denominator: s.denominator }))),
+    signatures: freeze(meters.map((s) => freeze({ beat: s.tick / ppq, numerator: s.numerator, denominator: s.denominator }))),
     notes: freeze(notes),
     duration: endTick / ppq,
+    tracks: freeze(parsedTracks),
   });
 }

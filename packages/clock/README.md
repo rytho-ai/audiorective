@@ -52,7 +52,7 @@ timeline.bpm.setValueAtTime(140, timeline.beatToTime(64)); // tempo change sched
 ## Transport
 
 ```typescript
-clock.start(); // or clock.start({ atBeat: 16 })
+clock.start(); // or clock.start(undefined, 16) to begin at beat 16
 clock.pause(); // freezes position; committed look-ahead audio keeps sounding (an accepted tail)
 clock.resume(); // continues from the frozen position
 clock.stop(); // resets to beat 0
@@ -63,7 +63,7 @@ clock.seek(64); // jumps to beat 64
 
 `clock.state` is a `ReadonlyCell<"stopped" | "playing" | "paused">` — the same store as `timeline.state`. Read it with `.value` (tracked) or `$()`; only `start`, `pause`, `resume` and `stop` change it, so it cannot be written from outside.
 
-Every jump (`seek`, `start({ atBeat })`, stop→start) bumps `window.generation` and begins a new continuity segment — windows are non-overlapping only _within_ a segment, so beats may legitimately reappear across a backward seek. Consumers holding derived state (step counters, generator positions) should reset when `generation` changes.
+Every jump (`seek`, `start(when, offsetBeats)`, stop→start) bumps `window.generation` and begins a new continuity segment — windows are non-overlapping only _within_ a segment, so beats may legitimately reappear across a backward seek. Consumers holding derived state (step counters, generator positions) should reset when `generation` changes.
 
 ## Rulers — reading the beat axis
 

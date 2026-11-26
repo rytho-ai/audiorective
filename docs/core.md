@@ -8,7 +8,7 @@ Reactive primitives for Web Audio. Bridges audio parameter automation and UI fra
 
 Audio state is the single source of truth. UI frameworks observe and mutate directly. No state duplication.
 
-For data-only waveform summaries and WAV encoding of PCM, use the [`@audiorective/core/peaks`](#pcm-peak-summaries) entry (`summarizePeaks`, `encodeWav`). It requires neither Web Audio nor a DOM.
+For data-only waveform summaries and WAV encoding of PCM, use the [`@audiorective/core/peaks`](#pcm-peak-summaries) entry (`summarizePeaks`, `encodeWav`, `resamplePCM`). It requires neither Web Audio nor a DOM.
 
 For reactive curves, transport beat loops, native parameter scheduling and domain adapters, use the optional
 [`@audiorective/core/automation`](./automation) entry.
@@ -644,6 +644,10 @@ Object.assign(document.createElement("a"), { href: url, download: "bounce.wav" }
 
 A WAV file holds under 4 GiB of samples; longer audio throws and must be split.
 
+### Resample PCM
+
+`resamplePCM(pcm, targetRate, { quality? })` returns `PCMData` at `targetRate`, pure like `encodeWav` (browsers, Node.js, workers; root and `@audiorective/core/peaks`). It is a polyphase Kaiser-windowed sinc, not the browser's linear resampler: content above `min(source, target) / 2` is removed, and a tone below the cutoff keeps its level within 0.1 dB with THD+N under -80 dB. Output sample `n` is the input at time `n / targetRate`, so frame 0 stays frame 0 and a click at input time `t` lands at `round(t * targetRate)`; the length is `round(frames * targetRate / sampleRate)`. The signal beyond both ends counts as silence. Equal rates return a copy. `quality` is `"standard"` (default, 32 zero crossings per side, about -90 dB), `"high"` (64) or `"fast"` (12, for previews). A 4-minute stereo 44.1 kHz file to 48 kHz takes about 2 s in Node (`"high"` about 4 s); run longer material in a worker.
+
 | Error                                                                        | Fix                                               |
 | ---------------------------------------------------------------------------- | ------------------------------------------------- |
 | `summarizePeaks: sampleRate must be a finite positive number`                | Supply the PCM's positive sample rate.            |
@@ -656,6 +660,10 @@ A WAV file holds under 4 GiB of samples; longer audio throws and must be split.
 | `encodeWav: channels must have equal frame counts`                           | Supply equally sized channels.                    |
 | `encodeWav: bitDepth must be 16, 24 or 32`                                   | Use one of the three supported depths.            |
 | `encodeWav: audio is too large for a WAV file; split it into shorter pieces` | Encode shorter pieces of under 4 GiB each.        |
+| `resamplePCM: sampleRate must be a finite positive number`                   | Supply the PCM's sample rate in Hz.               |
+| `resamplePCM: targetRate must be a finite positive number`                   | Pass the target rate in Hz.                       |
+| `resamplePCM: channels must have equal frame counts`                         | Supply equally sized channels.                    |
+| `resamplePCM: quality must be "fast", "standard" or "high"`                  | Use one of the three quality names.               |
 | `summarizePeaks: samples must be finite numbers`                             | Remove NaN and infinite samples.                  |
 | `peakFrameRange: index must identify an existing peak`                       | Use a valid bin index; empty summaries have none. |
 
@@ -1434,6 +1442,7 @@ export { batch, untracked, effect, computed };
 export { loadAudioBuffer, registerWorklet, reverseBuffer, renderOffline, playSound, assertSound, noteNumber };
 export { applyEventTransforms, resolveHitEdit, withCancel, hash01 };
 export { summarizePeaks, peakFrameRange };
+export { encodeWav, encodeWavBytes, resamplePCM };
 
 // Constants
 export { DEFAULT_SYNC_INTERVAL_MS };
@@ -1488,6 +1497,9 @@ export type {
   GraphSnapshot,
   PCMData,
   PeakSummary,
+  EncodeWavOptions,
+  ResamplePCMOptions,
+  ResampleQuality,
 };
 ```
 

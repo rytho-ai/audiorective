@@ -1,6 +1,7 @@
 /** Pure Equalizer band settings and validation; loads without Web Audio. */
 export type EqualizerBand = Readonly<{ frequency: number; gain: number; q: number }>;
 
+/** Validates `bands` (frequency 20-20000 Hz, gain +-24 dB, Q 0.1-20, at least one) and returns frozen copies; throws RangeError otherwise. */
 export function normalizeEqualizerBands(bands: readonly EqualizerBand[]): readonly EqualizerBand[] {
   const inRange = (value: number, min: number, max: number) => Number.isFinite(value) && value >= min && value <= max;
   if (

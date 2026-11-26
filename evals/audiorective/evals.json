@@ -525,7 +525,7 @@
       "expectations": [
         "Calls project.setTempoChanges([{ beat: 4, bpm: 60 }]) and relies on the running Workspace to rebase playback automatically (optionally await workspace.flush())",
         "Uses project.tempoMap beatToSeconds, secondsToBeat or snapSeconds for ruler and snapping; beat 8 maps to project second 6",
-        "Imports attachClipGesture from @audiorective/widgets/arrangement and supplies timeMap either as project.tempoMap directly or as a structural wrapper delegating every conversion and snapping method to the current project.tempoMap, without a second tempo model or handwritten conversion math",
+        "Imports attachClipGesture from @audiorective/widgets/clip and supplies timeMap either as project.tempoMap directly or as a structural wrapper delegating every conversion and snapping method to the current project.tempoMap, without a second tempo model or handwritten conversion math",
         "Uses attachTimelineZoom from the arrangement entry for continuous anchored slider and Ctrl/Meta+wheel zoom, with the app providing redraw in onScale",
         "Lets the widget own pointer preview, cancellation and keyboard nudge but applies Project.moveClip and undo history in onMove",
         "Applies the Project clip move without a commit call (the Workspace applies it) and disposes the gesture before removing its clip element",
@@ -1226,6 +1226,17 @@
         "Calls await workspace.addWebClapDevice(trackId, bundleUrl) and keeps the returned device",
         "Undoes with project.undo() and awaits workspace.flush() if it needs the result, without calling workspace.sync() or stopping and restarting the transport",
         "Does not build the host, connect audio nodes or copy descriptor fields by hand"
+      ]
+    },
+    {
+      "id": 95,
+      "prompt": "A user drops a Standard MIDI File and five WAV stems (44.1 and 48 kHz) onto my DAW page, which has a Project and a running Workspace. Import both into the song, with the MIDI file's tempo map, then add an Export MIDI button and an Export stems button that download the files. Do not run anything.",
+      "expected_output": "Uses importMidiFile, importAudioFiles, exportMidiFile and renderStems with encodeWav, then sync().",
+      "files": [],
+      "expectations": [
+        "Imports the MIDI file with importMidiFile(project, new Uint8Array(await file.arrayBuffer())) and reads tempoMapUsed, without parsing the SMF by hand",
+        "Imports the WAVs with await importAudioFiles(workspace, files) and runs await workspace.sync() afterwards, without resampling or decoding the files by hand",
+        "Exports with exportMidiFile(project) and renderStems(workspace) plus encodeWav, using result.stems and result.mix for the file set"
       ]
     }
   ]

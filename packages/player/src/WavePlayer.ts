@@ -239,6 +239,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
     this.store.processing.value = value;
   }
 
+  /** The player's output node; `volume` is applied here, so connect it like any node. */
   get output(): AudioNode {
     return this.gain;
   }
@@ -259,6 +260,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
   get duration(): number {
     return this.buffer?.duration ?? 0;
   }
+  /** The loaded audio before any stretch (`setStretch` leaves it untouched); null when nothing is loaded. Tracked. */
   get sourceBuffer(): AudioBuffer | null {
     void this.cells.version.value;
     return this.original;
@@ -284,6 +286,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
     if (!Number.isFinite(seconds)) throw new RangeError("Time must be finite seconds.");
     return this.length ? (Math.max(0, Math.min(this.length, seconds)) * (this.original?.duration ?? 0)) / this.length : 0;
   }
+  /** Playhead in seconds of the (stretched) output audio, from 0 to `duration`; wraps inside the selection while looping. Tracked by the clock, not by cells. */
   get position(): number {
     if (!this.anchor) return this.held;
     const a = this.anchor;
@@ -518,6 +521,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
       if (playing) this.begin(position, this.startTime());
     });
   }
+  /** Loops the current selection from its start and plays it; does nothing when nothing is selected. */
   async audition(): Promise<void> {
     this.assertAlive();
     if (!this.range) return;
@@ -681,6 +685,7 @@ export class WavePlayer extends AudioProcessor<{ volume: SchedulableParam }, Wav
       if (request === this.request) this.abort = null;
     }
   }
+  /** Stops playback, cancels pending loads and stretches, and releases the audio nodes; safe to call twice. */
   override dispose(): void {
     if (this.disposed) return;
     this.abortSignal?.removeEventListener("abort", this.onAbort);

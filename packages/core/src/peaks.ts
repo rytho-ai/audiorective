@@ -88,3 +88,5 @@ export function peakFrameRange(
 
 export { encodeWav, encodeWavBytes } from "./wav";
 export type { EncodeWavOptions } from "./wav";
+export { resamplePCM } from "./resample";
+export type { ResamplePCMOptions, ResampleQuality } from "./resample";

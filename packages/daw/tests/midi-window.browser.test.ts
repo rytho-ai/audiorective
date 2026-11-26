@@ -189,3 +189,53 @@ describe("MIDI clip windows in the Session", () => {
     void track;
   }, 60_000);
 });
+
+describe("editing a held note while it sounds", () => {
+  /** A sine that holds until the note ends, at a frequency that follows the pitch. */
+  const tone: SoundFactory = (context, hit) => {
+    const osc = new OscillatorNode(context, { frequency: 250 * 2 ** (hit.pitch / 12) });
+    const env = new GainNode(context, { gain: 0.3 });
+    osc.connect(env);
+    return { output: env, sources: [osc] };
+  };
+  /** Upward zero crossings per second inside a window: the pitch of a pure tone. */
+  const hertz = (x: Float32Array, from: number, to: number) => {
+    let crossings = 0;
+    for (let i = Math.round(from * RATE) + 1; i < Math.round(to * RATE); i++) if (x[i - 1] < 0 && x[i] >= 0) crossings++;
+    return crossings / (to - from);
+  };
+  function held() {
+    const project = new Project({ bpm: 120 });
+    const track = project.addTrack("Lead", "midi");
+    const clip = project.addMidiClip(track.id, { duration: 16, notes: [{ pitch: 60, velocity: 1, start: 0, duration: 12 }] }, 0);
+    cleanups.push(() => project.dispose());
+    return { project, clip, instruments: { [track.id]: { sound: tone } } };
+  }
+
+  test("a re-pitched note ends the old pitch and sounds the new one at once, to the note's end", async () => {
+    const { project, clip, instruments } = held();
+    const x = await render(project, 7, [{ at: 2, run: () => clip.midi.edit((notes) => void (notes[0].pitch = 67)) }], { instruments });
+    const before = hertz(x, 1, 1.9);
+    expect(hertz(x, 2.1, 2.2) / before).toBeCloseTo(2 ** (7 / 12), 1);
+    expect(hertz(x, 2.1, 5.9) / before).toBeCloseTo(2 ** (7 / 12), 1);
+    // Sounding without a gap from the edit on, and silent after the note ends at 6 s.
+    expect(rms(x, 2.05, 5.95)).toBeGreaterThan(0.1);
+    expect(rms(x, 6.2, 6.9)).toBeLessThan(0.005);
+  }, 30_000);
+
+  test("a start edit that still covers the playhead restarts the note: same pitch keeps sounding, released once at the end", async () => {
+    const { project, clip, instruments } = held();
+    const x = await render(project, 7, [{ at: 2, run: () => clip.midi.edit((notes) => void (notes[0].start = 1)) }], { instruments });
+    expect(rms(x, 2.05, 6.4)).toBeGreaterThan(0.1);
+    expect(rms(x, 6.7, 6.95)).toBeLessThan(0.005);
+    expect(rounded(onsets(x))[0]).toBeLessThan(0.01);
+  }, 30_000);
+
+  test("a note shortened to end before the playhead goes silent at the edit", async () => {
+    const { project, clip, instruments } = held();
+    const x = await render(project, 7, [{ at: 2, run: () => clip.midi.edit((notes) => void (notes[0].duration = 3)) }], { instruments });
+    // Shortened to end at beat 3 (1.5 s): it is already over at the edit.
+    expect(rms(x, 1.0, 1.4)).toBeGreaterThan(0.1);
+    expect(rms(x, 2.1, 5.9)).toBeLessThan(0.005);
+  }, 30_000);
+});

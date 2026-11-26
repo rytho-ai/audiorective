@@ -1,11 +1,13 @@
 import { encode } from "@toon-format/toon";
-import { untracked } from "@audiorective/core";
+import { encodeWavBytes, untracked, type PCMData } from "@audiorective/core";
 import { saveWorkspace } from "./compose";
-import type { ProjectEditRequest, ProjectVersion } from "./project-edits";
+import { PROJECT_EDIT_TYPES, type ProjectEditOperation, type ProjectEditRequest, type ProjectVersion } from "./project-edits";
 import { checkArguments } from "./extensions";
 import { midiPasses } from "./clip-loop";
 import { findSlotClip } from "./session-state";
 import { renderMixRange } from "./mix-range";
+import { renderStems } from "./exchange";
+import { exportMidiFile } from "./midi-file";
 import type { Workspace } from "./runtime";
 import { selectionFor } from "./selection";
 import { sessionFor } from "./session";
@@ -98,35 +100,449 @@ const BEAT_RANGE_SCHEMA = {
   description: "Half-open beat range: startBeat is inside, endBeat is not.",
 } as const;
 
-const OP_TYPES = [
-  "copyRange",
-  "moveClip",
-  "resizeClip",
-  "setClipSourceRange",
-  "setNoteVelocity",
-  "addNotes",
-  "removeNotes",
-  "editNotes",
-  "renameClip",
-  "rippleDelete",
-  "makeClipUnique",
-] as const;
+const prop = (type: string, description: string, extra: Record<string, unknown> = {}) => ({ type, description, ...extra });
+const NUM = (description: string, extra: Record<string, unknown> = {}) => prop("number", description, extra);
+const STR = (description: string) => prop("string", description);
+const BOOL = (description: string) => prop("boolean", description);
+const AT_BEAT = NUM("Project beats (quarter notes from the start), 0 or more. With atSeconds too, both must name the same moment (1e-6 s).", {
+  minimum: 0,
+});
+const AT_SECONDS = NUM("Project seconds, 0 or more. With atBeat too, both must name the same moment (1e-6 s).", { minimum: 0 });
+const AS = STR("Names what this step makes, unique in the request; later steps select it as { fromCopy: <name> }.");
+const REF_OBJECT = { type: "object", properties: { fromCopy: { type: "string" } }, required: ["fromCopy"], additionalProperties: false };
+const CLIP = {
+  type: "object",
+  description: "{ clipId } or { fromCopy: <as name>, trackId?, trackName?, name? } for clips an earlier step made with `as`.",
+  properties: {
+    clipId: { type: "string" },
+    fromCopy: { type: "string" },
+    trackId: { type: "string" },
+    trackName: { type: "string" },
+    name: { type: "string" },
+  },
+  additionalProperties: false,
+};
+const TRACK = {
+  description: "A track ID, or { fromCopy: <as name> } for a track an earlier addTrack made.",
+  oneOf: [{ type: "string" }, REF_OBJECT],
+};
+const SCENE = {
+  description: "A scene ID, or { fromCopy: <as name> } for a scene an earlier addScene or duplicateScene made.",
+  oneOf: [{ type: "string" }, REF_OBJECT],
+};
+const SLOT = {
+  type: "object",
+  description: "One Session cell: { sceneId, trackId }.",
+  properties: { sceneId: SCENE, trackId: TRACK },
+  required: ["sceneId", "trackId"],
+  additionalProperties: false,
+};
+const NOTE_PROPS = {
+  pitch: prop("integer", "MIDI note number 0 to 127 (60 is middle C).", { minimum: 0, maximum: 127 }),
+  start: NUM("Content beats, 0 or more.", { minimum: 0 }),
+  duration: NUM("Beats, more than 0.", { exclusiveMinimum: 0 }),
+  velocity: NUM("0 to 1. Default 0.8.", { minimum: 0, maximum: 1 }),
+};
+const NEW_NOTES = {
+  type: "array",
+  description: "Notes in content beats: [{ pitch, start, duration, velocity? }].",
+  items: { type: "object", properties: NOTE_PROPS, required: ["pitch", "start", "duration"], additionalProperties: false },
+};
+const SHAPE = { enum: ["linear", "hold"], description: 'Default "linear".' };
+const GAIN = (what: string) => NUM(`${what} as linear gain: 0 or more, 1 is unity (no upper limit).`, { minimum: 0 });
+const POSITIONED = (extra: Record<string, unknown>, required: string[]) => ({
+  type: "object",
+  properties: { atBeat: AT_BEAT, atSeconds: AT_SECONDS, ...extra },
+  required,
+  additionalProperties: false,
+});
+
+export type OpSpec = Readonly<{ summary: string; properties: Readonly<Record<string, unknown>>; required?: readonly string[] }>;
+
+/** Every apply_edits operation: what it does and its fields. The schema, the description and the field list the daw package enforces must agree (a test checks it). */
+export const EDIT_OP_SPECS: Readonly<Record<ProjectEditOperation["type"], OpSpec>> = {
+  copyRange: {
+    summary:
+      "Copy a beat range and insert the copy at atBeat; opens room on every track (later clips, tempo, markers and volume automation move later).",
+    properties: {
+      range: BEAT_RANGE_SCHEMA,
+      atBeat: NUM("Project beat to insert at, 0 or more.", { minimum: 0 }),
+      placement: { const: "insert" },
+      as: AS,
+    },
+    required: ["range", "atBeat", "placement", "as"],
+  },
+  moveClip: {
+    summary: "Move a timeline clip to a project beat, or by a number of beats, optionally to another track of the same kind.",
+    properties: {
+      clip: CLIP,
+      trackId: TRACK,
+      position: {
+        type: "object",
+        description: "Exactly one of atBeat (absolute project beat, 0 or more) and byBeats (shift, may be negative).",
+        properties: { atBeat: { type: "number", minimum: 0 }, byBeats: { type: "number" } },
+        additionalProperties: false,
+      },
+    },
+    required: ["clip", "position"],
+  },
+  resizeClip: {
+    summary:
+      "Move one or both edges of a clip, in absolute project beats, without deleting content (a MIDI start edge moves its sourceOffset, an audio start edge reveals its recording).",
+    properties: { clip: CLIP, start: NUM("Project beat of the start edge."), end: NUM("Project beat of the end edge.") },
+    required: ["clip"],
+  },
+  setClipSourceRange: {
+    summary:
+      "Choose the part of a clip's content that plays, keeping its position: content beats for MIDI, recording seconds for audio (stretched seconds when time-stretched). On a looped clip the range becomes the loop.",
+    properties: { clip: CLIP, start: NUM("Content beat (MIDI) or recording second (audio)."), end: NUM("Greater than start.") },
+    required: ["clip", "start", "end"],
+  },
+  setClipName: {
+    summary: "Set a clip's display name (timeline or Session slot).",
+    properties: { clip: CLIP, name: STR("Non-empty.") },
+    required: ["clip", "name"],
+  },
+  splitClip: {
+    summary:
+      "Split a timeline clip at a project position strictly inside it; the left piece keeps the clip's ID and `as` names the right piece. A position row with both atBeat and atSeconds must have them agree at the current tempo (1e-6 s).",
+    properties: { clip: CLIP, atBeat: AT_BEAT, atSeconds: AT_SECONDS, as: AS },
+    required: ["clip"],
+  },
+  duplicateClip: {
+    summary:
+      "Copy a timeline clip to a project position (own track or trackId of the same kind); atBeat and atSeconds together must agree (1e-6 s). linked: true shares a MIDI clip's notes (default false).",
+    properties: { clip: CLIP, atBeat: AT_BEAT, atSeconds: AT_SECONDS, trackId: TRACK, linked: BOOL("MIDI only. Default false."), as: AS },
+    required: ["clip"],
+  },
+  removeClip: { summary: "Remove a timeline clip (a Session slot clip goes with clearSlot).", properties: { clip: CLIP }, required: ["clip"] },
+  setClipLoop: {
+    summary:
+      "Repeat part of a clip's content for the clip's whole length, or stop with null. MIDI: { startBeat, endBeat } in content beats; audio: { startSeconds, endSeconds } in recording seconds, 0 <= start < end inside the recording.",
+    properties: {
+      clip: CLIP,
+      loop: {
+        description: "null removes the loop.",
+        oneOf: [
+          { type: "null" },
+          {
+            type: "object",
+            properties: { startBeat: { type: "number" }, endBeat: { type: "number" } },
+            required: ["startBeat", "endBeat"],
+            additionalProperties: false,
+          },
+          {
+            type: "object",
+            properties: { startSeconds: { type: "number" }, endSeconds: { type: "number" } },
+            required: ["startSeconds", "endSeconds"],
+            additionalProperties: false,
+          },
+        ],
+      },
+    },
+    required: ["clip", "loop"],
+  },
+  addMidiClip: {
+    summary:
+      "Add a MIDI clip to a MIDI track at a project beat. notes and sourceOffset are content beats; linkedTo shares another MIDI clip's notes instead of notes.",
+    properties: {
+      trackId: TRACK,
+      atBeat: NUM("Project beat, 0 or more.", { minimum: 0 }),
+      duration: NUM("Clip length in beats, more than 0.", { exclusiveMinimum: 0 }),
+      notes: NEW_NOTES,
+      sourceOffset: NUM("Content beat where the clip starts. Default 0."),
+      name: STR("Display name."),
+      linkedTo: CLIP,
+      as: AS,
+    },
+    required: ["trackId", "atBeat", "duration"],
+  },
+  setAudioClipEnvelope: {
+    summary: "Set an audio clip's gain and fades; an omitted field keeps its value.",
+    properties: {
+      clip: CLIP,
+      gain: GAIN("Clip level"),
+      fadeIn: NUM("Seconds, 0 or more; fadeIn + fadeOut must fit the clip.", { minimum: 0 }),
+      fadeOut: NUM("Seconds, 0 or more.", { minimum: 0 }),
+    },
+    required: ["clip"],
+  },
+  setAudioClipGainAutomation: {
+    summary: "Replace an audio clip's gain automation (empty list clears it); point times are seconds of the original recording.",
+    properties: {
+      clip: CLIP,
+      points: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            atSourceSeconds: NUM("Seconds of the original recording, 0 or more, unique.", { minimum: 0 }),
+            value: GAIN("Gain"),
+            shape: SHAPE,
+          },
+          required: ["atSourceSeconds", "value"],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ["clip", "points"],
+  },
+  setVolumeAutomation: {
+    summary:
+      "Replace a track's volume automation (empty list clears it); each point is at a unique project position, atBeat or atSeconds (both must agree at the current tempo, 1e-6 s). A position in beats is converted with the tempo map as it is at this step of the request, so put tempo changes first in `ops`.",
+    properties: {
+      trackId: TRACK,
+      points: { type: "array", items: POSITIONED({ value: GAIN("Gain"), shape: SHAPE }, ["value"]) },
+    },
+    required: ["trackId", "points"],
+  },
+  addNotes: {
+    summary: "Add notes to a MIDI clip (timeline or slot); the receipt's createdNotes lists their IDs.",
+    properties: { clip: CLIP, notes: NEW_NOTES },
+    required: ["clip", "notes"],
+  },
+  removeNotes: {
+    summary: "Delete notes by ID (read_notes lists them).",
+    properties: { clip: CLIP, noteIds: { type: "array", items: { type: "string" } } },
+    required: ["clip", "noteIds"],
+  },
+  editNotes: {
+    summary: "Change notes by ID in content beats; an omitted field stays.",
+    properties: {
+      clip: CLIP,
+      notes: {
+        type: "array",
+        items: { type: "object", properties: { id: { type: "string" }, ...NOTE_PROPS }, required: ["id"], additionalProperties: false },
+      },
+    },
+    required: ["clip", "notes"],
+  },
+  rippleDelete: {
+    summary: "Delete a half-open range from the whole song and close the gap; crossfade true is 5 ms, a number is seconds, false or omitted is none.",
+    properties: {
+      range: {
+        description: "{ startBeat, endBeat } or { startSeconds, endSeconds }.",
+        oneOf: [
+          BEAT_RANGE_SCHEMA,
+          {
+            type: "object",
+            properties: { startSeconds: { type: "number", minimum: 0 }, endSeconds: { type: "number", minimum: 0 } },
+            required: ["startSeconds", "endSeconds"],
+            additionalProperties: false,
+          },
+        ],
+      },
+      crossfade: { oneOf: [{ type: "boolean" }, { type: "number", minimum: 0 }] },
+    },
+    required: ["range"],
+  },
+  makeClipUnique: { summary: "Give a linked MIDI clip its own copy of the notes.", properties: { clip: CLIP }, required: ["clip"] },
+  addTrack: {
+    summary: "Add a track at the end; the receipt's createdTracks lists its ID.",
+    properties: {
+      name: STR("Non-empty."),
+      kind: { enum: ["audio", "midi", "bus"] },
+      volume: GAIN("Track level"),
+      muted: BOOL("Default false."),
+      solo: BOOL("Default false."),
+      pan: NUM("-1 (left) to 1 (right), 0 is centre. Default 0.", { minimum: -1, maximum: 1 }),
+      busRole: { enum: ["submix", "effect"], description: 'Bus tracks only. Default "submix".' },
+      as: AS,
+    },
+    required: ["name", "kind"],
+  },
+  removeTrack: {
+    summary: "Remove a track with its clips, slot clips and devices; routes to a removed bus are cleared.",
+    properties: { trackId: TRACK },
+    required: ["trackId"],
+  },
+  setTrackName: { summary: "Rename a track.", properties: { trackId: TRACK, name: STR("Non-empty.") }, required: ["trackId", "name"] },
+  setTrackVolume: { summary: "Set a track's level.", properties: { trackId: TRACK, volume: GAIN("Track level") }, required: ["trackId", "volume"] },
+  setTrackMuted: {
+    summary: "Mute or unmute a track (mute wins over solo).",
+    properties: { trackId: TRACK, muted: { type: "boolean" } },
+    required: ["trackId", "muted"],
+  },
+  setTrackSolo: { summary: "Solo or unsolo a track.", properties: { trackId: TRACK, solo: { type: "boolean" } }, required: ["trackId", "solo"] },
+  setTrackPan: {
+    summary: "Set a track's stereo position.",
+    properties: { trackId: TRACK, pan: NUM("-1 (left) to 1 (right), 0 is centre.", { minimum: -1, maximum: 1 }) },
+    required: ["trackId", "pan"],
+  },
+  setTrackRouting: {
+    summary: "Replace a track's output and post-fader sends; no cycles.",
+    properties: {
+      trackId: TRACK,
+      routing: {
+        type: "object",
+        properties: {
+          outputBusId: { description: "A bus track, or null for the master. Default null.", oneOf: [{ type: "null" }, ...TRACK.oneOf] },
+          sends: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: { busId: TRACK, gain: GAIN("Send level") },
+              required: ["busId", "gain"],
+              additionalProperties: false,
+            },
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+    required: ["trackId", "routing"],
+  },
+  setTrackEffects: {
+    summary:
+      "Replace a track's ordered inserts. Each is { id, type: filter|delay|eq, enabled, wet 0..1, ...settings } as read_project shows them under trackEffects.",
+    properties: { trackId: TRACK, effects: { type: "array", items: { type: "object" } } },
+    required: ["trackId", "effects"],
+  },
+  setTrackRackPreset: {
+    summary: "Replace a track's inserts and macros together.",
+    properties: { trackId: TRACK, preset: { type: "object", description: "{ effects, macros? } as read_project shows them under trackEffects." } },
+    required: ["trackId", "preset"],
+  },
+  setTrackMacroValue: {
+    summary: "Set one rack macro of a track.",
+    properties: { trackId: TRACK, macroId: { type: "string" }, value: NUM("0 to 1.", { minimum: 0, maximum: 1 }) },
+    required: ["trackId", "macroId", "value"],
+  },
+  setMasterVolume: { summary: "Set the master level.", properties: { volume: GAIN("Master level") }, required: ["volume"] },
+  setTitle: { summary: "Set the song title.", properties: { title: STR("Non-empty.") }, required: ["title"] },
+  setTempoChanges: {
+    summary: "Replace all tempo changes (read tempoChanges first); a change at beat 0 sets the starting tempo, without one it stays.",
+    properties: {
+      changes: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: { beat: NUM("0 or more, unique.", { minimum: 0 }), bpm: NUM("At least 1.", { minimum: 1 }) },
+          required: ["beat", "bpm"],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ["changes"],
+  },
+  setTimeSignatureChanges: {
+    summary: "Replace all time signature changes (read signatureChanges first); a change at beat 0 sets the starting signature.",
+    properties: {
+      changes: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            beat: NUM("0 or more, unique.", { minimum: 0 }),
+            numerator: prop("integer", "Beats per bar, 1 or more.", { minimum: 1 }),
+            denominator: prop("integer", "A power of two: 1, 2, 4, 8, 16.", { minimum: 1 }),
+          },
+          required: ["beat", "numerator", "denominator"],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ["changes"],
+  },
+  setMarkers: {
+    summary:
+      "Replace all markers (read markers first); each is a name at a unique project position, atBeat or atSeconds (both must agree at the current tempo, 1e-6 s). A position in beats is converted with the tempo map as it is at this step of the request, so put tempo changes first in `ops`.",
+    properties: { markers: { type: "array", items: POSITIONED({ name: STR("Non-empty.") }, ["name"]) } },
+    required: ["markers"],
+  },
+  removeDevice: {
+    summary: "Remove a device from its track's chain (read_project lists devices).",
+    properties: { deviceId: { type: "string" } },
+    required: ["deviceId"],
+  },
+  moveDevice: {
+    summary: "Put a device at a position in its track's chain.",
+    properties: { deviceId: { type: "string" }, index: prop("integer", "0 is first.", { minimum: 0 }) },
+    required: ["deviceId", "index"],
+  },
+  addScene: {
+    summary: "Add an empty Session scene at the end or after afterSceneId; the receipt's createdScenes lists its ID.",
+    properties: { name: STR('Default "Scene N".'), afterSceneId: SCENE, as: AS },
+  },
+  renameScene: { summary: "Rename a scene.", properties: { sceneId: SCENE, name: STR("Non-empty.") }, required: ["sceneId", "name"] },
+  moveScene: {
+    summary: "Put a scene at a position in the scene order.",
+    properties: { sceneId: SCENE, index: prop("integer", "0 is first.", { minimum: 0 }) },
+    required: ["sceneId", "index"],
+  },
+  removeScene: { summary: "Remove a scene and the clips in its slots.", properties: { sceneId: SCENE }, required: ["sceneId"] },
+  duplicateScene: {
+    summary: 'Copy a scene with its slot clips, after it or after afterSceneId; the copy is named "<name> copy".',
+    properties: { sceneId: SCENE, afterSceneId: SCENE, as: AS },
+    required: ["sceneId"],
+  },
+  setMidiClip: {
+    summary: "Put a new MIDI clip in a slot of a MIDI track, replacing its clip. duration is beats; notes and sourceOffset are content beats.",
+    properties: {
+      slot: SLOT,
+      duration: NUM("Beats, more than 0.", { exclusiveMinimum: 0 }),
+      notes: NEW_NOTES,
+      sourceOffset: NUM("Content beat where the clip starts. Default 0."),
+      name: STR("Display name."),
+      as: AS,
+    },
+    required: ["slot", "duration"],
+  },
+  moveSlotClip: {
+    summary: "Move a slot's clip to another slot of a track of the same kind, replacing its clip; it keeps its ID.",
+    properties: { from: SLOT, to: SLOT },
+    required: ["from", "to"],
+  },
+  clearSlot: { summary: "Empty a slot.", properties: { slot: SLOT }, required: ["slot"] },
+  copyToSlot: {
+    summary:
+      "Put a copy of a timeline or slot clip in a slot of a track of the same kind, replacing its clip. linked: true shares a MIDI clip's notes.",
+    properties: { clip: CLIP, slot: SLOT, linked: BOOL("MIDI only. Default false."), as: AS },
+    required: ["clip", "slot"],
+  },
+  copyToArrangement: {
+    summary:
+      "Place a copy of a slot's clip on the timeline at a project position (atBeat and atSeconds together must agree, 1e-6 s), on the slot's track or trackId (same kind). linked: true shares a MIDI clip's notes.",
+    properties: { slot: SLOT, trackId: TRACK, atBeat: AT_BEAT, atSeconds: AT_SECONDS, linked: BOOL("MIDI only. Default false."), as: AS },
+    required: ["slot"],
+  },
+};
+
+/** The full JSON Schema of one operation object. `apply_edits` does not send it (the tool list stays small; `runProjectEdits` validates every field and names the allowed ones), but tests and tools can use it. */
+export function opSchema(type: string, spec: OpSpec) {
+  return {
+    type: "object",
+    description: spec.summary,
+    properties: { type: { const: type }, ...spec.properties },
+    required: ["type", ...(spec.required ?? [])],
+    additionalProperties: false,
+  };
+}
+
+/** One line per operation for the tool description: `name{required, optional?}: summary`. */
+function opLine(type: string, spec: OpSpec): string {
+  const required = new Set(spec.required ?? []);
+  const fields = Object.keys(spec.properties).map((key) => (required.has(key) ? key : `${key}?`));
+  return `- ${type}{${fields.join(", ")}}: ${spec.summary}`;
+}
 
 /** The part of a clip's content that plays, as flat fields: beats for a MIDI clip, seconds of the recording for an audio clip. */
 function windowFields(clip: ProjectClip | null | undefined) {
-  if (!clip) return { sourceOffset: "", sourceLength: "", loopStart: "", loopEnd: "" };
+  if (!clip) return { sourceOffset: "", sourceLength: "", loopStart: "", loopEnd: "", stretchRatio: "" };
   if (clip.kind === "midi")
     return {
       sourceOffset: round(clip.sourceOffset),
       sourceLength: "",
       loopStart: clip.loop ? round(clip.loop.startBeat) : "",
       loopEnd: clip.loop ? round(clip.loop.endBeat) : "",
+      stretchRatio: "",
     };
   return {
     sourceOffset: round(clip.sourceOffset),
     sourceLength: round(clip.sourceLength),
     loopStart: clip.loop ? round(clip.loop.startSeconds) : "",
     loopEnd: clip.loop ? round(clip.loop.endSeconds) : "",
+    stretchRatio: clip.stretch ? round(clip.stretch.ratio) : "",
   };
 }
 
@@ -138,13 +554,81 @@ function timelineClip(project: Project, id: string): ProjectClip | undefined {
   return undefined;
 }
 
+/** A curve longer than this is summarized in `read_project` as a count and its first and last position; `read_automation` returns the points. */
+const AUTOMATION_SUMMARY_LIMIT = 32;
+
+/** Where a curve point sits, for the first and last of a long curve. */
+type CurvePoint = { time: number; value: number; shape: "linear" | "hold" };
+type CurveShape = { row: (point: CurvePoint) => Record<string, unknown>; position: (point: CurvePoint) => Record<string, unknown> };
+
+/** A track volume point as `setVolumeAutomation` takes it: both positions, unrounded so the row goes back unchanged. */
+const volumeCurve = (project: Project): CurveShape => {
+  const position = (point: CurvePoint) => ({ atBeat: project.tempoMap.secondsToBeat(point.time), atSeconds: point.time });
+  return { position, row: (point) => ({ ...position(point), value: point.value, shape: point.shape }) };
+};
+/** A clip gain point as `setAudioClipGainAutomation` takes it. */
+const gainCurve: CurveShape = {
+  position: (point) => ({ atSourceSeconds: point.time }),
+  row: (point) => ({ atSourceSeconds: point.time, value: point.value, shape: point.shape }),
+};
+
+/** One owner's curve as `{ <key>, points }`, or `{ <key>, count, first, last }` (positions only) when it is long. */
+function curveRows(key: string, id: string, points: readonly CurvePoint[], shape: CurveShape) {
+  if (points.length <= AUTOMATION_SUMMARY_LIMIT) return { [key]: id, points: points.map(shape.row) };
+  return { [key]: id, count: points.length, first: shape.position(points[0]), last: shape.position(points[points.length - 1]) };
+}
+
 /** A compact, readable view of the project for `read_project`. */
 function projectView(workspace: Workspace) {
   return untracked(() => {
     const project = workspace.project;
     const overview = project.overview();
     const selection = selectionFor(project).state.value;
-    const tracks = overview.tracks.map(({ id, name, kind, clips }) => ({ id, name, kind, clips: clips.length }));
+    const mixer = new Map(project.tracks.map((track) => [track.id, track]));
+    const tracks = overview.tracks.map(({ id, name, kind, clips }) => {
+      const track = mixer.get(id)!;
+      return {
+        id,
+        name,
+        kind,
+        busRole: track.busRole ?? "",
+        volume: round(track.volume, 4),
+        muted: track.muted,
+        solo: track.solo,
+        pan: round(track.pan, 4),
+        output: track.routing.outputBusId ?? "master",
+        clips: clips.length,
+      };
+    });
+    const devices = project.tracks.flatMap((track) =>
+      track.devices.map((device, index) => ({ id: device.id, trackId: track.id, index, name: device.name, pluginId: device.pluginId })),
+    );
+    const trackEffects = project.tracks
+      .filter((track) => track.effects.length || track.effectMacros.length)
+      .map((track) => ({ trackId: track.id, effects: track.effects, macros: track.effectMacros }));
+    const routing = project.tracks
+      .filter((track) => track.routing.outputBusId !== null || track.routing.sends.length)
+      .map((track) => ({
+        trackId: track.id,
+        routing: { outputBusId: track.routing.outputBusId, sends: track.routing.sends.map(({ busId, gain }) => ({ busId, gain })) },
+      }));
+    const volumeAutomation = project.tracks
+      .filter((track) => track.volumeAutomation.length)
+      .map((track) => curveRows("trackId", track.id, track.volumeAutomation, volumeCurve(project)));
+    const everyClip = [
+      ...project.tracks.flatMap((track) => track.clips),
+      ...sessionFor(project).scenes.flatMap((scene) =>
+        project.tracks.flatMap((track) => sessionFor(project).clipAt({ sceneId: scene.id, trackId: track.id }) ?? []),
+      ),
+    ];
+    const clipEnvelopes = everyClip.flatMap((clip) =>
+      clip.kind === "audio" && clip.envelope
+        ? [{ id: clip.id, gain: round(clip.envelope.gain, 4), fadeIn: round(clip.envelope.fadeIn), fadeOut: round(clip.envelope.fadeOut) }]
+        : [],
+    );
+    const clipGainAutomation = everyClip.flatMap((clip) =>
+      clip.kind === "audio" && clip.gainAutomation?.points.length ? [curveRows("clipId", clip.id, clip.gainAutomation.points, gainCurve)] : [],
+    );
     const clips = overview.tracks.flatMap((track) =>
       track.clips.map((clip) => ({
         id: clip.id,
@@ -185,10 +669,22 @@ function projectView(workspace: Workspace) {
       version: overview.version,
       bpm: overview.bpm,
       signature: `${overview.signature[0]}/${overview.signature[1]}`,
+      ...(overview.signatureChanges.length
+        ? {
+            signatureChanges: overview.signatureChanges.map(({ beat, numerator, denominator }) => ({ beat, numerator, denominator })),
+          }
+        : {}),
       tempoChanges: overview.tempoChanges.map(({ beat, bpm }) => ({ beat, bpm })),
-      markers: overview.markers.map(({ name, time }) => ({ name, seconds: round(time), beat: round(project.tempoMap.secondsToBeat(time)) })),
+      markers: overview.markers.map(({ name, time }) => ({ name, atBeat: project.tempoMap.secondsToBeat(time), atSeconds: time })),
+      masterVolume: round(project.masterVolume, 4),
       tracks,
+      ...(devices.length ? { devices } : {}),
+      ...(routing.length ? { routing } : {}),
+      ...(trackEffects.length ? { trackEffects } : {}),
+      ...(volumeAutomation.length ? { volumeAutomation } : {}),
       clips,
+      ...(clipEnvelopes.length ? { clipEnvelopes } : {}),
+      ...(clipGainAutomation.length ? { clipGainAutomation } : {}),
       scenes: overview.session.map(({ id, name }) => ({ id, name })),
       slotClips: slots,
       selection: {
@@ -268,7 +764,7 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
     {
       name: "read_project",
       description:
-        "Read the open project as TOON text: title, tempo and meter, markers, tracks, every clip with its beats and seconds, Session scenes, what the person has SELECTED (selection.clipIds, openClipId, range), the current `version`, playback state, undo labels, the app's own data as `extensions` (each `{ id, summary }`: what the app's data means, such as which pattern sits at which bars; only extensions that publish a summary appear) and the app's named operations (each with its `input` JSON Schema: pass exactly those fields to run_operation; `readOnly: true` ones only answer a question and change nothing). Clips carry sourceOffset, sourceLength (audio) and loopStart/loopEnd: the window of the content that plays, in beats for MIDI clips and seconds of the recording for audio clips. Call it first and again after any conflict. Positions are in beats (quarter notes from the start) unless named seconds.",
+        "Read the open project as TOON text: title, tempo and meter, markers, tracks, every clip with its beats and seconds, Session scenes, what the person has SELECTED (selection.clipIds, openClipId, range), the current `version`, playback state, undo labels, the app's own data as `extensions` (each `{ id, summary }`: what the app's data means, such as which pattern sits at which bars; only extensions that publish a summary appear) and the app's named operations (each with its `input` JSON Schema: pass exactly those fields to run_operation; `readOnly: true` ones only answer a question and change nothing). Clips carry sourceOffset, sourceLength (audio) and loopStart/loopEnd: the window of the content that plays, in beats for MIDI clips and seconds of the recording for audio clips. An audio clip that is time-stretched also carries stretchRatio (timeline seconds per second of audio; empty when it is not stretched). Call it first and again after any conflict. Positions are in beats (quarter notes from the start) unless named seconds.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
       call: guard(async () => toon(projectView(workspace))),
     },
@@ -403,27 +899,78 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
       }),
     },
     {
+      name: "read_automation",
+      description:
+        "List the points of one automation curve in the shape the replace ops take: `{ trackId }` returns a track's volume curve as rows `atBeat, atSeconds, value, shape` (send them to setVolumeAutomation); `{ clipId }` returns an audio clip's gain curve as rows `atSourceSeconds, value, shape` (send them to setAudioClipGainAutomation). read_project shows only a count with the first and last position for a curve of more than 32 points. Optional `range` keeps the points inside it: for a track { startBeat, endBeat } or { startSeconds, endSeconds } in project time, for a clip { startSeconds, endSeconds } in seconds of the recording (half-open). A range gives only part of the curve: replace a curve only with its full list.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          trackId: { type: "string" },
+          clipId: { type: "string" },
+          range: { description: "Half-open; beats or seconds of the project for a track, seconds of the recording for a clip.", type: "object" },
+        },
+        additionalProperties: false,
+      },
+      call: guard((args) => {
+        const unknown = Object.keys(args).find((key) => key !== "trackId" && key !== "clipId" && key !== "range");
+        if (unknown !== undefined) return fail(`Unknown field "${unknown}"; allowed: trackId, clipId, range.`);
+        if ((args.trackId === undefined) === (args.clipId === undefined)) return fail(`Give exactly one of "trackId" and "clipId".`);
+        const project = workspace.project;
+        const version = untracked(() => project.cells.version.value);
+        return untracked(() => {
+          if (args.trackId !== undefined) {
+            const trackId = stringArg(args, "trackId", true);
+            if (typeof trackId !== "string") return trackId!;
+            const track = project.tracks.find((item) => item.id === trackId);
+            if (!track) return fail(`No track "${trackId}". Use read_project to get track ids.`);
+            let keep = (_seconds: number) => true;
+            if (args.range !== undefined) {
+              const range = timeRange(args.range);
+              if ("content" in range) return range;
+              const seconds =
+                "startBeat" in range
+                  ? { start: project.tempoMap.beatToSeconds(range.startBeat), end: project.tempoMap.beatToSeconds(range.endBeat) }
+                  : { start: range.startSeconds, end: range.endSeconds };
+              keep = (time) => time >= seconds.start && time < seconds.end;
+            }
+            const shape = volumeCurve(project);
+            const shown = track.volumeAutomation.filter((point) => keep(point.time));
+            return toon({ trackId, version, total: track.volumeAutomation.length, count: shown.length, points: shown.map(shape.row) });
+          }
+          const clipId = stringArg(args, "clipId", true);
+          if (typeof clipId !== "string") return clipId!;
+          const clip = timelineClip(project, clipId) ?? findSlotClip(project, clipId);
+          if (!clip) return fail(`No clip "${clipId}". Use read_project or find to get clip ids.`);
+          if (clip.kind !== "audio") return fail(`Clip "${clipId}" is a MIDI clip: it has no gain curve.`);
+          let keep = (_seconds: number) => true;
+          if (args.range !== undefined) {
+            const range = timeRange(args.range);
+            if ("content" in range) return range;
+            if (!("startSeconds" in range)) return fail(`"range" for a clip must be { startSeconds, endSeconds } in seconds of the recording.`);
+            keep = (time) => time >= range.startSeconds && time < range.endSeconds;
+          }
+          const all = clip.gainAutomation?.points ?? [];
+          const shown = all.filter((point) => keep(point.time));
+          return toon({ clipId, version, total: all.length, count: shown.length, points: shown.map(gainCurve.row) });
+        });
+      }),
+    },
+    {
       name: "apply_edits",
       description: [
         `Apply a list of edit operations as ONE undoable step (the person presses Undo once to remove all of it).`,
         `Pass the \`version\` you last read as expectedVersion.`,
         `If the person changed the project since, you get status "conflict" and nothing changes: call read_project, re-plan and send again.`,
-        `Operations run in order: ${OP_TYPES.join(", ")}.`,
-        `Units: beats are project beats; resizeClip start/end are absolute project beats for every clip; setClipSourceRange start/end are content beats for a MIDI clip and seconds of the recording for an audio clip (of the stretched audio for a time-stretched clip).`,
-        `Shapes: { type: "copyRange", range: {startBeat,endBeat}, atBeat, placement: "insert", as: "name" } (insert opens room at atBeat on every track);`,
-        `{ type: "moveClip", clip: {clipId} | {fromCopy: "name", trackName?}, position: {atBeat} | {byBeats} };`,
-        `{ type: "resizeClip", clip, start?, end? } (move one or both edges without deleting content; a MIDI clip's start edge moves its sourceOffset, an audio clip's reveals its recording);`,
-        `{ type: "setClipSourceRange", clip, start, end } (which part of the content plays, the clip keeps its position; on a looped clip the range becomes the loop and the clip keeps its length; on a time-stretched audio clip it is seconds of the stretched audio and can only narrow);`,
-        `{ type: "renameClip", clip, name };`,
-        `{ type: "setNoteVelocity", clip, noteId, velocity: 0..1 };`,
-        `{ type: "addNotes", clip, notes: [{ pitch: 0..127, start, duration, velocity?: 0..1 (default 0.8) }] };`,
-        `{ type: "removeNotes", clip, noteIds: [...] };`,
-        `{ type: "editNotes", clip, notes: [{ id, pitch?, start?, duration?, velocity? }] } (note start/duration are CONTENT beats, the same beats read_notes shows; read note IDs with read_notes; an omitted field stays);`,
-        `{ type: "rippleDelete", range: {startBeat,endBeat} | {startSeconds,endSeconds}, crossfade? };`,
-        `{ type: "makeClipUnique", clip }.`,
+        `Operations run in order and the whole request is all-or-nothing: a step that cannot run returns status "rejected" with its opIndex and a code, and nothing changes.`,
+        `Positions: atBeat is project beats (quarter notes from the start), atSeconds is project seconds; give atBeat or atSeconds where an operation takes a position (both are accepted when they name the same moment, within 1e-6 s, so a row from read_project goes back unchanged). resizeClip start/end are absolute project beats for every clip; note start/duration, sourceOffset and setClipLoop beats are CONTENT beats (what read_notes shows); setClipSourceRange is content beats for MIDI and seconds of the recording for audio. Volumes, sends and gains are linear gain (0 or more, 1 is unity); pan is -1 (left) to 1 (right).`,
+        `Naming results: give an operation that makes clips, tracks or scenes \`as: "name"\`; later steps select clips as { fromCopy: "name", trackName? } and tracks and scenes as { fromCopy: "name" } in trackId or sceneId. The receipt lists created, changed and removed clip IDs, createdNotes, copies, createdTracks and createdScenes, changedTracks and removedTracks, changedScenes and removedScenes, and song (any of tempo, timeSignature, markers, title, masterVolume).`,
+        `Set-style operations (setTempoChanges, setTimeSignatureChanges, setMarkers, setVolumeAutomation, setTrackEffects, ...) REPLACE the whole list: read the current one from read_project (read_automation for a curve of more than 32 points) and send the full new list; a row from read_project goes back unchanged.`,
+        `Field shapes: clip = { clipId } or { fromCopy, trackId?, trackName?, name? }; trackId, sceneId, afterSceneId, busId, outputBusId = an ID string or { fromCopy } (outputBusId also null); slot = { sceneId, trackId }; notes = [{ pitch 0-127, start, duration, velocity? 0-1 }] in content beats; editNotes notes = [{ id, pitch?, start?, duration?, velocity? }]; range = { startBeat, endBeat } (rippleDelete also { startSeconds, endSeconds }); moveClip position = { atBeat } or { byBeats }; setClipLoop loop = null, { startBeat, endBeat } (MIDI) or { startSeconds, endSeconds } (audio); routing = { outputBusId, sends: [{ busId, gain }] }; tempo changes = [{ beat, bpm }]; time signature changes = [{ beat, numerator, denominator }]; markers = [{ name, atBeat and/or atSeconds }]; volume points = [{ atBeat and/or atSeconds, value, shape? "linear"|"hold" }]; clip gain points = [{ atSourceSeconds, value, shape? }]; effects and preset as read_project shows trackEffects.`,
+        `Operations (fields ending in ? are optional):`,
+        ...PROJECT_EDIT_TYPES.map((type) => opLine(type, EDIT_OP_SPECS[type])),
         `Unknown fields are rejected with the allowed list.`,
-        `The receipt says whether playback already has the edit, or status "noop" when nothing changed.`,
-      ].join(" "),
+        `The receipt says whether playback already has the edit (a structural change such as adding or removing a track needs the person's sync), or status "noop" when nothing changed.`,
+      ].join("\n"),
       inputSchema: {
         type: "object",
         properties: {
@@ -432,43 +979,9 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
           ops: {
             type: "array",
             minItems: 1,
-            items: {
-              type: "object",
-              properties: {
-                type: { enum: [...OP_TYPES] },
-                clip: {
-                  type: "object",
-                  description: "{ clipId } or { fromCopy, trackName? } (every op that takes a clip, including addNotes, removeNotes and editNotes).",
-                },
-                start: {
-                  type: "number",
-                  description:
-                    "resizeClip: absolute project beat of the start edge. setClipSourceRange: content beat (MIDI) or recording second (audio).",
-                },
-                end: {
-                  type: "number",
-                  description:
-                    "resizeClip: absolute project beat of the end edge. setClipSourceRange: content beat (MIDI) or recording second (audio).",
-                },
-                notes: {
-                  type: "array",
-                  description:
-                    "addNotes: [{ pitch, start, duration, velocity? }]. editNotes: [{ id, pitch?, start?, duration?, velocity? }]. Content beats.",
-                  items: {
-                    type: "object",
-                    properties: {
-                      id: { type: "string" },
-                      pitch: { type: "integer", minimum: 0, maximum: 127 },
-                      start: { type: "number", minimum: 0 },
-                      duration: { type: "number", exclusiveMinimum: 0 },
-                      velocity: { type: "number", minimum: 0, maximum: 1 },
-                    },
-                  },
-                },
-                noteIds: { type: "array", items: { type: "string" }, description: "removeNotes: IDs from read_notes." },
-              },
-              required: ["type"],
-            },
+            description:
+              "The operations in order; each is { type, ...fields } as listed in the tool description. Fields are checked when the operation runs.",
+            items: { type: "object", properties: { type: { enum: [...PROJECT_EDIT_TYPES] } }, required: ["type"] },
           },
         },
         required: ["expectedVersion", "label", "ops"],
@@ -521,8 +1034,15 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
           undoLabel: `${prefix}${label}`,
           created: receipt.created,
           createdNotes: receipt.createdNotes,
+          createdTracks: receipt.createdTracks,
+          createdScenes: receipt.createdScenes,
           changed: receipt.changed,
           removed: receipt.removed,
+          changedTracks: receipt.changedTracks,
+          removedTracks: receipt.removedTracks,
+          changedScenes: receipt.changedScenes,
+          removedScenes: receipt.removedScenes,
+          song: receipt.song,
           copies: receipt.copies,
           playback,
         });
@@ -683,6 +1203,116 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
         );
         await options.save(bytes, name);
         return json({ status: "saved", name, bytes: bytes.length, version: untracked(() => workspace.project.cells.version.value) });
+      }),
+    },
+    {
+      name: "export_midi",
+      description:
+        "Save the project's MIDI tracks as a Standard MIDI File (format 1: tempo and time signatures, then one track per MIDI track with its channels, notes, pedal, controllers and pitch bend; clip windows, loops and linked clips as they play) through the app's save handler. Audio, volume, pan and devices are not in it. Pass `expectedVersion` to refuse if the project has moved on.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "File name, for example song.mid." },
+          expectedVersion: { type: "string" },
+          ppq: { type: "integer", minimum: 1, maximum: 32767, description: "Ticks per quarter note. Default 960." },
+        },
+        required: ["name"],
+      },
+      call: guard(async (args) => {
+        const name = stringArg(args, "name", true);
+        if (typeof name !== "string") return name!;
+        if (!options.save) return fail("This app did not provide a save handler, so export_midi is unavailable.");
+        if (args.expectedVersion !== undefined && typeof args.expectedVersion !== "string") return fail(`"expectedVersion" must be a string.`);
+        if (args.ppq !== undefined && (typeof args.ppq !== "number" || !Number.isInteger(args.ppq) || args.ppq < 1 || args.ppq > 32767))
+          return fail(`"ppq" must be an integer from 1 to 32767.`);
+        const project = workspace.project;
+        const version = untracked(() => project.cells.version.value);
+        if (args.expectedVersion !== undefined && args.expectedVersion !== version)
+          return json(
+            {
+              status: "conflict",
+              currentVersion: version,
+              reason: "The project changed since this version was read.",
+              next: "Call read_project and export again.",
+            },
+            true,
+          );
+        const bytes = exportMidiFile(project, args.ppq === undefined ? {} : { ppq: args.ppq as number });
+        await options.save(bytes, name);
+        return json({ status: "saved", name, bytes: bytes.length, version });
+      }),
+    },
+    {
+      name: "export_stems",
+      description:
+        "Render every audio and MIDI track to its own 24-bit WAV, all with the same start and length (the song's length plus `tailSeconds`), plus the full mix, and hand each file to the app's save handler as `<name>-<track>.wav` and `<name>-mix.wav`. A stem is the track alone through its own chain and the bus it outputs to; send returns are only in the mix. Muted tracks give silent stems, and the result lists a warning for each silent stem. Playback is not interrupted.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Base name of the files, for example song." },
+          range: {
+            oneOf: [
+              BEAT_RANGE_SCHEMA,
+              {
+                type: "object",
+                properties: { startSeconds: { type: "number", minimum: 0 }, endSeconds: { type: "number", minimum: 0 } },
+                required: ["startSeconds", "endSeconds"],
+              },
+            ],
+            description: "What to render. Default: from the start to the end of the last clip.",
+          },
+          tailSeconds: { type: "number", minimum: 0, description: "Seconds after the end for reverbs and delays. Default 2." },
+          includeMix: { type: "boolean", description: "Also save the full mix. Default true." },
+          expectedVersion: { type: "string" },
+        },
+        required: ["name"],
+      },
+      call: guard(async (args) => {
+        const name = stringArg(args, "name", true);
+        if (typeof name !== "string") return name!;
+        if (!options.save) return fail("This app did not provide a save handler, so export_stems is unavailable.");
+        if (args.expectedVersion !== undefined && typeof args.expectedVersion !== "string") return fail(`"expectedVersion" must be a string.`);
+        if (args.tailSeconds !== undefined && (typeof args.tailSeconds !== "number" || !Number.isFinite(args.tailSeconds) || args.tailSeconds < 0))
+          return fail(`"tailSeconds" must be seconds >= 0.`);
+        if (args.includeMix !== undefined && typeof args.includeMix !== "boolean") return fail(`"includeMix" must be true or false.`);
+        let range: { startBeat: number; endBeat: number } | { startSeconds: number; endSeconds: number } | undefined;
+        if (args.range !== undefined) {
+          const parsed = timeRange(args.range);
+          if ("content" in parsed) return parsed;
+          range = parsed;
+        }
+        const result = await renderStems(workspace, {
+          ...(range ? { range } : {}),
+          ...(args.tailSeconds === undefined ? {} : { tailSeconds: args.tailSeconds as number }),
+          ...(args.includeMix === undefined ? {} : { includeMix: args.includeMix as boolean }),
+          ...(args.expectedVersion === undefined ? {} : { expectedVersion: args.expectedVersion as ProjectVersion }),
+        });
+        if (result.status === "conflict")
+          return json(
+            { status: "conflict", currentVersion: result.version, reason: result.reason, next: "Call read_project and export again." },
+            true,
+          );
+        const safe = (text: string) => text.replace(/[^\p{L}\p{N}._-]+/gu, "_");
+        const files: { name: string; bytes: number }[] = [];
+        const used = new Set<string>();
+        const put = async (file: string, audio: PCMData) => {
+          let unique = file;
+          for (let n = 2; used.has(unique); n++) unique = file.replace(/\.wav$/, `-${n}.wav`);
+          used.add(unique);
+          const bytes = encodeWavBytes(audio, { bitDepth: 24 });
+          await options.save!(bytes, unique);
+          files.push({ name: unique, bytes: bytes.length });
+        };
+        for (const stem of result.stems) await put(`${name}-${safe(stem.name)}.wav`, stem.audio);
+        if (result.mix) await put(`${name}-mix.wav`, result.mix);
+        return json({
+          status: "saved",
+          version: result.version,
+          sampleRate: result.sampleRate,
+          durationSeconds: round(result.durationSeconds),
+          files,
+          ...(result.warnings.length ? { warnings: result.warnings, next: "Tell the person about each warning: those files are silent." } : {}),
+        });
       }),
     },
   ];

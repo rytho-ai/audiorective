@@ -59,6 +59,7 @@ export class TimeStretch {
 
   private constructor(private readonly module: WebAssembly.Module) {}
 
+  /** Returns a new buffer of `round(input.length * ratio)` frames at the input's sample rate; `ratio` is output duration over input duration (2 plays twice as long). Rejects with RangeError for a bad `ratio`, `anchors` or non-finite samples, and with `AbortError` on cancellation. */
   async process(input: AudioBuffer, options: TimeStretchOptions): Promise<AudioBuffer> {
     const { ratio, anchors = [], loop = false, signal } = options;
     if (this.disposed) throw new Error("TimeStretch is disposed.");

@@ -46,6 +46,7 @@ export class Equalizer extends Effect<Record<string, SchedulableParam>> {
     this.defineGraph(() => filters.slice(1).map((filter, index) => [filters[index], filter] as const));
   }
 
+  /** Sets every band's frequency (Hz, 20-20000), gain (dB, +-24) and Q (0.1-20) in one batch; the count must equal the constructed band count, else throws RangeError. */
   setBands(bands: readonly EqualizerBand[]): void {
     const settings = normalizeEqualizerBands(bands);
     if (settings.length !== this.bands.length) throw new RangeError("Equalizer band count must match the constructed bank.");
@@ -59,6 +60,7 @@ export class Equalizer extends Effect<Record<string, SchedulableParam>> {
     });
   }
 
+  /** Fills `magnitudes` (linear gain) and `phases` (radians) with the whole bank's response, wet/dry mix included, at each of `frequencies` (Hz); the three arrays must have equal length. */
   getFrequencyResponse(frequencies: Float32Array<ArrayBuffer>, magnitudes: Float32Array<ArrayBuffer>, phases: Float32Array<ArrayBuffer>): void {
     if (magnitudes.length !== frequencies.length || phases.length !== frequencies.length)
       throw new RangeError("Equalizer frequency response arrays must have the same length.");

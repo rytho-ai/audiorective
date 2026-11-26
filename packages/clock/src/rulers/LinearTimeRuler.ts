@@ -11,11 +11,11 @@ export interface LinearTimePoint {
  * break the beat<->wallclock correspondence (see TimelineLike.position).
  */
 export class LinearTimeRuler implements Ruler<LinearTimePoint, LinearTimePoint> {
-  at(_beat: number, timeline: TimelineLike): LinearTimePoint {
+  at(beat: number, timeline: TimelineLike): LinearTimePoint {
     return { seconds: timeline.position };
   }
 
-  read(_window: Pick<CoreTickWindow, "beat">, timeline: TimelineLike): LinearTimePoint {
+  read(window: Pick<CoreTickWindow, "beat">, timeline: TimelineLike): LinearTimePoint {
     return this.at(0, timeline);
   }
 }

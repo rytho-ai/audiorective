@@ -14,7 +14,10 @@ export interface MidiSink extends Instrument {
 }
 
 type Held = { voice: Voice; note: number; release: number; seq: number };
-type NoteOff = { time: number; seq: number };
+type NoteOff = { time: number; seq: number; /** Only voices that started at or before this time are released. */ since?: number };
+
+/** A note velocity (0 to 1) as the MIDI byte every path sends: 1 to 127, so a note-on never reads as a note-off. */
+export const midiVelocityByte = (velocity: number): number => Math.max(1, Math.min(127, Math.round(velocity * 127)));
 
 /** A release far enough ahead to stand for "not released": a voice's pending stop can be moved later but not removed. */
 const NEVER = 1e9;
@@ -43,7 +46,9 @@ export class SamplerSink implements MidiSink {
 
   noteOn(note: number, options: Readonly<{ velocity?: number; when?: number; channel?: number }> = {}): CancellableEvent {
     this.prune();
-    const voice = this.sampler.noteOn(note, { when: options.when, velocity: options.velocity });
+    // A note plays at the level its MIDI byte gives, whether it came as bytes or as a velocity, so live and offline renders agree.
+    const velocity = options.velocity !== undefined && options.velocity > 0 ? midiVelocityByte(options.velocity) / 127 : options.velocity;
+    const voice = this.sampler.noteOn(note, { when: options.when, velocity });
     if (!voice) return done;
     const held: Held = { voice, note, release: Infinity, seq: this.seq++ };
     this.held.add(held);
@@ -67,11 +72,11 @@ export class SamplerSink implements MidiSink {
     };
   }
 
-  noteOff(note: number, when: number = this.context.currentTime): CancellableEvent {
+  noteOff(note: number, when: number = this.context.currentTime, since?: number): CancellableEvent {
     this.prune();
     const times = this.noteOffs.get(note) ?? [];
     this.noteOffs.set(note, times);
-    return this.pending(times, when, (held) => held.note === note);
+    return this.pending(times, when, (held) => held.note === note, since);
   }
 
   scheduleMidi(data: Uint8Array | readonly number[], when: number): CancellableEvent {
@@ -97,8 +102,8 @@ export class SamplerSink implements MidiSink {
   }
 
   /** Add a pending release at `when` to `times` and apply it to the voices `reaches`; the event withdraws it. */
-  private pending(times: NoteOff[], when: number, reaches: (held: Held) => boolean): CancellableEvent {
-    const entry: NoteOff = { time: when, seq: this.seq++ };
+  private pending(times: NoteOff[], when: number, reaches: (held: Held) => boolean, since?: number): CancellableEvent {
+    const entry: NoteOff = { time: when, seq: this.seq++, since };
     times.push(entry);
     const reapply = () => {
       for (const held of this.held) if (reaches(held)) this.apply(held);
@@ -122,7 +127,11 @@ export class SamplerSink implements MidiSink {
     const start = held.voice.when;
     let release = Infinity;
     for (const off of this.noteOffs.get(held.note) ?? [])
-      if (off.time > start + SAME_TIME || (off.time >= start - SAME_TIME && off.seq > held.seq)) release = Math.min(release, off.time);
+      if (
+        !(off.since !== undefined && start > off.since + SAME_TIME) &&
+        (off.time > start + SAME_TIME || (off.time >= start - SAME_TIME && off.seq > held.seq))
+      )
+        release = Math.min(release, off.time);
     for (const off of this.allOffs) if (off.time > start + SAME_TIME) release = Math.min(release, off.time);
     if (release === held.release) return;
     held.release = release;

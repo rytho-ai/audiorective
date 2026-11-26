@@ -56,15 +56,15 @@ describe("Clock.start(when, offsetBeats)", () => {
     expect(timeline.beatToTime(3)).toBeCloseTo(5.5, 12);
   });
 
-  test("start() with no arguments and start({ atBeat }) still work", () => {
+  test("start() with no arguments and start(undefined, offsetBeats) work", () => {
     const { ctx, timeline, clock } = harness(120);
     ctx.currentTime = 3;
     clock.start();
     expect(timeline.beatToTime(0)).toBe(3);
-    clock.start({ atBeat: 8 });
+    clock.start(undefined, 8);
     expect(timeline.beatToTime(8)).toBe(3);
     expect(timeline.timeToBeat(4)).toBeCloseTo(10, 12);
-    clock.start({});
+    clock.start(undefined);
     expect(timeline.beatToTime(0)).toBe(3);
   });
 

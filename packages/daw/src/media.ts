@@ -3,6 +3,32 @@ export type AudioMediaChunk = Readonly<{ startFrame: number; channels: readonly 
 /** The fields of a finished recorder span that media storage reads. */
 export type AudioMediaSpan = Readonly<{ sampleRate: number; channelCount: number; startFrame: number; endFrame: number }>;
 
+/** The compressed file behind a pending `AudioMedia`, and the archive path it came from. */
+const encodedFiles = new WeakMap<AudioMedia, Readonly<{ blob: Blob; path: string }>>();
+let creatingEncoded = false;
+
+/**
+ * Audio that a DAWproject file stores in a format the browser decodes (Ogg Vorbis, Opus, MP3, FLAC, AAC, ...) and nothing has decoded yet.
+ * `sampleRate`, `channelCount` and `frameCount` are what the file's `Audio` element states. Codec access: the reader creates it, `openWorkspace` decodes it.
+ */
+export function encodedAudioMedia(
+  blob: Blob,
+  path: string,
+  info: Readonly<{ sampleRate: number; channelCount: number; frameCount: number }>,
+): AudioMedia {
+  creatingEncoded = true;
+  try {
+    const media = new AudioMedia(blob, info.sampleRate, info.channelCount, info.frameCount);
+    encodedFiles.set(media, Object.freeze({ blob, path }));
+    return media;
+  } finally {
+    creatingEncoded = false;
+  }
+}
+
+/** Codec access: the compressed file and archive path behind a pending `AudioMedia`, or undefined for PCM media. */
+export const encodedFileOf = (media: AudioMedia): Readonly<{ blob: Blob; path: string }> | undefined => encodedFiles.get(media);
+
 /** Interleaved little-endian float32 PCM held by a Blob or disk-backed File. */
 export class AudioMedia {
   private disposed = false;
@@ -24,9 +50,17 @@ export class AudioMedia {
       frameCount < 1 ||
       !Number.isSafeInteger(byteOffset) ||
       byteOffset < 0 ||
-      byteOffset + frameCount * channelCount * 4 > blob.size
+      (!creatingEncoded && byteOffset + frameCount * channelCount * 4 > blob.size)
     )
       throw new RangeError("AudioMedia needs a valid PCM frame window.");
+  }
+
+  /**
+   * True for audio an opened DAWproject file stores compressed that the browser has not decoded yet: its clips exist and can be moved, trimmed and saved,
+   * but cannot be read or played. `openWorkspace`, `openWorkspaceBlob` and `workspace.open` decode it before the song starts, so a Workspace never holds a pending clip.
+   */
+  get pending(): boolean {
+    return encodedFiles.has(this);
   }
 
   /** Release caller-owned temporary storage after no clips or undo states refer to it. */
@@ -38,6 +72,8 @@ export class AudioMedia {
 
   async readFrames(startFrame: number, frameCount: number): Promise<readonly Float32Array[]> {
     if (this.disposed) throw new Error("AudioMedia is disposed.");
+    const encoded = encodedFiles.get(this);
+    if (encoded) throw new Error(`AudioMedia is not decoded yet: open the project with openWorkspace so the browser decodes "${encoded.path}".`);
     if (
       !Number.isInteger(startFrame) ||
       !Number.isInteger(frameCount) ||

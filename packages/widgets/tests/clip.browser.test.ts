@@ -2,7 +2,6 @@ import { afterEach, expect, test, vi } from "vitest";
 import { userEvent } from "vitest/browser";
 import { cell } from "@audiorective/core";
 import { attachClipGesture, attachClipTrim, attachClipWaveform, type ClipWaveformSource } from "../src/clip";
-import * as arrangement from "../src/arrangement";
 import { cleanup, host, own, pointer } from "./helpers";
 
 afterEach(cleanup);
@@ -213,10 +212,6 @@ test("dispose removes the handles and later drags do nothing", async () => {
   await pointer({ action: "move", x: x + 40, y });
   await pointer({ action: "up" });
   expect(onCommit).not.toHaveBeenCalled();
-});
-
-test("the arrangement entry keeps exporting attachClipGesture", () => {
-  expect(arrangement.attachClipGesture).toBe(attachClipGesture);
 });
 
 test("Enter and Space on a trim handle do not open the clip through a shared gesture", async () => {

@@ -1,8 +1,9 @@
 import type { WaveStretchAnchor, WaveStretchProcessor } from "@audiorective/player";
 import { normalizeClipAnchors } from "./clip-time-map";
-import { audioFrameCount } from "./model";
+import { adoptRenderedStretch, audioFrameCount } from "./model";
 import type { AudioClip, Project } from "./model";
 import { findAudioClip } from "./project-lookup";
+import { takeOpenedStretches } from "./internal/open-stretch";
 
 export type PreparedClipStretch = Readonly<{ apply(): AudioClip }>;
 
@@ -30,6 +31,8 @@ export class ClipStretch {
     ratio: number,
     processor?: WaveStretchProcessor,
     options: { signal?: AbortSignal; anchors?: readonly WaveStretchAnchor[] } = {},
+    /** Opening a file: applying swaps the clip's audio in place, as no Undo step and no new version (`adoptRenderedStretch`). */
+    opening = false,
   ): Promise<PreparedClipStretch> {
     if (this.isDisposed()) throw new Error("Workspace is disposed.");
     options.signal?.throwIfAborted();
@@ -75,7 +78,9 @@ export class ClipStretch {
         apply: () => {
           try {
             check();
-            return this.project().applyAudioClipStretch(clip, ratio, rendered, anchors);
+            if (!opening) return this.project().applyAudioClipStretch(clip, ratio, rendered, anchors);
+            adoptRenderedStretch(this.project(), clip, rendered!);
+            return findAudioClip(this.project(), clipId)!;
           } finally {
             release();
           }
@@ -84,6 +89,41 @@ export class ClipStretch {
     } catch (error) {
       release();
       throw error;
+    }
+  }
+}
+
+/**
+ * Opening a file that stretches audio clips: the reader gave each such clip varispeed audio (the right length, the pitch moved with the speed).
+ * With a `processor` every one is rendered pitch-preserving, one after the other, and swapped in place before the song plays; an engine failure on
+ * one clip leaves its varispeed audio and warns. Without one the clips stay as they are and one warning says how to fix the pitch.
+ */
+export async function renderOpenedStretches(
+  project: Project,
+  processor: WaveStretchProcessor | undefined,
+  warn: (message: string) => void,
+  isDisposed: () => boolean,
+): Promise<void> {
+  const opened = takeOpenedStretches(project).filter(({ clip }) => findAudioClip(project, clip.id) === clip);
+  if (!opened.length) return;
+  if (!processor) {
+    warn(
+      `${opened.length} audio ${opened.length === 1 ? "clip is" : "clips are"} time-stretched by the file's warp markers and play with the right length and position ` +
+        "but a changed pitch (varispeed). Pass a stretch processor, for example TimeStretch from @audiorective/effects/time-stretch, as the `stretch` option to keep the pitch.",
+    );
+    return;
+  }
+  const stretch = new ClipStretch(() => project, isDisposed);
+  for (const { clip, name } of opened) {
+    try {
+      const { ratio, anchors } = clip.stretch!;
+      (await stretch.prepare(clip.id, ratio, processor, anchors?.length ? { anchors } : {}, true)).apply();
+    } catch (error) {
+      if (isDisposed()) return;
+      warn(
+        `Audio clip "${name}" could not be stretched with the stretch processor (${error instanceof Error ? error.message : String(error)}); ` +
+          "it plays with a changed pitch.",
+      );
     }
   }
 }

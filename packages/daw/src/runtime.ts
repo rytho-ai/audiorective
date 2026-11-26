@@ -1,5 +1,7 @@
 import { importedBundles } from "./project-persistence";
-import { holdSeconds, playbackLead, smoothGain } from "./internal/playback-gain";
+import { chainFadeSeconds, chainLead, holdSeconds, playbackLead, smoothGain } from "./internal/playback-gain";
+import { WidthPath } from "./width-path";
+import { probeWidth } from "./internal/width-probe";
 import { Clock, Timeline } from "@audiorective/clock";
 import type { LoopRange, TickSource, TickWindow } from "@audiorective/clock";
 import {
@@ -14,7 +16,8 @@ import {
   type ReadonlyCell,
   type SamplerOptions,
 } from "@audiorective/core";
-import { SamplerSink } from "./midi-sink";
+import { SamplerSink, midiVelocityByte } from "./midi-sink";
+import type { MidiNote } from "@audiorective/midi";
 import { AutomationBinding, AutomationCurve, audioParamTarget, type AutomationTarget } from "@audiorective/core/automation";
 import { WebClapHost } from "@audiorective/host/webclap";
 import { ClipLauncher, type Clip as SessionClip, type ClipSpec } from "@audiorective/launcher";
@@ -23,12 +26,12 @@ import { TrackRack } from "./track-rack";
 import type { RackEffect } from "./rack-preset";
 import { AudioTrackSession } from "./audio-track-session";
 import { Audition, type RangeAuditionState } from "./audition";
-import { ClipStretch, type PreparedClipStretch } from "./clip-stretch";
+import { ClipStretch, renderOpenedStretches, type PreparedClipStretch } from "./clip-stretch";
 import { createWorkspaceLoop, LoopFold, type WorkspaceLoop } from "./arrangement-loop";
 import { ClipScheduler } from "./clip-scheduler";
 import { Mixer, type MixerStrip } from "./mixer";
 import { LevelMeters, type WorkspaceLevels } from "./level-meters";
-import { captureDeviceState, MidiClip, Project } from "./model";
+import { audioChannelCount, captureDeviceState, MidiClip, Project } from "./model";
 import type { TempoMap } from "./tempo-map";
 import type { AudioClipGainAutomation, MediaAudioClip, PcmAudioClip, ProjectClip, ProjectTrack, TrackRouting, WebClapDevice } from "./model";
 import type { BeatRange, ProjectVersion, SecondsRange } from "./project-edits";
@@ -63,7 +66,7 @@ type TrackStage = Readonly<{
 export type WorkspaceSource = Uint8Array | Blob;
 
 /** The options `workspace.open` takes. Those given replace the workspace's own for this song and later syncs; those left out stay. */
-export type WorkspaceOpenOptions = Pick<WorkspaceOptions, "workletUrl" | "resolveBundle" | "instruments" | "warnings">;
+export type WorkspaceOpenOptions = Pick<WorkspaceOptions, "workletUrl" | "resolveBundle" | "instruments" | "stretch" | "warnings">;
 
 export type WorkspaceOptions = {
   destination?: AudioNode;
@@ -77,6 +80,13 @@ export type WorkspaceOptions = {
    * including tracks added before a `sync()`.
    */
   instruments?: Readonly<Record<string, TrackInstrument>> | ((track: Pick<ProjectTrack, "id" | "name" | "kind">) => TrackInstrument | undefined);
+  /**
+   * The stretch engine for audio clips a file stretches (an audio file of one tempo in a song of another, as Bitwig Studio writes it), typed as the
+   * player's `stretch` option; `TimeStretch` from `@audiorective/effects/time-stretch` fits. At open every such clip is rendered with it, pitch preserved,
+   * before the song plays; this is not an Undo step and does not change the version. Without it those clips play by varispeed (right length and position,
+   * changed pitch) and `warnings` says so once. A render that fails leaves that clip on varispeed with a warning. `prepareAudioClipStretch` takes its own processor.
+   */
+  stretch?: WaveStretchProcessor;
   /** Initial value of `workspace.arrangement`. Default true; false for an app that only plays Session clips. */
   arrangement?: boolean;
   /** Messages produced before the workspace existed, such as file-open warnings; they precede the workspace's own. */
@@ -173,12 +183,13 @@ export class Workspace {
    * What another workspace needs to load the same devices and instruments: a render workspace, or this project saved and opened again.
    * Its `resolveBundle` asks this workspace's own `resolveBundle` first, then approves a bundle URL this workspace has loaded for the same CLAP ID.
    */
-  get deviceOptions(): Pick<WorkspaceOptions, "workletUrl" | "resolveBundle" | "instruments"> {
+  get deviceOptions(): Pick<WorkspaceOptions, "workletUrl" | "resolveBundle" | "instruments" | "stretch"> {
     const resolve = this.options.resolveBundle;
     const loaded = this.loadedBundles;
     return {
       workletUrl: this.options.workletUrl,
       instruments: this.options.instruments,
+      stretch: this.options.stretch,
       resolveBundle: async (device) =>
         (resolve ? await resolve(device) : undefined) ??
         (device.bundleUrl && loaded.get(device.pluginId)?.has(device.bundleUrl) ? device.bundleUrl : undefined),
@@ -188,6 +199,8 @@ export class Workspace {
   private readonly scheduler: ClipScheduler;
   private readonly noteOff: Array<() => void> = [];
   private readonly midiClipPositions = new WeakMap<MidiClip, number>();
+  /** The notes of each bound MIDI clip as of its last edit, so an edit while playing can tell which sounding notes it changed. */
+  private readonly noteSnapshots = new WeakMap<MidiClip, readonly MidiNote[]>();
   private readonly seekPoint = cell({ seconds: 0 });
   private activeTempoMap: TempoMap;
   /**
@@ -219,6 +232,8 @@ export class Workspace {
   private seekResume?: Promise<void>;
   private readonly heldAnchors = new WeakSet<TakeAnchor>();
   private disposed = false;
+  /** Work waiting on a fade timer; `dispose()` runs it. */
+  private readonly pending = new Set<() => void>();
   private readonly mixer: Mixer;
   private readonly levelMeters: LevelMeters;
 
@@ -317,6 +332,15 @@ export class Workspace {
   }
 
   static async create(context: AudioContext, project: Project, options: WorkspaceOptions = {}): Promise<Workspace> {
+    // Clips the opened file stretched get their render first, so the song never plays them twice with two pitches.
+    const stretchWarnings: string[] = [];
+    await renderOpenedStretches(
+      project,
+      options.stretch,
+      (message) => stretchWarnings.push(message),
+      () => false,
+    );
+    if (stretchWarnings.length) options = { ...options, warnings: [...(options.warnings ?? []), ...stretchWarnings] };
     const workspace = new Workspace(context, project, options);
     try {
       await workspace.sync();
@@ -574,15 +598,16 @@ export class Workspace {
     });
   }
 
-  /** Explicitly rebuild the graph after structural edits. Stops transport. */
+  /** Rebuild every track and device from the Project after a structural edit: stops playback, reloads, seeks back to the previous position and clears `cells.needsSync`. A failure rejects and leaves `cells.needsSync` set. */
   sync(): Promise<void> {
     return this.serialize(() => this.applyProjectEdit(() => this.rebuildTracks()));
   }
 
   /**
-   * Add the WebCLAP plug-in at `bundleUrl` to a track: loads the bundle once to read its CLAP ID, name, vendor and version, records the device with
-   * `project.addWebClapDevice` (`bundleUrl` is stored as given), then runs `sync()`, so playback stops, as for any device change; pending track edits apply with it.
-   * `options.pluginId` picks one plug-in of a bundle that holds several. Not an Undo step (device and track-list changes never are).
+   * Add the WebCLAP plug-in at `bundleUrl` to a track: loads the bundle once to read its CLAP ID, name, vendor and version, then records the device with
+   * `project.addWebClapDevice` (`bundleUrl` is stored as given) as one Undo step named `Add <name>`, and resolves once the running track has it. Playback does not stop: the plug-in is spliced into the running track.
+   * Only a pending track-list change (`cells.needsSync`) runs `sync()` first, which stops playback.
+   * `options.pluginId` picks one plug-in of a bundle that holds several.
    * A bundle that cannot load rejects with its error and leaves the Project unchanged; if the rebuild fails, only this device is removed again (as Undo when nothing was edited since, else as a new edit), and any other edit stays. If the device is gone from the Project when loading ends (Undo, a removal, a replaced song), it rejects with `Workspace device was removed before it finished loading.`
    */
   async addWebClapDevice(trackId: string, bundleUrl: string, options: Readonly<{ pluginId?: string }> = {}): Promise<WebClapDevice> {
@@ -625,7 +650,7 @@ export class Workspace {
     if (this.disposed) throw new Error("Workspace is disposed.");
     const parse = songParser();
     if (!parse) throw new Error("Workspace open needs the @audiorective/daw root entry: import it once so the file reader is registered.");
-    const opened = await parse(source);
+    const opened = await parse(source, this.context);
     return this.serialize(() => this.swapSong(opened, options));
   }
 
@@ -641,6 +666,7 @@ export class Workspace {
     };
     const built = new Map<string, TrackRuntime>();
     try {
+      await renderOpenedStretches(project, stage.options.stretch, stage.warn, () => this.disposed);
       for (const track of project.tracks) {
         const runtime = await this.createTrack(track, stage);
         built.set(track.id, runtime);
@@ -754,25 +780,149 @@ export class Workspace {
   }
 
   /** Connect the track's input through its hosts, in order, to its rack. Reconnects a chain that is already wired. */
-  private wireDevices(runtime: TrackRuntime): void {
-    runtime.input.disconnect();
+  /**
+   * Connect the track input through its devices into the rack, behind a gate of its own. With `fade` (a live change) the previous chain stays connected
+   * while the new gate fades in and the old one out over `chainFadeSeconds`; the old edges are removed afterwards, and `later` tells the caller when.
+   */
+  private wireDevices(runtime: TrackRuntime, fade = false, widths?: { before: 1 | 2 | undefined; after: 1 | 2 | undefined }): void {
+    const old = runtime.chain;
+    const gate = this.context.createGain();
+    const edges: Array<readonly [AudioNode, AudioNode]> = [];
+    const link = (from: AudioNode, to: AudioNode) => {
+      from.connect(to);
+      edges.push([from, to]);
+    };
     let previous: AudioNode = runtime.input;
     for (const host of runtime.hosts.values()) {
-      host.output.disconnect();
-      previous.connect(host.input);
+      link(previous, host.input);
       previous = host.output;
     }
-    previous.connect(runtime.rack.input);
+    link(previous, gate);
+    runtime.chain = { gate, edges };
+    // A live change connects the new chain silent; the gate fades in when the crossfade begins.
+    if (fade && old) gate.gain.value = 0;
+    // The channel pans a mono input with the mono law and a stereo one with the stereo law, and follows the widest connection, so connecting a stereo chain
+    // to a mono track would step its level in whatever render quantum the edit lands in. A track that changes width crosses between two ways into the strip
+    // (`WidthPath`) with scheduled gains instead, so no graph edit is ever heard.
+    const flip = fade && !!old && !!widths && !!widths.before && !!widths.after && widths.before !== widths.after;
+    const path = flip ? this.widthPathOf(runtime) : undefined;
+    const handled = path && !path.busy;
+    // From mono to stereo the strip's own input is held mono while the stereo chain connects (its signal is mono, so nothing changes).
+    if (handled && widths?.after === 2 && path.mode === "natural") path.pinInput(true);
+    gate.connect(runtime.rack.input);
+    if (!old) return;
+    const keep = (edge: readonly [AudioNode, AudioNode]) => edges.some(([from, to]) => from === edge[0] && to === edge[1]);
+    const release = () => {
+      for (const edge of old.edges)
+        if (!keep(edge)) {
+          try {
+            edge[0].disconnect(edge[1]);
+          } catch {
+            // already disconnected
+          }
+        }
+      old.gate.disconnect();
+    };
+    if (!fade) return release();
+    const crossfade = () => {
+      // Re-read the clock right before scheduling, so a slow main thread moves the start forward instead of putting events in the past.
+      const at = this.context.currentTime + chainLead;
+      gate.gain.cancelScheduledValues(at);
+      gate.gain.setValueAtTime(0, at);
+      gate.gain.linearRampToValueAtTime(1, at + chainFadeSeconds);
+      old.gate.gain.cancelScheduledValues(at);
+      old.gate.gain.setValueAtTime(old.gate.gain.value, at);
+      old.gate.gain.linearRampToValueAtTime(0, at + chainFadeSeconds);
+      return at;
+    };
+    const settle = (work: () => void) => this.afterAudio(chainLead + chainFadeSeconds + 0.04, work);
+    if (!handled) {
+      crossfade();
+      settle(release);
+    } else if (widths?.after === 2) {
+      // Mono to stereo: the sound moves to the stereo path while the chains cross; the strip's own input is let go once it is silent.
+      path.busy = true;
+      path.toStereo(crossfade(), chainFadeSeconds);
+      settle(() => {
+        release();
+        path.pinInput(false);
+        path.busy = false;
+      });
+    } else {
+      // Stereo to mono: first the sound moves to the stereo path (the same law, so nothing changes), then the strip's own input is made mono while silent,
+      // and the chains cross as the sound moves back to it.
+      path.busy = true;
+      const back = () => {
+        path.pinInput(true);
+        path.toNatural(crossfade(), chainFadeSeconds);
+        settle(() => {
+          release();
+          path.busy = false;
+          // The old stereo chain's edges may leave a render quantum after `release`; the strip's input stays mono, which is what it carries, until they are gone.
+          this.afterAudio(0.06, () => {
+            if (!path.busy && path.mode === "natural") path.pinInput(false);
+          });
+        });
+      };
+      if (path.mode === "natural") {
+        path.toStereo(this.context.currentTime + chainLead, chainFadeSeconds);
+        settle(back);
+      } else back();
+    }
+  }
+
+  /**
+   * How many channels reach the track's strip: 2 when a plug-in or a rack effect is on the track, otherwise the width of its sources. An audio track's
+   * is read from its clips; any other track's (an instrument sound, a bus) was measured in the graph (`runtime.sourceWidth`, undefined until it has been).
+   */
+  private channelWidth(runtime: TrackRuntime, track: ProjectTrack): 1 | 2 | undefined {
+    if (runtime.hosts.size > 0 || runtime.rack.effects.length > 0) return 2;
+    // Not measured (nothing was sounding): taken as mono, which is inaudible to get wrong while nothing sounds and is what the plain strip does today.
+    if (track.kind !== "audio") return runtime.sourceWidth ?? 1;
+    return track.clips.some((clip) => clip.kind === "audio" && audioChannelCount(clip) > 1) ? 2 : 1;
+  }
+
+  /** The track's stereo path, built on first use; undefined when this context cannot build it (the switch then plays the plain crossfade). */
+  private widthPathOf(runtime: TrackRuntime): WidthPath | undefined {
+    try {
+      return (runtime.widthPath ??= new WidthPath(this.context, runtime.automationGain, runtime.channel));
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Run `work` once the audio clock has advanced `seconds`: a fade is measured on that clock, which falls behind the wall clock when the machine is busy. */
+  private afterAudio(seconds: number, work: () => void): void {
+    const until = this.context.currentTime + seconds;
+    const poll = () => {
+      if (this.disposed || this.context.currentTime >= until) work();
+      else this.later(10, poll);
+    };
+    this.later(10, poll);
+  }
+
+  /** Run `work` after `ms`, or at once when the Workspace is disposed first, so nothing waits on a timer that will never matter. */
+  private later(ms: number, work: () => void): () => void {
+    const run = () => {
+      this.pending.delete(run);
+      clearTimeout(timer);
+      work();
+    };
+    const timer = setTimeout(run, ms);
+    this.pending.add(run);
+    return run;
   }
 
   /** Where a MIDI track plays: its first loaded device, or without devices its `instruments` sampler. */
-  private pointMidi(runtime: TrackRuntime, track: ProjectTrack, instruments: WorkspaceOptions["instruments"]): void {
+  private pointMidi(runtime: TrackRuntime, track: ProjectTrack, instruments: WorkspaceOptions["instruments"], fade = false): void {
+    // A sampler that goes keeps sounding into the old chain's gate while it fades out.
+    const drop = (sampler: Sampler) => (fade ? this.afterAudio(chainLead + chainFadeSeconds + 0.03, () => sampler.dispose()) : sampler.dispose());
     if (track.kind !== "midi") return;
     const first = runtime.hosts.values().next().value;
     if (first) {
       if (runtime.sampler) {
         runtime.midi?.allNotesOff();
-        runtime.sampler.dispose();
+        drop(runtime.sampler);
         runtime.sampler = undefined;
       }
       runtime.midi = first;
@@ -783,7 +933,7 @@ export class Workspace {
     if (!instrument) {
       if (runtime.sampler) {
         runtime.midi?.allNotesOff();
-        runtime.sampler.dispose();
+        drop(runtime.sampler);
         runtime.sampler = undefined;
         runtime.midi = undefined;
       }
@@ -791,7 +941,7 @@ export class Workspace {
     }
     if (runtime.sampler) return;
     runtime.sampler = new Sampler(this.context, instrument);
-    runtime.sampler.connect(runtime.rack.input);
+    runtime.sampler.connect(runtime.chain!.gate);
     runtime.midi = new SamplerSink(runtime.sampler, this.context);
   }
 
@@ -845,7 +995,8 @@ export class Workspace {
 
   /**
    * Make a live track's chain match `track.devices` without stopping anything: devices that went are disposed (their last state is kept for Redo),
-   * new ones are loaded off to the side, then the chain is rewired in one synchronous step. Only this track's audio is interrupted, briefly.
+   * new ones are loaded off to the side, then the new chain is wired in one synchronous step behind a gate that fades in over the old chain's (25 ms), and the old
+   * devices are disposed after the fade. A device that leaves still sounds during the fade, except its held notes, which end at the swap.
    */
   private async applyDevices(project: Project, track: ProjectTrack, runtime: TrackRuntime): Promise<void> {
     const keys = deviceKeys(track);
@@ -872,11 +1023,24 @@ export class Workspace {
       for (const host of loaded.values()) host.dispose();
       return;
     }
+    // A track whose sources the project does not describe (an instrument sound, a bus) is asked what it carries before the swap, while the old chain still plays.
+    if (track.kind !== "audio" && runtime.hosts.size === 0) {
+      const measured = await probeWidth(this.context, runtime.sampler?.output ?? runtime.input);
+      if (measured) runtime.sourceWidth = measured;
+    }
+    if (this.disposed) {
+      for (const host of loaded.values()) host.dispose();
+      return;
+    }
     // From here no await: the swap is one step.
     const midi = runtime.midi;
+    const fade = !isOfflineContext(this.context);
+    const widthBefore = this.channelWidth(runtime, track);
     for (const [id, host] of leaving) {
       host.allNotesOff();
-      host.dispose();
+      // The old chain keeps running while the new one fades in; the device is disposed once the old chain is gone.
+      if (fade) this.afterAudio(chainLead + chainFadeSeconds + 0.06, () => host.dispose());
+      else host.dispose();
       runtime.hosts.delete(id);
       runtime.deviceStates.delete(id);
     }
@@ -889,8 +1053,8 @@ export class Workspace {
     }
     runtime.hosts = hosts;
     runtime.deviceKeys = keys;
-    this.wireDevices(runtime);
-    this.pointMidi(runtime, track, this.options.instruments);
+    this.wireDevices(runtime, fade, { before: widthBefore, after: this.channelWidth(runtime, track) });
+    this.pointMidi(runtime, track, this.options.instruments, fade);
     if (runtime.midi !== midi) {
       // The track plays into another device now: sounding notes end, and its Session clips are rebuilt for the new one.
       midi?.allNotesOff();
@@ -967,6 +1131,9 @@ export class Workspace {
     }
     const position = this.position;
     const tempoChanged = this.activeTempoMap !== project.tempoMap;
+    const [numerator, denominator] = project.signature;
+    // Bars the clock counts (quantized launches, "1m") follow the starting signature; later changes are in the Project's meter map.
+    if (this.clock.meter.value[0] !== numerator || this.clock.meter.value[1] !== denominator) this.clock.meter.value = [numerator, denominator];
     let clipsChanged = false;
     let refreshClips = false;
     const invalidatedAudio = new Set<string>();
@@ -1191,7 +1358,7 @@ export class Workspace {
       }
       known.splice(index, 0, id);
     });
-    scenes.forEach(({ name }, index) => launcher.scenes[index]._rename(name));
+    scenes.forEach(({ name }, index) => launcher.scenes[index].rename(name));
     let replaced = false;
     for (const track of this.project.tracks) {
       const sessionTrack = launcher.tracks[track.id];
@@ -1233,6 +1400,7 @@ export class Workspace {
     const now = this.context.currentTime;
     const when = isOfflineContext(this.context) ? now : Math.ceil((now + playbackLead) * this.context.sampleRate) / this.context.sampleRate;
     this.rebaseTempo(beat, when);
+    this.scheduler.armSeekFade(when);
     this.clock.start(when, beat);
     this.positionAutomation(position, true, when);
     return this.clock.refresh();
@@ -1267,7 +1435,7 @@ export class Workspace {
     const prefetched = playing ? this.prefetchMediaAt(seconds) : undefined;
     this.resumingSeek = !!prefetched;
     this.allNotesOff();
-    this.cancelAudio();
+    this.cancelAudio(playing);
     this.activeTempoMap = this.project.tempoMap;
     const beat = this.activeTempoMap.secondsToBeat(seconds);
     if (prefetched) {
@@ -1337,12 +1505,16 @@ export class Workspace {
       if (runtime.midi && this.clock.state.value === "playing") {
         const next = new Set(clips);
         const beat = this.fold.toBeat(this.timeline.timeToBeat(this.context.currentTime));
-        const changedPlayingClip = runtime.clips.some((clip) => {
-          if (!(clip instanceof MidiClip)) return false;
+        let endAll = false;
+        for (const clip of runtime.clips) {
+          if (!(clip instanceof MidiClip)) continue;
           const time = this.midiClipPositions.get(clip) ?? clip.time;
-          return time <= beat && beat <= time + clip.duration && (!next.has(clip) || clip.time !== time);
-        });
-        if (changedPlayingClip) runtime.midi.allNotesOff();
+          if (!(time <= beat && beat <= time + clip.duration) || (next.has(clip) && clip.time === time)) continue;
+          // A clip that left or loops plays through its pass bookkeeping: everything ends. A clip that only moved keeps the notes it still covers.
+          if (!next.has(clip) || clip.loop) endAll = true;
+          else this.carryMovedNotes(runtime, clip, time, beat);
+        }
+        if (endAll) runtime.midi.allNotesOff();
       }
       return true;
     }
@@ -1352,17 +1524,80 @@ export class Workspace {
     return true;
   }
 
+  /**
+   * `clip` moved from `from` to its current time while it plays. A note that sounds at `beat` before and after the move, at the same pitch and channel,
+   * keeps sounding (the refresh that follows queues its release where the moved note ends); a sounding note the new place no longer covers ends with its
+   * normal release, and a note the new place covers that did not sound before starts now with its own velocity.
+   */
+  private carryMovedNotes(track: TrackRuntime, clip: MidiClip, from: number, beat: number): void {
+    if (!track.midi) return;
+    const notes = untracked(() => clip.midi.notes.value);
+    const sounding = (time: number) =>
+      notes.filter((note) => {
+        const start = Math.max(time, time + note.start - clip.sourceOffset);
+        return start <= beat && beat < Math.min(time + clip.duration, time + note.start - clip.sourceOffset + note.duration);
+      });
+    const key = (note: MidiNote) => `${note.channel}:${note.pitch}`;
+    const before = sounding(from);
+    const after = sounding(clip.time);
+    const kept = new Set(after.map(key));
+    const was = new Set(before.map(key));
+    for (const note of before) if (!kept.has(key(note))) track.midi.scheduleMidi([0x80 | note.channel, note.pitch, 0], this.context.currentTime);
+    for (const note of after)
+      if (!was.has(key(note))) track.midi.scheduleMidi([0x90 | note.channel, note.pitch, midiVelocityByte(note.velocity)], this.context.currentTime);
+  }
+
+  /** End the notes of `clip` that sound at `beat` and that an edit moved, re-pitched or removed, or shortened to before `beat`. */
+  private releaseEditedNotes(track: TrackRuntime, clip: MidiClip, previous: readonly MidiNote[], next: readonly MidiNote[], beat: number): void {
+    if (!track.midi) return;
+    const byId = new Map(next.map((note) => [note.id, note]));
+    for (const note of previous) {
+      const start = clip.time + note.start - clip.sourceOffset;
+      if (!(start <= beat && beat < start + note.duration)) continue;
+      const edited = byId.get(note.id);
+      if (edited && edited.pitch === note.pitch && edited.channel === note.channel && edited.start === note.start && start + edited.duration > beat)
+        continue;
+      track.midi.scheduleMidi([0x80 | note.channel, note.pitch, 0], this.context.currentTime);
+    }
+    // A note the edit made sound at `beat` (re-pitched, moved or lengthened over the playhead) starts now with its own velocity; the refresh
+    // that follows queues its release, and only schedules note-ons that lie ahead.
+    const before = new Map(previous.map((note) => [note.id, note]));
+    const end = clip.time + clip.duration;
+    for (const note of next) {
+      const start = Math.max(clip.time, clip.time + note.start - clip.sourceOffset);
+      if (!(start <= beat && beat < Math.min(end, clip.time + note.start - clip.sourceOffset + note.duration))) continue;
+      const old = before.get(note.id);
+      if (old && old.pitch === note.pitch && old.channel === note.channel && old.start === note.start) {
+        const oldStart = clip.time + old.start - clip.sourceOffset;
+        if (oldStart <= beat && beat < oldStart + old.duration) continue;
+      }
+      track.midi.scheduleMidi([0x90 | note.channel, note.pitch, midiVelocityByte(note.velocity)], this.context.currentTime);
+    }
+  }
+
   private bindNotes(): void {
     for (const off of this.noteOff.splice(0)) off();
     for (const track of this.tracks.values()) {
       for (const clip of track.clips) {
         if (!(clip instanceof MidiClip)) continue;
         this.midiClipPositions.set(clip, clip.time);
+        this.noteSnapshots.set(
+          clip,
+          untracked(() => clip.midi.notes.value),
+        );
         this.noteOff.push(
           clip.midi.revision.subscribe(() => {
+            const previous = this.noteSnapshots.get(clip) ?? [];
+            const next = untracked(() => clip.midi.notes.value);
+            this.noteSnapshots.set(clip, next);
             if (this.clock.state.value !== "playing") return;
             const beat = this.fold.toBeat(this.timeline.timeToBeat(this.context.currentTime));
-            if (clip.time <= beat && beat <= clip.time + clip.duration) track.midi?.allNotesOff();
+            if (clip.time <= beat && beat <= clip.time + clip.duration) {
+              // A looped clip plays through its pass bookkeeping: end everything there. Otherwise only the sounding notes the edit changed or removed end,
+              // and the refresh below re-queues the rest, so a held note an edit did not touch keeps sounding.
+              if (clip.loop) track.midi?.allNotesOff();
+              else this.releaseEditedNotes(track, clip, previous, next, beat);
+            }
             void this.clock.refresh();
           }),
         );
@@ -1370,16 +1605,16 @@ export class Workspace {
     }
   }
 
-  setTrackVolume(trackId: string, value: number): void {
+  setTrackVolume(trackId: string, volume: number): void {
     this.reflectProjectEdit(() => {
-      this.project.setTrackVolume(trackId, value);
+      this.project.setTrackVolume(trackId, volume);
       this.mixer.applyMixer();
     });
   }
 
-  setMasterVolume(value: number): void {
+  setMasterVolume(volume: number): void {
     this.reflectProjectEdit(() => {
-      this.project.setMasterVolume(value);
+      this.project.setMasterVolume(volume);
       this.mixer.applyMaster();
     });
   }
@@ -1587,8 +1822,8 @@ export class Workspace {
     }
   }
 
-  private cancelAudio(): void {
-    this.scheduler.cancelAudio();
+  private cancelAudio(crossfade = false): void {
+    this.scheduler.cancelAudio(undefined, crossfade);
   }
 
   private disposeTrack(runtime: TrackRuntime): void {
@@ -1597,8 +1832,10 @@ export class Workspace {
     for (const host of runtime.hosts.values()) host.dispose();
     runtime.sampler?.dispose();
     runtime.automationBinding?.dispose();
+    runtime.widthPath?.dispose();
     runtime.automationGain.disconnect();
     runtime.input.disconnect();
+    runtime.chain?.gate.disconnect();
     this.mixer.disposeStrip(runtime);
   }
 
@@ -1617,6 +1854,7 @@ export class Workspace {
     this.stopWatchingArrangement?.();
     this.stop();
     this.disposed = true;
+    for (const run of [...this.pending]) run();
     this.audition.stop();
     this.stretch.abortAll();
     this.clock.dispose();

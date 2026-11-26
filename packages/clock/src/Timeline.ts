@@ -19,6 +19,7 @@ interface RulerEntry {
  * spec's "The core is three things" section.
  */
 export class Timeline<TRulers extends Record<string, Ruler<unknown, unknown>> = Record<never, never>> {
+  /** Tempo in beats per minute; a scheduled curve, so beat and time conversions follow its ramps. */
   readonly bpm: TempoParam;
   /** Transport state: the single store for the transport. Written only by the Clock via the `_start/_pause/_resume/_stop` anchor writes. */
   readonly state: ReadonlyCell<TransportState>;
@@ -59,6 +60,7 @@ export class Timeline<TRulers extends Record<string, Ruler<unknown, unknown>> = 
     return this._transport;
   }
 
+  /** Counter that increases on every position jump (start, seek, stop); a change means beats may repeat or skip, so cached schedules are stale. */
   get generation(): number {
     return this._generation;
   }
@@ -92,6 +94,7 @@ export class Timeline<TRulers extends Record<string, Ruler<unknown, unknown>> = 
   // renaming one side only -- emitting `TRulers[K$1]` inside a mapped type
   // still bound to `K`, which silently degrades every consumer's ruler
   // readings to `unknown`. Distinct names keep the emitted types correct.
+  /** Register `ruler` under `key`; its `current` reading appears at `rulers[key].current`. Returns this timeline typed with the new ruler. */
   addRuler<TKey extends string, TWindow, TPoint>(key: TKey, ruler: Ruler<TWindow, TPoint>): Timeline<TRulers & Record<TKey, Ruler<TWindow, TPoint>>> {
     const now = this._now();
     const store = new Cell<TPoint>(ruler.at(this.timeToBeat(now), this));
@@ -101,6 +104,7 @@ export class Timeline<TRulers extends Record<string, Ruler<unknown, unknown>> = 
     return this as unknown as Timeline<TRulers & Record<TKey, Ruler<TWindow, TPoint>>>;
   }
 
+  /** Registered rulers by key, each with a reactive `current` reading at the playing beat. */
   get rulers(): { [K in keyof TRulers]: RulerSlot<TRulers[K] extends Ruler<unknown, infer TPoint> ? TPoint : never> } {
     return this._rulersView as never;
   }

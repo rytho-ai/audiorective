@@ -49,4 +49,6 @@ export { summarizePeaks, peakFrameRange } from "./peaks";
 export type { PCMData, PeakSummary } from "./peaks";
 export { encodeWav, encodeWavBytes } from "./wav";
 export type { EncodeWavOptions } from "./wav";
+export { resamplePCM } from "./resample";
+export type { ResamplePCMOptions, ResampleQuality } from "./resample";
 export { registerWorklet, WorkletUnavailableError } from "./registerWorklet";

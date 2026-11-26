@@ -14,8 +14,8 @@ import {
 } from "@audiorective/daw";
 import type { MidiNote } from "@audiorective/midi";
 import { mountPianoRoll, pianoRollModel, type PianoRollHandle, type ClipPianoRollModel } from "@audiorective/widgets/piano-roll";
+import { attachClipGesture } from "@audiorective/widgets/clip";
 import {
-  attachClipGesture,
   attachTimeRangeGesture,
   attachTimelineZoom,
   type ClipGestureHandle,

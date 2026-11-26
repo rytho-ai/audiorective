@@ -168,7 +168,7 @@ describe("public readers are tracked", () => {
     const scene = watch(launcher.scenes[0]!, touched.scene);
     await expectTracked(
       () => scene.name,
-      () => scene._rename("Renamed"),
+      () => scene.rename("Renamed"),
     );
     await expectTracked(
       () => launcher.scenes.length,

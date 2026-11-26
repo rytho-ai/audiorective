@@ -53,9 +53,20 @@ async function song(save?: (bytes: Uint8Array, name: string) => void) {
 const parse = (result: McpToolResult) => JSON.parse(result.content);
 
 describe("mcpTools", () => {
-  test("lists the seven tools with object schemas", async () => {
+  test("lists the ten tools with object schemas", async () => {
     const { tools } = await song();
-    expect(tools.map((tool) => tool.name)).toEqual(["read_project", "find", "read_notes", "apply_edits", "run_operation", "listen", "save_as"]);
+    expect(tools.map((tool) => tool.name)).toEqual([
+      "read_project",
+      "find",
+      "read_notes",
+      "read_automation",
+      "apply_edits",
+      "run_operation",
+      "listen",
+      "save_as",
+      "export_midi",
+      "export_stems",
+    ]);
     for (const tool of tools) {
       expect(tool.inputSchema.type).toBe("object");
       expect(tool.description.length).toBeGreaterThan(20);
@@ -145,13 +156,13 @@ describe("mcpTools", () => {
   test("apply_edits rejects bad requests without changing the project", async () => {
     const { call, project } = await song();
     const version = project.cells.version.value;
-    expect((await call("apply_edits", { label: "x", ops: [{ type: "renameClip" }] })).content).toContain("expectedVersion");
+    expect((await call("apply_edits", { label: "x", ops: [{ type: "setClipName" }] })).content).toContain("expectedVersion");
     expect((await call("apply_edits", { expectedVersion: version, label: " ", ops: [{ type: "x" }] })).isError).toBe(true);
     expect((await call("apply_edits", { expectedVersion: version, label: "x", ops: [] })).isError).toBe(true);
     const rejected = await call("apply_edits", {
       expectedVersion: version,
       label: "Missing clip",
-      ops: [{ type: "renameClip", clip: { clipId: "nope" }, name: "x" }],
+      ops: [{ type: "setClipName", clip: { clipId: "nope" }, name: "x" }],
     });
     expect(rejected.isError).toBe(true);
     expect(parse(rejected)).toMatchObject({ status: "rejected", code: "clip-not-found", opIndex: 0 });
@@ -165,7 +176,7 @@ describe("mcpTools", () => {
     const result = await call("apply_edits", {
       expectedVersion: project.cells.version.value,
       label: "Rename",
-      ops: [{ type: "renameClip", clip: { clipId: project.findClips({ trackName: "Drums" })[0].id }, name: "Kick" }],
+      ops: [{ type: "setClipName", clip: { clipId: project.findClips({ trackName: "Drums" })[0].id }, name: "Kick" }],
     });
     const receipt = parse(result);
     expect(receipt.status).toBe("applied");
@@ -231,6 +242,31 @@ describe("mcpTools", () => {
     expect(saved).toHaveLength(1);
   });
 
+  test("export_midi and export_stems hand a .mid and the stem WAVs to the app's saver", async () => {
+    const saved: Array<{ name: string; bytes: Uint8Array }> = [];
+    const { call, project } = await song((bytes, name) => void saved.push({ name, bytes }));
+    const midi = await call("export_midi", { name: "agent.mid" });
+    expect(parse(midi)).toMatchObject({ status: "saved", name: "agent.mid", version: project.cells.version.value });
+    expect(String.fromCharCode(...saved[0].bytes.subarray(0, 4))).toBe("MThd");
+    expect((await call("export_midi", { name: "x.mid", expectedVersion: "old" })).isError).toBe(true);
+    expect((await call("export_midi", { name: "x.mid", ppq: 0 })).isError).toBe(true);
+    const stems = await call("export_stems", { name: "agent", tailSeconds: 0.1 });
+    const body = parse(stems);
+    expect(body.status).toBe("saved");
+    expect(body.files.map((file: { name: string }) => file.name)).toEqual(saved.slice(1).map((file) => file.name));
+    expect(body.files.at(-1).name).toBe("agent-mix.wav");
+    expect(new Set(saved.slice(1).map((file) => file.bytes.length)).size).toBe(1);
+    expect(String.fromCharCode(...saved[1].bytes.subarray(0, 4))).toBe("RIFF");
+    expect((await call("export_stems", { name: "x", tailSeconds: -1 })).isError).toBe(true);
+    expect((await call("export_stems", { name: "x", expectedVersion: "old" })).isError).toBe(true);
+  }, 60_000);
+
+  test("export tools without a saver are error results", async () => {
+    const { call } = await song();
+    expect((await call("export_midi", { name: "x.mid" })).isError).toBe(true);
+    expect((await call("export_stems", { name: "x" })).isError).toBe(true);
+  });
+
   test("save_as without a saver is an error result", async () => {
     const { call } = await song();
     const result = await call("save_as", { name: "x.dawproject" });
@@ -263,7 +299,7 @@ describe("mcpTools affordance", () => {
     const result = await call("apply_edits", {
       expectedVersion: version,
       label: "Typo",
-      ops: [{ type: "renameClip", clip: { clipId: drumClip.id }, name: "x", newName: "y" }],
+      ops: [{ type: "setClipName", clip: { clipId: drumClip.id }, name: "x", newName: "y" }],
     });
     expect(result.isError).toBe(true);
     expect(parse(result)).toMatchObject({ status: "rejected", code: "invalid-operation", opIndex: 0 });
@@ -276,13 +312,13 @@ describe("mcpTools affordance", () => {
     await call("apply_edits", {
       expectedVersion: project.cells.version.value,
       label: "Name",
-      ops: [{ type: "renameClip", clip: { clipId: drumClip.id }, name: "Kick" }],
+      ops: [{ type: "setClipName", clip: { clipId: drumClip.id }, name: "Kick" }],
     });
     const version = project.cells.version.value;
     const again = await call("apply_edits", {
       expectedVersion: version,
       label: "Name",
-      ops: [{ type: "renameClip", clip: { clipId: drumClip.id }, name: "Kick" }],
+      ops: [{ type: "setClipName", clip: { clipId: drumClip.id }, name: "Kick" }],
     });
     expect(again.isError).toBeUndefined();
     expect(parse(again)).toMatchObject({ status: "noop", version });

@@ -128,7 +128,9 @@ try {
   assert.ok(Math.abs(result.entries[1].earlyPeak / result.entries[1].peak - 0.25) < 0.01, JSON.stringify(result.entries[1]));
   assert.equal(result.cancellation, "AbortError");
   assert.equal(result.report.pluginDependencies.length, 0);
-  assert.ok(result.report.limitations.some((line) => line.startsWith("Audio clip gain automation")));
+  // Plain clip gain automation is standard DAWproject content now (Points expression="gain"); only stretched or looped clips keep it private.
+  assert.ok(!result.report.limitations.some((line) => /gain automation/i.test(line)), JSON.stringify(result.report.limitations));
+  assert.ok(result.report.standardContent.includes("audio clip gain and gain automation"), JSON.stringify(result.report.standardContent));
   assert.deepEqual(
     result.effectOutput.effects.map(({ type }) => type),
     ["filter", "delay"],

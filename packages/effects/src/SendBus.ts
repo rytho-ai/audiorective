@@ -25,6 +25,7 @@ export class SendBus {
   private readonly receives = new Map<string, SendReceive>();
   constructor(private readonly ctx: BaseAudioContext) {}
 
+  /** Creates the receive point `name`, or returns the existing one; connect it onward with `bus.receive(name).connect(...)`. */
   define(name: string): SendReceive {
     let node = this.receives.get(name);
     if (!node) {
@@ -34,12 +35,14 @@ export class SendBus {
     return node;
   }
 
+  /** The receive point `name`; throws when `define(name)` has not been called. */
   receive(name: string): SendReceive {
     const node = this.receives.get(name);
     if (!node) throw new Error(`SendBus: no receive named "${name}" — call define("${name}") first`);
     return node;
   }
 
+  /** True when `define(name)` has been called and `undefine(name)` has not. */
   has(name: string): boolean {
     return this.receives.has(name);
   }

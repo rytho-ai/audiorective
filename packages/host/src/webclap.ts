@@ -59,9 +59,13 @@ const modules = new WeakMap<AudioContext, Map<string, Promise<void>>>();
  */
 export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: ReadonlyCell<readonly WebClapParameter[]> }> {
   declare readonly params: WebClapParamAccess;
+  /** The AudioWorkletNode that runs the plug-in. */
   readonly node: AudioWorkletNode;
+  /** The URL the bundle was loaded from, as passed to `load`. */
   readonly bundleUrl: string;
+  /** The loaded plug-in's identity: CLAP ID, name, vendor and version. */
   readonly descriptor: WebClapDescriptor;
+  /** True when the plug-in has a GUI that `mountEditor` can show. */
   readonly hasEditor: boolean;
 
   private stateWaiters: Waiter<Uint8Array>[] = [];
@@ -129,6 +133,7 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
     for (const message of early) this.receive(message);
   }
 
+  /** Fetches the bundle, starts the plug-in in an AudioWorklet and resolves when it is ready. Rejects with the loader's error when the bundle or worklet cannot load. */
   static async load(context: AudioContext, bundle: WebClapBundle): Promise<WebClapHost> {
     const workletUrl = bundle.workletUrl ?? new URL("./webclap-worklet.js", import.meta.url).href;
     let contextModules = modules.get(context);
@@ -174,9 +179,11 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
     }
   }
 
+  /** The node that receives audio into the plug-in (an instrument plug-in ignores it). */
   get input(): AudioNode {
     return this.node;
   }
+  /** The plug-in's audio output; connect it onward like any node. */
   get output(): AudioNode {
     return this.node;
   }
@@ -249,13 +256,14 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
     this.pending.clear();
   }
 
-  /** @internal Resolves once the worklet has handled every message posted before this call, without calling into the plug-in. */
+  /** Resolves once the worklet has handled every message posted before this call, without calling into the plug-in. */
   messagesHandled(): Promise<void> {
     const result = this.wait<void>((waiter) => this.syncWaiters.push(waiter));
     this.node.port.postMessage({ type: "sync" });
     return result;
   }
 
+  /** The plug-in's state as bytes; pass them to `loadState` later to restore it. Rejects on timeout or `dispose()`. */
   async saveState(): Promise<Uint8Array> {
     return this.readState(false);
   }
@@ -266,6 +274,7 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
     return result;
   }
 
+  /** Restores bytes made by `saveState`, resolves once the plug-in has applied them. Rejects on timeout or `dispose()`. */
   async loadState(bytes: Uint8Array): Promise<void> {
     if (!(bytes instanceof Uint8Array)) throw new TypeError("WebCLAP state needs bytes.");
     const expected = new Uint8Array(bytes);
@@ -280,6 +289,7 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
     throw new DOMException("WebCLAP state did not settle after load.", "TimeoutError");
   }
 
+  /** Shows the plug-in's GUI in `frame`; returns a function that unmounts it. Throws when `hasEditor` is false. */
   async mountEditor(frame: HTMLIFrameElement): Promise<() => void> {
     if (!this.hasEditor) throw new Error("WebCLAP plug-in has no editor.");
     if (this.editor) throw new DOMException("WebCLAP editor is already mounted.", "InvalidStateError");
@@ -416,6 +426,7 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
     }
   }
 
+  /** Unmounts the editor, stops the worklet and rejects pending state requests; safe to call twice. */
   override dispose(): void {
     if (this.disposed) return;
     this.disposed = true;

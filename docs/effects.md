@@ -106,7 +106,7 @@ console.log(stretch.latency.value); // samples, known only after `ready`
 
 ## TimeStretch
 
-`TimeStretch` renders pitch-preserving duration and timing changes: an `AudioBuffer` in, an `AudioBuffer` out. Import `@audiorective/effects/time-stretch` to avoid evaluating the live effects/audio-runtime implementations. Importing it creates no nodes or DOM. Processing requires browser Web Workers and WASM support.
+`TimeStretch` renders pitch-preserving duration and timing changes: an `AudioBuffer` in, an `AudioBuffer` out. Import `@audiorective/effects/time-stretch` to avoid evaluating the live effects/audio-runtime implementations. Importing it creates no nodes or DOM. Processing requires browser Web Workers and WASM support. Pass a loaded `TimeStretch` as the `stretch` option of `openWorkspace` (see [DAW](./daw.md#stretched-audio-from-another-daw)) to keep the pitch of audio a `.dawproject` from another DAW stretches by its warp markers.
 
 `await TimeStretch.load({ wasmUrl })` fetches and compiles the Rubber Band WebAssembly build (the `rubberband-wasm3.3` C ABI) once per URL and returns a stretcher over the cached module. The package includes its adapter, but **no Rubber Band WASM binary or third-party GPL wrapper**: you host the file and pass its URL (a `blob:` or object URL works for a file the user picks). There is no built-in module URL or download.
 
@@ -346,7 +346,7 @@ const wav = await renderOffline({ seconds: 8, channels: 2, sampleRate: 44100 }, 
 
 ## Advanced: pre-warming worklets
 
-`registerWorklet(ctx, name, source)` lives in `@audiorective/core` (so the capability packages can use it) and `@audiorective/effects` re-exports it. It is exported for apps that want to load a worklet module ahead of first use (e.g. during a loading screen) rather than on first construction of `Compressor`, `Limiter`, `Ducker`, or a stretch-engine `PitchShift`. `Compressor`, `Limiter` and `Ducker` call it with the same `(ctx, name)` pair internally, so a pre-warm call and the effect's own call share one `addModule` load.
+`registerWorklet(ctx, name, source)` lives in `@audiorective/core` only (the capability packages use it too); import it from there. It is exported for apps that want to load a worklet module ahead of first use (e.g. during a loading screen) rather than on first construction of `Compressor`, `Limiter`, `Ducker`, or a stretch-engine `PitchShift`. `Compressor`, `Limiter` and `Ducker` call it with the same `(ctx, name)` pair internally, so a pre-warm call and the effect's own call share one `addModule` load.
 
 ## Common errors
 

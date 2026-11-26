@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { unzipSync, zipSync } from "fflate";
-import { AudioMedia, AudioMediaWriter, Project, openDawProject, openDawProjectBlob, saveDawProjectTo } from "../src";
+import { AudioMedia, AudioMediaWriter, Project, openDawProject, openDawProjectBlob, saveDawProject, saveDawProjectTo } from "../src";
 
 function memoryStorage() {
   const chunks: Uint8Array[] = [];
@@ -139,7 +139,11 @@ describe("file-backed audio", () => {
     expect(emptyFields.project.title).toBe("Untitled");
     emptyFields.project.dispose();
     files["metadata.xml"] = new TextEncoder().encode("<MetaData><Title/><Artist>Someone</Artist></MetaData>");
-    expect(() => openDawProject(zipSync(files))).toThrow("unsupported Artist metadata");
+    // Metadata the model has no field for is kept in the file and listed in the warnings, not rejected.
+    const kept = openDawProject(zipSync(files));
+    expect(kept.warnings.join()).toContain("MetaData/Artist");
+    expect(new TextDecoder().decode(unzipSync(saveDawProject(kept.project))["metadata.xml"])).toContain("<Artist>Someone</Artist>");
+    kept.project.dispose();
     project.dispose();
   });
 

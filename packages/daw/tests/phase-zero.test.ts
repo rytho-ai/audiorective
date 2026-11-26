@@ -41,12 +41,15 @@ test("both open paths reject a ZIP directory that disagrees with its local recor
   }
 });
 
-test("unsupported master state fails to open", () => {
+test("master state the model does not carry is kept and reported, not rejected", () => {
   const files = unzipSync(saveDawProject(new Project()));
   files["project.xml"] = strToU8(
     strFromU8(files["project.xml"]).replace('<Volume id="masterVolume"', '<Mute value="true"/><Volume id="masterVolume"'),
   );
-  expect(() => openDawProject(zipSync(files))).toThrow(/unsupported master/i);
+  const opened = openDawProject(zipSync(files));
+  expect(opened.warnings.join()).toContain("Master channel mute or solo");
+  expect(strFromU8(unzipSync(saveDawProject(opened.project))["project.xml"])).toContain('<Mute value="true"/>');
+  opened.project.dispose();
 });
 
 test("recorded channel messages survive both save paths", async () => {
@@ -124,4 +127,17 @@ test("disposed projects reject editing and both save paths", async () => {
   expect(() => project.setTitle("Closed")).toThrow(/disposed/);
   expect(() => saveDawProject(project)).toThrow(/disposed/);
   await expect(stored(project)).rejects.toThrow(/disposed/);
+});
+
+test("a plug-in on an effects bus is playable again after save and open", () => {
+  const project = new Project();
+  const bus = project.addTrack("Return", "bus", { busRole: "effect" });
+  const device = project.addWebClapDevice(bus.id, { pluginId: "example.fx", name: "Fx", bundleUrl: "/fx.wclap", state: new Uint8Array([1, 2]) });
+  const { project: opened, warnings } = openDawProject(saveDawProject(project));
+  expect(warnings).toEqual([]);
+  const reopened = opened.tracks.find(({ kind }) => kind === "bus")!;
+  expect(reopened.devices.map(({ id, pluginId, bundleUrl }) => [id, pluginId, bundleUrl])).toEqual([[device.id, "example.fx", "/fx.wclap"]]);
+  expect([...reopened.devices[0].state]).toEqual([1, 2]);
+  opened.dispose();
+  project.dispose();
 });

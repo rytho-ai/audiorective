@@ -4,6 +4,16 @@ const invalid = () => new Error("Project archive is incomplete or corrupt.");
 const view = (bytes: Uint8Array) => new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
+/** A relative path with no backslash, control or reserved character and no `.` or `..` part: spaces and non-ASCII letters, as DAWs name their audio files, are fine. */
+export function safeArchivePath(name: string): boolean {
+  if (!name) return false;
+  for (let i = 0; i < name.length; i++) {
+    const code = name.charCodeAt(i);
+    if (code < 32 || code === 127 || '\\:*?"<>|'.includes(name[i])) return false;
+  }
+  return name.split("/").every((part) => part !== "" && part !== "." && part !== "..");
+}
+
 type Entry = { size: number; crc: number; offset: number; compressedSize: number; flags: number; method: number };
 
 function directoryLocation(tail: Uint8Array, length: number) {
@@ -45,13 +55,13 @@ function parseDirectory(bytes: Uint8Array, location: ReturnType<typeof directory
     )
       throw invalid();
     const name = decoder.decode(bytes.subarray(at + 46, nameEnd));
-    if (
-      !/^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*$/.test(name) ||
-      name.split("/").some((part) => part === "." || part === "..") ||
-      entries.has(name) ||
-      name === "__proto__"
-    )
-      throw new Error("Project archive has duplicate or unsafe paths.");
+    // A folder entry holds nothing: other tools write one for `audio/` and `plugins/`.
+    if (name.endsWith("/") && size === 0 && safeArchivePath(name.slice(0, -1))) {
+      offsets.add(offset);
+      at = end;
+      continue;
+    }
+    if (!safeArchivePath(name) || entries.has(name) || name === "__proto__") throw new Error("Project archive has duplicate or unsafe paths.");
     entries.set(name, { size, crc, offset, compressedSize, flags, method });
     offsets.add(offset);
     at = end;

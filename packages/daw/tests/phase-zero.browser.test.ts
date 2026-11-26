@@ -218,10 +218,14 @@ test("M2 slow media read: seam and seek dropouts", async () => {
       prev = v;
     }
     seq.push({ from: s, to: prev });
-    // The outgoing 12ms fade changes sample amplitudes after the action.
-    // Check the contiguous source frames through each seam before that fade.
+    // A seek while playing crossfades: the old position fades out and the new one fades in over 12 ms, so the first frames at the target are scaled.
+    // The new material must be sample-accurate from the target position once that fade-in window has passed (a play from stopped has no fade and is exact from frame 0).
+    const fadeFrames = Math.round(0.03 * RATE);
     for (const start of [1.5, 5.5]) {
-      const run = seq.find(({ from }) => from === start * RATE);
+      const first = start * RATE;
+      const run = seq.find(({ from, to }) =>
+        start === 1.5 ? from === first : from >= first && from <= first + fadeFrames && to > first + fadeFrames,
+      );
       expect(run?.to, `${delay}ms read at ${start}s`).toBeGreaterThan((start + 0.6) * RATE);
     }
   }
