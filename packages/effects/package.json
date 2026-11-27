@@ -1,6 +1,6 @@
 {
   "name": "@audiorective/effects",
-  "version": "2.3.2",
+  "version": "3.0.0-beta.0",
   "description": "DSP effects for audiorective — filter, distortion, phaser, frequency shifter, ping-pong delay, convolver, compressor, limiter, ducker, pitch shift, effect chain, channel strip and send bus",
   "type": "module",
   "license": "MIT",

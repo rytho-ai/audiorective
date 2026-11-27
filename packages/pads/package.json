@@ -1,6 +1,6 @@
 {
   "name": "@audiorective/pads",
-  "version": "2.3.2",
+  "version": "3.0.0-beta.0",
   "description": "Headless choke-group pad bank",
   "type": "module",
   "license": "MIT",

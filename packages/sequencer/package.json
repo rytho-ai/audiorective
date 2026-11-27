@@ -1,6 +1,6 @@
 {
   "name": "@audiorective/sequencer",
-  "version": "2.3.2",
+  "version": "3.0.0-beta.0",
   "description": "Headless lane-based step sequencer with pattern notation and built-in sounds",
   "type": "module",
   "license": "MIT",

@@ -1,6 +1,6 @@
 {
   "name": "@audiorective/samples",
-  "version": "2.3.2",
+  "version": "3.0.0-beta.0",
   "description": "Headless sample library loading and caching",
   "type": "module",
   "license": "MIT",

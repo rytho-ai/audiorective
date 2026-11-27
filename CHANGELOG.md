@@ -13,6 +13,8 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ## [Unreleased]
 
+## [3.0.0-beta.0] - 2026-11-27
+
 ### Added
 
 - **daw, mcp:** a stepped device parameter snaps instead of throwing. `project.setDeviceParameter` and the `setDeviceParameter` operation take any value from `min` to `max` on a `step: 1` parameter and apply the nearest whole step counted from `min` (a tie goes up: `53.9` applies as `54`); a value outside the range still throws. `project.setDeviceParameter` returns the value applied, and the `applyEdits` receipt (and the MCP `apply_edits` result) has `deviceParameters: [{ deviceId, parameterId, value }]`, one entry per `setDeviceParameter` operation in request order. The message `… is stepped and needs a whole number …` is gone. `read_automation` for a controller lane the track does not have returns `points: []` with a `note` instead of an error (an unknown track still errors), so the call that prepares a `setControllerLane` works.

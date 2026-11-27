@@ -306,7 +306,7 @@ const INSTRUCTIONS =
 /** An MCP server whose tools are whatever the connected page serves. It holds no DAW logic. Connect it to a transport. */
 export function createMcpServer(bridge: PageBridge): Server {
   const server = new Server(
-    { name: "audiorective-mcp", version: "2.3.2" },
+    { name: "audiorective-mcp", version: "3.0.0-beta.0" },
     { capabilities: { tools: { listChanged: true } }, instructions: INSTRUCTIONS },
   );
   bridge.onChange(() => {

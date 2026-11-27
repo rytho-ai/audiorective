@@ -1,6 +1,6 @@
 {
   "name": "@audiorective/widgets",
-  "version": "2.3.2",
+  "version": "3.0.0-beta.0",
   "description": "Composable player controls, waveform and MIDI piano-roll display, selection and audio audition widgets",
   "type": "module",
   "license": "MIT",

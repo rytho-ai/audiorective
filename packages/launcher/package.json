@@ -1,6 +1,6 @@
 {
   "name": "@audiorective/launcher",
-  "version": "2.3.2",
+  "version": "3.0.0-beta.0",
   "description": "Headless clip launcher: tracks of clips with quantised launches, scenes, follow actions and pattern clips on a clock",
   "type": "module",
   "license": "MIT",

@@ -1,6 +1,6 @@
 {
   "name": "@audiorective/daw",
-  "version": "2.3.2",
+  "version": "3.0.0-beta.0",
   "description": "Audio and MIDI projects, the DAWproject codec and a browser playback runtime",
   "type": "module",
   "license": "MIT",

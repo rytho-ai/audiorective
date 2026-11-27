@@ -1,6 +1,6 @@
 {
   "name": "@audiorective/mcp",
-  "version": "2.3.2",
+  "version": "3.0.0-beta.0",
   "description": "MCP stdio server that relays an agent's tool calls to an audiorective page over a WebSocket",
   "type": "module",
   "license": "MIT",

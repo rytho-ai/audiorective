@@ -1,6 +1,6 @@
 {
   "name": "@audiorective/recorder",
-  "version": "2.3.2",
+  "version": "3.0.0-beta.0",
   "description": "Headless AudioWorklet PCM take capture",
   "type": "module",
   "license": "MIT",

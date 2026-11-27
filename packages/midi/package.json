@@ -1,6 +1,6 @@
 {
   "name": "@audiorective/midi",
-  "version": "2.3.2",
+  "version": "3.0.0-beta.0",
   "description": "Pure MIDI note data and browser MIDI take recording",
   "type": "module",
   "license": "MIT",

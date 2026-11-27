@@ -638,7 +638,7 @@ function prepareDawProject(
   const document = new DOMImplementation().createDocument(null, "Project", null);
   const root = document.documentElement!;
   root.setAttribute("version", "1.0");
-  append(root, "Application", { name: "Audiorective", version: "2.3.2" });
+  append(root, "Application", { name: "Audiorective", version: "3.0.0-beta.0" });
   const transport = append(root, "Transport");
   index.set("tempo", append(transport, "Tempo", { id: "transportTempo", unit: "bpm", value: project.bpm }));
   index.set(

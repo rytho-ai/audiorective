@@ -1,6 +1,6 @@
 {
   "name": "@audiorective/player",
-  "version": "2.3.2",
+  "version": "3.0.0-beta.0",
   "description": "Headless range playback with committed selections and offline time-stretch",
   "type": "module",
   "license": "MIT",
