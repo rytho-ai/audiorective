@@ -474,7 +474,3 @@ Two things to remember when writing assertions:
 - **Syncing `FilePlayer`.** It runs on the media clock and cannot sample-lock to ctx-clocked sources; the clock governs ctx-clocked sources (`BufferPlayer`, `Sampler`, synths).
 - **Note content and micro-timing** live in [StepSequencer](./sequencer.md) and [MIDI](./midi.md); they attach to this timing owner.
 - **String time notation.** Plain floats only.
-
-## Design
-
-See [`docs/superpowers/specs/2026-07-04-clock-design.md`](https://github.com/audiorective/audiorective/blob/eaad3df1bf52ec319414b73640d273ae445ecbb2/docs/superpowers/specs/2026-07-04-clock-design.md) for the full design rationale, including the stress-test findings against step-sequencer/drum-machine/DAW/rhythm-game usage.

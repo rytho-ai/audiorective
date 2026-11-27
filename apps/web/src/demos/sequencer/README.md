@@ -92,8 +92,8 @@ Scheduling is verified deterministically. `DrumMachine`'s only injectable seam i
 
 ## Deliberately out of scope
 
-Swing, velocity, and per-note offsets are note-content concerns for a future track/clip primitive, not the clock's job — see the [clock design spec](https://github.com/audiorective/audiorective/blob/eaad3df1bf52ec319414b73640d273ae445ecbb2/docs/superpowers/specs/2026-07-04-clock-design.md).
+Swing, velocity, and per-note offsets are note-content concerns for a future track/clip primitive, not the clock's job.
 
 Note that pattern repetition is _not_ out of scope here — it's the `CycleBarRuler`, and it's the same mechanism a DAW transport loop uses. The beat axis never jumps in either case; you read it modulo the region. Treating the two as different things would be a distinction the design doesn't actually make.
 
-Design notes: [`docs/superpowers/specs/2026-07-12-step-sequencer-demo-design.md`](https://github.com/audiorective/audiorective/blob/eaad3df1bf52ec319414b73640d273ae445ecbb2/docs/superpowers/specs/2026-07-12-step-sequencer-demo-design.md) · [`docs/superpowers/specs/2026-09-02-latency-lab-demo-design.md`](https://github.com/audiorective/audiorective/blob/a5b16408c9df64fa1fbce46283d16293b4741923/docs/superpowers/specs/2026-09-02-latency-lab-demo-design.md) · Clock guide: [`docs/clock.md`](../../../../../docs/clock.md)
+Clock guide: [`docs/clock.md`](../../../../../docs/clock.md)

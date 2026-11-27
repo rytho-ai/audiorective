@@ -97,4 +97,4 @@ The headless `FxRack` constructs against an `OfflineAudioContext`, renders one b
 
 The delay has no tempo sync — `PingPongDelay.delayTime` is always in seconds; the app or a higher-level scheduler converts beats to durations. The `Compressor` and `Limiter` are plain feedforward dynamics with no modelled-hardware presets (VCA, FET, opto modes). Both are design constraints owned by the effects package, not specific to this demo.
 
-Design notes: [`docs/superpowers/specs/2026-09-06-effects-package-design.md`](https://github.com/audiorective/audiorective/blob/a5b16408c9df64fa1fbce46283d16293b4741923/docs/superpowers/specs/2026-09-06-effects-package-design.md#part-8--showroom-demo-fx-rack) · Effects guide: [`docs/effects.md`](../../../../../docs/effects.md)
+Effects guide: [`docs/effects.md`](../../../../../docs/effects.md)

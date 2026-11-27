@@ -160,4 +160,3 @@ Invalid constructor option combinations throw `TypeError`; numeric scheduling an
 <span id="testing-scheduling-deterministically"></span>[testing scheduling deterministically](./clock-advanced.md#testing-scheduling-deterministically).
 <span id="when-you-cant-inject--testing-a-type-that-owns-its-clock"></span>[when you cant inject — testing a type that owns its clock](./clock-advanced.md#when-you-cant-inject--testing-a-type-that-owns-its-clock).
 <span id="non-goals"></span>[non goals](./clock-advanced.md#non-goals).
-<span id="design"></span>[design](./clock-advanced.md#design).
