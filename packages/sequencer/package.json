@@ -13,7 +13,7 @@
     "url": "git+https://github.com/audiorective/audiorective.git",
     "directory": "packages/sequencer"
   },
-  "author": "Chriest Yu <jcppman@gmai.com>",
+  "author": "Chriest Yu <jcppman@gmail.com>",
   "files": [
     "dist"
   ],
