@@ -2,7 +2,9 @@ import { AudioBufferCache, batch, cell, readonlyCell, type Cell, type ReadonlyCe
 import { Effect, type EffectOptions } from "./Effect";
 
 export interface ConvolverOptions extends EffectOptions {
+  /** Optional impulse response; takes precedence over url when both are supplied. */
   buffer?: AudioBuffer;
+  /** Optional impulse-response URL loaded asynchronously when no buffer is supplied. */
   url?: string;
   /** ConvolverNode.normalize. Default true. */
   normalize?: boolean;

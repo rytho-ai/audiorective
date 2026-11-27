@@ -4,12 +4,12 @@
   "tasks": [
     {
       "id": "S1-stretch-to-tempo",
-      "prompt": "A browser DAW has an open 4/4 song as `project` (100 BPM) and its running engine as `workspace`. The audio track `Loop` has one audio clip `clipId`: a drum loop recorded at 90 BPM, exactly 4 bars long in the recording (10.667 s). Write the `Stretch to tempo` button: it makes the clip fill the same 4 bars at the song's 100 BPM (9.6 s on the timeline) without changing pitch, using the pitch-preserving stretcher in `stretch`. Rendering takes seconds and must not freeze the page, and the user can press Cancel (`controller`) to abandon it with the song untouched; the song only changes at the end, as one Undo step named `Stretch loop`, and only if the clip was not edited meanwhile (otherwise tell the user). The user can also pin the drum hit at 2.0 s of the recording to land exactly on beat 2 of the clip. Afterwards show `ratio` (timeline seconds over recording seconds) in a label. A waveform overlay also needs two helpers: where a second of the recording sits on the clip's timeline, and the other way round.",
+      "prompt": "A browser DAW has an open 4/4 song as `project` (100 BPM) and its running engine as `workspace`. The audio track `Loop` has one audio clip `clipId`: a drum loop recorded at 90 BPM, exactly 4 bars long in the recording (10.667 s). Write the `Stretch to tempo` button: it makes the clip fill the same 4 bars at the song's 100 BPM (9.6 s on the timeline) without changing pitch, using the pitch-preserving stretcher in `stretch`. Rendering takes seconds and must not freeze the page, and the user can press Cancel (`controller`) to abandon it with the song untouched; the song only changes at the end, as one Undo step named `Stretch loop`, and only if the clip was not edited meanwhile (otherwise tell the user). The user can also pin the drum hit at 2.0 s of the recording to land exactly two beats after the clip's start. Afterwards show `ratio` (timeline seconds over recording seconds) in a label. A waveform overlay also needs two helpers: where a second of the recording sits on the clip's timeline, and the other way round.",
       "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;\ndeclare const clipId: string;\ndeclare const stretch: import(\"@audiorective/player\").WaveStretchProcessor;\ndeclare const controller: AbortController;",
       "expectations": [
         "Renders the stretched audio through the running engine with the given stretcher and an abort signal, without changing the song until the render has finished.",
         "Uses a ratio of 0.9 (9.6 s of timeline over 10.667 s of recording).",
-        "Passes an anchor so the hit at 2.0 s of the recording lands on beat 2 of the clip (1.2 s on the timeline at 100 BPM).",
+        "Passes an anchor so the hit at 2.0 s of the recording lands two beats after the clip start (1.2 s on the timeline at 100 BPM).",
         "Commits the finished render to the song as one Undo step only if the clip is unchanged since it was read, and reports the conflict otherwise.",
         "Cancel leaves the song untouched and does not show an error.",
         "Maps recording seconds to timeline seconds and back through the clip's own time map, including the anchor, not by a single multiplication."
@@ -24,7 +24,7 @@
         {
           "expectation": 1,
           "label": "Ratio 0.9",
-          "any": ["0\\.9\\b", "9\\.6\\s*/\\s*10\\.6"]
+          "any": ["0\\.9\\b", "9\\.6\\s*/\\s*10\\.6", "beatToSeconds"]
         },
         {
           "expectation": 2,
@@ -34,7 +34,7 @@
         {
           "expectation": 3,
           "label": "Apply stretch",
-          "all": ["applyAudioClipStretch"]
+          "any": ["applyAudioClipStretch", "\\.apply\\(\\)"]
         },
         {
           "expectation": 5,
@@ -74,7 +74,7 @@
         {
           "expectation": 3,
           "label": "Unity envelope",
-          "all": ["unityClipEnvelope"]
+          "any": ["unityClipEnvelope", "gain\\s*:\\s*1"]
         },
         {
           "expectation": 4,

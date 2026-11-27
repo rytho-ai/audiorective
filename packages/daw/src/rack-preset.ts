@@ -5,25 +5,65 @@ import { normalizeEqualizerBands, type EqualizerBand } from "@audiorective/effec
 export type RackMacroParameter = "wet" | "frequency" | "q" | "delayTime" | "feedback";
 export type RackMacroMapping = ValueRange &
   Readonly<{
+    /** Opaque ID of the target insert slot within this track rack. */
     slotId: string;
+    /** Insert parameter key; the selected effect must expose it. */
     parameter: RackMacroParameter;
+    /** Interpolation from min to max; default linear, with positive endpoints required for exponential. */
     scale?: "linear" | "exponential";
   }>;
 export type RackMacroSettings = Readonly<{
   id: string;
+  /** Optional display label; omitted to use the macro ID as its control label. */
   label?: string;
+  /** Normalized macro position 0..1, mapped to each target range. */
   value: number;
+  /** Distinct insert-parameter mappings owned by this macro; empty for an unassigned control. */
   targets: readonly RackMacroMapping[];
 }>;
 
 export const isMacroValue = (value: number): boolean => Number.isFinite(value) && value >= 0 && value <= 1;
 
-export type EffectSlot = Readonly<{ id: string; enabled: boolean; wet: number }>;
-export type RackFilter = EffectSlot & Readonly<{ type: "filter"; mode: "lowpass" | "highpass"; frequency: number; q: number }>;
-export type RackDelay = EffectSlot & Readonly<{ type: "delay"; delayTime: number; feedback: number }>;
-export type RackEq = EffectSlot & Readonly<{ type: "eq"; bands: readonly EqualizerBand[] }>;
+export type EffectSlot = Readonly<{
+  id: string;
+  /** Whether the insert processes audio; false bypasses its wet contribution. */
+  enabled: boolean;
+  /** Wet/dry blend 0..1, from fully dry to fully processed. */
+  wet: number;
+}>;
+export type RackFilter = EffectSlot &
+  Readonly<{
+    type: "filter";
+    /** Filter response, lowpass or highpass. */
+    mode: "lowpass" | "highpass";
+    /** Cutoff frequency in hertz, 20..20000. */
+    frequency: number;
+    /** Dimensionless resonance Q, 0.1..20. */
+    q: number;
+  }>;
+export type RackDelay = EffectSlot &
+  Readonly<{
+    type: "delay";
+    /** Delay duration in seconds, 0.01..1. */
+    delayTime: number;
+    /** Dimensionless repeat gain, 0..0.95. */
+    feedback: number;
+  }>;
+export type RackEq = EffectSlot &
+  Readonly<{
+    type: "eq";
+    /** Ordered equalizer bands, each validated in its own frequency, gain-in-dB and Q ranges. */
+    bands: readonly EqualizerBand[];
+  }>;
 export type RackEffect = RackFilter | RackDelay | RackEq;
-export type RackPreset = Readonly<{ version?: 1; effects: readonly RackEffect[]; macros?: readonly RackMacroSettings[] }>;
+export type RackPreset = Readonly<{
+  /** Preset format marker; omitted is treated as version 1. */
+  version?: 1;
+  /** Ordered built-in insert settings; empty for a dry rack. */
+  effects: readonly RackEffect[];
+  /** Normalized controls and their insert mappings; omitted for no macros. */
+  macros?: readonly RackMacroSettings[];
+}>;
 
 const between = (value: number, min: number, max: number) => Number.isFinite(value) && value >= min && value <= max;
 

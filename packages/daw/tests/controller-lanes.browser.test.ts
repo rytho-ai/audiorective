@@ -167,7 +167,9 @@ describe("a running Workspace sends the lanes to the track's instrument", () => 
       [3, 0],
     ]);
     expect(messagesOf(sent, 0xb0, 1)).toEqual(expectedModWheel());
+    // The bend's first point is at beat 1: before it the transport starts the channel at its rest value, the centre.
     expect(messagesOf(sent, 0xe0)).toEqual([
+      [0, 8192],
       [1, 8192],
       [3, 16383],
     ]);
@@ -240,7 +242,10 @@ describe("a running Workspace sends the lanes to the track's instrument", () => 
       { instruments },
     );
     const afterSeek = during.slice(mark).filter(({ when }) => when < 0.5 + 0.2);
-    expect(afterSeek.map(({ data }) => data.join(",")).sort()).toEqual(["176,1,127", "176,64,127", "225,0,64"]);
+    // The seek moves nothing to rest first: the position chases what beat 2.5 needs and sends only what differs from where the device is. The wheel was
+    // mid-ramp and goes to 127; the pedal is down on both sides (the sampler lifts it on all-notes-off, so it is pressed again, never lifted); the bend
+    // already stands at its centre.
+    expect(afterSeek.map(({ data }) => data.join(",")).sort()).toEqual(["176,1,127", "176,64,127"]);
   }, 60_000);
 
   test("a loop of beats 1 to 3 puts each lane back to its value at beat 1 at every wrap", async () => {
@@ -261,17 +266,14 @@ describe("a running Workspace sends the lanes to the track's instrument", () => 
       ],
       { instruments },
     );
-    // From beat 1: the pedal goes down at once, then wraps at 1 s and 2 s of the context put it (and the others) back at beat 1's values.
+    // From beat 1: the pedal goes down at once. The wraps at 1 s and 2 s of the context put each lane back to its value at beat 1, and send only what the
+    // region changed: the pedal and the bend stand at their beat 1 values through the loop, so they are not sent again.
     const sustainMessages = sent
       .filter(({ data }) => data[0] === 0xb0 && data[1] === 64)
       .map(({ data, when }) => [Math.round(when * 1e6) / 1e6, data[2]]);
-    expect(sustainMessages.slice(0, 3)).toEqual([
-      [0, 127],
-      [1, 127],
-      [2, 127],
-    ]);
+    expect(sustainMessages.slice(0, 3)).toEqual([[0, 127]]);
     const bendMessages = sent.filter(({ data }) => (data[0] & 0xf0) === 0xe0).map(({ when }) => Math.round(when * 1e6) / 1e6);
-    expect(bendMessages.slice(0, 3)).toEqual([0, 1, 2]);
+    expect(bendMessages.slice(0, 3)).toEqual([0]);
     // The mod wheel keeps moving inside the loop and restarts from its value at beat 1 (64) at each wrap.
     const wheel = sent.filter(({ data }) => data[0] === 0xb0 && data[1] === 1);
     expect(wheel.filter(({ when }) => Math.abs(when - 1) < 1e-6).map(({ data }) => data[2])).toEqual([64]);

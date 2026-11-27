@@ -14,24 +14,35 @@ export type RenderSessionOptions = Readonly<{
   expectedVersion?: ProjectVersion;
   /** Seconds rendered after the last scene so reverbs and delays ring out. Default: 2. */
   tailSeconds?: number;
+  /** Cancels the offline render with AbortError; omitted to render until completion. */
   signal?: AbortSignal;
 }>;
 
 export type RenderSessionResult = Readonly<
   | {
+      /** Outcome tag; rendered carries audio and conflict carries the current version without rendering. */
       status: "rendered";
+      /** Project version captured for rendering, or the current version when a conflict prevents rendering. */
       version: ProjectVersion;
       /** Stereo PCM from beat 0 (the first scene's start) to the end of the last scene plus the tail. */
       audio: PCMData;
+      /** Rendered duration in seconds including the tail, rounded to sample frames. */
       durationSeconds: number;
-      /** Seconds in `audio` where each entry of `scenes` starts, on a bar line, in play order. */
+      /** Seconds from the start of audio where each requested scene begins, in play order. */
       starts: readonly number[];
-      /** `null` for digital silence. */
+      /** Sample peak in dBFS; null for digital silence. */
       peakDbFS: number | null;
-      /** BS.1770 gated loudness; `null` under 400 ms or silent. */
+      /** BS.1770 gated integrated loudness in LUFS; null below 0.4 seconds or for silence. */
       loudnessLUFS: number | null;
     }
-  | { status: "conflict"; version: ProjectVersion; reason: string }
+  | {
+      /** Outcome tag; rendered carries audio and conflict carries the current version without rendering. */
+      status: "conflict";
+      /** Project version captured for rendering, or the current version when a conflict prevents rendering. */
+      version: ProjectVersion;
+      /** Human-readable explanation of the version conflict; no audio was rendered. */
+      reason: string;
+    }
 >;
 
 const EPS = 1e-9;

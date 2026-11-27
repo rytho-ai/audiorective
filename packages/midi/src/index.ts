@@ -18,11 +18,14 @@ export { parseMidi } from "./midi-file";
 export { writeMidi } from "./midi-writer";
 export type { WriteMidiInput, MidiWriteTrack } from "./midi-writer";
 export { midiGrid } from "./midi-grid";
+export { controllerRestValue, restOf as controllerRestOf, controllerStateKey, chaseMessages } from "./midi-rest";
+export type { RestExpression } from "./midi-rest";
 export { compileMidiPlaybackEvents } from "./midi-playback";
 export type { MidiPlaybackSource, MidiPlaybackSourceEvent, MidiPlaybackEvent } from "./midi-playback";
-export { MidiClip } from "./MidiClip";
+export { MidiClip, claimController } from "./MidiClip";
 export type {
   MidiClipOptions,
+  ClipMessage,
   NoteHit,
   NoteTransform,
   ClipLength,

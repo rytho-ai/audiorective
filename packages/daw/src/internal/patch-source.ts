@@ -4,6 +4,7 @@ import type { TempoMap } from "../tempo-map";
 import { foldSteps, leavingShapes, type PointShape } from "./point-shape";
 import { identityWarpPoints, readWarpPoints, warpTolerance, warpVerdict } from "./nested-audio";
 import { controllerFromNormalized, type ControllerExpression } from "../controller-lane";
+import { writeKeptShifts } from "./kept-timeline";
 import { unmodeledPoints, type ClipLink, type Snapshot, type SourceXml, type TrackLink } from "./source-xml";
 
 /** The elements the model would write for the current project, by entity key (`clip:clip3`, `volume:track1`, ...). */
@@ -126,6 +127,7 @@ export function applySourcePatch({ source, index, entries, mediaEntries, preserv
   projectXml: string;
   metadataXml: string;
 } {
+  writeKeptShifts(source);
   const doc = source.project;
   const root = doc.documentElement!;
   const base = source.baseline ?? new Map<string, Snapshot>();
@@ -479,7 +481,7 @@ export function applySourcePatch({ source, index, entries, mediaEntries, preserv
         const before = base.get(key)!;
         const after = cur.get(key)!;
         mergeAttrs(existing, before.attrs, after.attrs, ["id"]);
-        for (const tag of ["State"])
+        for (const tag of ["Parameters", "State"])
           if (before.childXml[tag] !== after.childXml[tag]) {
             remove(kid(existing, tag));
             const fresh = kid(index.get(key)!, tag);

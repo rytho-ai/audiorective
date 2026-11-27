@@ -17,11 +17,24 @@ export type WriteMidiInput = Readonly<{
   /** Ticks per quarter note, integer 1..32767. Default 960. */
   ppq?: number;
   /** Tempo steps from a beat on; one at beat 0 sets the starting tempo (default 120 BPM). */
-  tempos?: readonly Readonly<{ beat: number; bpm: number }>[];
+  tempos?: readonly Readonly<{
+    /** Quarter-note beat position at which this tempo takes effect. */
+    beat: number;
+    /** Positive tempo in quarter-note beats per minute. */
+    bpm: number;
+  }>[];
   /** Time signatures from a beat on; one at beat 0 sets the first (default 4/4). The denominator is a power of two up to 128. */
-  signatures?: readonly Readonly<{ beat: number; numerator: number; denominator: number }>[];
+  signatures?: readonly Readonly<{
+    /** Quarter-note beat position at which this meter takes effect. */
+    beat: number;
+    /** Number of denominator note values per bar. */
+    numerator: number;
+    /** Meter note-value denominator; 4 denotes a quarter note. */
+    denominator: number;
+  }>[];
   /** Name of the conductor track (the first chunk, which carries tempo and meter). */
   title?: string;
+  /** Tracks written in input order; each track retains its own messages and notes. */
   tracks: readonly MidiWriteTrack[];
   /** Omit repeated status bytes. Default false. */
   runningStatus?: boolean;
@@ -65,7 +78,7 @@ function chunk(events: Out[], endTick: number, name: string | undefined, running
  * Beats become ticks by rounding at `ppq`. At one tick note-offs come first, then other messages, then note-ons, so a note that ends where the next starts stays two notes.
  * Throws `writeMidi ...` RangeErrors on values a file cannot hold.
  */
-export function writeMidi(input: WriteMidiInput): Uint8Array {
+export function writeMidi(input: WriteMidiInput): Uint8Array<ArrayBuffer> {
   const ppq = input.ppq ?? 960;
   if (!Number.isInteger(ppq) || ppq < 1 || ppq > 32767) bad("ppq must be an integer from 1 to 32767.");
   const tickOf = (beat: number, what: string): number => {

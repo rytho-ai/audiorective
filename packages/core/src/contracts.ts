@@ -4,6 +4,7 @@ import { hash01 } from "./hash";
 export interface CancellableEvent {
   /** `time` is the audio-context time, in seconds, the retraction takes effect (a scheduler's `cancelFrom(time)`, or now for a transport change or refresh); an event that is already sounding may stop at it. Omitted: now. */
   cancel(time?: number): void;
+  /** Registers a notification when the owned event finishes or is cancelled. */
   onEnded(listener: () => void): void;
 }
 
@@ -41,29 +42,58 @@ export function withCancel(event: CancellableEvent | null, undo: () => void): Ca
 
 /** Converts between beats and absolute audio-context time. */
 export type BeatTiming = Readonly<{
+  /** Maps a quarter-note beat position to absolute AudioContext seconds. */
   beatToTime(beat: number): number;
   /** Beat at absolute audio-context `time` (seconds). */
   timeToBeat(time: number): number;
 }>;
 
 /** The one field every scheduler's outgoing event has: the absolute audio-context time it sounds. */
-export type ScheduledEvent = Readonly<{ when: number }>;
+export type ScheduledEvent = Readonly<{
+  /** Absolute AudioContext seconds at which the event sounds. */
+  when: number;
+}>;
 
 /** A scheduled event that also has a length (`duration`, seconds) and a level (`velocity`, 0..1), such as a note or a hit. */
-export type TimedEvent = ScheduledEvent & Readonly<{ duration: number; velocity: number }>;
+export type TimedEvent = ScheduledEvent &
+  Readonly<{
+    /** Positive event length in seconds. */
+    duration: number;
+    /** Normalized strike strength, 0..1; transforms discard events at 0. */
+    velocity: number;
+  }>;
 
 /** The one field every event has inside a transform pipeline: the beat it sounds at, before it is mapped to audio time. */
-export type BeatEvent = Readonly<{ beat: number }>;
+export type BeatEvent = Readonly<{
+  /** Quarter-note beat position; 0 is the transport origin. */
+  beat: number;
+}>;
 
 /** A beat event that also has a length in beats and a level. Its seconds form is a `TimedEvent`. */
-export type TimedBeatEvent = BeatEvent & Readonly<{ durationBeats: number; velocity: number }>;
+export type TimedBeatEvent = BeatEvent &
+  Readonly<{
+    /** Positive event length in quarter-note beats. */
+    durationBeats: number;
+    /** Normalized strike strength, 0..1; transforms discard events at 0. */
+    velocity: number;
+  }>;
 
 /**
  * The seconds form of a beat event, which is what a scheduler triggers and what a `unit: "second"` transform sees:
  * `beat` becomes `when` and `durationBeats`, when present, becomes `duration`. Every other field is unchanged.
  */
 export type SecondsOf<E extends BeatEvent> = Readonly<
-  Omit<E, "beat" | "durationBeats"> & ScheduledEvent & (E extends { durationBeats: number } ? { duration: number } : unknown)
+  Omit<E, "beat" | "durationBeats"> &
+    ScheduledEvent &
+    (E extends {
+      /** Positive quarter-note beat length recognized by the conditional conversion. */
+      durationBeats: number;
+    }
+      ? {
+          /** Converted event length in seconds, preserving the tempo curve across the event. */
+          duration: number;
+        }
+      : unknown)
 >;
 
 /** The unit of the events a transform reads and returns: `"beat"` (the default) or `"second"`. */
@@ -96,10 +126,25 @@ export type EventTransformContext = Readonly<{
  * adjustments that are really about time, such as millisecond jitter; the result is mapped back to beats for the next transform.
  * `apply` is pure: it keeps no state across windows and never triggers or cancels audio.
  */
-export type EventTransform<E extends BeatEvent = BeatEvent> = Readonly<{ id: string; params?: Readonly<Record<string, unknown>> }> &
+export type EventTransform<E extends BeatEvent = BeatEvent> = Readonly<{
+  /** Stable transform identifier used to attribute validation errors. */
+  id: string;
+  /** Serializable transform settings; omitted when the transform has none. */
+  params?: Readonly<Record<string, unknown>>;
+}> &
   (
-    | Readonly<{ unit?: "beat"; apply(events: readonly E[], context: EventTransformContext): readonly E[] }>
-    | Readonly<{ unit: "second"; apply(events: readonly SecondsOf<E>[], context: EventTransformContext): readonly SecondsOf<E>[] }>
+    | Readonly<{
+        /** Input/output coordinates in quarter-note beats; omission selects this default variant. */
+        unit?: "beat";
+        /** Pure beat-event mapping; returns valid quarter-note positions and durations without triggering audio. */
+        apply(events: readonly E[], context: EventTransformContext): readonly E[];
+      }>
+    | Readonly<{
+        /** Input/output coordinates in absolute AudioContext seconds; required for this variant. */
+        unit: "second";
+        /** Pure seconds-event mapping; returns valid audio times and durations without triggering audio. */
+        apply(events: readonly SecondsOf<E>[], context: EventTransformContext): readonly SecondsOf<E>[];
+      }>
   );
 
 /**
@@ -108,7 +153,13 @@ export type EventTransform<E extends BeatEvent = BeatEvent> = Readonly<{ id: str
  * `{ ...event }` copy; without it the event's `beat` (or `when`) is the identity, which is stable only while no earlier transform moves it.
  * `seed` defaults to 0.
  */
-export type EventTransformInput = Omit<EventTransformContext, "randomFor"> & Readonly<{ seed?: number; keyOf?: (event: never) => number | string }>;
+export type EventTransformInput = Omit<EventTransformContext, "randomFor"> &
+  Readonly<{
+    /** Deterministic random seed; defaults to 0. */
+    seed?: number;
+    /** Stable event identity for repeatable randomness; defaults to its beat or audio time. */
+    keyOf?: (event: never) => number | string;
+  }>;
 
 type AnyEvent = Record<string, unknown>;
 
@@ -186,7 +237,16 @@ export function applyEventTransforms<E extends BeatEvent>(
 export type Random = (key?: number | string) => number;
 
 /** The timing fields of an event a per-event `transform` may move: absolute audio seconds and the beat position, and the length in seconds and in beats. */
-export type HitTiming = Readonly<{ when: number; duration: number; beat: number; durationBeats: number }>;
+export type HitTiming = Readonly<{
+  /** Absolute AudioContext seconds at which the hit sounds. */
+  when: number;
+  /** Positive sounding length in seconds. */
+  duration: number;
+  /** Quarter-note beat position; beat edits take precedence over audio-time edits. */
+  beat: number;
+  /** Positive sounding length in quarter-note beats. */
+  durationBeats: number;
+}>;
 
 /**
  * Resolves what a per-event `transform` returned against the event it was given. Beats win: a changed `beat` or `durationBeats` is mapped through `timing`,

@@ -14,8 +14,11 @@ export type GraphSource = AudioNode | AudioProcessor; // AudioWorkletNode exclud
 export type GraphSink = AudioNode | AudioProcessor | AudioParam | SchedulableParam;
 
 export interface EdgeOptions {
+  /** Zero-based source output port; defaults to 0. */
   output?: number;
+  /** Zero-based destination input port; defaults to 0. */
   input?: number;
+  /** Optional diagnostic text for this connection; does not affect routing. */
   label?: string;
 }
 
@@ -35,8 +38,11 @@ type ValidateEdge<E> = E extends readonly [infer From, infer To, ...infer Rest] 
 export type ValidateEdges<E extends EdgeList> = { [K in keyof E]: E[K] extends GraphEdge ? ValidateEdge<E[K]> : E[K] };
 
 export interface GraphOptions {
+  /** Audio context shared by every node in this graph. */
   context: BaseAudioContext;
+  /** Enable automatic join-point latency compensation; defaults to true. */
   compensate?: boolean;
+  /** Optional processor whose latency includes this graph's internal paths. */
   owner?: AudioProcessor;
   /**
    * Called with the handle after each solve completes. `AudioEngine` uses this to keep
@@ -47,6 +53,7 @@ export interface GraphOptions {
 }
 
 export interface GraphHandle {
+  /** Disconnects owned graph routes and compensation nodes; safe to call twice. */
   dispose(): void;
   /** Target arrival in samples at `node`'s output in the last solve; live compensation may still be crossfading. */
   arrivalOf(node: GraphSource): number;
@@ -90,9 +97,34 @@ interface Wire {
 }
 
 export interface GraphSnapshot {
+  /** Monotonically increasing diagnostic solve counter. */
   solveId: number;
-  nodes: { id: number; kind: "native" | "processor"; label: string; latency: number; arrival: number }[];
-  edges: { from: number; to: number; label?: string; kind: "audio" | "param" | "virtual" | "back"; compensationSamples: number }[];
+  /** Snapshot of participating nodes; identifiers are local to the diagnostic graph. */
+  nodes: {
+    /** Numeric node identifier referenced by snapshot edges. */
+    id: number;
+    /** Node category: native Web Audio node or AudioProcessor. */
+    kind: "native" | "processor";
+    /** Human-readable diagnostic text; does not affect routing. */
+    label: string;
+    /** Declared processing delay in sample frames. */
+    latency: number;
+    /** Accumulated arrival delay in sample frames. */
+    arrival: number;
+  }[];
+  /** Snapshot of connections, including virtual and feedback edges. */
+  edges: {
+    /** Numeric identifier of the source node in this snapshot. */
+    from: number;
+    /** Numeric identifier of the destination node in this snapshot. */
+    to: number;
+    /** Optional diagnostic text inherited from the connection. */
+    label?: string;
+    /** Connection category; back edges are excluded from forward delay solving. */
+    kind: "audio" | "param" | "virtual" | "back";
+    /** Additional alignment delay in sample frames; 0 when none is needed. */
+    compensationSamples: number;
+  }[];
 }
 
 interface GraphRegistration {

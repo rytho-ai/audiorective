@@ -6,9 +6,13 @@ import { StretchShifter } from "./pitch/StretchShifter";
 export type PitchShiftEngine = "granular" | "stretch";
 
 export interface StretchOptions {
+  /** Optional Signalsmith tonal-frequency limit in hertz; omitted to use the engine default. */
   tonalityHz?: number;
+  /** Optional formant preservation; omitted to use the Signalsmith default. */
   formantCompensation?: boolean;
+  /** Optional formant shift in semitones; omitted to use the Signalsmith default. */
   formantSemitones?: number;
+  /** Optional Signalsmith processing block duration in milliseconds, matching its native configuration. */
   blockMs?: number;
 }
 
@@ -19,6 +23,7 @@ export interface PitchShiftOptions extends EffectOptions {
   engine?: PitchShiftEngine;
   /** Grain size for the granular engine, seconds. Default 0.1. */
   windowSize?: number;
+  /** Optional Signalsmith configuration; used only by the stretch engine. */
   stretch?: StretchOptions;
 }
 

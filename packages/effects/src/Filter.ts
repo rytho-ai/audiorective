@@ -7,9 +7,13 @@ import { mixFrequencyResponse } from "./internal/frequency-response";
 const FILTER_TYPES: readonly BiquadFilterType[] = ["lowpass", "highpass", "bandpass", "lowshelf", "highshelf", "peaking", "notch", "allpass"];
 
 export interface FilterOptions extends EffectOptions {
+  /** Cutoff in hertz, 10..22050; defaults to 350. */
   frequency?: number;
+  /** Biquad response shape; defaults to "lowpass". */
   type?: BiquadFilterType;
+  /** Resonance amount, 0.0001..1000; defaults to 1. */
   Q?: number;
+  /** Shelf or peaking boost in dB, -40..40; defaults to 0. */
   gain?: number;
   /** dB per octave; one biquad per 12 dB in series. Default -12. */
   rolloff?: -12 | -24 | -48;

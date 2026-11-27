@@ -11,7 +11,7 @@ Audio state is the single source of truth. UI frameworks observe and mutate dire
 For data-only waveform summaries use the [`@audiorective/core/peaks`](#pcm-peak-summaries) entry (`summarizePeaks`, `peakFrameRange`, `PeakSummary`). WAV encoding and resampling of PCM (`encodeWav`, `encodeWavBytes`, `resamplePCM`, the `PCMData` type) come from the root. None of them requires Web Audio or a DOM, and the root loads in plain Node.js.
 
 For reactive curves, transport beat loops, native parameter scheduling and domain adapters, use the optional
-[`@audiorective/core/automation`](./automation) entry.
+[`@audiorective/core/automation`](./automation.md) entry.
 
 ## Quick Start
 
@@ -41,7 +41,7 @@ class Synth extends AudioProcessor<{
 }
 
 const ctx = new AudioContext();
-const synth = new Synth(ctx);
+const synth = new Sampler(ctx, { sound: "C4" });
 synth.output.connect(ctx.destination);
 
 synth.params.volume.value = 0.8;
@@ -136,7 +136,7 @@ A `StepSequencer` lane declares per-step numbers as `params: Record<string, Para
 
 Basic reactive parameter for any type. Supports optional `bind` for syncing to external state.
 
-```typescript
+```typescript fragment: signature listing, not runnable code
 class Param<T> implements Readable<T> {
   readonly $: SignalAccessor<T>;
   get value(): T;
@@ -165,7 +165,7 @@ interface SchedulableParamOptions extends ParamOptions<number> {
 
 Numeric parameter with Web Audio scheduling methods. All scheduling methods return `this` for chaining.
 
-```typescript
+```typescript fragment: signature listing, not runnable code
 class SchedulableParam extends Param<number> {
   /** Fires on every change, including while a scheduled ramp moves the value. */
   subscribe(listener: (value: number) => void, options?: { immediate?: boolean }): () => void;
@@ -198,7 +198,7 @@ class SchedulableParam extends Param<number> {
 
 ### ParamSync
 
-```typescript
+```typescript fragment: signature listing, not runnable code
 const DEFAULT_SYNC_INTERVAL_MS = 100; // ~10Hz
 
 class ParamSync {
@@ -241,7 +241,7 @@ stop();
 
 Reactive container for structured/complex data. Uses Immer `produce` for ergonomic immutable updates via `.update()`. Usable standalone, or attached to an `AudioProcessor` via the `cell` build helper, in which case it appears in the processor's `cells` registry.
 
-```typescript
+```typescript fragment: signature listing, not runnable code
 class Cell<T> implements Readable<T> {
   readonly $: SignalAccessor<T>;
   get value(): T;
@@ -293,7 +293,7 @@ To replace the whole value, assign `pattern.value = next` instead.
 
 A tracked view that cannot be written: `.value` has no setter, `$` takes no argument, and there is no `.update()`. Use it for state that may only change through its owner's methods, because the change needs validation, playback, or cancellation. The owner keeps the writable `Cell` private and registers the view.
 
-```typescript
+```typescript fragment: signature listing, not runnable code
 class ReadonlyCell<T> implements Readable<T> {
   readonly $: () => T;
   get value(): T;
@@ -306,7 +306,7 @@ function readonlyCell<T>(source: Cell<T> | (() => T)): ReadonlyCell<T>;
 
 Pass a `Cell` to view it, or a function to view a value derived from other cells and params. A derived view re-runs its readers only when its own value changes. A writable `Cell` is not assignable where a `ReadonlyCell` is declared, so the owner has to opt in with `readonlyCell(...)`.
 
-```typescript
+```typescript fragment: intentional invalid example
 class Looper extends AudioProcessor<{}, { region: ReadonlyCell<Region | null> }> {
   private readonly _region: Cell<Region | null>;
 
@@ -328,7 +328,7 @@ looper.cells.region.value = r; // type error, and throws: use looper.setRegion(r
 
 ### effect, computed, batch and untracked
 
-```typescript
+```typescript fragment: signature listing, not runnable code
 function effect(fn: () => void): () => void; // runs now and on every change; returns stop
 function computed<T>(fn: () => T): () => T; // cached derived value; call it to read
 function batch<T>(fn: () => T): T;
@@ -355,7 +355,7 @@ Declare both registries explicitly, for example `AudioProcessor<{}, {}>` for a p
 
 Base class for audio processing units. Generic over the param and cell registries it exposes. Subclasses pass a build callback to `super()` that returns those registries.
 
-```typescript
+```typescript fragment: signature listing, not runnable code
 abstract class AudioProcessor<
   P extends Record<string, Param<any>> = Record<string, Param<any>>,
   C extends Record<string, Cell<any> | ReadonlyCell<any>> = Record<string, Cell<any> | ReadonlyCell<any>>,
@@ -381,7 +381,7 @@ abstract class AudioProcessor<
 
   /** Stops, disconnects and releases everything this processor owns. Safe to call twice. */
   dispose(): void;
-  [Symbol.dispose](): void; // calls dispose(), so `using processor = new Synth(ctx)` works
+  [Symbol.dispose](): void; // calls dispose(), so `using processor = new Sampler(ctx, { sound: "C4" })` works
 }
 
 interface BuildHelpers {
@@ -416,8 +416,8 @@ import { AudioProcessor, type Param } from "@audiorective/core";
 class Layered extends AudioProcessor<{ useShifter: Param<boolean> }> {
   private readonly _out: GainNode;
 
-  constructor(ctx: AudioContext, shifter: AudioProcessor) {
-    // locals before super(), per the build-callback convention
+  constructor(ctx: AudioContext, shifter: AudioProcessor & { input: AudioNode }) {
+    // a sink needs a concrete `input`; locals before super(), per the build-callback convention
     const osc = new OscillatorNode(ctx);
     const filter = new BiquadFilterNode(ctx);
     const lfo = new OscillatorNode(ctx, { frequency: 5 });
@@ -460,7 +460,7 @@ Every processor exposes `readonly latency: Param<number>` — its processing lat
 
 `latency` defaults to `0`. Declare it in the build callback three ways:
 
-```typescript
+```typescript fragment: partial class body
 super(ctx, ({ param }) => ({
   params: {
     /* ... */
@@ -492,7 +492,7 @@ Compensation runs on every re-solve of a `defineGraph`: at any join with two or 
 
 **Engine queries** (on `AudioEngine`, so `engine.core.latency` for a `createEngine` consumer):
 
-```typescript
+```typescript fragment: signature listing, not runnable code
 engine.latency: ReadonlyCell<number>;       // samples — longest path into ctx.destination across every engine-owned graph
 engine.perceivedTime: number;                // ctx.currentTime - latency/sampleRate - ctx.outputLatency (0 where unsupported)
 engine.getPathLatency(proc: AudioProcessor): number; // samples from proc's output to ctx.destination
@@ -514,7 +514,7 @@ Thrown by `engine.getPathLatency(proc)` when `proc` isn't part of the current so
 
 Built-in `AudioProcessor` that owns a `PannerNode` (HRTF) and exposes its seven properties as reactive `Param<T>`s. Lives in core — audio works end-to-end without any 3D renderer. `@audiorective/threejs` provides `PannerAnchor` to bind a scene `Object3D`'s world transform to the panner.
 
-```typescript
+```typescript fragment: signature listing, not runnable code
 import { Spatial, type SpatialOptions } from "@audiorective/core";
 
 class Spatial extends AudioProcessor<{
@@ -547,7 +547,7 @@ interface SpatialOptions {
 Feed audio into `spatial.input` (a `GainNode`) and connect `spatial.output` to `ctx.destination` (or further). Writing to any of the seven `Param<T>`s propagates to the underlying `PannerNode` via a bind effect.
 
 ```typescript
-const synth = new MySynth(ctx);
+const synth = new Sampler(ctx, { sound: "C4" });
 const spatial = new Spatial(ctx, { distanceModel: "inverse", refDistance: 2 });
 synth.output.connect(spatial.input);
 spatial.output.connect(ctx.destination);
@@ -564,7 +564,7 @@ Position/orientation are plain `AudioParam`s on `spatial.panner`. Drive them dir
 
 Built-in `AudioProcessor` that owns an `AnalyserNode` as a **pass-through tap** — wire it inline (`source → analyser.input`, `analyser.output → destination`) and read the realtime spectrum or waveform. The primitive every visualizer needs, so you don't hand-roll an `AnalyserNode` + byte buffer each time.
 
-```typescript
+```typescript fragment: signature listing, not runnable code
 import { Analyser, type AnalyserOptions } from "@audiorective/core";
 
 class Analyser extends AudioProcessor {
@@ -639,8 +639,10 @@ const tail = peakFrameRange(summary, 1);
 ```typescript
 import { encodeWav } from "@audiorective/core";
 
-const url = URL.createObjectURL(encodeWav(result.audio, { bitDepth: 24 })); // result.audio from renderMixRange or renderSession
-Object.assign(document.createElement("a"), { href: url, download: "bounce.wav" }).click();
+if (result.status === "rendered") {
+  const url = URL.createObjectURL(encodeWav(result.audio, { bitDepth: 24 })); // result from renderMixRange or renderSession
+  Object.assign(document.createElement("a"), { href: url, download: "bounce.wav" }).click();
+}
 ```
 
 A WAV file holds under 4 GiB of samples; longer audio throws and must be split.
@@ -736,7 +738,7 @@ piano.noteOff("E4"); // releases the held voices of that note
 
 **Public surface:**
 
-```typescript
+```typescript fragment: signature listing, not runnable code
 sampler.sound: Sound | null                     // tracked; the next hit uses it
 sampler.output: GainNode                        // summing gain; use sampler.connect(...)
 sampler.params.volume: SchedulableParam         // output gain 0..1
@@ -788,7 +790,7 @@ const zap: SoundFactory = (ctx, hit) => {
   osc.frequency.exponentialRampToValueAtTime(80, hit.when + 0.2);
   return osc; // a bare source node is both the output and the only source
 };
-const two = (ctx) => {
+const two: SoundFactory = (ctx) => {
   const a = new OscillatorNode(ctx);
   const b = new OscillatorNode(ctx, { detune: 7 });
   const mix = new GainNode(ctx);
@@ -870,7 +872,7 @@ deck.params.rate
 
 **Public surface:**
 
-```typescript
+```typescript fragment: signature listing, not runnable code
 player.buffer: AudioBuffer | null      // hot-swap; takes effect on next start(). Reads and writes `params.buffer`
 player.output: AudioNode               // output gain; connect → Spatial / EQ / destination
 player.params.volume: SchedulableParam // output gain 0..1
@@ -930,7 +932,7 @@ player.dispose();
 
 **Public surface:**
 
-```typescript
+```typescript fragment: signature listing, not runnable code
 player.audio: HTMLAudioElement         // escape hatch for direct DOM access
 player.output: AudioNode               // MediaElementSource → connect here
 player.src: string | null              // getter/setter; setter loads + resets state; the getter is tracked by effects
@@ -957,7 +959,7 @@ player.dispose(): void
 
 **`play()` rejects with the element's own `DOMException`, exactly as `HTMLMediaElement.play()` does:** `NotAllowedError` when the browser blocks autoplay before a user gesture, `AbortError` when a `src` change or `pause()` interrupts the request, `NotSupportedError` when there is no `src` or the media cannot be decoded. Nothing is swallowed, so catch it where the user can act: `player.play().catch((error) => { if (error.name === "NotAllowedError") showPressPlayNotice(); })`, ignoring `AbortError`. `player.cells.isPlaying` stays the state to render. A plain control bar that reports its own play failures is [`mountPlayer` with `fromFilePlayer(player)`](./widgets.md#plain-player-controls).
 
-```typescript
+```typescript prelude=player:FilePlayer
 // React example — bind transport cells to UI
 const isPlaying = useValue(player.cells.isPlaying);
 const currentTime = useValue(player.cells.currentTime);
@@ -983,7 +985,7 @@ The same call synthesizes a sample: build an oscillator or noise burst with a ga
 
 `Sampler`, `BufferPlayer`, and every `@audiorective/effects` processor accept a `BaseAudioContext`, so the same classes run live and offline.
 
-A graph driven by a `@audiorective/clock` `Clock` needs its ticks driven in step with the render — use that package's `renderTimeline`, which wraps `renderOffline`. See [`docs/clock.md`](./clock.md#rendering-offline--rendertimeline).
+A graph driven by a `@audiorective/clock` `Clock` needs its ticks driven in step with the render — use that package's `renderTimeline`, which wraps `renderOffline`. See [`docs/clock.md`](./clock-advanced.md#rendering-offline--rendertimeline).
 
 ---
 
@@ -1074,7 +1076,7 @@ met.params.bpm.value = 240;
 
 ### Object Bind (Non-AudioParam Properties)
 
-```typescript
+```typescript fragment: application sketch; app-specific classes or callbacks omitted
 class Synth extends AudioProcessor<{ waveform: Param<OscillatorType> }> {
   private readonly osc: OscillatorNode;
 
@@ -1102,7 +1104,7 @@ class Synth extends AudioProcessor<{ waveform: Param<OscillatorType> }> {
   }
 }
 
-const synth = new Synth(ctx);
+const synth = new Sampler(ctx, { sound: "C4" });
 synth.params.waveform.value = "square"; // effect pushes to osc.type
 ```
 
@@ -1168,7 +1170,7 @@ The engine mirrors every `statechange` its context reports, not just the transit
 
 ### AudioEngine
 
-```typescript
+```typescript fragment: signature listing, not runnable code
 class AudioEngine {
   /** Without a context it creates one and closes it on dispose(). Aborting `options.signal` calls dispose(). */
   constructor(existingContext?: AudioContext, options?: { signal?: AbortSignal });
@@ -1205,7 +1207,7 @@ Arms one-shot gesture listeners on `target` that call `resume()` on the first us
 
 This is the engine-side primitive used by `@audiorective/react`'s `EngineProvider` and `@audiorective/threejs`'s `attach()`. Use it directly in frameworks without a wrapper.
 
-```typescript
+```typescript fragment: application sketch; app-specific classes or callbacks omitted
 // Vanilla
 const detach = engine.core.autoStart(document);
 // ...later
@@ -1219,7 +1221,7 @@ engine.core.autoStart(canvas, { events: ["pointerdown"] });
 
 `createEngine`'s `setup` is synchronous. When the engine needs decoded buffers or an offline render, load them first and create the engine afterwards, inside an effect that disposes it on cleanup. Module-scope `createEngine` and `createEngineContext(engine)` assume the engine already exists, so use plain state in this shape:
 
-```tsx
+```tsx fragment: application sketch; app-specific classes or callbacks omitted
 function App() {
   const [engine, setEngine] = useState<ReturnType<typeof build> | null>(null);
 
@@ -1248,7 +1250,7 @@ function App() {
 
 A suspended context's `currentTime` is frozen, so anything scheduled "now" before the context runs lands at a stale time. When the gesture that starts audio is also the one that issues a command (a launch, a play button), await `resume()` first, then run the command:
 
-```typescript
+```typescript fragment: application sketch; app-specific classes or callbacks omitted
 async function onPlay() {
   await engine.core.resume(); // resumes inside the click; resolves at once when already running
   clock.start(); // now context.currentTime is live
@@ -1274,7 +1276,7 @@ Thrown by the `AudioEngine` constructor — and therefore by `createEngine` — 
 
 Vue setup-style factory that replaces subclassing for the common case. User-defined properties are top-level; engine lifecycle is accessed via `.core`.
 
-```typescript
+```typescript fragment: signature listing, not runnable code
 function createEngine<T extends Record<string, unknown>>(
   setup: (context: AudioContext, helpers: EngineSetupHelpers) => T,
   options?: { context?: AudioContext; signal?: AbortSignal }, // aborting the signal disposes the engine
@@ -1291,7 +1293,7 @@ Throws [`EngineEnvironmentError`](#engineenvironmenterror) if the environment ha
 
 **What gets registered.** Only values that are `AudioProcessor` instances at the top level of the returned object are registered, and `engine.core.dispose()` disposes exactly those, then closes a context the engine created. A processor nested inside another object (a plain composite such as a drum machine that owns processors) is not registered, and neither is the composite itself. Return the composite beside its processors, so the engine disposes the processors; the composite's own non-audio state (cells, timers, a `Clock`) is yours to tear down:
 
-```typescript
+```typescript fragment: application sketch; app-specific classes or callbacks omitted
 const engine = createEngine((ctx) => {
   const kit = new Kit(ctx); // AudioProcessor: registered and disposed by the engine
   const machine = new DrumMachine(kit); // plain composite: kept on the result, not registered
@@ -1306,9 +1308,9 @@ A processor you build later, outside `setup`, joins with `engine.core.register(p
 
 The `setup` callback's original one-argument form (`createEngine((ctx) => …)`) still works — `helpers` is a second argument, so no existing consumer breaks.
 
-```typescript
+```typescript fragment: application sketch; app-specific classes or callbacks omitted
 const engine = createEngine((ctx, { defineGraph }) => {
-  const synth = new Synth(ctx);
+  const synth = new Sampler(ctx, { sound: "C4" });
   const sequencer = new Sequencer(synth, ctx);
 
   // root graph — its sink is ctx.destination, referenced directly, no reserved name
@@ -1323,7 +1325,7 @@ engine.core.resume(); // resume AudioContext
 engine.core.state.value; // AudioContextState
 engine.core.latency.value; // samples — longest path into ctx.destination
 engine.core.perceivedTime; // ctx.currentTime minus latency and output latency — what the listener hears now
-engine.core.getPathLatency(synth); // samples from synth.output to ctx.destination
+engine.core.getPathLatency(engine.synth); // samples from synth.output to ctx.destination
 engine.core.dispose(); // cleanup
 engine.core.context; // AudioContext
 ```
@@ -1334,7 +1336,7 @@ engine.core.context; // AudioContext
 
 Structural types let capability modules cooperate without importing each other. A module that needs one declares it as a parameter type; any object with the same members satisfies it.
 
-```typescript
+```typescript fragment: signature listing, not runnable code
 import type {
   BeatTiming,
   CancellableEvent,
@@ -1402,7 +1404,7 @@ const jitter: EventTransform<TimedBeatEvent> = {
 
 ## registerWorklet
 
-```typescript
+```typescript fragment: signature listing, not runnable code
 registerWorklet(ctx: BaseAudioContext, name: string, source: string): Promise<void>
 ```
 
@@ -1431,7 +1433,7 @@ signals/src/
 
 Every name below is exported from the `@audiorective/core` root. `scripts/check-core-exports.test.mjs` fails when this list and `packages/core/src/index.ts` differ.
 
-```typescript
+```typescript fragment: signature listing, not runnable code
 // Classes
 export { Param, SchedulableParam, ParamSync, AudioProcessor, AudioEngine, Cell, ReadonlyCell, Spatial, Analyser };
 export { Sampler, BufferPlayer, FilePlayer };

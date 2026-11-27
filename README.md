@@ -12,7 +12,7 @@ audiorective aims to solve this — think JUCE-grade infrastructure, but for the
 
 We fill that structural gap with independent, composable packages. Each one solves a specific recurring problem — from reactive state management to scheduling, analysis, and beyond — so you can focus on the exciting part: audio.
 
-What's even better: we also ship an agent skill that teaches LLMs how to use audiorective to solve real audio problems correctly. Whether you're a vibe-coder, an AI-assisted session engineer, or a 100% hand-crafting master — we've got you covered. See [Agent Skill](#agent-skill) below for install instructions.
+What's even better: we also ship an agent skill that teaches LLMs how to use audiorective to solve real audio problems correctly. Whether you're a vibe-coder, an AI-assisted session engineer, or a 100% hand-crafting master — we've got you covered. See [Agent Skill](#agent-skills) below for install instructions.
 
 ## Packages
 

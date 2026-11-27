@@ -108,6 +108,7 @@ export type {
   SetTrackVolumeEdit,
   SetVolumeAutomationEdit,
   SetControllerLaneEdit,
+  SetDeviceParameterEdit,
   ControllerPointEdit,
   SplitClipEdit,
   TimeRange,
@@ -128,9 +129,12 @@ export type {
   RackPreset,
 } from "./rack-preset";
 export { rackMacroRange } from "./rack-preset";
+export { rackDeviceId, splitRackDeviceId } from "./device-parameters";
+export type { DeviceParameter, DeviceParameterRecord } from "./device-parameters";
 export { TempoMap } from "./tempo-map";
 export type { TempoChange } from "./tempo-map";
 export { controllerMax, controllerSampleBeats, controllerExpressions } from "./controller-lane";
+export { controllerRestValue } from "@audiorective/midi";
 export type { ControllerLane, ControllerPoint, ControllerExpression } from "./controller-lane";
 export { MeterMap } from "./meter-map";
 export type { TimeSignatureChange } from "./meter-map";

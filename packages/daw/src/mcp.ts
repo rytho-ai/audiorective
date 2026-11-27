@@ -8,10 +8,15 @@ import { findSlotClip } from "./session-state";
 import { renderMixRange } from "./mix-range";
 import { renderStems } from "./exchange";
 import { exportMidiFile } from "./midi-file";
+import type { ControllerExpression } from "./controller-lane";
 import type { Workspace } from "./runtime";
 import { selectionFor } from "./selection";
 import { sessionFor } from "./session";
 import type { Project, ProjectClip } from "./model";
+import { rackDeviceId, rackSlotParameters } from "./device-parameters";
+import { bridgeProtocols, callableOperations, operationRefusal, resolveAllow, restrictTools, type McpToolCategory } from "./mcp-policy";
+
+export { MCP_TOOL_CATEGORIES, type McpToolCategory } from "./mcp-policy";
 
 /** What a tool hands back: text the agent reads, whether it failed, and the same facts as JSON for code. */
 export type McpToolResult = Readonly<{
@@ -21,11 +26,21 @@ export type McpToolResult = Readonly<{
   isError?: boolean;
   /** The same facts as `content`, as a plain value. */
   data?: unknown;
+  /** Sound for the agent to hear, sent next to `content` as an MCP audio block. Only `listen` sets it, and only when the app allows it with `listenAudio` and its `allow` includes `export`. */
+  audio?: Readonly<{
+    /** Media type of the encoded audio block; always audio/wav. */
+    mimeType: "audio/wav";
+    /** Base64-encoded WAV file bytes. */
+    base64: string;
+  }>;
 }>;
 
 /** One thing an agent can do to the open project. Transport-neutral: an MCP server, a WebSocket bridge or a test calls it the same way. */
 export type McpTool = Readonly<{
   name: string;
+  /** What the tool does, for `mcpTools`' `allow` option. Every tool declares one where it is defined, so a new tool cannot skip the policy. */
+  category: McpToolCategory;
+  /** Plain-language purpose and argument guidance exposed to the agent. */
   description: string;
   /** JSON Schema (type `"object"`) of the arguments. */
   inputSchema: Readonly<Record<string, unknown>>;
@@ -35,9 +50,27 @@ export type McpTool = Readonly<{
 
 export type McpToolsOptions = Readonly<{
   /** Where `save_as` puts the file; the page decides (a download, a file handle, a server). Without it `save_as` returns an error. */
-  save?: (bytes: Uint8Array, name: string) => void | Promise<void>;
+  save?: (bytes: Uint8Array<ArrayBuffer>, name: string) => void | Promise<void>;
   /** Text added to the `Agent: ` prefix of an undo label. Default none. */
   labelPrefix?: string;
+  /**
+   * The kinds of tool the agent may use; the rest do not appear in the tool list and are refused if called. `read`: queries and `listen`;
+   * `edit`: `apply_edits`; `export`: `save_as`, `export_midi`, `export_stems`; `operations`: `run_operation` for the app's operations (a
+   * `readOnly` operation needs `read` instead). Default: all four, so an existing app keeps working; the origin check and pairing token
+   * of `@audiorective/mcp` are what keep other web pages out. Restrict it for an agent that should only look, such as `["read"]`.
+   */
+  allow?: readonly McpToolCategory[];
+  /**
+   * Let `listen` return sound as well as numbers when the agent asks with `audio: true`: a 16-bit stereo WAV of the start of the rendered range, at most `maxSeconds` long.
+   * Default off, because audio is the largest and most private thing a tool can send: it is base64 in a tool result that the agent's model provider receives,
+   * and about 192 KB per second at 48 kHz, so the app opts in and picks the length. Returning audio sends the song out of the page like an export does, so it also needs the
+   * `export` category in `allow` (the default allows it); an app with `allow: ["read"]` gets the numbers only. When off, `audio: true` returns the numbers and says why audio is not returned.
+   * `maxSeconds` must be a finite number greater than 0; `mcpTools` throws otherwise.
+   */
+  listenAudio?: Readonly<{
+    /** Configured audio cap in seconds; only the start of a longer rendered range is returned. */
+    maxSeconds: number;
+  }>;
 }>;
 
 /** The WebSocket close code `@audiorective/mcp` sends to a page that a newer page replaced. */
@@ -157,7 +190,14 @@ const POSITIONED = (extra: Record<string, unknown>, required: string[]) => ({
   additionalProperties: false,
 });
 
-export type OpSpec = Readonly<{ summary: string; properties: Readonly<Record<string, unknown>>; required?: readonly string[] }>;
+export type OpSpec = Readonly<{
+  /** Plain-language description of this edit operation for the generated tool schema. */
+  summary: string;
+  /** JSON Schema entries for the operation arguments, excluding the type discriminant. */
+  properties: Readonly<Record<string, unknown>>;
+  /** Names of required arguments; omitted when every argument is optional. */
+  required?: readonly string[];
+}>;
 
 /** Every apply_edits operation: what it does and its fields. The schema, the description and the field list the daw package enforces must agree (a test checks it). */
 export const EDIT_OP_SPECS: Readonly<Record<ProjectEditOperation["type"], OpSpec>> = {
@@ -478,6 +518,20 @@ export const EDIT_OP_SPECS: Readonly<Record<ProjectEditOperation["type"], OpSpec
     properties: { deviceId: { type: "string" }, index: prop("integer", "0 is first.", { minimum: 0 }) },
     required: ["deviceId", "index"],
   },
+  setDeviceParameter: {
+    summary:
+      "Set one parameter of a device: a WebCLAP plug-in or a built-in effect (read_device_params lists deviceId, each row's id and its range). Send `expectedValue` (the row's value you read) so a value the person changed meanwhile returns conflict instead of being overwritten (equal within a relative 1e-6 counts as unchanged). Joins the same undo step as the other operations.",
+    properties: {
+      deviceId: STR('A device ID from read_project (devices), or "trackId:slotId" for a built-in effect (read_project effectDevices).'),
+      parameterId: STR("The `id` of a read_device_params row."),
+      value: prop("number", "In the row's units, within its min and max; a stepped row needs a whole number."),
+      expectedValue: prop(
+        "number",
+        "The row's value as you read it; a different current value (beyond a relative 1e-6, so a float32 value copied back still matches) returns status conflict with the current value and changes nothing.",
+      ),
+    },
+    required: ["deviceId", "parameterId", "value"],
+  },
   addScene: {
     summary: "Add an empty Session scene at the end or after afterSceneId; the receipt's createdScenes lists its ID.",
     properties: { name: STR('Default "Scene N".'), afterSceneId: SCENE, as: AS },
@@ -590,6 +644,9 @@ const gainCurve: CurveShape = {
   row: (point) => ({ atSourceSeconds: point.time, value: point.value, shape: point.shape }),
 };
 
+/** Whether a lane of this expression has a controller number (`channelController`) or key (`polyPressure`); the other expressions have none. */
+const numberedLane = (expression: ControllerExpression): boolean => expression === "channelController" || expression === "polyPressure";
+
 /** A controller lane point as `setControllerLane` takes it: its beat, the seconds it falls at now, the value and shape. */
 const controllerCurve = (project: Project): CurveShape => {
   const position = (point: CurvePoint) => ({ atBeat: point.time, atSeconds: project.tempoMap.beatToSeconds(point.time) });
@@ -625,7 +682,23 @@ function projectView(workspace: Workspace) {
       };
     });
     const devices = project.tracks.flatMap((track) =>
-      track.devices.map((device, index) => ({ id: device.id, trackId: track.id, index, name: device.name, pluginId: device.pluginId })),
+      track.devices.map((device, index) => ({
+        id: device.id,
+        trackId: track.id,
+        index,
+        name: device.name,
+        pluginId: device.pluginId,
+        parameters: device.parameters.length,
+      })),
+    );
+    const effectDevices = project.tracks.flatMap((track) =>
+      track.effects.map((slot) => ({
+        id: rackDeviceId(track.id, slot.id),
+        trackId: track.id,
+        slotId: slot.id,
+        type: slot.type,
+        parameters: rackSlotParameters(slot).length,
+      })),
     );
     const trackEffects = project.tracks
       .filter((track) => track.effects.length || track.effectMacros.length)
@@ -643,7 +716,8 @@ function projectView(workspace: Workspace) {
       track.controllerLanes.map((lane) => {
         const { expression, channel, controller } = lane;
         const { trackId: _id, ...rest } = curveRows("trackId", track.id, lane.points, controllerCurve(project));
-        return { trackId: track.id, expression, channel, controller, ...rest };
+        // The controller number (or key) only exists for the numbered expressions: setControllerLane takes none for the others.
+        return { trackId: track.id, expression, channel, ...(numberedLane(expression) ? { controller } : {}), ...rest };
       }),
     );
     const everyClip = [
@@ -710,6 +784,7 @@ function projectView(workspace: Workspace) {
       masterVolume: round(project.masterVolume, 4),
       tracks,
       ...(devices.length ? { devices } : {}),
+      ...(effectDevices.length ? { effectDevices } : {}),
       ...(routing.length ? { routing } : {}),
       ...(trackEffects.length ? { trackEffects } : {}),
       ...(volumeAutomation.length ? { volumeAutomation } : {}),
@@ -781,6 +856,13 @@ function silentSpans(channels: readonly Float32Array[], sampleRate: number, star
  */
 export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): readonly McpTool[] {
   const prefix = `Agent: ${options.labelPrefix ?? ""}`;
+  const allowed = resolveAllow(options.allow);
+  const listenAudio = options.listenAudio;
+  if (
+    listenAudio !== undefined &&
+    !(isRecord(listenAudio) && typeof listenAudio.maxSeconds === "number" && Number.isFinite(listenAudio.maxSeconds) && listenAudio.maxSeconds > 0)
+  )
+    throw new Error("mcpTools: listenAudio.maxSeconds must be a finite number greater than 0.");
   const guard =
     (run: (args: Args) => Promise<McpToolResult> | McpToolResult) =>
     async (raw: unknown): Promise<McpToolResult> => {
@@ -795,13 +877,15 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
   const tools: McpTool[] = [
     {
       name: "read_project",
+      category: "read",
       description:
         "Read the open project as TOON text: title, tempo and meter, markers, tracks, every clip with its beats and seconds, Session scenes, what the person has SELECTED (selection.clipIds, openClipId, range), the current `version`, playback state, undo labels, the app's own data as `extensions` (each `{ id, summary }`: what the app's data means, such as which pattern sits at which bars; only extensions that publish a summary appear) and the app's named operations (each with its `input` JSON Schema: pass exactly those fields to run_operation; `readOnly: true` ones only answer a question and change nothing). Clips carry sourceOffset, sourceLength (audio) and loopStart/loopEnd: the window of the content that plays, in beats for MIDI clips and seconds of the recording for audio clips. An audio clip that is time-stretched also carries stretchRatio (timeline seconds per second of audio; empty when it is not stretched). Call it first and again after any conflict. Positions are in beats (quarter notes from the start) unless named seconds.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
-      call: guard(async () => toon(projectView(workspace))),
+      call: guard(async () => toon(callableOperations(projectView(workspace), allowed))),
     },
     {
       name: "find",
+      category: "read",
       description:
         'Locate content. `{ type: "clips", name?, trackId?, trackName?, range?, relation? }` returns the matching clips (names are not unique: check `count`). `{ type: "marker", name, occurrence? }` returns one marker. Ranges are half-open beats.',
       inputSchema: {
@@ -875,6 +959,7 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
     },
     {
       name: "read_notes",
+      category: "read",
       description:
         "List the notes of one MIDI clip as TOON rows `id,pitch,start,duration,velocity,hidden`. Pass `range` (content beats) when you only need part of a long clip. start and duration are CONTENT beats (the beats addNotes, editNotes and setClipSourceRange use; the clip plays the window starting at `window.sourceOffset`, so a note at start 0 is not at the clip's start when sourceOffset is not 0). `hidden` is true for a note the clip's window or loop does not play. Optional `range` { startBeat, endBeat } (content beats, half-open) keeps only notes that overlap it. Works for timeline and Session clips; linked clips share notes.",
       inputSchema: {
@@ -932,6 +1017,7 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
     },
     {
       name: "read_automation",
+      category: "read",
       description:
         "List the points of one automation curve in the shape the replace ops take: `{ trackId }` returns a track's volume curve as rows `atBeat, atSeconds, value, shape` (send them to setVolumeAutomation); `{ trackId, expression, channel, controller? }` returns that MIDI controller lane of the track in the same rows (send them to setControllerLane); `{ clipId }` returns an audio clip's gain curve as rows `atSourceSeconds, value, shape` (send them to setAudioClipGainAutomation). read_project shows only a count with the first and last position for a curve of more than 32 points. Optional `range` keeps the points inside it: for a track { startBeat, endBeat } or { startSeconds, endSeconds } in project time, for a clip { startSeconds, endSeconds } in seconds of the recording (half-open). A range gives only part of the curve: replace a curve only with its full list.",
       inputSchema: {
@@ -987,7 +1073,7 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
                 trackId,
                 expression: lane.expression,
                 channel: lane.channel,
-                controller: lane.controller,
+                ...(numberedLane(lane.expression) ? { controller: lane.controller } : {}),
                 version,
                 total: lane.points.length,
                 count: inside.length,
@@ -1019,14 +1105,37 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
       }),
     },
     {
+      name: "read_device_params",
+      category: "read",
+      description:
+        "List the parameters of one device in one shape for a WebCLAP plug-in and a built-in effect: `deviceId` is an ID from read_project `devices`, or `trackId:slotId` from `effectDevices`. Each row has `id`, `name`, `kind` (webclap or rack), `min`, `max`, `default`, `value` (what plays now, in the row's units), and where known `unit`, `step` (1: whole numbers only) and `text` (the plug-in's display string of the value). To change one, send apply_edits `{ type: \"setDeviceParameter\", deviceId, parameterId: row.id, value, expectedValue: row.value }`; `expectedValue` makes a value the person moved meanwhile come back as a conflict instead of being overwritten. A plug-in that has not loaded yet has no rows (ask the person to open the project in the page). The returned `version` is the project version the rows were read at.",
+      inputSchema: { type: "object", properties: { deviceId: { type: "string" } }, required: ["deviceId"], additionalProperties: false },
+      call: guard((args) => {
+        const unknown = Object.keys(args).find((key) => key !== "deviceId");
+        if (unknown !== undefined) return fail(`Unknown field "${unknown}"; allowed: deviceId.`);
+        const deviceId = stringArg(args, "deviceId", true);
+        if (typeof deviceId !== "string") return deviceId!;
+        return untracked(() => {
+          const parameters = workspace.deviceParameters(deviceId);
+          return toon({
+            deviceId,
+            version: workspace.project.cells.version.value,
+            count: parameters.length,
+            parameters: parameters.map((row) => ({ ...row })),
+          });
+        });
+      }),
+    },
+    {
       name: "apply_edits",
+      category: "edit",
       description: [
         `Apply a list of edit operations as ONE undoable step (the person presses Undo once to remove all of it).`,
         `Pass the \`version\` you last read as expectedVersion.`,
         `If the person changed the project since, you get status "conflict" and nothing changes: call read_project, re-plan and send again.`,
         `Operations run in order and the whole request is all-or-nothing: a step that cannot run returns status "rejected" with its opIndex and a code, and nothing changes.`,
         `Positions: atBeat is project beats (quarter notes from the start), atSeconds is project seconds; give atBeat or atSeconds where an operation takes a position (both are accepted when they name the same moment, within 1e-6 s, so a row from read_project goes back unchanged). resizeClip start/end are absolute project beats for every clip; note start/duration, sourceOffset and setClipLoop beats are CONTENT beats (what read_notes shows); setClipSourceRange is content beats for MIDI and seconds of the recording for audio. Volumes, sends and gains are linear gain (0 or more, 1 is unity); pan is -1 (left) to 1 (right).`,
-        `Naming results: give an operation that makes clips, tracks or scenes \`as: "name"\`; later steps select clips as { fromCopy: "name", trackName? } and tracks and scenes as { fromCopy: "name" } in trackId or sceneId. The receipt lists created, changed and removed clip IDs, createdNotes, copies, createdTracks and createdScenes, changedTracks and removedTracks, changedScenes and removedScenes, and song (any of tempo, timeSignature, markers, title, masterVolume).`,
+        `Naming results: give an operation that makes clips, tracks or scenes \`as: "name"\`; later steps select clips as { fromCopy: "name", trackName? } and tracks and scenes as { fromCopy: "name" } in trackId or sceneId. The receipt lists created, changed and removed clip IDs, createdNotes, copies, createdTracks and createdScenes, changedTracks and removedTracks, changedScenes (scenes renamed or moved in the order; a filled slot is a clip in created or changed) and removedScenes, and song (any of tempo, timeSignature, markers, title, masterVolume).`,
         `Set-style operations (setTempoChanges, setTimeSignatureChanges, setMarkers, setVolumeAutomation, setControllerLane, setTrackEffects, ...) REPLACE the whole list: read the current one from read_project (read_automation for a curve of more than 32 points) and send the full new list; a row from read_project goes back unchanged.`,
         `Field shapes: clip = { clipId } or { fromCopy, trackId?, trackName?, name? }; trackId, sceneId, afterSceneId, busId, outputBusId = an ID string or { fromCopy } (outputBusId also null); slot = { sceneId, trackId }; notes = [{ pitch 0-127, start, duration, velocity? 0-1 }] in content beats; editNotes notes = [{ id, pitch?, start?, duration?, velocity? }]; range = { startBeat, endBeat } (rippleDelete also { startSeconds, endSeconds }); moveClip position = { atBeat } or { byBeats }; setClipLoop loop = null, { startBeat, endBeat } (MIDI) or { startSeconds, endSeconds } (audio); routing = { outputBusId, sends: [{ busId, gain }] }; tempo changes = [{ beat, bpm }]; time signature changes = [{ beat, numerator, denominator }]; markers = [{ name, atBeat and/or atSeconds }]; volume points = [{ atBeat and/or atSeconds, value, shape? "linear"|"hold" }]; controller lane points = [{ atBeat and/or atSeconds, value (integer), shape? }]; clip gain points = [{ atSourceSeconds, value, shape? }]; effects and preset as read_project shows trackEffects.`,
         `Operations (fields ending in ? are optional):`,
@@ -1068,7 +1177,7 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
               status: "conflict",
               currentVersion: receipt.version,
               reason: receipt.reason,
-              next: "Nothing was changed and the person's edit is kept. Call read_project, check the new state, and send the edit again with the new version. Note and clip IDs usually stay valid when the person changed other material; re-read only what they touched.",
+              next: "Nothing was changed and the person's edit is kept. Call read_project (read_device_params for a device parameter), check the new state, and send the edit again with the new version. Note and clip IDs usually stay valid when the person changed other material; re-read only what they touched.",
             },
             true,
           );
@@ -1113,6 +1222,7 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
     },
     {
       name: "run_operation",
+      category: "operations",
       description:
         "Call one of the app's named operations (listed under `operations` in read_project, each with its `input` JSON Schema) with JSON `args` that use only the fields of that schema: unknown or missing fields are an error that lists the schema. It runs as one undoable step labelled by the operation. A `readOnly` operation is a query: it returns status `read` and its `result`, changes nothing and makes no undo step. Pass `expectedVersion` to refuse when the person has changed the project since you read it (ignored by read-only operations).",
       inputSchema: {
@@ -1134,6 +1244,8 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
         const known = operations.map((operation) => operation.name);
         if (!known.includes(name)) return fail(`No operation named "${name}". Available: ${known.length ? known.join(", ") : "none"}.`);
         const { input, readOnly } = operations.find((operation) => operation.name === name)!;
+        const refusal = operationRefusal(allowed, readOnly === true, name);
+        if (refusal) return fail(refusal);
         if (!readOnly && args.expectedVersion !== undefined && args.expectedVersion !== current)
           return json(
             {
@@ -1170,8 +1282,9 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
     },
     {
       name: "listen",
+      category: "read",
       description:
-        "Render a range of the full mix offline (every track, device and effect; playback is not interrupted) and return evidence as JSON: peakDbFS, loudnessLUFS (null when silent or under 400 ms), silentSpans in project seconds, and a click check per `seamBeats` entry (`hasClick`). Never returns audio. `range` is { startBeat, endBeat } or { startSeconds, endSeconds }. Renders the whole mix; there is no per-track listen. Renders the current version unless `expectedVersion` is given.",
+        "Render a range of the full mix offline (every track, device and effect; playback is not interrupted) and return evidence as JSON: peakDbFS, loudnessLUFS (null when silent or under 400 ms), silentSpans in project seconds, and a click check per `seamBeats` entry (`hasClick`). `range` is { startBeat, endBeat } or { startSeconds, endSeconds }. Renders the whole mix, or only `trackIds` (each through its own effects, instruments and the bus it outputs to; send returns fed by them are included; a muted track stays silent; the numbers measure the sum of those tracks; selecting a bus also brings in the tracks that feed it), so a track or a pair can be checked on its own. Returns numbers only, unless `audio: true` and the app allows sound: then a short WAV of the start of the range comes with the numbers. Renders the current version unless `expectedVersion` is given.",
       inputSchema: {
         type: "object",
         properties: {
@@ -1186,6 +1299,16 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
             ],
           },
           expectedVersion: { type: "string" },
+          trackIds: {
+            type: "array",
+            items: { type: "string" },
+            minItems: 1,
+            description: "Hear only these tracks (ids from read_project). Default: every track.",
+          },
+          audio: {
+            type: "boolean",
+            description: "Also return a short WAV of the start of the range, when the app allows it (it needs the export permission). Default false.",
+          },
           seamBeats: {
             type: "array",
             items: { type: "number" },
@@ -1209,12 +1332,20 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
             return fail(`"seamBeats" must be an array of numbers.`);
           seamBeats = args.seamBeats as number[];
         }
+        let trackIds: string[] | undefined;
+        if (args.trackIds !== undefined) {
+          if (!Array.isArray(args.trackIds) || args.trackIds.length === 0 || !args.trackIds.every((id) => typeof id === "string"))
+            return fail(`"trackIds" must be a non-empty array of track ids.`);
+          trackIds = args.trackIds as string[];
+        }
+        if (args.audio !== undefined && typeof args.audio !== "boolean") return fail(`"audio" must be a boolean.`);
         for (const key of ["prerollSeconds", "silenceDb", "minSilenceSeconds"])
           if (args[key] !== undefined && (typeof args[key] !== "number" || !Number.isFinite(args[key]))) return fail(`"${key}" must be a number.`);
         const result = await renderMixRange(workspace, {
           expectedVersion,
           range,
           seamBeats,
+          trackIds,
           prerollSeconds: args.prerollSeconds as number | undefined,
         });
         if (result.status === "conflict")
@@ -1222,9 +1353,29 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
             { status: "conflict", currentVersion: result.version, reason: result.reason, next: "Call read_project and listen again." },
             true,
           );
-        return json({
+        let audio: McpToolResult["audio"];
+        let audioNote: string | undefined;
+        if (args.audio === true) {
+          if (!listenAudio) audioNote = "Audio is not enabled by this app, so only the numbers are returned.";
+          else if (!allowed.has("export"))
+            audioNote =
+              "Audio needs the export permission, which this app has not granted, so only the numbers are returned. Tell the person if you need to hear it.";
+          else {
+            const { sampleRate, channels } = result.audio;
+            const frames = Math.min(channels[0].length, Math.floor(listenAudio.maxSeconds * sampleRate));
+            const bytes = encodeWavBytes({ sampleRate, channels: channels.map((channel) => channel.subarray(0, frames)) }, { bitDepth: 16 });
+            let binary = "";
+            for (let at = 0; at < bytes.length; at += 0x8000) binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000));
+            audio = { mimeType: "audio/wav", base64: btoa(binary) };
+            if (frames < channels[0].length)
+              audioNote = `The audio holds the first ${round(frames / sampleRate)} s of the range (the app's limit is ${listenAudio.maxSeconds} s); the numbers cover all of it.`;
+          }
+        }
+        const evidence = {
           status: "rendered",
           version: result.version,
+          ...(trackIds ? { trackIds } : {}),
+          ...(audioNote ? { audioNote } : {}),
           startSeconds: round(result.startSeconds),
           durationSeconds: round(result.durationSeconds),
           peakDbFS: result.peakDbFS === null ? null : round(result.peakDbFS, 2),
@@ -1243,11 +1394,13 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
             localJump: round(localJump, 4),
           })),
           historyTruncated: result.historyTruncated,
-        });
+        };
+        return audio ? { ...json(evidence), audio } : json(evidence);
       }),
     },
     {
       name: "save_as",
+      category: "export",
       description:
         "Save the project as a .dawproject file through the app's save handler (the app decides where it goes). Pass `expectedVersion` to refuse if the project has moved on.",
       inputSchema: {
@@ -1270,6 +1423,7 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
     },
     {
       name: "export_midi",
+      category: "export",
       description:
         "Save the project's MIDI tracks as a Standard MIDI File (format 1: tempo and time signatures, then one track per MIDI track with its channels, notes, pedal, controllers and pitch bend; clip windows, loops and linked clips as they play) through the app's save handler. Audio, volume, pan and devices are not in it. Pass `expectedVersion` to refuse if the project has moved on.",
       inputSchema: {
@@ -1307,6 +1461,7 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
     },
     {
       name: "export_stems",
+      category: "export",
       description:
         "Render every audio and MIDI track to its own 24-bit WAV, all with the same start and length (the song's length plus `tailSeconds`), plus the full mix, and hand each file to the app's save handler as `<name>-<track>.wav` and `<name>-mix.wav`. A stem is the track alone through its own chain and the bus it outputs to; send returns are only in the mix. Muted tracks give silent stems, and the result lists a warning for each silent stem. Playback is not interrupted.",
       inputSchema: {
@@ -1379,22 +1534,40 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
       }),
     },
   ];
-  return Object.freeze(tools);
+  return Object.freeze(restrictTools(tools, allowed));
 }
 
 /** What `connectMcpBridge` accepts of a WebSocket: the browser's `WebSocket` or a compatible class. */
 export type McpBridgeSocket = {
+  /** Connection-open callback installed by the bridge; null when unset. */
   onopen: ((event: unknown) => void) | null;
-  onmessage: ((event: { data: unknown }) => void) | null;
-  onclose: ((event: { code?: number; reason?: string }) => void) | null;
+  /** Incoming-frame callback installed by the bridge; null when unset. */
+  onmessage:
+    | ((event: {
+        /** Incoming WebSocket payload; only string frames are handled. */
+        data: unknown;
+      }) => void)
+    | null;
+  /** Connection-close callback installed by the bridge; null when unset. */
+  onclose:
+    | ((event: {
+        /** WebSocket close code; 4000 means another page replaced this one, and omission is an ordinary close. */
+        code?: number;
+        /** Optional peer-provided text explaining why the connection closed. */
+        reason?: string;
+      }) => void)
+    | null;
+  /** Socket-error callback installed by the bridge; null when unset. */
   onerror: ((event: unknown) => void) | null;
+  /** Sends one JSON text frame to the agent server; may throw if the socket is closed. */
   send(data: string): void;
+  /** Closes this socket; the bridge decides whether to reconnect. */
   close(): void;
 };
 
 export type McpBridgeOptions = Readonly<{
   /** Default: the global `WebSocket`. */
-  WebSocket?: new (url: string) => McpBridgeSocket;
+  WebSocket?: new (url: string, protocols?: string[]) => McpBridgeSocket;
   /** First reconnect delay in ms. Default 500; it doubles after each failure. */
   reconnectMs?: number;
   /** Longest reconnect delay in ms. Default 10000. */
@@ -1406,6 +1579,13 @@ export type McpBridgeOptions = Readonly<{
    * reconnect, so two open pages do not take turns replacing each other; call `connect()` on the handle to take the connection back.
    */
   onReplaced?: () => void;
+  /**
+   * The pairing token, only for a server that requires one (`--token`, `AUDIORECTIVE_MCP_TOKEN` or the `token` option; a default server
+   * needs none). It travels as a WebSocket subprotocol, not in the URL. Without the right token such a server refuses the page with
+   * HTTP 403 and the page only sees a failed connection (`onStatus(false)`, retried with backoff). Throws when it is not 22 or more
+   * letters, digits, `_` or `-`.
+   */
+  token?: string;
 }>;
 
 /**
@@ -1414,7 +1594,8 @@ export type McpBridgeOptions = Readonly<{
  * `{ id, result }` (`list`: `[{ name, description, inputSchema }]`; `call`: an `McpToolResult`) or `{ id, error: string }`.
  */
 export function connectMcpBridge(tools: readonly McpTool[], url: string, options: McpBridgeOptions = {}): { close(): void; connect(): void } {
-  const Socket = options.WebSocket ?? (globalThis as { WebSocket?: new (url: string) => McpBridgeSocket }).WebSocket;
+  const Socket = options.WebSocket ?? (globalThis as { WebSocket?: new (url: string, protocols?: string[]) => McpBridgeSocket }).WebSocket;
+  const protocols = options.token === undefined ? undefined : bridgeProtocols(options.token);
   if (!Socket) return { close() {}, connect() {} };
   const first = options.reconnectMs ?? 500;
   const max = options.maxReconnectMs ?? 10_000;
@@ -1434,7 +1615,13 @@ export function connectMcpBridge(tools: readonly McpTool[], url: string, options
         current.send(JSON.stringify({ id, result: tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) }));
       else if (message.method === "call") {
         const tool = tools.find((candidate) => candidate.name === message.name);
-        if (!tool) current.send(JSON.stringify({ id, error: `No tool named "${String(message.name)}".` }));
+        if (!tool)
+          current.send(
+            JSON.stringify({
+              id,
+              error: `No tool named "${String(message.name)}". This page serves: ${tools.map(({ name }) => name).join(", ") || "none"}.`,
+            }),
+          );
         else current.send(JSON.stringify({ id, result: await tool.call(message.args) }));
       } else current.send(JSON.stringify({ id, error: `Unknown method "${String(message.method)}".` }));
     } catch (error) {
@@ -1459,7 +1646,7 @@ export function connectMcpBridge(tools: readonly McpTool[], url: string, options
     replaced = false;
     let current: McpBridgeSocket;
     try {
-      current = new Socket(url);
+      current = protocols ? new Socket(url, protocols) : new Socket(url);
     } catch {
       // A bad URL throws here instead of failing later; report it and keep trying, like any other failed connection.
       options.onStatus?.(false);

@@ -4,6 +4,7 @@ import type { BeatRange, SecondsRange, TimeRange } from "./project-edits";
 import { TempoMap, type TempoChange } from "./tempo-map";
 import { unityClipEnvelope } from "./clip-envelope";
 import { controllerPointsAfterDelete } from "./controller-lane";
+import { keptContent } from "./project-persistence";
 
 const EPSILON = 1e-9;
 /** Keeps a value step in a linear automation curve from becoming a long ramp. */
@@ -119,6 +120,12 @@ export function rippleDelete(project: Project, range: TimeRange, options?: { cro
   const { startSeconds, endSeconds, startBeat, endBeat } = resolveTimeRange(before, range);
   const lengthSeconds = endSeconds - startSeconds;
   const lengthBeats = endBeat - startBeat;
+  // Content the opened file keeps as it is moves with the rest, or the edit is refused here, before anything has changed.
+  keptContent.shift(
+    project,
+    { kind: "delete", seconds: { from: startSeconds, to: endSeconds }, beats: { from: startBeat, to: endBeat } },
+    "ripple delete",
+  );
 
   for (const track of project.tracks) {
     const lefts: string[] = [];

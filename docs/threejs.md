@@ -51,7 +51,7 @@ import { createEngine } from "@audiorective/core";
 import { attach } from "@audiorective/threejs";
 
 const engine = createEngine((ctx) => {
-  const synth = new MySynth(ctx);
+  const synth = new Sampler(ctx, { sound: "C4" });
   return { synth };
 });
 
@@ -67,7 +67,7 @@ Extends `THREE.Object3D`. Takes an externally-owned `PannerNode` (typically from
 
 ### Constructor
 
-```typescript
+```typescript fragment: signature listing, not runnable code
 class PannerAnchor extends THREE.Object3D {
   readonly panner: PannerNode;
 
@@ -97,7 +97,7 @@ import { createEngine, Spatial } from "@audiorective/core";
 import { attach, PannerAnchor } from "@audiorective/threejs";
 
 const engine = createEngine((ctx) => {
-  const synth = new MySynth(ctx);
+  const synth = new Sampler(ctx, { sound: "C4" });
   const spatial = new Spatial(ctx, { distanceModel: "inverse" });
   synth.output.connect(spatial.input);
   spatial.output.connect(ctx.destination);
@@ -140,7 +140,7 @@ Because the `Spatial` lives in core and already connects to `ctx.destination`, t
 
 `PannerAnchor` is a plain `Object3D`, so it works as a primitive:
 
-```tsx
+```tsx fragment: requires React Three Fiber JSX registration
 function SpatialSynth({ spatial }: { spatial: Spatial }) {
   const ref = useRef<PannerAnchor>(null);
   if (!ref.current) ref.current = new PannerAnchor(spatial.panner);

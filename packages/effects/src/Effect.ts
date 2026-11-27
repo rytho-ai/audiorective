@@ -23,7 +23,9 @@ type CellRegistry = Record<string, import("@audiorective/core").Cell<any> | impo
 export type EffectStatus = "loading" | "ready" | "error";
 
 export interface WetArm {
+  /** Entry point of the wet signal path; must share the effect's audio context. */
   input: AudioNode | AudioProcessor;
+  /** Exit point of the wet signal path; mixed with the dry share. */
   output: AudioNode | AudioProcessor;
   /** Start in `"loading"` with the wet arm muted until `track()` resolves. Default false. */
   loading?: boolean;

@@ -56,9 +56,7 @@ import * as pc from "playcanvas";
 import { createEngine } from "@audiorective/core";
 import { attach } from "@audiorective/playcanvas";
 
-const engine = createEngine((ctx) => {
-  /* ... */
-});
+const engine = createEngine((ctx) => ({ sampler: new Sampler(ctx) }));
 
 const app = new pc.Application(canvas, {});
 const detach = attach(engine, app); // share AudioContext + arm autoStart
@@ -84,7 +82,7 @@ If the camera entity carries an `AudioListenerComponent` (PlayCanvas's standard 
 
 Drives an externally-owned `PannerNode` from a PlayCanvas entity's world transform, once per frame on the app's `update` event. The PlayCanvas counterpart to `@audiorective/threejs`'s `PannerAnchor`.
 
-```typescript
+```typescript fragment: signature listing, not runnable code
 function bindPanner(app: pc.AppBase, entity: pc.Entity, panner: PannerNode): () => void;
 ```
 
@@ -108,7 +106,7 @@ import { createEngine, Spatial } from "@audiorective/core";
 import { attach, bindPanner } from "@audiorective/playcanvas";
 
 const engine = createEngine((ctx) => {
-  const synth = new MySynth(ctx);
+  const synth = new Sampler(ctx, { sound: "C4" });
   const spatial = new Spatial(ctx, { distanceModel: "inverse" });
   synth.output.connect(spatial.input);
   spatial.output.connect(ctx.destination);

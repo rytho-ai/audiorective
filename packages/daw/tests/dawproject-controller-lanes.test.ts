@@ -535,9 +535,10 @@ describe("applyEdits setControllerLane", () => {
 describe("the MIDI file export", () => {
   test("a track's lanes are sampled into the file with the clip's events, sorted by beat", () => {
     const { project, keys } = song();
+    // A lane on channel 1: the clip's own bends are on channel 0, and a lane replaces the clip's events only for its own channel.
     project.setControllerLane(keys.id, {
       expression: "pitchBend",
-      channel: 0,
+      channel: 1,
       controller: 0,
       points: [
         { time: 0, value: 8192, shape: "linear" },
@@ -555,10 +556,10 @@ describe("the MIDI file export", () => {
     expect(volume.at(-1)!.beat).toBe(8);
     expect(volume.at(-1)!.data[2]).toBe(20);
     expect(volume.length).toBeGreaterThan(40);
-    const bendValues = track.events.filter(({ data }) => data[0] === 0xe0).map(({ beat, data }) => [beat, data[1] + (data[2] << 7)]);
-    // The lane (beats 0 to 2) and the clip's own bends (the clip starts at beat 4).
-    expect(bendValues.filter(([beat]) => beat <= 2).at(-1)).toEqual([2, 0]);
-    expect(bendValues.filter(([beat]) => beat > 4)).toEqual([
+    const bends = (status: number) => track.events.filter(({ data }) => data[0] === status).map(({ beat, data }) => [beat, data[1] + (data[2] << 7)]);
+    // The lane (beats 0 to 2, channel 1) and the clip's own bends (channel 0; the clip starts at beat 4).
+    expect(bends(0xe1).at(-1)).toEqual([2, 0]);
+    expect(bends(0xe0).filter(([beat]) => beat > 4)).toEqual([
       [6, 8192],
       [6.5, 16383],
       [7.5, 0],

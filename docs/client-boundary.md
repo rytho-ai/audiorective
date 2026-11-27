@@ -16,7 +16,7 @@ You need a boundary that skips the server render entirely.
 
 **Next.js** (pages router and app router):
 
-```tsx
+```tsx fragment: requires application-local modules
 import dynamic from "next/dynamic";
 
 const AudioWorkspace = dynamic(() => import("./AudioWorkspace"), {
@@ -42,7 +42,7 @@ In the app router, `next/dynamic` with `ssr: false` must be called from a client
 ```ts
 // audio/engine.ts — only ever imported from inside the island
 export const engine = createEngine((ctx) => ({
-  synth: new Synth(ctx),
+  synth: new Sampler(ctx, { sound: "C4" }),
 }));
 
 export const { EngineProvider, useEngine } = createEngineContext(engine);
@@ -64,7 +64,7 @@ Three rules that decide most seams:
 
 Supplying a context bypasses the check entirely — this is how you run against a mock or a host-provided context:
 
-```ts
+```ts fragment: application sketch; app-specific classes or callbacks omitted
 createEngine(setup, { context });
 ```
 

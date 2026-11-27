@@ -5,6 +5,7 @@ import type { AudioClip, Project } from "../model";
  * `Workspace.create` render them with the app's stretch processor before the song plays. Keyed by the opened Project and taken once.
  */
 export type OpenedStretch = Readonly<{
+  /** Opened stretched clip currently using varispeed, awaiting the app stretch engine. */
   clip: AudioClip;
   /** The file asked for a pitch-preserving stretch; a clip whose algorithm is varispeed by intent is not listed. */
   name: string;

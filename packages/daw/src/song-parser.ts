@@ -4,7 +4,21 @@ import type { Project } from "./model";
 export type SongParser = (
   source: Uint8Array | Blob,
   context: AudioContext,
-) => Promise<Readonly<{ project: Project; warnings: readonly string[] }>> | Readonly<{ project: Project; warnings: readonly string[] }>;
+) =>
+  | Promise<
+      Readonly<{
+        /** Opened project, with browser audio decoded before it is handed to the runtime. */
+        project: Project;
+        /** File-open and decoding limitations; empty when none were found. */
+        warnings: readonly string[];
+      }>
+    >
+  | Readonly<{
+      /** Opened project, with browser audio decoded before it is handed to the runtime. */
+      project: Project;
+      /** File-open and decoding limitations; empty when none were found. */
+      warnings: readonly string[];
+    }>;
 
 let parser: SongParser | undefined;
 

@@ -16,18 +16,28 @@ export type MixRangeOptions = Readonly<{
    * when one starts earlier, because held notes and controllers need their history. A shorter value sets `historyTruncated`.
    */
   prerollSeconds?: number;
-  /** Beats inside `range` to check for clicks, such as the joins of an edit. */
+  /** Project-beat positions to check for clicks, including either range boundary; omitted for no seam checks. */
   seamBeats?: readonly number[];
+  /**
+   * Hear only these tracks, by id. Each still sounds through its own devices, instruments, inserts, volume, pan and automation, the bus it outputs to and the master,
+   * so the audio equals a live solo of the same tracks. Send returns (effect buses fed by a selected track) are included, as in a solo; selecting a bus track also
+   * brings in the tracks that feed it. A muted track stays silent, because mute wins over solo, and the project's own solo flags are ignored for this render.
+   * Peak, loudness and seams measure the sum of what sounds. The live project, playback and its version are untouched. Default: every track, with the project's own mute and solo.
+   * Throws a `RangeError` for an empty list or an id that is not a track.
+   */
+  trackIds?: readonly string[];
+  /** Cancels the offline render with AbortError; omitted to render until completion. */
   signal?: AbortSignal;
 }>;
 
 export type MixSeam = Readonly<{
+  /** Requested seam position in project beats, including either boundary of the rendered range. */
   beat: number;
-  /** Frame in `audio`. */
+  /** Zero-based sample frame per channel in audio; the range-end seam equals its frame count. */
   frame: number;
-  /** Largest sample-to-sample step within 2 ms of the seam. */
+  /** Largest absolute sample-to-sample amplitude step within 0.002 seconds of the seam. */
   jump: number;
-  /** Largest step in the 50 ms around it, outside those 2 ms. */
+  /** Largest absolute amplitude step within 0.05 seconds, outside the central 0.002 seconds. */
   localJump: number;
   /** The seam stands out from its surroundings: a click, or a hard attack placed exactly there. */
   hasClick: boolean;
@@ -35,32 +45,47 @@ export type MixSeam = Readonly<{
 
 export type MixRangeResult = Readonly<
   | {
+      /** Outcome tag; rendered carries audio and conflict carries the current version without rendering. */
       status: "rendered";
+      /** Project version captured for rendering, or the current version when a conflict prevents rendering. */
       version: ProjectVersion;
+      /** Inclusive project-second start of the returned audio, rounded to the nearest sample frame. */
       startSeconds: number;
+      /** Returned audio duration in seconds, after rounding both range edges to sample frames. */
       durationSeconds: number;
       /** Stereo PCM of exactly the range. */
       audio: PCMData;
-      /** `null` for digital silence. */
+      /** Sample peak in dBFS; null for digital silence. */
       peakDbFS: number | null;
-      /** BS.1770 gated loudness; `null` under 400 ms or silent. */
+      /** BS.1770 gated integrated loudness in LUFS; null below 0.4 seconds or for silence. */
       loudnessLUFS: number | null;
+      /** Measurements in requested seamBeats order; empty when no seams were requested. */
       seams: readonly MixSeam[];
       /** MIDI started before the rendered audio, so held notes and controllers in this range may be missing. */
       historyTruncated: boolean;
     }
-  | { status: "conflict"; version: ProjectVersion; reason: string }
+  | {
+      /** Outcome tag; rendered carries audio and conflict carries the current version without rendering. */
+      status: "conflict";
+      /** Project version captured for rendering, or the current version when a conflict prevents rendering. */
+      version: ProjectVersion;
+      /** Human-readable explanation of the version conflict; no audio was rendered. */
+      reason: string;
+    }
 >;
 
 const SEAM_MARGIN_SECONDS = 0.06;
 
-/** Render one beat range of the full mix offline, through every device and effect, and measure it. Playback is not interrupted. */
+/** Render one beat range of the mix offline, through every device and effect (all tracks, or only `trackIds`), and measure it. Playback is not interrupted. */
 export async function renderMixRange(workspace: Workspace, options: MixRangeOptions): Promise<MixRangeResult> {
   const { expectedVersion, prerollSeconds, seamBeats = [], signal } = options;
   if (!timeRangeKind(options.range))
     throw new RangeError("renderMixRange needs a range with 0 <= startBeat < endBeat or 0 <= startSeconds < endSeconds.");
   if (prerollSeconds !== undefined && (!Number.isFinite(prerollSeconds) || prerollSeconds < 0))
     throw new RangeError("renderMixRange prerollSeconds must be finite and non-negative.");
+  const { trackIds } = options;
+  if (trackIds !== undefined && (!Array.isArray(trackIds) || trackIds.length === 0 || trackIds.some((id) => typeof id !== "string")))
+    throw new RangeError("renderMixRange trackIds must be a non-empty list of track IDs.");
   const control = new RenderControl("renderMixRange", signal);
   const { checkAbort } = control;
   let snapshot: Project | undefined;
@@ -70,6 +95,12 @@ export async function renderMixRange(workspace: Workspace, options: MixRangeOpti
     checkAbort();
     const version = live.cells.version.value;
     if (version !== expectedVersion) return { status: "conflict", version, reason: "The project changed since this version was read." };
+
+    if (trackIds) {
+      const known = new Set(live.tracks.map((track) => track.id));
+      const unknown = trackIds.find((id) => !known.has(id));
+      if (unknown !== undefined) throw new RangeError(`renderMixRange has no track with id "${unknown}".`);
+    }
 
     const sampleRate = workspace.context.sampleRate;
     const tempo = live.tempoMap;
@@ -93,6 +124,10 @@ export async function renderMixRange(workspace: Workspace, options: MixRangeOpti
     const margin = seamBeats.length ? Math.ceil(SEAM_MARGIN_SECONDS * sampleRate) : 0;
     const seamFirstFrame = Math.min(firstFrame, Math.max(0, startFrame - margin));
     const rendering = (snapshot = renderSnapshot(live));
+    if (trackIds) {
+      const chosen = new Set(trackIds);
+      for (const track of rendering.tracks) rendering.setTrackSolo(track.id, chosen.has(track.id));
+    }
     const renderFrames = (from: number, frameCount: number) => renderSnapshotFrames(workspace, rendering, control, from, frameCount);
 
     const rendered = await renderFrames(firstFrame, endFrame + margin - firstFrame);

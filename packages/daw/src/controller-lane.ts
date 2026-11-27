@@ -3,6 +3,8 @@
  * into the MIDI messages that play it. Pure: the Project model, the DAWproject codec, playback, the MIDI file export and the MCP view all use it.
  */
 
+import { controllerRestValue } from "@audiorective/midi";
+
 /** The MIDI messages a lane can carry. */
 export type ControllerExpression = "channelController" | "pitchBend" | "channelPressure" | "polyPressure" | "programChange";
 
@@ -12,19 +14,34 @@ export type ControllerExpression = "channelController" | "pitchBend" | "channelP
  * point: `"linear"` moves toward it, `"hold"` keeps this value until it (a step). The last point has nothing to go on to, so it is always `"hold"`. A
  * program-change lane always steps. Points at the same time are a step too: every one is sent, in order.
  */
-export type ControllerPoint = Readonly<{ time: number; value: number; shape: "linear" | "hold" }>;
+export type ControllerPoint = Readonly<{
+  /** Non-negative position in project beats; equal positions send steps in input order. */
+  time: number;
+  /** Integer 0..127, or 0..16383 for pitch bend with centre 8192. */
+  value: number;
+  /** Interpolation toward the next point; the last point and program changes always hold. */
+  shape: "linear" | "hold";
+}>;
 
 /** The movement of one controller on one channel. `controller` is the controller number (`channelController`) or the key (`polyPressure`), else 0. */
 export type ControllerLane = Readonly<{
+  /** MIDI message family that determines the value range and controller interpretation. */
   expression: ControllerExpression;
   /** MIDI channel 0 to 15. */
   channel: number;
+  /** CC number 0..119, poly-pressure key 0..127, or 0 for the other expressions. */
   controller: number;
+  /** Points sorted by project beat with equal times kept in order; normally non-empty. */
   points: readonly ControllerPoint[];
 }>;
 
 /** What a lane sends at one beat. */
-export type ControllerEvent = Readonly<{ beat: number; value: number }>;
+export type ControllerEvent = Readonly<{
+  /** Position in project beats at which to send the sampled value. */
+  beat: number;
+  /** Integer 0..127, or 0..16383 for pitch bend with centre 8192. */
+  value: number;
+}>;
 
 /** Every `ControllerExpression` a lane can use, in the order the tool schema lists them. */
 export const controllerExpressions: readonly ControllerExpression[] = [
@@ -84,17 +101,36 @@ export function controllerLaneProblem(lane: ControllerLane, allowEmpty = false):
 export function normalizeControllerLane(lane: ControllerLane, allowEmpty = false): ControllerLane {
   const problem = controllerLaneProblem(lane, allowEmpty);
   if (problem) throw new RangeError(`Project controller lane: ${problem}.`);
-  // Nothing follows the last point: its shape is "hold", so the same lane has one form.
-  const points = lane.points.map((point, i) =>
-    Object.freeze({ time: point.time, value: point.value, shape: i === lane.points.length - 1 ? ("hold" as const) : point.shape }),
+  // Sort first (equal times keep their order), then nothing follows the last point: its shape is "hold", so the same lane has one form.
+  const sorted = lane.points.map((point, index) => ({ point, index })).sort((a, b) => a.point.time - b.point.time || a.index - b.index);
+  const points = sorted.map(({ point }, i) =>
+    Object.freeze({ time: point.time, value: point.value, shape: i === sorted.length - 1 ? ("hold" as const) : point.shape }),
   );
-  const sorted = points.map((point, index) => ({ point, index })).sort((a, b) => a.point.time - b.point.time || a.index - b.index);
   return Object.freeze({
     expression: lane.expression,
     channel: lane.channel,
     controller: lane.controller,
-    points: Object.freeze(sorted.map(({ point }) => point)),
+    points: Object.freeze(points),
   });
+}
+
+/** The `controllerLaneKey` of the lane a raw channel message would belong to (a program change maps to the `programChange` lane), or undefined for a note or a channel-mode message. */
+export function messageLaneKey(data: Uint8Array | readonly number[]): string | undefined {
+  const channel = data[0] & 15;
+  switch (data[0] & 0xf0) {
+    case 0xb0:
+      return data.length >= 3 && data[1] < 120 ? controllerLaneKey({ expression: "channelController", channel, controller: data[1] }) : undefined;
+    case 0xe0:
+      return controllerLaneKey({ expression: "pitchBend", channel, controller: 0 });
+    case 0xd0:
+      return controllerLaneKey({ expression: "channelPressure", channel, controller: 0 });
+    case 0xa0:
+      return controllerLaneKey({ expression: "polyPressure", channel, controller: data[1] });
+    case 0xc0:
+      return controllerLaneKey({ expression: "programChange", channel, controller: 0 });
+    default:
+      return undefined;
+  }
 }
 
 /** The MIDI message that sets `value` on a lane's controller. */
@@ -151,20 +187,29 @@ export function compileControllerLane(lane: ControllerLane): readonly Controller
 const EPS = 1e-9;
 
 /**
- * The lane's messages a playback segment sends, as `{ beat, data }`. `[from, to)` is the segment in project beats. A segment that `begins` a run (a start,
- * a seek, a loop wrap) first sends the value in force at `from` (the last event at or before it), then the events after `from`; any other segment sends the
- * events in `[from, to)`.
+ * The message that sets a lane to the value in force at `from` (project beats): the last event at or before it, else the controller's rest value (see
+ * `controllerRestValue`). Undefined for a program lane before its first point and for a controller without a rest value.
  */
-export function controllerMessagesIn(lane: ControllerLane, from: number, to: number, begins: boolean): Array<{ beat: number; data: Uint8Array }> {
-  const events = compileControllerLane(lane);
-  const out: Array<{ beat: number; data: Uint8Array }> = [];
+export function controllerStartMessage(lane: ControllerLane, from: number): Uint8Array | undefined {
   let state: ControllerEvent | undefined;
-  for (const event of events) {
+  for (const event of compileControllerLane(lane)) {
     if (event.beat > from + EPS) break;
     state = event;
   }
-  if (begins && state) out.push({ beat: from, data: controllerMessage(lane, state.value) });
-  for (const event of events) {
+  // Before the first point nothing is in force: the controller's rest value is, so a pedal or bend left down by an earlier position does not carry on.
+  const start = state?.value ?? controllerRestValue(lane.expression, lane.controller);
+  return start === undefined ? undefined : controllerMessage(lane, start);
+}
+
+/**
+ * The lane's messages a playback segment sends, as `{ beat, data }`. `[from, to)` is the segment in project beats. A segment that `begins` a run (a start,
+ * a seek, a loop wrap) first sends the value in force at `from` (`controllerStartMessage`), then the events after `from`; any other segment sends the events in `[from, to)`.
+ */
+export function controllerMessagesIn(lane: ControllerLane, from: number, to: number, begins: boolean): Array<{ beat: number; data: Uint8Array }> {
+  const out: Array<{ beat: number; data: Uint8Array }> = [];
+  const start = begins ? controllerStartMessage(lane, from) : undefined;
+  if (start) out.push({ beat: from, data: start });
+  for (const event of compileControllerLane(lane)) {
     const after = begins ? event.beat > from + EPS : event.beat >= from - EPS;
     if (!after || event.beat >= to - EPS) continue;
     out.push({ beat: event.beat, data: controllerMessage(lane, event.value) });
@@ -182,7 +227,14 @@ export function controllerValueAt(expression: ControllerExpression, points: read
   return Math.round(point.value + ((next.value - point.value) * (beat - point.time)) / (next.time - point.time));
 }
 
-/** The points left when the beats `[start, end)` are deleted and later beats close up: points inside go, later ones move earlier, and the value in force at `end` is held from `start`. */
+const lastAt = (points: readonly ControllerPoint[], beat: number): ControllerPoint | undefined =>
+  points[points.findLastIndex((p) => p.time <= beat + EPS)];
+
+/**
+ * The points left when the beats `[start, end)` are deleted and later beats close up: points inside go and later ones move earlier. The curve outside the
+ * range keeps its values: a point at `start` carries the value in force at `end` and the shape of the segment there (a ramp that crossed `end` goes on as a
+ * ramp), and when a ramp from before `start` is cut, a point at `start` first holds the value it had there.
+ */
 export function controllerPointsAfterDelete(
   expression: ControllerExpression,
   points: readonly ControllerPoint[],
@@ -192,14 +244,22 @@ export function controllerPointsAfterDelete(
   const length = end - start;
   const out = points.filter((point) => point.time < start - EPS);
   const kept = points.filter((point) => point.time >= end - EPS).map((point) => ({ ...point, time: point.time - length }));
+  const atStart = kept[0] && Math.abs(kept[0].time - start) < EPS ? kept[0] : undefined;
   const state = controllerValueAt(expression, points, end);
-  if (state !== undefined && !(kept[0] && Math.abs(kept[0].time - start) < EPS)) out.push({ time: start, value: state, shape: "hold" });
+  const follows = atStart?.value ?? state;
+  const before = out[out.length - 1];
+  if (before?.shape === "linear") {
+    const value = controllerValueAt(expression, points, start);
+    if (value !== undefined && value !== follows) out.push({ time: start, value, shape: "hold" });
+  }
+  if (state !== undefined && !atStart) out.push({ time: start, value: state, shape: kept.length ? lastAt(points, end)!.shape : "hold" });
   return [...out, ...kept];
 }
 
 /**
  * The points after the beats `[start, end)` are copied and inserted at `at` (outside the range), pushing later beats `end - start` later: the copy plays the
- * range's own movement from its start value, and the lane's value from before the insert resumes after it.
+ * range's own movement from its start value, and the lane's value from before the insert resumes after it. The curve outside the copy keeps its values and its
+ * shapes: a ramp that crosses `at` is held up to it and a ramp that was in force at `at` resumes after the copy.
  */
 export function controllerPointsAfterInsert(
   expression: ControllerExpression,
@@ -211,12 +271,23 @@ export function controllerPointsAfterInsert(
   const length = end - start;
   const out = points.filter((point) => point.time < at - EPS);
   const copied = points.filter((point) => point.time >= start - EPS && point.time < end - EPS);
-  const startState = controllerValueAt(expression, points, start);
-  if (startState !== undefined && !(copied[0] && Math.abs(copied[0].time - start) < EPS)) out.push({ time: at, value: startState, shape: "hold" });
-  for (const point of copied) out.push({ ...point, time: point.time - start + at });
-  const resume = controllerValueAt(expression, points, at);
   const later = points.filter((point) => point.time >= at - EPS);
-  if (resume !== undefined && !(later[0] && Math.abs(later[0].time - at) < EPS)) out.push({ time: at + length, value: resume, shape: "hold" });
+  const startState = controllerValueAt(expression, points, start);
+  const copyStart = copied[0] && Math.abs(copied[0].time - start) < EPS ? copied[0] : undefined;
+  const resume = controllerValueAt(expression, points, at);
+  const resumes = later[0] && Math.abs(later[0].time - at) < EPS ? later[0] : undefined;
+  const before = out[out.length - 1];
+  const first = copyStart?.value ?? startState;
+  if (before?.shape === "linear" && resume !== undefined && resume !== first) out.push({ time: at, value: resume, shape: "hold" });
+  const copy: ControllerPoint[] = [];
+  if (startState !== undefined && !copyStart) copy.push({ time: at, value: startState, shape: lastAt(points, start)!.shape });
+  for (const point of copied) copy.push({ ...point, time: point.time - start + at });
+  out.push(...copy);
+  // A ramp still running at the copy's end is held where the original curve was at `end`.
+  const tail = copy[copy.length - 1];
+  const stateAtEnd = controllerValueAt(expression, points, end);
+  if (tail?.shape === "linear" && stateAtEnd !== undefined) out.push({ time: at + length, value: stateAtEnd, shape: "hold" });
+  if (resume !== undefined && !resumes) out.push({ time: at + length, value: resume, shape: later.length ? lastAt(points, at)!.shape : "hold" });
   for (const point of later) out.push({ ...point, time: point.time + length });
   return out;
 }

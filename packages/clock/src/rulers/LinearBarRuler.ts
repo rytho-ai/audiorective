@@ -4,7 +4,9 @@ import { beatsPerBar, gridPoints } from "./Ruler";
 import type { GridPoint, Ruler } from "./Ruler";
 
 export interface LinearBarRulerOptions {
+  /** Positive meter numerator, counted in denominator note values per bar. */
   numerator: number;
+  /** Positive meter denominator; 4 denotes a quarter note. */
   denominator: number;
 }
 
@@ -13,7 +15,9 @@ export interface LinearBarPoint {
   bar: number;
   /** Quarter-note axis beats since the bar began, regardless of the meter denominator. */
   beatInBar: number;
+  /** Meter numerator, counted in denominator note values per bar. */
   numerator: number;
+  /** Meter denominator; 4 denotes a quarter note. */
   denominator: number;
 }
 

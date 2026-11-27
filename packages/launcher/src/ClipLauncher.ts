@@ -90,23 +90,28 @@ export class ClipEvent extends Event {
 
 /** A launch or stop as it is about to be scheduled. */
 export type LaunchRequest = Readonly<{
+  /** Track whose current clip will be replaced or stopped. */
   track: Track;
   /** The clip that will start; null for a stop. */
   clip: Clip | null;
   /** What caused it. */
   source: LaunchSource;
+  /** Boundary rule resolved for this request; "none" starts immediately. */
   quantize: Quantize;
   /** Beat of the boundary; null while the clock is stopped or paused (the launch waits for `start` or `resume`, so there is no boundary yet and setting `beat` or `when` is ignored: change `quantize`). */
   beat: number | null;
   /** Audio-context time of that beat at the current tempo; null like `beat`. */
   when: number | null;
+  /** Whether to preserve the playing clip's material phase at replacement. */
   legato: boolean;
 }>;
 /** Return the request to schedule or `null` to drop it. Change `quantize` to aim at another boundary, or `beat` for an exact one (`when` follows); the clip is fixed. */
 export type LaunchTransform = (launch: LaunchRequest, random: Random) => LaunchRequest | null;
 /** A launch (`clip`) or stop (`clip` null) that was just scheduled. */
 export interface ScheduledChange {
+  /** Track affected when the scheduled boundary is reached. */
   readonly track: Track;
+  /** Clip to start at the boundary; null schedules a stop. */
   readonly clip: Clip | null;
   /** Audio-context time the change takes effect; the current time for quantize "none". */
   readonly when: number;
@@ -115,6 +120,7 @@ export interface ScheduledChange {
 }
 /** A launch or stop waiting for its boundary. */
 export interface QueuedChange {
+  /** Track waiting for a start or stop boundary. */
   track: Track;
   /** The clip that will start; null for a stop. */
   clip: Clip | null;

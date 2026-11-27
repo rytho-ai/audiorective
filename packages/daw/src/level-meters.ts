@@ -2,7 +2,12 @@ import { cell, readonlyCell, type ReadonlyCell } from "@audiorective/core";
 import type { Channel } from "@audiorective/effects";
 
 /** Post-fader peak in dBFS of the master output and of each track strip; -Infinity when silent. */
-export type WorkspaceLevels = Readonly<{ master: number; tracks: Readonly<Record<string, number>> }>;
+export type WorkspaceLevels = Readonly<{
+  /** Post-fader master peak in dBFS; -Infinity when silent or the audio context is not running. */
+  master: number;
+  /** Post-fader peaks in dBFS keyed by opaque track ID; each silent track reads -Infinity. */
+  tracks: Readonly<Record<string, number>>;
+}>;
 
 const SILENT: WorkspaceLevels = Object.freeze({ master: -Infinity, tracks: Object.freeze({}) });
 

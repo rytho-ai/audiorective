@@ -16,16 +16,32 @@ export interface AutomationClipOptions {
 
 /** Structural clock scheduler window; applications attach the clip instead of calling schedule. */
 export interface AutomationClipWindow {
-  beat: { start: number; end: number };
+  /** Quarter-note beat interval to schedule, half-open [start, end). */
+  beat: {
+    /** Inclusive lower boundary in quarter-note beats. */
+    start: number;
+    /** Exclusive upper boundary in quarter-note beats. */
+    end: number;
+  };
   /** `current`: the audio-context time of the tick, in seconds. */
-  time: { current: number };
+  time: {
+    /** Absolute AudioContext seconds at the current scheduling tick. */
+    current: number;
+  };
+  /** Registers an event at absolute AudioContext seconds for later transport cancellation. */
   own(event: CancellableEvent, when: number): void;
 }
 
 /** Structural Clock handle, so this pure module never imports a clock or constructs audio nodes. */
 export interface AutomationClipTransport {
-  readonly timeline: BeatTiming & { readonly now: number };
+  /** Borrowed beat/audio-time mapping with the current absolute AudioContext seconds. */
+  readonly timeline: BeatTiming & {
+    /** Current absolute AudioContext time in seconds. */
+    readonly now: number;
+  };
+  /** Retracts and refills pending automation after an edit. */
   refresh(): void;
+  /** Stops following the transport and retracts owned automation. */
   detach(): void;
 }
 

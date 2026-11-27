@@ -35,8 +35,11 @@ export interface StepGridLane {
   rate: string | number;
   /** 0..1, shown as a percentage: delays every odd step by that share of half a step. */
   swing: number;
+  /** Playback traversal order; forwarded to the borrowed lane without changing step data. */
   direction: StepGridDirection;
+  /** Whether this lane is silenced; step content remains intact. */
   muted: boolean;
+  /** Whether this lane participates in solo playback; step content remains intact. */
   solo: boolean;
   /** Custom per-step numbers this lane declares, by id; they become tabs after the built-in ones. */
   readonly params: Readonly<Record<string, ParamRange>>;
@@ -50,24 +53,39 @@ export interface StepGridLane {
 
 /** What the grid reads and drives. A `StepSequencer` satisfies it, and so can any model with these members. */
 export interface StepGridSequencer {
+  /** Borrowed lanes keyed by stable identifiers; display order follows the widget's lane configuration. */
   readonly lanes: Readonly<Record<string, StepGridLane>>;
 }
 
 /** User-facing strings; each key overrides the English default. */
 export type StepGridLabels = {
+  /** Accessible sequencer caption; defaults to "Step sequencer". */
   grid: string;
+  /** Normalized strike-strength caption; defaults to "Velocity". */
   velocity: string;
+  /** Beat-offset caption; defaults to "Offset". */
   offset: string;
+  /** Event beat-length caption; defaults to "Length". */
   length: string;
+  /** Retrigger-count caption; defaults to "Repeat". */
   repeat: string;
+  /** MIDI-note caption; defaults to "Pitch". */
   pitch: string;
+  /** Probability caption; defaults to "Chance". */
   chance: string;
+  /** Lane-collapse caption; defaults to "Fold". */
   fold: string;
+  /** Lane-silencing caption; defaults to "Mute". */
   mute: string;
+  /** Lane-isolation caption; defaults to "Solo". */
   solo: string;
+  /** Pattern step-count caption; defaults to "Steps". */
   steps: string;
+  /** Step-rate caption; defaults to "Rate". */
   rate: string;
+  /** Traversal-order caption; defaults to "Direction". */
   direction: string;
+  /** Swing-amount caption; defaults to "Swing". */
   swing: string;
   /** Short caption of the direction column. */
   dir: string;
@@ -80,6 +98,7 @@ export type StepGridOptions = {
   laneLabel?(name: string): string;
   /** Zero-based step index; add one for visible numbering. */
   formatStep?(label: string, step: number): string;
+  /** Optional control-caption overrides; missing entries use the built-in English labels. */
   labels?: Partial<StepGridLabels>;
 };
 
@@ -88,6 +107,7 @@ export type StepGridBuiltInParameter = "velocity" | "offset" | "length" | "repea
 
 /** Resources live until this step is removed or its cell attachment is detached. */
 export interface StepGridCellContext extends WidgetPluginContext {
+  /** Stable identifier of the lane containing this cell. */
   readonly laneId: string;
   /** Zero-based step index. */
   readonly stepIndex: number;
@@ -108,7 +128,19 @@ export interface StepGridPluginContext extends WidgetPluginContext {
   /** The step's element, or `null` for an unknown lane or step. */
   cellElement(laneId: string, step: number): HTMLElement | null;
   /** The step's box in CSS pixels relative to `surface`, or `null` for an unknown lane or step. */
-  cellRect(laneId: string, step: number): Readonly<{ x: number; y: number; width: number; height: number }> | null;
+  cellRect(
+    laneId: string,
+    step: number,
+  ): Readonly<{
+    /** Horizontal boundary in CSS pixels relative to the grid surface. */
+    x: number;
+    /** Vertical boundary in CSS pixels relative to the grid surface. */
+    y: number;
+    /** Cell width in CSS pixels. */
+    width: number;
+    /** Cell height in CSS pixels. */
+    height: number;
+  }> | null;
   /** Mount a full-surface overlay; position children with `cellRect()`. */
   mountOverlay(element: HTMLElement): Unsubscribe;
   /** Add an element to the toolbar strip next to the parameter tabs. */
@@ -124,5 +156,6 @@ export interface StepGridPluginContext extends WidgetPluginContext {
 export type StepGridPlugin = WidgetPlugin<StepGridPluginContext>;
 
 export interface StepGridHandle extends PluginTarget<StepGridPluginContext> {
+  /** Releases resources owned by this attachment or view; safe to call twice. */
   dispose(): void;
 }

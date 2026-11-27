@@ -15,6 +15,7 @@ export interface MidiSink extends Instrument {
 
 type Held = { voice: Voice; note: number; release: number; seq: number };
 type NoteOff = { time: number; seq: number; /** Only voices that started at or before this time are released. */ since?: number };
+type Pedal = { time: number; seq: number; down: boolean };
 
 /** A note velocity (0 to 1) as the MIDI byte every path sends: 1 to 127, so a note-on never reads as a note-off. */
 export const midiVelocityByte = (velocity: number): number => Math.max(1, Math.min(127, Math.round(velocity * 127)));
@@ -29,6 +30,10 @@ const done: CancellableEvent = { cancel() {}, onEnded: (listener) => listener() 
  * Plays MIDI on a `Sampler` the way a device queue would: note-on starts a voice (velocity 0..127 → 0..1), and note-off and CC120/CC123 are releases pending at their
  * time. Each voice is released at the earliest pending release that reaches it; a withdrawn release gives the voice back its next one, and a voice started later still
  * meets the releases already pending.
+ *
+ * The sustain pedal (CC64, down from value 64) is honoured at its own time: a note-off that falls while the pedal is down releases at the next pedal-up instead
+ * (never, until one arrives), and CC120/CC123 release at once whatever the pedal does. The sampler has one pedal for every channel. Everything else is ignored:
+ * pitch bend, mod wheel and other controllers, channel and polyphonic pressure, and program change (a sampler plays one sound, at the velocity of the note-on).
  */
 export class SamplerSink implements MidiSink {
   private readonly held = new Set<Held>();
@@ -38,6 +43,8 @@ export class SamplerSink implements MidiSink {
   private seq = 0;
   /** Pending all-notes-off times: they release every voice started before then. */
   private readonly allOffs: NoteOff[] = [];
+  /** Sustain pedal moves, in time then call order. */
+  private readonly pedals: Pedal[] = [];
 
   constructor(
     readonly sampler: Sampler,
@@ -87,10 +94,12 @@ export class SamplerSink implements MidiSink {
       this.prune();
       return this.pending(this.allOffs, when, () => true);
     }
+    if (status === 0xb0 && data[1] === 64) return this.pedal(when, data[2] >= 64);
     return done;
   }
 
   allNotesOff(): void {
+    this.pedals.length = 0;
     this.sampler.stopAll();
     this.held.clear();
     this.noteOffs.clear();
@@ -99,6 +108,40 @@ export class SamplerSink implements MidiSink {
 
   messagesHandled(): Promise<void> {
     return Promise.resolve();
+  }
+
+  /** A pedal move at `when`, kept in time order; the event withdraws it. */
+  private pedal(when: number, down: boolean): CancellableEvent {
+    this.prune();
+    const entry: Pedal = { time: when, seq: this.seq++, down };
+    const at = this.pedals.findIndex((other) => other.time > when + SAME_TIME);
+    this.pedals.splice(at < 0 ? this.pedals.length : at, 0, entry);
+    const reapply = () => {
+      for (const held of this.held) this.apply(held);
+    };
+    reapply();
+    let withdrawn = false;
+    return {
+      cancel: () => {
+        if (withdrawn) return;
+        withdrawn = true;
+        const index = this.pedals.indexOf(entry);
+        if (index >= 0) this.pedals.splice(index, 1);
+        reapply();
+      },
+      onEnded: (listener) => listener(),
+    };
+  }
+
+  /** When a note-off at `off` really releases: at once with the pedal up, else at the next pedal-up after it (`Infinity` until one is scheduled). */
+  private effective(off: NoteOff): number {
+    let down = false;
+    for (const pedal of this.pedals) {
+      const before = pedal.time < off.time - SAME_TIME || (pedal.time <= off.time + SAME_TIME && pedal.seq < off.seq);
+      if (before) down = pedal.down;
+      else if (down && !pedal.down) return pedal.time;
+    }
+    return down ? Infinity : off.time;
   }
 
   /** Add a pending release at `when` to `times` and apply it to the voices `reaches`; the event withdraws it. */
@@ -131,7 +174,7 @@ export class SamplerSink implements MidiSink {
         !(off.since !== undefined && start > off.since + SAME_TIME) &&
         (off.time > start + SAME_TIME || (off.time >= start - SAME_TIME && off.seq > held.seq))
       )
-        release = Math.min(release, off.time);
+        release = Math.min(release, this.effective(off));
     for (const off of this.allOffs) if (off.time > start + SAME_TIME) release = Math.min(release, off.time);
     if (release === held.release) return;
     held.release = release;
@@ -143,13 +186,16 @@ export class SamplerSink implements MidiSink {
     const now = this.context.currentTime;
     for (const held of this.held) if (!untracked(() => held.voice.playing.value)) this.held.delete(held);
     // In place: a pending event withdraws its time from the same array.
-    const drop = (times: NoteOff[]) => {
-      for (let i = times.length - 1; i >= 0; i--) if (times[i].time < now) times.splice(i, 1);
+    // A note-off the pedal still holds stays until the pedal comes up.
+    const drop = (times: NoteOff[], pedalled: boolean) => {
+      for (let i = times.length - 1; i >= 0; i--) if ((pedalled ? this.effective(times[i]) : times[i].time) < now) times.splice(i, 1);
     };
     for (const [note, times] of this.noteOffs) {
-      drop(times);
+      drop(times, true);
       if (!times.length) this.noteOffs.delete(note);
     }
-    drop(this.allOffs);
+    drop(this.allOffs, false);
+    // The last move already past still says where the pedal stands.
+    if (!this.noteOffs.size) while (this.pedals.length > 1 && this.pedals[1].time < now) this.pedals.shift();
   }
 }

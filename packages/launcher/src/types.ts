@@ -2,7 +2,9 @@ import type { BeatTiming, CancellableEvent, Sound } from "@audiorective/core";
 
 /** What a transport hands a scheduler when it attaches (the part of a clock's `SchedulerHandle` a clip's own scheduler may use). */
 export type TransportHandle = Readonly<{
+  /** Retracts and refills this scheduler's pending events after an edit. */
   refresh(): void;
+  /** Stops following the transport and cancels this scheduler's owned events. */
   detach(): void;
   /** The beats the launcher clip's `loop` and `length` repeat every, or null when the clip does not loop (or has no `length`). A scheduler that loops itself, such as a `MidiClip`, follows it. */
   loopBeats(): number | null;
@@ -12,9 +14,19 @@ export type TransportHandle = Readonly<{
 
 /** The part of a transport window `schedule` reads. Internal to transports: `clock.attach(launcher)` passes it; applications never build one. */
 export type TransportWindow = Readonly<{
-  beat: { start: number; end: number };
+  /** Clip-relative scheduling interval in quarter-note beats, half-open [start, end). */
+  beat: {
+    /** Inclusive lower boundary in quarter-note beats. */
+    start: number;
+    /** Exclusive upper boundary in quarter-note beats. */
+    end: number;
+  };
   /** `current`: the audio-context time of the tick, in seconds. */
-  time: { current: number };
+  time: {
+    /** Absolute AudioContext seconds at this scheduling tick. */
+    current: number;
+  };
+  /** Registers an event at absolute AudioContext `when` seconds for transport cancellation. */
   own(event: CancellableEvent, when: number): void;
 }>;
 
@@ -23,13 +35,17 @@ export type ResetReason = "start" | "stop" | "pause" | "seek" | "detach";
 
 /** One change of the transport as a clock reports it: `when` is the audio time it takes effect, `beat` the beat position there. */
 export type TransportChange = Readonly<{
+  /** Transport operation that produced this notification; used to retime pending work. */
   type: "start" | "stop" | "pause" | "resume" | "seek" | "tempo";
+  /** Absolute AudioContext seconds at which the change takes effect. */
   when: number;
+  /** Quarter-note transport beat position at the effective audio time. */
   beat: number;
 }>;
 
 /** The tempo curve of the transport a launcher follows (a clock's `timeline.bpm`). */
 export type TransportTempo = Readonly<{
+  /** Current tempo in quarter-note beats per minute. */
   readonly value: number;
   /** Tempo in BPM at audio-context `time` (seconds). */
   valueAtTime(time: number): number;
@@ -41,19 +57,36 @@ export type TransportTempo = Readonly<{
 
 /** What a launcher learns about the clock it is attached to (a clock's `SchedulerHandle`). */
 export type TransportAttachment = Readonly<{
-  timeline: BeatTiming & { readonly bpm: TransportTempo };
-  state: Readonly<{ readonly value: "stopped" | "playing" | "paused" }>;
-  meter: Readonly<{ readonly value: readonly [number, number] }>;
+  /** Borrowed beat/audio-time mapping and live tempo curve. */
+  timeline: BeatTiming & {
+    /** Live tempo curve in quarter-note beats per minute. */
+    readonly bpm: TransportTempo;
+  };
+  /** Borrowed transport-state reader; never mutated by the scheduler. */
+  state: Readonly<{
+    /** Current playback phase: stopped, playing or paused. */
+    readonly value: "stopped" | "playing" | "paused";
+  }>;
+  /** Borrowed meter reader used to resolve bar-based note values. */
+  meter: Readonly<{
+    /** Meter tuple [numerator, denominator]; [4, 4] means four quarter notes per bar. */
+    readonly value: readonly [number, number];
+  }>;
+  /** Retracts and refills this scheduler's pending events after an edit. */
   refresh(): void;
   /** Revokes events scheduled at or after audio-context `time` (seconds). */
   cancelFrom(time: number): void;
+  /** Stops following the transport and cancels this scheduler's owned events. */
   detach(): void;
 }>;
 
 /** A scheduler a launcher can be attached as: `clock.attach(launcher)`. */
 export type Scheduler = {
+  /** Fills one half-open quarter-note beat window and registers cancellable events with own. */
   schedule(window: TransportWindow, timing: BeatTiming): void;
+  /** Optional notification after transport cancellation; reason distinguishes restart, jump and detach. */
   reset?(reason: ResetReason): void;
+  /** Optional notification after a transport change has been applied. */
   transport?(change: TransportChange): void;
 };
 
@@ -69,11 +102,24 @@ export type ClipLength = number | Exclude<Quantize, "none">;
  * It sees windows whose beat 0 is the clip's start; the clip's `pitch` is not applied to it.
  */
 export type ClipScheduler = {
+  /** Fills one clip-relative half-open beat window; beat 0 is the clip's start. */
   schedule(window: TransportWindow, timing: BeatTiming): void;
+  /** Optional notification when this clip's scheduled playback is reset. */
   reset?(reason: ResetReason): void;
+  /** Optional attachment callback; a returned cleanup runs when the scheduler leaves. */
   attached?(handle: TransportHandle): void | (() => void);
+  /** Optional whole-scheduler output routing; used when no lane outputs are exposed. */
   connect?(destination: AudioNode): unknown;
-  readonly lanes?: Readonly<Record<string, { connect(node: AudioNode): AudioNode }>>;
+  /** Optional per-lane outputs; the launcher connects each to the clip's track path. */
+  readonly lanes?: Readonly<
+    Record<
+      string,
+      {
+        /** Routes this lane's audio to the supplied destination and returns the connected node. */
+        connect(node: AudioNode): AudioNode;
+      }
+    >
+  >;
 };
 
 /** A clip: an AudioBuffer, or options with one of `buffer`, `sound` or `scheduler`. A buffer alone plays once. */
@@ -101,27 +147,48 @@ export type FollowTarget = {
 export type ClipWarp = "repitch" | false;
 
 /** A loop: `true` repeats the whole material, a region repeats [startBeat, endBeat) of it (material beats from the first beat). */
-export type LoopSetting = boolean | { startBeat: number; endBeat: number };
+export type LoopSetting =
+  | boolean
+  | {
+      /** Inclusive repeat-region boundary in quarter-note material beats. */
+      startBeat: number;
+      /** Exclusive repeat-region boundary in quarter-note material beats. */
+      endBeat: number;
+    };
 
 /** A follow action: `after` the clip's start one of `next` is picked by weight. */
-export type FollowSetting = { after: ClipLength; next: readonly FollowTarget[] };
+export type FollowSetting = {
+  /** Delay from the clip's start in seconds, or a tempo-aware note value such as "1m". */
+  after: ClipLength;
+  /** Weighted follow outcomes; "stay" keeps the current clip without launching another. */
+  next: readonly FollowTarget[];
+};
 
 /** Every option a clip can change after construction, with defaults filled in; `null` means unset. */
 export type ClipSettings = Readonly<{
+  /** Resolved display text; defaults to the track name and slot number. */
   name: string;
+  /** Resolved repeat rule; false plays once, true repeats all material, a range is half-open. */
   loop: LoopSetting;
   /** null: a buffer's own length, else endless. */
   length: ClipLength | null;
+  /** Initial position in quarter-note material beats; defaults to 0. */
   offsetBeats: number;
   /** null: follows `launcher.quantize`. */
   quantize: Quantize | null;
+  /** Press/release response; defaults to "trigger". */
   mode: ClipMode;
+  /** Retrigger interval in quarter-note beats for repeat mode; defaults to 1. */
   repeatBeats: number;
+  /** Probability of accepting a launch, 0..1; defaults to 1. */
   chance: number;
+  /** Weighted follow action; null disables automatic follow launches. */
   follow: FollowSetting | null;
+  /** Preserve the playing clip's material phase on launch; defaults to false. */
   legato: boolean;
   /** Tempo of a buffer's material; the clock tempo when the clip was created (or attached) for a buffer clip without `bpm`, unused otherwise. */
   bpm: number;
+  /** Tempo-following rule for buffers; defaults to "repitch", false keeps natural speed. */
   warp: ClipWarp;
 }>;
 
@@ -171,10 +238,24 @@ export type ClipOptions = {
   bpm?: number;
   /** Buffer clips: how the clip follows tempo changes and ramps of the transport, scene tempo included. Default "repitch": it plays at clock tempo / `bpm` times its natural speed, so every buffer clip follows the song tempo; `false` plays at its own speed. Real-time time stretching is not offered. */
   warp?: ClipWarp;
-} & ({ buffer: AudioBuffer } | { sound: Sound } | { scheduler: ClipScheduler });
+} & (
+  | {
+      /** Decoded material to play; mutually exclusive with sound and scheduler. */
+      buffer: AudioBuffer;
+    }
+  | {
+      /** Buffer or event factory to play; mutually exclusive with buffer and scheduler. */
+      sound: Sound;
+    }
+  | {
+      /** Borrowed event scheduler; mutually exclusive with buffer and sound. */
+      scheduler: ClipScheduler;
+    }
+);
 
 /** One scene: the clips at one slot across all tracks. */
 export interface SceneSpec {
+  /** Optional display text; omitted to use the launcher's generated scene name. */
   name?: string;
   /** BPM the transport changes to at the scene's boundary; warped audio clips follow it. */
   tempo?: number;

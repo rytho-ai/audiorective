@@ -20,9 +20,19 @@ export type Quantize = "none" | `${number}m` | `${number}n`;
 export type NoteLength = Exclude<Quantize, "none">;
 /** The part of a clock's `SchedulerHandle` a recorder reads; `clock.attach(recorder)` supplies it. */
 export type RecorderTransport = Readonly<{
+  /** Borrowed mapping between quarter-note beats and absolute AudioContext seconds. */
   timeline: BeatTiming;
-  state: Readonly<{ value: "stopped" | "playing" | "paused" }>;
-  meter: Readonly<{ value: readonly [number, number] }>;
+  /** Borrowed transport-state reader used to follow recording boundaries. */
+  state: Readonly<{
+    /** Current playback phase: stopped, playing or paused. */
+    value: "stopped" | "playing" | "paused";
+  }>;
+  /** Borrowed meter reader retained as recording metadata. */
+  meter: Readonly<{
+    /** Meter tuple [numerator, denominator]; [4, 4] means four quarter notes per bar. */
+    value: readonly [number, number];
+  }>;
+  /** Stops following the transport and unregisters this recorder's attachment. */
   detach(): void;
 }>;
 /** Why a clock resets its schedulers: it started, stopped, paused or jumped, or the scheduler is leaving. */
@@ -80,20 +90,39 @@ export interface RecordedAudio extends PCMData {
   readonly endTime: number;
   /** The clock beat, in beats from the clock's beat 0, at `startTime` when the recorder was attached to a playing clock at the start, else null. */
   readonly startBeat: number | null;
-  readonly dropouts?: readonly Readonly<{ startFrame: number; endFrame: number }>[];
+  /** Missing half-open ranges on the absolute AudioContext frame clock, filled with silence; omitted when none. */
+  readonly dropouts?: readonly Readonly<{
+    /** Inclusive missing-frame boundary on the absolute AudioContext frame clock, per channel. */
+    startFrame: number;
+    /** Exclusive missing-frame boundary on the absolute AudioContext frame clock, per channel. */
+    endFrame: number;
+  }>[];
 }
 export interface RecordedAudioSpan {
+  /** Integer number of captured channels. */
   readonly channelCount: number;
+  /** Captured sample-frame rate in hertz. */
   readonly sampleRate: number;
+  /** Inclusive capture boundary in absolute audio-context sample frames per channel. */
   readonly startFrame: number;
+  /** Exclusive capture boundary in absolute audio-context sample frames per channel. */
   readonly endFrame: number;
+  /** Inclusive capture boundary in absolute AudioContext seconds. */
   readonly startTime: number;
+  /** Exclusive capture boundary in absolute AudioContext seconds. */
   readonly endTime: number;
   /** Missing browser render frames, represented as silence in streamed PCM. */
-  readonly dropouts?: readonly Readonly<{ startFrame: number; endFrame: number }>[];
+  readonly dropouts?: readonly Readonly<{
+    /** Inclusive missing-frame boundary on the absolute AudioContext frame clock, per channel. */
+    startFrame: number;
+    /** Exclusive missing-frame boundary on the absolute AudioContext frame clock, per channel. */
+    endFrame: number;
+  }>[];
 }
 export interface RecordedAudioChunk {
+  /** First captured sample frame per channel on the absolute AudioContext clock. */
   readonly startFrame: number;
+  /** Planar linear PCM, one Float32Array per channel; arrays cover equal frame counts. */
   readonly channels: readonly Float32Array[];
 }
 
@@ -143,7 +172,9 @@ function abortError(): DOMException {
 }
 
 export type AudioRecorderCells = {
+  /** Capture lifecycle phase; initially idle and changed only by recorder commands. */
   state: ReadonlyCell<AudioRecorderState>;
+  /** Latest capture failure text; null when no error is recorded. */
   error: ReadonlyCell<string | null>;
   /** AudioContext time the armed take starts at; null unless a take is armed. */
   startsAt: ReadonlyCell<number | null>;

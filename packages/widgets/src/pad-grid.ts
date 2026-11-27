@@ -1,6 +1,15 @@
-export type PadControl = Readonly<{ id: string; label: string; key?: string }>;
+export type PadControl = Readonly<{
+  /** Stable pad identifier forwarded to press callbacks. */
+  id: string;
+  /** Visible pad caption; independent of its stable identifier. */
+  label: string;
+  /** Optional keyboard binding; omission leaves the pad pointer-only. */
+  key?: string;
+}>;
 export type PadGridOptions = Readonly<{
+  /** Pads in display order; an empty list draws no hit buttons. */
   pads: readonly PadControl[];
+  /** Triggers a pad by identifier; an optional returned release runs when the press ends. */
   press(id: string): void | (() => void);
 }>;
 

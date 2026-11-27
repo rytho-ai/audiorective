@@ -6,6 +6,10 @@ let hasGui = false;
 let respondToLoad = true;
 
 const info = (id: number, value: number) => ({ id, name: `p${id}`, min: 0, max: 1, defaultValue: 0, value, text: "" });
+/** CLAP_PARAM_IS_STEPPED and CLAP_PARAM_IS_ENUM. */
+const STEPPED = 1;
+const ENUM = 1 << 16;
+let extra: Record<string, unknown>[] = [];
 
 class FakeGain {
   gain = { value: 1 };
@@ -24,7 +28,7 @@ class FakePort {
           data: {
             type: "loaded",
             descriptor: { id: "x", name: "x", vendor: "", version: "", features: [] },
-            params: [info(7, 0.25), info(9, 0.5)],
+            params: [info(7, 0.25), info(9, 0.5), ...extra],
             hasGui,
             latencySamples: 48,
             audioInputs: [],
@@ -46,6 +50,7 @@ describe("WebClapHost params", () => {
   beforeEach(() => {
     hasGui = false;
     respondToLoad = true;
+    extra = [];
     vi.stubGlobal("GainNode", FakeGain);
     vi.stubGlobal("AudioParam", FakeAudioParam);
     vi.stubGlobal("AudioWorkletNode", FakeNode);
@@ -56,8 +61,14 @@ describe("WebClapHost params", () => {
     vi.unstubAllGlobals();
   });
 
-  const load = async () => {
-    const context = { sampleRate: 48000, currentTime: 3, destination: {}, audioWorklet: { addModule: async () => {} } } as unknown as AudioContext;
+  const load = async (state: AudioContextState = "suspended") => {
+    const context = {
+      sampleRate: 48000,
+      currentTime: 3,
+      state,
+      destination: {},
+      audioWorklet: { addModule: async () => {} },
+    } as unknown as AudioContext;
     const host = await WebClapHost.load(context, { url: "http://localhost/bundle.wclap", workletUrl: "http://localhost/w.js" });
     const port = host.node.port as unknown as FakePort;
     port.sent.length = 0;
@@ -88,7 +99,25 @@ describe("WebClapHost params", () => {
   it("forwards writes to the worklet", async () => {
     const { host, port } = await load();
     host.params["7"].value = 0.75;
-    expect(port.sent).toEqual([{ type: "param", id: 7, value: 0.75 }]);
+    expect(port.sent).toEqual([{ type: "param", id: 7, value: 0.75, from: 0.25, ramp: 0, step: undefined }]);
+  });
+
+  it("moves a smooth parameter over a ramp while the context runs, and jumps a switch, an enum or a stopped context", async () => {
+    const wide = { id: 20, name: "wide", min: 0, max: 127, defaultValue: 0, value: 10, text: "", flags: STEPPED, step: 1 };
+    const few = { id: 21, name: "few", min: 0, max: 3, defaultValue: 0, value: 0, text: "", flags: STEPPED, step: 1 };
+    const choice = { id: 22, name: "choice", min: 0, max: 200, defaultValue: 0, value: 0, text: "", flags: STEPPED | ENUM, step: 1 };
+    extra = [wide, few, choice];
+    const { host, port } = await load("running");
+    host.params["7"].value = 0.75;
+    host.params["20"].value = 90;
+    host.params["21"].value = 2;
+    host.params["22"].value = 100;
+    expect(port.sent).toEqual([
+      { type: "param", id: 7, value: 0.75, from: 0.25, ramp: 0.02, step: undefined },
+      { type: "param", id: 20, value: 90, from: 10, ramp: 0.02, step: 1 },
+      { type: "param", id: 21, value: 2, from: 0, ramp: 0, step: 1 },
+      { type: "param", id: 22, value: 100, from: 0, ramp: 0, step: 1 },
+    ]);
   });
 
   it("applies plug-in changes without echoing and notifies effects", async () => {

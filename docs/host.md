@@ -53,7 +53,7 @@ Keep the copied worklet in step with the installed package version, for example 
 
 ```ts
 const amount = host.params["2"]; // An ID provided by the plug-in.
-const detachControl = host.effect(() => {
+const detachControl = effect(() => {
   slider.valueAsNumber = amount.value;
 });
 slider.oninput = () => {
@@ -62,7 +62,7 @@ slider.oninput = () => {
 // On teardown: detachControl(); slider.oninput = null;
 ```
 
-`dispose()` and a plug-in `"error"` message clear every pending response timer and reject the callers still waiting on `saveState()`, `loadState()` or `mountEditor()` instead of leaving them to time out. `WebClapEvent` is core's `CancellableEvent`. `saveState()` returns opaque patch bytes. `loadState(bytes)` waits for matching readback and applies reported parameter values to the existing Params so controls reflect the loaded patch.
+`dispose()` and a plug-in `"error"` message clear every pending response timer and reject the callers still waiting on `saveState()`, `loadState()` or `mountEditor()` instead of leaving them to time out. `WebClapEvent` is core's `CancellableEvent`. `saveState()` returns opaque patch bytes and first refreshes `parameterInfo` and `params` from the plug-in, so a parameter the plug-in changed inside (a preset loaded in its own editor) is current when the bytes arrive. A plug-in that has processed no audio yet (a suspended context) still reports the value it had before a write, so a reported value that differs from one this host wrote and the plug-in has not confirmed (by reporting it, by a `paramOut`, or by a loaded state) is ignored. `loadState(bytes)` waits for matching readback and applies reported parameter values to the existing Params so controls reflect the loaded patch.
 
 ## Select a device in a bundle
 

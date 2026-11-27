@@ -1,4 +1,11 @@
-export type TakeAnchor = Readonly<{ audioTime: number; projectTime: number; advancing: boolean }>;
+export type TakeAnchor = Readonly<{
+  /** Absolute AudioContext seconds captured when anchoring the take; finite and non-negative. */
+  audioTime: number;
+  /** Project position in seconds corresponding to audioTime, before input-latency correction. */
+  projectTime: number;
+  /** True while project time advances with the audio clock; false anchors a paused take to one project position. */
+  advancing: boolean;
+}>;
 
 /** Throws unless `audioTime` is a finite, non-negative AudioContext time. */
 export function assertTakeAudioTime(audioTime: number): void {

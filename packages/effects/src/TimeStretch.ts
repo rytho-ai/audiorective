@@ -1,7 +1,12 @@
 import { TIME_STRETCH_WORKER } from "./stretch/timeStretch.worker";
 
 /** An interior correspondence in frames at the buffer's sample rate. */
-export type TimeStretchAnchor = Readonly<{ sourceFrame: number; outputFrame: number }>;
+export type TimeStretchAnchor = Readonly<{
+  /** Source position in sample frames per channel, measured from frame 0. */
+  sourceFrame: number;
+  /** Corresponding output position in sample frames per channel, measured from frame 0. */
+  outputFrame: number;
+}>;
 
 export interface TimeStretchLoadOptions {
   /** URL of the Rubber Band WebAssembly build (rubberband-wasm 3.3 C ABI). Fetched and compiled once per URL. */

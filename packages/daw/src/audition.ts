@@ -9,7 +9,14 @@ import { audioChunkSeconds, type AudioClipWindow, type AudioHandle } from "./tra
 /** `clip` is the Project clip (its identity decides staleness); `play` is what sounds, the clip itself or a range of its recording. */
 type ClipAudition = { clip: AudioClip; play: AudioClip; cancel?: () => void };
 type RangeAudition = { range: RangeAuditionState; tracks: readonly ProjectTrack[]; clock?: Clock };
-export type RangeAuditionState = Readonly<{ start: number; end: number; trackIds: readonly string[] }>;
+export type RangeAuditionState = Readonly<{
+  /** Inclusive start of the audition loop in project seconds. */
+  start: number;
+  /** Exclusive end of the audition loop in project seconds; greater than start. */
+  end: number;
+  /** Opaque IDs of the tracks included in this audition. */
+  trackIds: readonly string[];
+}>;
 
 /**
  * Plays one audio clip or one looping project range through the master output, independently of
@@ -48,7 +55,7 @@ export class Audition {
   /** Audition the current audio clip, or with `range` that part of its whole recording, through master output independently of Arrangement. */
   async auditionClip(clipId: string, options: { range?: { start: number; end: number } } = {}): Promise<void> {
     if (this.isDisposed()) throw new Error("Workspace is disposed.");
-    const source = findAudioClip(this.project(), clipId, true);
+    const source = findAudioClip(this.project(), clipId);
     if (!source) throw new Error("Workspace audition needs an audio clip.");
     const { range } = options ?? {};
     const clip = range ? recordingWindow(source, range.start, range.end) : source;
@@ -66,7 +73,7 @@ export class Audition {
       if (this.current !== audition) return;
       if (clip.media) await this.scheduler.loadMediaBuffer(clip, 0);
       if (this.current !== audition) return;
-      if (findAudioClip(this.project(), clipId, true) !== source) return finish();
+      if (findAudioClip(this.project(), clipId) !== source) return finish();
 
       if (clip.media) {
         let nextChunk = 0;
@@ -116,7 +123,7 @@ export class Audition {
     if (!audition) return;
     const stale =
       "clip" in audition
-        ? findAudioClip(this.project(), audition.clip.id, true) !== audition.clip
+        ? findAudioClip(this.project(), audition.clip.id) !== audition.clip
         : audition.tracks.some((track) => this.project().tracks.find(({ id }) => id === track.id)?.clips !== track.clips);
     if (stale) this.stop();
   }

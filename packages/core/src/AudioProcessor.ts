@@ -16,24 +16,67 @@ export type ParamRegistry = Record<string, Param<any>>;
 export type CellRegistry = Record<string, Cell<any> | ReadonlyCell<any>>;
 
 export interface BuildHelpers {
-  param<T extends number>(options: Omit<ParamOptions<T>, "bind"> & { bind: AudioParam; smoothing?: number }): SchedulableParam;
-  param<T>(options: ParamOptions<T> & { bind: ParamBind<T> }): Param<T>;
+  /** Creates a reactive parameter; an AudioParam binding enables sample-accurate scheduling. */
+  param<T extends number>(
+    options: Omit<ParamOptions<T>, "bind"> & {
+      /** Native automation target; its AudioParam enables sample-accurate scheduling. */
+      bind: AudioParam;
+      /** Value-write settling time in seconds; defaults to 0 for immediate changes. */
+      smoothing?: number;
+    },
+  ): SchedulableParam;
+  /** Creates a reactive parameter; an AudioParam binding enables sample-accurate scheduling. */
+  param<T>(
+    options: ParamOptions<T> & {
+      /** Property reader/writer binding for immediate reactive updates; no audio-thread scheduling. */
+      bind: ParamBind<T>;
+    },
+  ): Param<T>;
+  /** Creates a reactive parameter; an AudioParam binding enables sample-accurate scheduling. */
   param<T>(options: ParamOptions<T>): Param<T>;
-  schedulableParam(options: Omit<ParamOptions<number>, "bind"> & { bind?: AudioParam; smoothing?: number }): SchedulableParam;
+  /** Creates a sample-accurate parameter; without a binding it owns a silent ConstantSourceNode. */
+  schedulableParam(
+    options: Omit<ParamOptions<number>, "bind"> & {
+      /** Native automation target; omitted to create an owned ConstantSourceNode. */
+      bind?: AudioParam;
+      /** Value-write settling time in seconds; defaults to 0 for immediate changes. */
+      smoothing?: number;
+    },
+  ): SchedulableParam;
+  /** Creates tracked state initialized to the supplied value; no audio scheduling. */
   cell<T>(initial: T): Cell<T>;
 }
 
 type Undeclared<Msg extends string> = { [K in Msg]: never };
 export type BuildResult<P extends ParamRegistry, C extends CellRegistry> = (string extends keyof P
-  ? { params?: Undeclared<"Error: params not declared — add a P type parameter to AudioProcessor"> }
+  ? {
+      /** Unavailable until the processor declares its parameter-registry generic; cannot be supplied in this branch. */
+      params?: Undeclared<"Error: params not declared — add a P type parameter to AudioProcessor">;
+    }
   : [keyof P] extends [never]
-    ? { params?: P }
-    : { params: P }) &
+    ? {
+        /** Empty parameter registry; may be omitted when the declared registry has no keys. */
+        params?: P;
+      }
+    : {
+        /** Required parameter registry matching the processor's declared nonempty registry. */
+        params: P;
+      }) &
   (string extends keyof C
-    ? { cells?: Undeclared<"Error: cells not declared — add a C type parameter to AudioProcessor"> }
+    ? {
+        /** Unavailable until the processor declares its cell-registry generic; cannot be supplied in this branch. */
+        cells?: Undeclared<"Error: cells not declared — add a C type parameter to AudioProcessor">;
+      }
     : [keyof C] extends [never]
-      ? { cells?: C }
-      : { cells: C }) & {
+      ? {
+          /** Empty observable-state registry; may be omitted when the declared registry has no keys. */
+          cells?: C;
+        }
+      : {
+          /** Required observable-state registry matching the processor's declared nonempty registry. */
+          cells: C;
+        }) & {
+    /** Processing delay in sample frames; defaults to 0 and may borrow a reactive parameter. */
     latency?: number | Param<number>;
   };
 

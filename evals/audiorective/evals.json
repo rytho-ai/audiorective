@@ -907,7 +907,7 @@
       "expected_output": "Uses the shared ParamSpec type from @audiorective/core rather than a local copy of the shape.",
       "files": [],
       "expectations": [
-        "Types the definitions as ParamSpec imported from @audiorective/core (or StepParamSpec from @audiorective/sequencer, its alias), not a hand-written { id, min, max, default } interface",
+        "Types the definitions as ParamSpec imported from @audiorective/core, not a hand-written { id, min, max, default } interface",
         "Passes the list to the StepSequencer params option and checks min < max and default within min..max, keeping step as an editing hint rather than enforcing it"
       ]
     },
@@ -1237,6 +1237,18 @@
         "Imports the MIDI file with importMidiFile(project, new Uint8Array(await file.arrayBuffer())) and reads tempoMapUsed, without parsing the SMF by hand",
         "Imports the WAVs with await importAudioFiles(workspace, files) and runs await workspace.sync() afterwards, without resampling or decoding the files by hand",
         "Exports with exportMidiFile(project) and renderStems(workspace) plus encodeWav, using result.stems and result.mix for the file set"
+      ]
+    },
+    {
+      "id": 96,
+      "prompt": "My DAW page has a Project and a running Workspace with a WebCLAP synth on a track. Add a \"Darker\" button that lowers the synth's filter cutoff by a quarter of its range, but only if the cutoff is still what the sliders panel last showed (the person may have turned the plug-in's own knob since). It must be one Undo step and be saved with the song. Do not run anything.",
+      "expected_output": "Reads rows with workspace.deviceParameters, sets the value with project.edit and project.setDeviceParameter (or applyEdits with expectedValue), compares against the row's value and handles the conflict.",
+      "files": [],
+      "expectations": [
+        "Finds the cutoff row in workspace.deviceParameters(device.id) by name and reads its min, max and value, without reaching into host.params or CLAP ids by hand",
+        "Changes it with project.setDeviceParameter(deviceId, row.id, value) inside project.edit(...) (or one applyEdits setDeviceParameter operation with expectedValue), not by writing host.params directly and not with setDeviceState",
+        "Guards on the value the panel last showed (compares it with the current row value, or passes expectedValue and handles status conflict), and keeps the person's value when it differs",
+        "Does not add its own save or undo code: Undo and the saved file already carry the value"
       ]
     }
   ]

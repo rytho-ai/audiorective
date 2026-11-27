@@ -38,6 +38,7 @@ const DAW_PROJECT = [
   "project.ts",
   "model.ts",
   "rack-preset.ts",
+  "device-parameters.ts",
   "media.ts",
   "clip-time-map.ts",
   "clip-loop.ts",
@@ -80,6 +81,7 @@ const DAW_RUNTIME = [
   "take-placement.ts",
   "track-reconcile.ts",
   "track-rack.ts",
+  "device-parameter-link.ts",
   "rack-macro.ts",
   "project-lookup.ts",
   "session-notes.ts",
@@ -87,7 +89,7 @@ const DAW_RUNTIME = [
 ];
 const DAW_ROOT = ["index.ts", "compose.ts"];
 /** The mcp entry: tools over a live Workspace. It sits beside the runtime and may also use the root's `saveWorkspace`. */
-const DAW_MCP = ["mcp.ts"];
+const DAW_MCP = ["mcp.ts", "mcp-policy.ts"];
 
 /** App-level packages that take no `@audiorective/*` package at runtime. */
 const STANDALONE = ["mcp"];

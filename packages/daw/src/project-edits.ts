@@ -3,30 +3,52 @@ import type { BusRole, Project, ProjectClip, ProjectMarker, ProjectTrack, TrackK
 import { unityClipEnvelope } from "./clip-envelope";
 import { controllerExpressions, controllerMax, controllerPointsAfterInsert, type ControllerExpression } from "./controller-lane";
 import type { RackEffect, RackPreset } from "./rack-preset";
+import { rackDeviceId, rackSlotParameters, splitRackDeviceId } from "./device-parameters";
 import { sessionFor } from "./session";
 import { TempoMap, type TempoChange } from "./tempo-map";
 import type { TimeSignatureChange } from "./meter-map";
 import { timeRangeKind, crossfadeSeconds } from "./ripple-delete";
+import { keptContent } from "./project-persistence";
 import { findSlotClip, readSession, slotKey } from "./session-state";
 
 /** One state of a Project. Opaque: compare it for equality and pass it back as `expectedVersion`. */
-export type ProjectVersion = string & { readonly projectVersion: unique symbol };
-/** A half-open range of project beats: `startBeat` is inside, `endBeat` is not. */
-export type BeatRange = Readonly<{ startBeat: number; endBeat: number }>;
-/** A half-open range of project seconds: `startSeconds` is inside, `endSeconds` is not. */
-export type SecondsRange = Readonly<{ startSeconds: number; endSeconds: number }>;
+export type ProjectVersion = string & {
+  /** Compile-time brand that prevents ordinary strings from being used as project versions. */
+  readonly projectVersion: unique symbol;
+};
+/** A half-open beat range on the owner's axis: project beats for timeline ranges, content beats for MIDI loops. */
+export type BeatRange = Readonly<{
+  /** Inclusive start in project beats for timeline ranges or content beats for MIDI loops. */
+  startBeat: number;
+  /** Exclusive end on the same beat axis as startBeat; must be greater than startBeat. */
+  endBeat: number;
+}>;
+/** A half-open seconds range on the owner's axis: project seconds for timeline ranges, recording seconds for audio loops. */
+export type SecondsRange = Readonly<{
+  /** Inclusive start in project seconds for timeline ranges or recording seconds for audio loops. */
+  startSeconds: number;
+  /** Exclusive end on the same seconds axis as startSeconds; must be greater than startSeconds. */
+  endSeconds: number;
+}>;
 /** A half-open range in project beats or project seconds. */
 export type TimeRange = BeatRange | SecondsRange;
 
 export type ProjectClipSummary = Readonly<{
   id: string;
+  /** Optional clip display name; omitted when the clip is unnamed. */
   name?: string;
   kind: "audio" | "midi";
+  /** Opaque ID of the track containing this clip. */
   trackId: string;
+  /** Display name of the containing track; names need not be unique. */
   trackName: string;
+  /** Inclusive clip start in project seconds, converted through the tempo map for MIDI. */
   startSeconds: number;
+  /** Clip-window duration in seconds, including tempo changes across a MIDI clip. */
   durationSeconds: number;
+  /** Inclusive clip start in project beats, converted through the tempo map for audio. */
   startBeat: number;
+  /** Clip-window duration in beats, including tempo changes across an audio clip. */
   durationBeats: number;
   /** MIDI only: the content beat where the clip's start sits; the clip plays content `[sourceOffset, sourceOffset + durationBeats)` (or its loop). */
   sourceOffset?: number;
@@ -37,28 +59,51 @@ export type ProjectClipSummary = Readonly<{
 }>;
 
 export type ProjectOverview = Readonly<{
+  /** Opaque current project version to pass back as expectedVersion. */
   version: ProjectVersion;
+  /** Song title stored in the project. */
   title: string;
+  /** Initial tempo in quarter-note beats per minute, before later changes. */
   bpm: number;
+  /** Initial [numerator, denominator] signature; MeterMap bars count from 1. */
   signature: readonly [number, number];
   /** Time signatures from a beat on, after the starting `signature`; empty when the meter never changes. */
   signatureChanges: readonly TimeSignatureChange[];
+  /** Tempo steps at positive project beats, ordered by beat; empty for a constant tempo. */
   tempoChanges: readonly TempoChange[];
+  /** Named positions in project seconds, ordered by time. */
   markers: readonly ProjectMarker[];
   /** The timeline clips of each track. Session slot clips are in `session`, not here. */
-  tracks: readonly Readonly<{ id: string; name: string; kind: TrackKind; clips: readonly ProjectClipSummary[] }>[];
+  tracks: readonly Readonly<{
+    id: string;
+    name: string;
+    /** Track role: audio, MIDI, or a routing bus. */
+    kind: TrackKind;
+    /** Arrangement clips on this track; empty for a bus or an empty track. */
+    clips: readonly ProjectClipSummary[];
+  }>[];
   /** The Session grid: scenes in order, each with the clips of its filled slots. */
-  session: readonly Readonly<{ id: string; name: string; clips: readonly ProjectSlotClipSummary[] }>[];
+  session: readonly Readonly<{
+    id: string;
+    name: string;
+    /** Filled slots in this scene; empty slots have no entry. */
+    clips: readonly ProjectSlotClipSummary[];
+  }>[];
 }>;
 
 /** A clip in a Session slot. `duration` is in the clip's own unit: seconds for audio, beats for MIDI. */
 export type ProjectSlotClipSummary = Readonly<{
   id: string;
+  /** Optional clip display name; omitted when the clip is unnamed. */
   name?: string;
   kind: "audio" | "midi";
+  /** Opaque ID of the track containing this clip. */
   trackId: string;
+  /** Display name of the containing track; names need not be unique. */
   trackName: string;
+  /** Clip length in seconds for audio or beats for MIDI, as identified by unit; MIDI permits zero. */
   duration: number;
+  /** Unit of duration: seconds for audio, quarter-note beats for MIDI. */
   unit: "seconds" | "beats";
   /** MIDI only: the content beat where the clip's start sits (see `ProjectClipSummary`). */
   sourceOffset?: number;
@@ -71,9 +116,11 @@ export type ProjectSlotClipSummary = Readonly<{
 export type ProjectClipQuery = Readonly<{
   /** Exact clip name. Names are not unique, so check how many clips match. */
   name?: string;
+  /** Opaque track ID filter; omitted to search all tracks. */
   trackId?: string;
   /** Exact track name. */
   trackName?: string;
+  /** Half-open project-beat filter converted through the tempo map; omitted for all timeline positions. */
   range?: BeatRange;
   /** How a clip must relate to `range`. Default `"overlaps"`. */
   relation?: "overlaps" | "contained";
@@ -81,16 +128,65 @@ export type ProjectClipQuery = Readonly<{
 
 /** An existing clip, or the clips an earlier operation of this request named with `as` (`fromCopy`, optionally narrowed by track or name). */
 export type EditClipSelector =
-  | Readonly<{ clipId: string; fromCopy?: never; trackId?: never; trackName?: never; name?: never }>
-  | Readonly<{ fromCopy: string; clipId?: never; trackId?: string; trackName?: string; name?: string }>;
+  | Readonly<{
+      /** Opaque existing clip ID; mutually exclusive with fromCopy. */
+      clipId: string;
+      /** Excluded in this union branch; omit this field. */
+      fromCopy?: never;
+      /** Excluded in this union branch; omit this field. */
+      trackId?: never;
+      /** Excluded in this union branch; omit this field. */
+      trackName?: never;
+      /** Excluded in this union branch; omit this field. */
+      name?: never;
+    }>
+  | Readonly<{
+      /** Earlier operation alias from as; selects its created clips, optionally narrowed by track or name. */
+      fromCopy: string;
+      /** Excluded in this union branch; omit this field. */
+      clipId?: never;
+      /** Opaque track ID narrowing a fromCopy result; omitted to allow any track. */
+      trackId?: string;
+      /** Exact track display name narrowing a fromCopy result; omitted for no name filter. */
+      trackName?: string;
+      /** Exact clip display name narrowing a fromCopy result; omitted for no name filter. */
+      name?: string;
+    }>;
 /** A track ID, or `{ fromCopy }` naming a track an earlier `addTrack` of this request made with `as`. */
-export type EditTrackRef = string | Readonly<{ fromCopy: string }>;
+export type EditTrackRef =
+  | string
+  | Readonly<{
+      /** Alias assigned with as by an earlier addTrack operation in this request. */
+      fromCopy: string;
+    }>;
 /** A scene ID, or `{ fromCopy }` naming a scene an earlier `addScene` or `duplicateScene` of this request made with `as`. */
-export type EditSceneRef = string | Readonly<{ fromCopy: string }>;
+export type EditSceneRef =
+  | string
+  | Readonly<{
+      /** Alias assigned with as by an earlier addScene or duplicateScene operation in this request. */
+      fromCopy: string;
+    }>;
 /** One cell of the Session grid. */
-export type EditSlotRef = Readonly<{ sceneId: EditSceneRef; trackId: EditTrackRef }>;
+export type EditSlotRef = Readonly<{
+  /** Opaque scene ID or an earlier scene-creation alias naming the slot row. */
+  sceneId: EditSceneRef;
+  /** Opaque track ID or an earlier track-creation alias naming the slot column. */
+  trackId: EditTrackRef;
+}>;
 /** A project position: `atBeat` (project beats) or `atSeconds` (project seconds), 0 or more, converted with the tempo map current when the step runs. A row giving both is accepted when they agree at that tempo map (within 1e-6 s) and rejected otherwise. */
-export type EditPosition = Readonly<{ atBeat: number; atSeconds?: number }> | Readonly<{ atSeconds: number; atBeat?: number }>;
+export type EditPosition =
+  | Readonly<{
+      /** Non-negative project beat; when both units are supplied they must agree within 1e-6 seconds. */
+      atBeat: number;
+      /** Non-negative project seconds; when both units are supplied they must agree within 1e-6 seconds. */
+      atSeconds?: number;
+    }>
+  | Readonly<{
+      /** Non-negative project seconds; when both units are supplied they must agree within 1e-6 seconds. */
+      atSeconds: number;
+      /** Non-negative project beat; when both units are supplied they must agree within 1e-6 seconds. */
+      atBeat?: number;
+    }>;
 
 /** A note to add, in content beats (the clip plays the window starting at its `sourceOffset`): `start` counts from the content's first beat, not the clip's start. */
 export type NewNoteEdit = Readonly<{
@@ -107,7 +203,9 @@ export type NewNoteEdit = Readonly<{
 /** Copy a beat range and insert the copy at `atBeat`, opening room on every track; later clips, tempo, markers and volume automation move later. Names the copies with `as`. */
 export type CopyRangeEdit = Readonly<{
   type: "copyRange";
+  /** Half-open project-beat range to copy from every track. */
   range: BeatRange;
+  /** Non-negative project beat at which to insert the copied range and open room on every track. */
   atBeat: number;
   /** `"insert"` opens room at `atBeat`: later clips, tempo, markers and automation move later on every track. */
   placement: "insert";
@@ -117,200 +215,506 @@ export type CopyRangeEdit = Readonly<{
 /** Move a timeline clip, optionally to another track of the same kind. `atBeat` is an absolute project beat (0 or more); `byBeats` shifts from the clip's start. */
 export type MoveClipEdit = Readonly<{
   type: "moveClip";
+  /** Clip selector resolved against the project or copies made earlier in this request. */
   clip: EditClipSelector;
   /** The target track; default the clip's own. It must be a track of the same kind. */
   trackId?: EditTrackRef;
   /** Beats follow the tempo map at the time this step runs. A clip that ends the request on top of another clip rejects it. */
-  position: Readonly<{ atBeat: number; byBeats?: never }> | Readonly<{ byBeats: number; atBeat?: never }>;
+  position:
+    | Readonly<{
+        /** Non-negative absolute project beat at which the clip starts; excludes byBeats. */
+        atBeat: number;
+        /** Excluded in this union branch; omit this field. */
+        byBeats?: never;
+      }>
+    | Readonly<{
+        /** Signed shift from the current clip start in beats; excludes atBeat and cannot move before project zero. */
+        byBeats: number;
+        /** Excluded in this union branch; omit this field. */
+        atBeat?: never;
+      }>;
 }>;
 /** Move one or both edges of a clip without deleting content; edges are absolute project beats (0 or more) for audio and MIDI clips alike. */
 export type ResizeClipEdit = Readonly<{
   type: "resizeClip";
+  /** Clip selector resolved against the project or copies made earlier in this request. */
   clip: EditClipSelector;
   /** Absolute project beats. An omitted edge stays. Nothing is deleted: a MIDI clip's start edge moves its `sourceOffset` with it, an audio clip's reveals its recording. */
   start?: number;
+  /** Exclusive new clip end in project beats; omitted to retain the current end and must follow the start. */
   end?: number;
 }>;
 /** Choose which part of a clip's content plays, keeping its position: content beats for MIDI, recording seconds for audio (stretched seconds when time-stretched). */
 export type SetClipSourceRangeEdit = Readonly<{
   type: "setClipSourceRange";
+  /** Clip selector resolved against the project or copies made earlier in this request. */
   clip: EditClipSelector;
   /** The part of the content to play, keeping the clip's position: content beats for a MIDI clip, recording seconds for an audio clip (seconds of the stretched audio when it is time-stretched). On a looped clip it becomes the loop and the start, and the clip keeps its length. */
   start: number;
+  /** Exclusive content-beat end for MIDI or recording-second end for audio, using stretched recording seconds when stretched. */
   end: number;
 }>;
 /** Set a clip's display name (timeline or Session slot): a non-empty string. */
-export type SetClipNameEdit = Readonly<{ type: "setClipName"; clip: EditClipSelector; name: string }>;
+export type SetClipNameEdit = Readonly<{
+  type: "setClipName";
+  /** Clip selector resolved against the project or copies made earlier in this request. */
+  clip: EditClipSelector;
+  name: string;
+}>;
 /** Split a timeline clip at a project position strictly inside it (`atBeat` in project beats or `atSeconds` in project seconds). The left piece keeps the ID; the right piece is the new clip and is named by `as`. */
-export type SplitClipEdit = Readonly<{ type: "splitClip"; clip: EditClipSelector; as?: string }> & EditPosition;
+export type SplitClipEdit = Readonly<{
+  type: "splitClip";
+  /** Clip selector resolved against the project or copies made earlier in this request. */
+  clip: EditClipSelector;
+  /** Optional request-local alias for created objects so later operations can refer to them with fromCopy. */
+  as?: string;
+}> &
+  EditPosition;
 /** Copy a timeline clip to a project position (`atBeat` beats or `atSeconds` seconds, 0 or more) on its own track or on `trackId` (same kind). `linked: true` shares a MIDI clip's notes (default false). */
 export type DuplicateClipEdit = Readonly<{
   type: "duplicateClip";
+  /** Clip selector resolved against the project or copies made earlier in this request. */
   clip: EditClipSelector;
+  /** Destination track ID or alias of the same kind; omitted to keep the source track. */
   trackId?: EditTrackRef;
+  /** Shares MIDI note content with the source when true; default false, and audio copies remain independent. */
   linked?: boolean;
+  /** Optional request-local alias for created objects so later operations can refer to them with fromCopy. */
   as?: string;
 }> &
   EditPosition;
 /** Remove a timeline clip (a Session slot clip goes with `clearSlot`). */
-export type RemoveClipEdit = Readonly<{ type: "removeClip"; clip: EditClipSelector }>;
+export type RemoveClipEdit = Readonly<{
+  type: "removeClip";
+  /** Clip selector resolved against the project or copies made earlier in this request. */
+  clip: EditClipSelector;
+}>;
 /** Repeat part of a clip's content for the clip's whole length, or stop repeating with `null`. MIDI: content beats `{ startBeat, endBeat }`; audio: recording seconds `{ startSeconds, endSeconds }` ending inside the recording. */
 export type SetClipLoopEdit = Readonly<{
   type: "setClipLoop";
+  /** Clip selector resolved against the project or copies made earlier in this request. */
   clip: EditClipSelector;
-  loop: Readonly<{ startBeat: number; endBeat: number }> | Readonly<{ startSeconds: number; endSeconds: number }> | null;
+  /** Half-open repeating content range, in MIDI content beats or audio recording seconds; null removes the loop. */
+  loop:
+    | Readonly<{
+        /** Inclusive loop start in MIDI content beats. */
+        startBeat: number;
+        /** Exclusive loop end in MIDI content beats; must follow startBeat. */
+        endBeat: number;
+      }>
+    | Readonly<{
+        /** Inclusive loop start in audio recording seconds. */
+        startSeconds: number;
+        /** Exclusive loop end in audio recording seconds; must follow startSeconds and fit the recording. */
+        endSeconds: number;
+      }>
+    | null;
 }>;
 /** Add a MIDI clip to a MIDI track at `atBeat` (project beats, 0 or more) and `duration` beats (more than 0). `notes` are in content beats; `sourceOffset` is the content beat where the clip starts (default 0). `linkedTo` shares another MIDI clip's notes instead of `notes`. */
 export type AddMidiClipEdit = Readonly<{
   type: "addMidiClip";
+  /** Opaque track ID or an earlier addTrack alias; the referenced track must exist. */
   trackId: EditTrackRef;
+  /** Non-negative project beat at which the new arrangement clip starts. */
   atBeat: number;
+  /** Positive clip-window duration in beats. */
   duration: number;
+  /** Notes in content beats; omitted for an empty clip unless linkedTo supplies shared notes. */
   notes?: readonly NewNoteEdit[];
+  /** Content beat at the clip start; default 0, with negative values allowing empty lead-in. */
   sourceOffset?: number;
+  /** Optional non-empty display name; omitted to leave the new clip unnamed. */
   name?: string;
+  /** Existing MIDI clip whose note content to share instead of notes; omitted for independent content. */
   linkedTo?: EditClipSelector;
+  /** Optional request-local alias for created objects so later operations can refer to them with fromCopy. */
   as?: string;
 }>;
 /** Set an audio clip's gain and fades: linear gain 0 or more (default 1), fades in seconds 0 or more that fit the clip. An omitted field keeps its value. */
 export type SetAudioClipEnvelopeEdit = Readonly<{
   type: "setAudioClipEnvelope";
+  /** Clip selector resolved against the project or copies made earlier in this request. */
   clip: EditClipSelector;
+  /** Finite linear gain 0..∞; omitted to keep the current gain, or unity 1 without an envelope. */
   gain?: number;
+  /** Non-negative fade-in duration in clip-local seconds; omitted to keep it, and both fades must fit the clip. */
   fadeIn?: number;
+  /** Non-negative fade-out duration in clip-local seconds; omitted to keep it, and both fades must fit the clip. */
   fadeOut?: number;
 }>;
 /** A point of audio clip gain automation: `atSourceSeconds` is seconds of the original recording (0 or more), `value` linear gain (0 or more), `shape` "linear" (default) or "hold". */
-export type ClipGainPointEdit = Readonly<{ atSourceSeconds: number; value: number; shape?: "linear" | "hold" }>;
+export type ClipGainPointEdit = Readonly<{
+  /** Non-negative position in seconds of the original recording, before stretching. */
+  atSourceSeconds: number;
+  /** Finite linear gain 0..∞, with 1 for unity. */
+  value: number;
+  /** Interpolation toward the next point; default linear, with the final point normalized to hold. */
+  shape?: "linear" | "hold";
+}>;
 /** Replace an audio clip's gain automation; an empty list clears it. */
 export type SetAudioClipGainAutomationEdit = Readonly<{
   type: "setAudioClipGainAutomation";
+  /** Clip selector resolved against the project or copies made earlier in this request. */
   clip: EditClipSelector;
+  /** Replacement gain curve in original recording seconds; empty to clear the curve. */
   points: readonly ClipGainPointEdit[];
 }>;
 /** A point of track volume automation: a project position (`atBeat` or `atSeconds`), `value` linear gain (0 or more), `shape` "linear" (default) or "hold". */
-export type VolumePointEdit = Readonly<{ value: number; shape?: "linear" | "hold" }> & EditPosition;
+export type VolumePointEdit = Readonly<{
+  /** Finite track gain 0..∞ linear, with 1 for unity. */
+  value: number;
+  /** Interpolation toward the next point; default linear, with the final point normalized to hold. */
+  shape?: "linear" | "hold";
+}> &
+  EditPosition;
 /** Replace a track's volume automation (positions unique); an empty list clears it. */
-export type SetVolumeAutomationEdit = Readonly<{ type: "setVolumeAutomation"; trackId: EditTrackRef; points: readonly VolumePointEdit[] }>;
+export type SetVolumeAutomationEdit = Readonly<{
+  type: "setVolumeAutomation";
+  /** Opaque track ID or an earlier addTrack alias; the referenced track must exist. */
+  trackId: EditTrackRef;
+  /** Replacement track gain curve at project positions; empty to clear it and duplicate positions are rejected. */
+  points: readonly VolumePointEdit[];
+}>;
 /** A point of a MIDI controller lane: a project position (`atBeat` or `atSeconds`), an integer `value` in the controller's range (0 to 127, or 0 to 16383 for pitchBend), `shape` "linear" (default) or "hold". Points at one position are a step. */
-export type ControllerPointEdit = Readonly<{ value: number; shape?: "linear" | "hold" }> & EditPosition;
+export type ControllerPointEdit = Readonly<{
+  /** Integer 0..127, or 0..16383 for pitch bend with centre 8192. */
+  value: number;
+  /** Interpolation toward the next point; default linear, with program changes and final points forced to hold. */
+  shape?: "linear" | "hold";
+}> &
+  EditPosition;
 /**
  * Replace one MIDI controller lane of a MIDI track, the lane `{ expression, channel, controller }`; an empty list removes it. `controller` is the controller number
  * (`channelController`) or the key (`polyPressure`) and is left out for the other expressions.
  */
 export type SetControllerLaneEdit = Readonly<{
   type: "setControllerLane";
+  /** Opaque track ID or an earlier addTrack alias; the referenced track must exist. */
   trackId: EditTrackRef;
+  /** MIDI message family that determines the controller and value ranges. */
   expression: ControllerExpression;
+  /** Zero-based MIDI channel, an integer 0..15. */
   channel: number;
+  /** Required CC number 0..119 or poly-pressure key 0..127; must be omitted for other expressions. */
   controller?: number;
+  /** Replacement points at project positions; empty removes the lane and equal positions make ordered steps. */
   points: readonly ControllerPointEdit[];
 }>;
 /** Delete a half-open range from the whole song, closing the gap (beats or seconds). `crossfade`: `true` for 5 ms, a length in seconds, or `false` (default) for none. */
 export type RippleDeleteEdit = Readonly<{
   type: "rippleDelete";
+  /** Half-open range in project beats or project seconds, removed song-wide with the gap closed. */
   range: TimeRange;
   /** `true` for a short default crossfade (5 ms), `false` or omitted for none, or a length in seconds. */
   crossfade?: boolean | number;
 }>;
 /** Give a linked MIDI clip its own copy of the notes. */
-export type MakeClipUniqueEdit = Readonly<{ type: "makeClipUnique"; clip: EditClipSelector }>;
+export type MakeClipUniqueEdit = Readonly<{
+  type: "makeClipUnique";
+  /** Clip selector resolved against the project or copies made earlier in this request. */
+  clip: EditClipSelector;
+}>;
 /** New notes in a MIDI clip's content (timeline or Session slot). Read their IDs with `read_notes` or from the receipt's `createdNotes`. */
-export type AddNotesEdit = Readonly<{ type: "addNotes"; clip: EditClipSelector; notes: readonly NewNoteEdit[] }>;
+export type AddNotesEdit = Readonly<{
+  type: "addNotes";
+  /** Clip selector resolved against the project or copies made earlier in this request. */
+  clip: EditClipSelector;
+  /** New MIDI notes in content beats, in the order their IDs appear in createdNotes. */
+  notes: readonly NewNoteEdit[];
+}>;
 /** Delete notes by ID. */
-export type RemoveNotesEdit = Readonly<{ type: "removeNotes"; clip: EditClipSelector; noteIds: readonly string[] }>;
+export type RemoveNotesEdit = Readonly<{
+  type: "removeNotes";
+  /** Clip selector resolved against the project or copies made earlier in this request. */
+  clip: EditClipSelector;
+  /** Opaque IDs of existing notes in the selected MIDI clip; an unknown ID rejects the request. */
+  noteIds: readonly string[];
+}>;
 /** Change notes by ID in content beats; an omitted field stays; velocity is 0 to 1. */
 export type EditNotesEdit = Readonly<{
   type: "editNotes";
+  /** Clip selector resolved against the project or copies made earlier in this request. */
   clip: EditClipSelector;
-  notes: readonly Readonly<{ id: string; pitch?: number; start?: number; duration?: number; velocity?: number }>[];
+  /** Existing notes to change by opaque ID; each row must supply at least one changed field. */
+  notes: readonly Readonly<{
+    id: string;
+    /** Integer MIDI note number 0..127, with 60 for middle C; omitted to retain the pitch. */
+    pitch?: number;
+    /** Non-negative position in content beats; omitted to retain the current start. */
+    start?: number;
+    /** Positive duration in beats; omitted to retain the current duration. */
+    duration?: number;
+    /** Normalized strength 0..1; omitted to retain the current velocity. */
+    velocity?: number;
+  }>[];
 }>;
 
 /** Add a track at the end. `volume` is linear gain 0 or more (default 1), `pan` -1 to 1 (default 0), `muted` and `solo` default false, `busRole` (bus only) "submix" (default) or "effect". `as` names it. */
 export type AddTrackEdit = Readonly<{
   type: "addTrack";
   name: string;
+  /** Role of the new track: audio, MIDI, or a routing bus. */
   kind: TrackKind;
+  /** Finite linear gain 0..∞, with 1 for unity; default 1. */
   volume?: number;
+  /** Starts the track silent even when soloed if true; default false. */
   muted?: boolean;
+  /** Includes the track in the active solo paths when true; default false. */
   solo?: boolean;
+  /** Stereo position -1..1, left to right; default 0 at the centre. */
   pan?: number;
+  /** Bus purpose, submix or effect; default submix for a bus and invalid on other track kinds. */
   busRole?: BusRole;
+  /** Optional request-local alias for created objects so later operations can refer to them with fromCopy. */
   as?: string;
 }>;
 /** Remove a track with its clips, slot clips and devices; routes to a removed bus are cleared. */
-export type RemoveTrackEdit = Readonly<{ type: "removeTrack"; trackId: EditTrackRef }>;
+export type RemoveTrackEdit = Readonly<{
+  type: "removeTrack";
+  /** Opaque track ID or an earlier addTrack alias; the referenced track must exist. */
+  trackId: EditTrackRef;
+}>;
 /** Rename a track: a non-empty string. */
-export type SetTrackNameEdit = Readonly<{ type: "setTrackName"; trackId: EditTrackRef; name: string }>;
+export type SetTrackNameEdit = Readonly<{
+  type: "setTrackName";
+  /** Opaque track ID or an earlier addTrack alias; the referenced track must exist. */
+  trackId: EditTrackRef;
+  name: string;
+}>;
 /** Set a track's level as linear gain: 0 or more, 1 is unity (no upper limit). */
-export type SetTrackVolumeEdit = Readonly<{ type: "setTrackVolume"; trackId: EditTrackRef; volume: number }>;
+export type SetTrackVolumeEdit = Readonly<{
+  type: "setTrackVolume";
+  /** Opaque track ID or an earlier addTrack alias; the referenced track must exist. */
+  trackId: EditTrackRef;
+  /** Finite linear gain 0..∞, with 0 for silence and 1 for unity. */
+  volume: number;
+}>;
 /** Mute or unmute a track (mute wins over solo). */
-export type SetTrackMutedEdit = Readonly<{ type: "setTrackMuted"; trackId: EditTrackRef; muted: boolean }>;
+export type SetTrackMutedEdit = Readonly<{
+  type: "setTrackMuted";
+  /** Opaque track ID or an earlier addTrack alias; the referenced track must exist. */
+  trackId: EditTrackRef;
+  /** True silences the track even if it is soloed; false removes its mute. */
+  muted: boolean;
+}>;
 /** Solo or unsolo a track. */
-export type SetTrackSoloEdit = Readonly<{ type: "setTrackSolo"; trackId: EditTrackRef; solo: boolean }>;
+export type SetTrackSoloEdit = Readonly<{
+  type: "setTrackSolo";
+  /** Opaque track ID or an earlier addTrack alias; the referenced track must exist. */
+  trackId: EditTrackRef;
+  /** True includes this track and its routing paths while solo is active; false removes its solo. */
+  solo: boolean;
+}>;
 /** Set a track's stereo position, -1 (left) to 1 (right); 0 is centre. */
-export type SetTrackPanEdit = Readonly<{ type: "setTrackPan"; trackId: EditTrackRef; pan: number }>;
+export type SetTrackPanEdit = Readonly<{
+  type: "setTrackPan";
+  /** Opaque track ID or an earlier addTrack alias; the referenced track must exist. */
+  trackId: EditTrackRef;
+  /** Stereo position -1..1, from fully left to fully right; 0 is centre. */
+  pan: number;
+}>;
 /** Replace a track's output and post-fader sends. `outputBusId` is a bus track or null for the master (default null); each send has a bus `busId` and a linear `gain` 0 or more. Routes may not form a cycle. */
 export type SetTrackRoutingEdit = Readonly<{
   type: "setTrackRouting";
+  /** Opaque track ID or an earlier addTrack alias; the referenced track must exist. */
   trackId: EditTrackRef;
-  routing: Readonly<{ outputBusId?: EditTrackRef | null; sends?: readonly Readonly<{ busId: EditTrackRef; gain: number }>[] }>;
+  /** Replacement main output and post-fader sends; cycles are rejected. */
+  routing: Readonly<{
+    /** Destination bus ID or alias; null or omission routes to the master. */
+    outputBusId?: EditTrackRef | null;
+    /** Replacement sends; omission clears all sends. */
+    sends?: readonly Readonly<{
+      /** Destination bus ID or alias; must name an existing bus. */
+      busId: EditTrackRef;
+      /** Finite post-fader send gain 0..∞ linear, with 1 for unity. */
+      gain: number;
+    }>[];
+  }>;
 }>;
 /** Replace a track's ordered built-in inserts (filter, delay or eq, as `read_project` lists them). */
-export type SetTrackEffectsEdit = Readonly<{ type: "setTrackEffects"; trackId: EditTrackRef; effects: readonly RackEffect[] }>;
+export type SetTrackEffectsEdit = Readonly<{
+  type: "setTrackEffects";
+  /** Opaque track ID or an earlier addTrack alias; the referenced track must exist. */
+  trackId: EditTrackRef;
+  /** Replacement ordered built-in inserts; empty removes all inserts. */
+  effects: readonly RackEffect[];
+}>;
 /** Replace a track's inserts and macros together: `{ effects, macros? }`. */
-export type SetTrackRackPresetEdit = Readonly<{ type: "setTrackRackPreset"; trackId: EditTrackRef; preset: RackPreset }>;
+export type SetTrackRackPresetEdit = Readonly<{
+  type: "setTrackRackPreset";
+  /** Opaque track ID or an earlier addTrack alias; the referenced track must exist. */
+  trackId: EditTrackRef;
+  /** Replacement insert settings and macro mappings; omitted macros clear the current macros. */
+  preset: RackPreset;
+}>;
 /** Set one rack macro of a track, 0 to 1. */
-export type SetTrackMacroValueEdit = Readonly<{ type: "setTrackMacroValue"; trackId: EditTrackRef; macroId: string; value: number }>;
+export type SetTrackMacroValueEdit = Readonly<{
+  type: "setTrackMacroValue";
+  /** Opaque track ID or an earlier addTrack alias; the referenced track must exist. */
+  trackId: EditTrackRef;
+  /** Opaque ID of an existing macro on this track. */
+  macroId: string;
+  /** Normalized macro position 0..1, mapped to each target parameter range. */
+  value: number;
+}>;
 /** Set the master level as linear gain: 0 or more, 1 is unity. */
-export type SetMasterVolumeEdit = Readonly<{ type: "setMasterVolume"; volume: number }>;
+export type SetMasterVolumeEdit = Readonly<{
+  type: "setMasterVolume";
+  /** Finite linear gain 0..∞, with 0 for silence and 1 for unity. */
+  volume: number;
+}>;
 /** Set the song title: a non-empty string. */
-export type SetTitleEdit = Readonly<{ type: "setTitle"; title: string }>;
+export type SetTitleEdit = Readonly<{
+  type: "setTitle";
+  /** Non-empty song title stored in the project. */
+  title: string;
+}>;
 /** Replace all tempo changes: `{ beat, bpm }` with beat 0 or more (unique) and bpm at least 1. A change at beat 0 sets the starting tempo; without one it stays. */
-export type SetTempoChangesEdit = Readonly<{ type: "setTempoChanges"; changes: readonly TempoChange[] }>;
+export type SetTempoChangesEdit = Readonly<{
+  type: "setTempoChanges";
+  /** Replacement tempo steps at unique project beats >= 0 with BPM >= 1; beat 0 sets the initial tempo. */
+  changes: readonly TempoChange[];
+}>;
 /** Replace all time signature changes: `{ beat, numerator, denominator }` with an integer numerator and a power-of-two denominator. A change at beat 0 sets the starting signature. */
-export type SetTimeSignatureChangesEdit = Readonly<{ type: "setTimeSignatureChanges"; changes: readonly TimeSignatureChange[] }>;
+export type SetTimeSignatureChangesEdit = Readonly<{
+  type: "setTimeSignatureChanges";
+  /** Replacement meter changes at unique project beats >= 0; beat 0 sets the initial signature. */
+  changes: readonly TimeSignatureChange[];
+}>;
 /** A marker: a non-empty `name` at a project position (`atBeat` or `atSeconds`; markers are stored in seconds). */
 export type MarkerEdit = Readonly<{ name: string }> & EditPosition;
 /** Replace all markers (unique positions). */
-export type SetMarkersEdit = Readonly<{ type: "setMarkers"; markers: readonly MarkerEdit[] }>;
+export type SetMarkersEdit = Readonly<{
+  type: "setMarkers";
+  /** Replacement named project positions; duplicate positions are rejected and an empty list clears markers. */
+  markers: readonly MarkerEdit[];
+}>;
 /** Remove a device from its track's chain. */
-export type RemoveDeviceEdit = Readonly<{ type: "removeDevice"; deviceId: string }>;
+export type RemoveDeviceEdit = Readonly<{
+  type: "removeDevice";
+  /** Opaque ID of an existing WebCLAP device in a track device chain. */
+  deviceId: string;
+}>;
 /** Put a device at position `index` (an integer from 0, the first) of its track's chain. */
-export type MoveDeviceEdit = Readonly<{ type: "moveDevice"; deviceId: string; index: number }>;
+export type MoveDeviceEdit = Readonly<{
+  type: "moveDevice";
+  /** Opaque ID of an existing WebCLAP device in a track device chain. */
+  deviceId: string;
+  /** Zero-based destination position within the track device chain; must be within the existing chain. */
+  index: number;
+}>;
+
+/**
+ * Set one parameter of a device to `value`: `deviceId` is a WebCLAP device's ID or a built-in effect's `trackId:slotId`, `parameterId` is the `id` of a row of
+ * `read_device_params` (the CLAP id as a string, or `wet`, `frequency`, ...), `value` is in that row's units. `expectedValue` is the value you read: if the parameter holds another
+ * value now (the person or the plug-in moved it) the request returns `conflict` with the current value in its reason and changes nothing. The comparison allows a relative
+ * tolerance of 1e-6 (an absolute 1e-9 near 0), so a float32 value printed and copied back (`0.30000001` for `0.3`) is not a conflict.
+ */
+export type SetDeviceParameterEdit = Readonly<{
+  type: "setDeviceParameter";
+  /** WebCLAP device ID or rackDeviceId(trackId, slotId) for a built-in insert. */
+  deviceId: string;
+  /** Parameter-table key: decimal CLAP parameter ID or a built-in rack parameter key. */
+  parameterId: string;
+  /** Finite value in the parameter own units and inclusive min..max range; stepped rows require integers. */
+  value: number;
+  /** Value previously read, in the parameter own units; omission skips this guard and a mismatch returns conflict. Equal within a relative 1e-6 (absolute 1e-9 near 0) counts as the same. */
+  expectedValue?: number;
+}>;
 
 /** Add an empty scene at the end or after `afterSceneId`; `name` defaults to "Scene N". `as` names it. */
-export type AddSceneEdit = Readonly<{ type: "addScene"; name?: string; afterSceneId?: EditSceneRef; as?: string }>;
+export type AddSceneEdit = Readonly<{
+  type: "addScene";
+  /** Optional non-empty scene display name; default Scene N based on the existing scene count. */
+  name?: string;
+  /** Scene ID or alias after which to insert; omitted to append to the scene order. */
+  afterSceneId?: EditSceneRef;
+  /** Optional request-local alias for created objects so later operations can refer to them with fromCopy. */
+  as?: string;
+}>;
 /** Rename a scene: a non-empty string. */
-export type RenameSceneEdit = Readonly<{ type: "renameScene"; sceneId: EditSceneRef; name: string }>;
+export type RenameSceneEdit = Readonly<{
+  type: "renameScene";
+  /** Opaque scene ID or an earlier scene-creation alias; the referenced scene must exist. */
+  sceneId: EditSceneRef;
+  name: string;
+}>;
 /** Put a scene at position `index` (an integer from 0, the first) in the scene order. */
-export type MoveSceneEdit = Readonly<{ type: "moveScene"; sceneId: EditSceneRef; index: number }>;
+export type MoveSceneEdit = Readonly<{
+  type: "moveScene";
+  /** Opaque scene ID or an earlier scene-creation alias; the referenced scene must exist. */
+  sceneId: EditSceneRef;
+  /** Zero-based destination in the scene order; must be within the existing scene list. */
+  index: number;
+}>;
 /** Remove a scene and the clips in its slots. */
-export type RemoveSceneEdit = Readonly<{ type: "removeScene"; sceneId: EditSceneRef }>;
+export type RemoveSceneEdit = Readonly<{
+  type: "removeScene";
+  /** Opaque scene ID or an earlier scene-creation alias; the referenced scene must exist. */
+  sceneId: EditSceneRef;
+}>;
 /** Copy a scene with its slot clips after it or after `afterSceneId`; the copy is named "<name> copy". `as` names the new scene. */
-export type DuplicateSceneEdit = Readonly<{ type: "duplicateScene"; sceneId: EditSceneRef; afterSceneId?: EditSceneRef; as?: string }>;
+export type DuplicateSceneEdit = Readonly<{
+  type: "duplicateScene";
+  /** Opaque scene ID or an earlier scene-creation alias; the referenced scene must exist. */
+  sceneId: EditSceneRef;
+  /** Scene ID or alias after which to insert the copy; omitted to place it after the source. */
+  afterSceneId?: EditSceneRef;
+  /** Optional request-local alias for created objects so later operations can refer to them with fromCopy. */
+  as?: string;
+}>;
 /** Put a new MIDI clip in a slot of a MIDI track, replacing its clip. `duration` is beats (more than 0), `notes` and `sourceOffset` are content beats as for `addMidiClip`. `as` names the clip. */
 export type SetMidiClipEdit = Readonly<{
   type: "setMidiClip";
+  /** Scene and track references naming one Session grid slot. */
   slot: EditSlotRef;
+  /** Positive clip-window duration in beats. */
   duration: number;
+  /** Notes in content beats; omitted for an empty clip in the selected slot. */
   notes?: readonly NewNoteEdit[];
+  /** Content beat at the clip start; default 0, with negative values allowing empty lead-in. */
   sourceOffset?: number;
+  /** Optional non-empty display name; omitted to leave the new clip unnamed. */
   name?: string;
+  /** Optional request-local alias for created objects so later operations can refer to them with fromCopy. */
   as?: string;
 }>;
 /** Move a slot's clip to another slot of a track of the same kind, replacing its clip; the clip keeps its ID. */
-export type MoveSlotClipEdit = Readonly<{ type: "moveSlotClip"; from: EditSlotRef; to: EditSlotRef }>;
+export type MoveSlotClipEdit = Readonly<{
+  type: "moveSlotClip";
+  /** Source Session slot, which must contain a clip. */
+  from: EditSlotRef;
+  /** Destination slot on a track of the same kind; replaces any clip already there. */
+  to: EditSlotRef;
+}>;
 /** Empty a slot. */
-export type ClearSlotEdit = Readonly<{ type: "clearSlot"; slot: EditSlotRef }>;
+export type ClearSlotEdit = Readonly<{
+  type: "clearSlot";
+  /** Scene and track references naming one Session grid slot. */
+  slot: EditSlotRef;
+}>;
 /** Put a copy of a timeline or slot clip in a slot of a track of the same kind, replacing its clip. `linked: true` shares a MIDI clip's notes (default false). `as` names the copy. */
-export type CopyToSlotEdit = Readonly<{ type: "copyToSlot"; clip: EditClipSelector; slot: EditSlotRef; linked?: boolean; as?: string }>;
+export type CopyToSlotEdit = Readonly<{
+  type: "copyToSlot";
+  /** Clip selector resolved against the project or copies made earlier in this request. */
+  clip: EditClipSelector;
+  /** Scene and track references naming one Session grid slot. */
+  slot: EditSlotRef;
+  /** Shares MIDI note content with the source when true; default false, and audio copies remain independent. */
+  linked?: boolean;
+  /** Optional request-local alias for created objects so later operations can refer to them with fromCopy. */
+  as?: string;
+}>;
 /** Place a copy of a slot's clip on the timeline at `atBeat` or `atSeconds` (project time, 0 or more), on the slot's track or on `trackId` (same kind). `linked: true` shares a MIDI clip's notes. `as` names the copy. */
 export type CopyToArrangementEdit = Readonly<{
   type: "copyToArrangement";
+  /** Scene and track references naming one Session grid slot. */
   slot: EditSlotRef;
+  /** Destination track ID or alias of the same kind; omitted to keep the source track. */
   trackId?: EditTrackRef;
+  /** Shares MIDI note content with the source when true; default false, and audio copies remain independent. */
   linked?: boolean;
+  /** Optional request-local alias for created objects so later operations can refer to them with fromCopy. */
   as?: string;
 }> &
   EditPosition;
@@ -354,6 +758,7 @@ export type ProjectEditOperation =
   | SetMarkersEdit
   | RemoveDeviceEdit
   | MoveDeviceEdit
+  | SetDeviceParameterEdit
   | AddSceneEdit
   | RenameSceneEdit
   | MoveSceneEdit
@@ -370,6 +775,7 @@ export type ProjectEditRequest = Readonly<{
   expectedVersion: ProjectVersion;
   /** Shown in undo history. */
   label: string;
+  /** Operations applied in order as one atomic Undo step; any rejected step rolls back the request. */
   ops: readonly ProjectEditOperation[];
 }>;
 
@@ -392,45 +798,116 @@ export type ProjectEditSongPart = "tempo" | "timeSignature" | "markers" | "title
 
 export type ProjectEditReceipt = Readonly<
   | {
+      /** Outcome tag: applied commits the request, while conflict or rejected changes nothing. */
       status: "applied";
+      /** Opaque project version after a successful request, or the unchanged current version on failure. */
       version: ProjectVersion;
       /** IDs of the clips this edit created (timeline and Session slots), including the copies and pieces other operations made. */
       created: readonly string[];
       /** Per `addNotes` operation, in request order: the clip and the IDs of the notes it created, in the order of the operation's `notes`. */
-      createdNotes: readonly Readonly<{ clipId: string; ids: readonly string[] }>[];
+      createdNotes: readonly Readonly<{
+        /** Opaque ID of the MIDI clip receiving the new notes. */
+        clipId: string;
+        /** Opaque IDs of the added notes, in operation input order. */
+        ids: readonly string[];
+      }>[];
       /** Per `addTrack` operation, in request order: the new track's ID and its `as` name, if any. */
-      createdTracks: readonly Readonly<{ id: string; as?: string }>[];
+      createdTracks: readonly Readonly<{
+        id: string;
+        /** Alias supplied by the track-creation operation; omitted when none was supplied. */
+        as?: string;
+      }>[];
       /** Per `addScene` and `duplicateScene` operation, in request order: the new scene's ID and its `as` name, if any. */
-      createdScenes: readonly Readonly<{ id: string; as?: string }>[];
+      createdScenes: readonly Readonly<{
+        id: string;
+        /** Alias supplied by the scene-creation operation; omitted when none was supplied. */
+        as?: string;
+      }>[];
+      /** Opaque IDs of surviving timeline or slot clips changed by the edit. */
       changed: readonly string[];
+      /** Opaque IDs of timeline or slot clips removed by the edit. */
       removed: readonly string[];
       /** IDs of the tracks that stay and whose name, level, mute, solo, pan, inserts, macros, routing, devices or level automation this edit changed. */
       changedTracks: readonly string[];
       /** IDs of the tracks this edit removed (an Undo of `addTrack` removes it). */
       removedTracks: readonly string[];
-      /** IDs of the scenes that stay and that this edit renamed or moved. */
+      /** IDs of the scenes that stay and that this edit renamed, or whose place in the order changed (a moved scene and the scenes beside its old and new place). Filling or clearing a slot changes clips, listed in `created`, `changed` and `removed`, not here. */
       changedScenes: readonly string[];
       /** IDs of the scenes this edit removed. */
       removedScenes: readonly string[];
       /** The song-level settings this edit changed, from "tempo", "timeSignature", "markers", "title" and "masterVolume". */
       song: readonly ProjectEditSongPart[];
       /** Per `as` name given to a clip-making operation: the clips it made (`from` is the clip a copy or piece came from, when there is one). */
-      copies: Readonly<Record<string, readonly Readonly<{ from?: string; id: string; trackId: string }>[]>>;
+      copies: Readonly<
+        Record<
+          string,
+          readonly Readonly<{
+            /** Opaque source clip ID for a copy or split piece; omitted for newly created content. */
+            from?: string;
+            id: string;
+            /** Opaque ID of the track containing the created clip. */
+            trackId: string;
+          }>[]
+        >
+      >;
     }
-  | { status: "conflict"; version: ProjectVersion; reason: string }
-  | { status: "rejected"; version: ProjectVersion; code: ProjectEditRejection; reason: string; opIndex?: number }
+  | {
+      /** Outcome tag: applied commits the request, while conflict or rejected changes nothing. */
+      status: "conflict";
+      /** Opaque project version after a successful request, or the unchanged current version on failure. */
+      version: ProjectVersion;
+      /** Human-readable explanation of the conflict or rejection; the request changed nothing. */
+      reason: string;
+    }
+  | {
+      /** Outcome tag: applied commits the request, while conflict or rejected changes nothing. */
+      status: "rejected";
+      /** Opaque project version after a successful request, or the unchanged current version on failure. */
+      version: ProjectVersion;
+      /** Machine-readable category of the rejected request or operation. */
+      code: ProjectEditRejection;
+      /** Human-readable explanation of the conflict or rejection; the request changed nothing. */
+      reason: string;
+      /** Zero-based index of the failing operation; omitted for request-level or history failures. */
+      opIndex?: number;
+    }
 >;
 
-export type ProjectEditCopies = Record<string, { from?: string; id: string; trackId: string }[]>;
-export type ProjectEditCreatedNotes = { clipId: string; ids: string[] }[];
-export type ProjectEditCreated = { id: string; as?: string }[];
+export type ProjectEditCopies = Record<
+  string,
+  {
+    /** Opaque source clip ID for a copy or split piece; omitted for newly created content. */
+    from?: string;
+    id: string;
+    /** Opaque ID of the track containing the created clip. */
+    trackId: string;
+  }[]
+>;
+export type ProjectEditCreatedNotes = {
+  /** Opaque ID of the MIDI clip receiving new notes. */
+  clipId: string;
+  /** Opaque IDs of newly added notes in input order. */
+  ids: string[];
+}[];
+export type ProjectEditCreated = {
+  id: string;
+  /** Alias supplied by the creating operation; omitted when no alias was requested. */
+  as?: string;
+}[];
 /** What running the operations produced beyond the clip changes the history entry already lists. */
 export type ProjectEditRun = {
+  /** Created clips grouped by request-local as alias, including their source when applicable. */
   copies: ProjectEditCopies;
+  /** New note IDs grouped by addNotes operation, in request order. */
   createdNotes: ProjectEditCreatedNotes;
+  /** New tracks and their optional request-local aliases, in request order. */
   createdTracks: ProjectEditCreated;
+  /** New scenes and their optional request-local aliases, in request order. */
   createdScenes: ProjectEditCreated;
 };
+
+/** Thrown by an operation whose `expected…` guard no longer holds; `applyEdits` returns it as `conflict` (not `rejected`) and the Project is left as it was. */
+export class ProjectEditConflict extends Error {}
 
 export class ProjectEditFailure extends Error {
   constructor(
@@ -607,6 +1084,18 @@ function copyRange(ctx: Ctx, op: CopyRangeEdit): void {
   // A throwaway map answers where each old position lands; the Project takes it last.
   const tempoChanges = insertedTempo(before, start, end, at);
   const after = new TempoMap(before.initialBpm, tempoChanges);
+  // Content the opened file keeps as it is moves with the rest, or the edit is refused here, before anything has changed.
+  keptContent.shift(
+    project,
+    {
+      kind: "insert",
+      seconds: { start: startSeconds, end: endSeconds, at: atSeconds },
+      beats: { start, end, at },
+      before,
+      after,
+    },
+    "copyRange",
+  );
   const copiedSeconds = (seconds: number) => after.beatToSeconds(at + before.secondsToBeat(seconds) - start);
   const laterSeconds = (seconds: number) => after.beatToSeconds(before.secondsToBeat(seconds) + length);
   const originals = project.tracks.flatMap((track) => track.clips.map((clip) => ({ trackId: track.id, clip })));
@@ -892,6 +1381,7 @@ export const PROJECT_EDIT_FIELDS: Readonly<Record<ProjectEditOperation["type"], 
   setMarkers: ["markers"],
   removeDevice: ["deviceId"],
   moveDevice: ["deviceId", "index"],
+  setDeviceParameter: ["deviceId", "parameterId", "value", "expectedValue"],
   addScene: ["name", "afterSceneId", "as"],
   renameScene: ["sceneId", "name"],
   moveScene: ["sceneId", "index"],
@@ -942,6 +1432,7 @@ export const EDIT_OPERATION_FOR_METHOD: Readonly<Record<string, ProjectEditOpera
   "Project.setMarkers": "setMarkers",
   "Project.removeDevice": "removeDevice",
   "Project.moveDevice": "moveDevice",
+  "Project.setDeviceParameter": "setDeviceParameter",
   "ProjectSession.addScene": "addScene",
   "ProjectSession.renameScene": "renameScene",
   "ProjectSession.moveScene": "moveScene",
@@ -1384,6 +1875,39 @@ function deviceRef(project: Project, op: Rec): string {
   return id;
 }
 
+/** The row a device-parameter operation names, or the reason it cannot: a WebCLAP device's table row, or a rack effect slot's row. */
+function deviceParameterOp(project: Project, op: SetDeviceParameterEdit): void {
+  const deviceId = requiredString(op as unknown as Rec, "deviceId");
+  const parameterId = requiredString(op as unknown as Rec, "parameterId");
+  const value = requiredNumber(op as unknown as Rec, "value");
+  const expected = optionalNumber(op as unknown as Rec, "expectedValue");
+  const device = project.tracks.flatMap((track) => track.devices).find((item) => item.id === deviceId);
+  const at = splitRackDeviceId(deviceId);
+  const track = at && project.tracks.find((item) => item.id === at.trackId);
+  const slot = track?.effects.find((item) => item.id === at!.slotId);
+  if (!device && !slot) {
+    const hint = project.tracks.flatMap((item) => item.effects.filter(({ id }) => id === deviceId).map(({ id }) => `"${rackDeviceId(item.id, id)}"`));
+    fail("device-not-found", `Device "${deviceId}" does not exist${hint.length ? `; a built-in effect is addressed as ${hint.join(" or ")}` : ""}.`);
+  }
+  const rows = device ? device.parameters : rackSlotParameters(slot!);
+  const row = rows.find((item) => item.id === parameterId);
+  if (!row)
+    fail(
+      "invalid-operation",
+      `Device "${deviceId}" has no parameter "${parameterId}"${rows.length ? `; read_device_params lists its ${rows.length}` : "; it has no parameter table yet"}.`,
+    );
+  if (expected !== undefined && Math.abs(row!.value - expected) > Math.max(1e-9, 1e-6 * Math.max(Math.abs(row!.value), Math.abs(expected))))
+    throw new ProjectEditConflict(
+      `Parameter "${parameterId}" of device "${deviceId}" is ${row!.value} now, not the ${expected} you read. Read it again and decide whether to still set ${value}.`,
+    );
+  try {
+    project.setDeviceParameter(deviceId, parameterId, value);
+  } catch (error) {
+    if (error instanceof RangeError) fail("invalid-operation", error.message);
+    throw error;
+  }
+}
+
 function sceneOp(ctx: Ctx, as: string | undefined, scene: { id: string }): void {
   ctx.createdScenes.push({ id: scene.id, ...(as === undefined ? {} : { as }) });
   if (as !== undefined) ctx.scenes.set(as, scene.id);
@@ -1481,6 +2005,7 @@ const RUNNERS: Runners = {
   setMarkers: markersOp,
   removeDevice: (ctx, op) => ctx.project.removeDevice(deviceRef(ctx.project, op)),
   moveDevice: (ctx, op) => ctx.project.moveDevice(deviceRef(ctx.project, op), requiredNumber(op, "index", { integer: true, min: 0 })),
+  setDeviceParameter: (ctx, op) => deviceParameterOp(ctx.project, op),
   addScene: (ctx, op) => {
     const as = claimName(ctx, op);
     const name = optionalString(op, "name");
@@ -1544,6 +2069,7 @@ export function runProjectEdits(project: Project, ops: readonly ProjectEditOpera
             ctx.created.add(id);
           }
     } catch (error) {
+      if (error instanceof ProjectEditConflict) throw error;
       if (error instanceof ProjectEditFailure) throw new ProjectEditFailure(error.code, error.message, index);
       throw new ProjectEditFailure("edit-failed", error instanceof Error ? error.message : String(error), index);
     }
@@ -1559,6 +2085,13 @@ export function runProjectEdits(project: Project, ops: readonly ProjectEditOpera
       (other) => other.id !== clipId && other.time < end - tolerance && other.time + other.duration > clip.time + tolerance,
     );
     if (blocker) throw new ProjectEditFailure("overlap", `Clip "${clipId}" would overlap clip "${blocker.id}".`, index);
+    // Clips the opened file keeps as they are occupy their place on the track too.
+    const seconds = (value: number) => (clip.kind === "midi" ? project.tempoMap.beatToSeconds(value) : value);
+    const kept = keptContent
+      .spans(project, track.id)
+      .find((span) => span.start < seconds(end) - tolerance && span.end > seconds(clip.time) + tolerance);
+    if (kept)
+      throw new ProjectEditFailure("overlap", `Clip "${clipId}" would overlap kept clip "${kept.name}", which the file keeps unchanged.`, index);
   }
   const { copies, createdNotes, createdTracks, createdScenes } = ctx;
   return { copies, createdNotes, createdTracks, createdScenes };

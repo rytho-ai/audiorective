@@ -16,18 +16,24 @@ export interface EffectChainOptions {
 
 /** One effect's saved state: its type name and every primitive parameter value (`bypass` and `wet` included). */
 export interface EffectChainJSONEffect {
+  /** Effect constructor identifier used during restoration; unknown identifiers produce an issue. */
   type: string;
+  /** Serialized unformatted parameter values, in each effect's native units. */
   params: Record<string, number | string | boolean>;
 }
 
 export interface EffectChainJSON {
+  /** Serialization schema discriminator; must be 1. */
   version: 1;
+  /** Effects in signal-flow order; an empty list is a bypass chain. */
   effects: EffectChainJSONEffect[];
 }
 
 /** A preset problem reported by `EffectChain.fromJSON` or `chain.restore`: `path` locates it in the JSON, e.g. `effects[2].params.frequency`. */
 export interface EffectChainIssue {
+  /** Location of invalid serialized data, using the chain's diagnostic path notation. */
   path: string;
+  /** Human-readable validation explanation; accompanies the invalid data path. */
   message: string;
 }
 

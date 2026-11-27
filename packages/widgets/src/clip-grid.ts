@@ -3,36 +3,67 @@ import { effect } from "./detached-effect";
 
 /** The part of a launcher clip the grid reads and drives (an `@audiorective/launcher` `Clip` satisfies it). */
 export interface ClipGridClip {
+  /** Whether this clip currently owns playback on its track. */
   readonly playing: Readable<boolean>;
+  /** Whether this clip is waiting for a launch boundary. */
   readonly queued: Readable<boolean>;
+  /** Requests playback using the launcher's resolved quantization rule. */
   launch(): void;
 }
 /** The part of a launcher track the grid reads and drives (an `@audiorective/launcher` `Track` satisfies it). */
 export interface ClipGridTrack {
+  /** Currently active clip or another truthy playback marker; falsy means no session playback. */
   readonly playing: Readable<unknown>;
+  /** Pending track change or another truthy marker; falsy means no pending change. */
   readonly queued: Readable<unknown>;
+  /** Requests a stop at the launcher's resolved quantization boundary. */
   stop(): void;
 }
 /** The part of a launcher the grid reads and drives (a `ClipLauncher` satisfies it). */
 export interface ClipGridLauncher {
+  /** Currently active session clips; an empty array means arrangement playback. */
   readonly playing: Readable<readonly unknown[]>;
-  readonly queued: Readable<readonly Readonly<{ beat: number | null }>[]>;
+  /** Pending changes; an empty array disables the cancel button. */
+  readonly queued: Readable<
+    readonly Readonly<{
+      /** Quarter-note transport beat of the pending boundary; null while no boundary is resolved. */
+      beat: number | null;
+    }>[]
+  >;
   /**
    * Receives a scene's slot index (a layout scene with `index`) or its `ClipGridClip` objects: typed `never[]` so a launcher that takes its own clip type (`Clip[]`) satisfies this.
    * The index form lets the launcher apply its own rules for the scene's empty slots.
    */
   launchScene(scene: number | readonly never[]): void;
+  /** Requests all session tracks to stop and return to arrangement playback. */
   stopAll(): void;
+  /** Withdraws pending launches; returns whether any queued change was cancelled. */
   cancelQueued(): boolean;
 }
 
 export type ClipGridLayout = Readonly<{
-  tracks: readonly Readonly<{ track: ClipGridTrack; label: string }>[];
+  /** Visible track columns in display order; an empty list draws no track columns. */
+  tracks: readonly Readonly<{
+    /** Borrowed track whose playback state and stop command drive this column. */
+    track: ClipGridTrack;
+    /** Visible column caption; independent of the borrowed track's identity. */
+    label: string;
+  }>[];
+  /** Visible scene rows in display order; may represent subsets of launcher scenes. */
   scenes: readonly Readonly<{
+    /** Visible row caption; independent of the launcher's scene slot. */
     label: string;
     /** The launcher's scene slot this row stands for. Give it when the row is the launcher's whole scene: its button then calls `launchScene(index)`, so `emptySlots` applies; without it the row launches exactly its `clips`. */
     index?: number;
-    clips: readonly Readonly<{ track: ClipGridTrack; clip: ClipGridClip; label: string }>[];
+    /** Launchable cells in this row; absent track slots remain empty. */
+    clips: readonly Readonly<{
+      /** Borrowed track that owns this cell's clip. */
+      track: ClipGridTrack;
+      /** Borrowed clip whose state and launch command drive this cell. */
+      clip: ClipGridClip;
+      /** Visible launch-button caption; independent of the clip's identity. */
+      label: string;
+    }>[];
   }>[];
 }>;
 
@@ -43,13 +74,21 @@ export type ClipGridOptions = {
   launch?(command: () => void): void;
   /** Replaces the cancel button's `launcher.cancelQueued()`, so an app can also drop launches it is still preparing. */
   cancel?(): void;
+  /** Optional button and status-text overrides; missing entries use built-in English text. */
   labels?: Partial<{
+    /** Scene-button prefix; defaults to "Scene". */
     scene: string;
+    /** Cancel-button caption; defaults to "Cancel queued launch". */
     cancel: string;
+    /** Return-button caption; defaults to "Back to Arrangement". */
     arrangement: string;
+    /** Status when no session clip plays; defaults to "Arrangement playing". */
     idle: string;
+    /** Status while session clips play; defaults to "Session playback". */
     playing: string;
+    /** Status for rows without launchable clips; defaults to "No launchable audio clips". */
     empty: string;
+    /** Formats a quarter-note transport beat; default text displays beat + 1. */
     queued(beat: number): string;
   }>;
 };

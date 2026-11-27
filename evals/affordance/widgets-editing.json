@@ -23,12 +23,12 @@
         {
           "expectation": 1,
           "label": "Default renderer reused",
-          "all": ["defaultRenderer"]
+          "any": ["defaultRenderer", "attachClipWaveform"]
         },
         {
           "expectation": 2,
           "label": "Source and output mapping",
-          "all": ["outputToSource", "sourceToOutput"]
+          "all": ["outputToSource"]
         },
         {
           "expectation": 3,

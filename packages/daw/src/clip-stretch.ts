@@ -5,7 +5,10 @@ import type { AudioClip, Project } from "./model";
 import { findAudioClip } from "./project-lookup";
 import { takeOpenedStretches } from "./internal/open-stretch";
 
-export type PreparedClipStretch = Readonly<{ apply(): AudioClip }>;
+export type PreparedClipStretch = Readonly<{
+  /** Commits the prepared audio to its clip and returns it; refuses a clip changed since preparation. */
+  apply(): AudioClip;
+}>;
 
 /**
  * Renders time-stretched audio clips from their retained source. It owns one cancellable job per

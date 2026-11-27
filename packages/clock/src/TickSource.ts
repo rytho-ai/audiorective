@@ -1,10 +1,12 @@
-/** Drives the Clock tick loop: `start(onTick)` begins calling `onTick` repeatedly, `stop()` ends it. */
+/** Drives the Clock tick loop: `start(onTick)` begins calling `onTick` repeatedly, `stop()` ends it. A `Clock` picks one itself (`WorkerTickSource`); pass `tickSource` only for tests (`ManualTickSource`) or an offline render. Writing your own is never needed. */
 export interface TickSource {
+  /** Begins periodic notifications; callback timing is wall-clock driven rather than audio accurate. */
   start(onTick: () => void): void;
+  /** Stops periodic notifications; no further ticks should be delivered. */
   stop(): void;
 }
 
-/** Tests drive ticks by hand — fully deterministic, no timers. */
+/** Pass as `new Clock({ tickSource })` in tests or an offline render to run ticks by hand with `tick()`: deterministic, no timers. */
 export class ManualTickSource implements TickSource {
   private _onTick?: () => void;
   private _running = false;
@@ -27,7 +29,7 @@ export class ManualTickSource implements TickSource {
   }
 }
 
-/** setInterval-based fallback for environments without Worker. */
+/** Main-thread `setInterval` ticks, throttled in background tabs. Do not pass it to `Clock`: the default `WorkerTickSource` already falls back to it when `Worker` is missing, and a hand-written `setInterval` source is never needed. */
 export class IntervalTickSource implements TickSource {
   private readonly _intervalMs: number;
   private _handle: ReturnType<typeof setInterval> | undefined;

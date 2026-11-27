@@ -5,7 +5,9 @@ import type { SignalAccessor } from "./types";
 export interface AutomationPoint {
   /** Position on the curve in its own unit (seconds, or beats when played through an `AutomationClip`); 0 or more, unique per curve. */
   readonly time: number;
+  /** Target amount in the bound parameter's units; not normalized automatically. */
   readonly value: number;
+  /** Interpolation toward the next point: a linear ramp or a held value. */
   readonly shape: "linear" | "hold";
 }
 
@@ -82,6 +84,7 @@ export class AutomationCurve {
  * preserving the value at the supplied absolute audio time. Domain adapters own fanout.
  */
 export interface AutomationTarget {
+  /** Replaces events from absolute AudioContext `when` seconds; point times are relative seconds from zero. */
   program(points: readonly AutomationPoint[], when: number): void;
   /** Cancels future events and holds the value at absolute audio `time` (seconds). */
   hold(time: number): void;

@@ -2,11 +2,17 @@ import type { PCMData } from "./pcm";
 
 /** Extrema across all channels in fixed source-frame bins. */
 export interface PeakSummary {
+  /** Lowest linear sample value across all channels in each source-frame bucket. */
   readonly min: Float32Array;
+  /** Highest linear sample value across all channels in each source-frame bucket. */
   readonly max: Float32Array;
+  /** Source sample-frame rate in hertz. */
   readonly sampleRate: number;
+  /** Total source sample frames per channel. */
   readonly frameCount: number;
+  /** Positive number of source sample frames represented by each bucket. */
   readonly framesPerPeak: number;
+  /** Source duration in seconds, frameCount / sampleRate. */
   readonly duration: number;
 }
 

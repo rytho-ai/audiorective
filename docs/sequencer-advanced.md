@@ -53,7 +53,7 @@ workspace.transport.attach(seq); // follows the project transport: play, pause, 
 - `attach` returns a detach function. Detaching calls `reset()` once, which retracts that sequencer's pending hits (running their cleanups) and sets playheads and progress to `null`; the transport and other schedulers continue.
 - Stop, pause and seek on the clock reset every attached scheduler. One sequencer attached to two clocks queues on both; each clock re-queues after an edit.
 - `seq.dispose()` detaches from every transport. Stopping a clock that others share stops them too, so dispose the sequencer, not the clock.
-- `schedule(window, timing)` and `reset()` are the transport's calls, not the application's. See [Clock](./clock.md#attach-several-schedulers).
+- `schedule(window, timing)` and `reset()` are the transport's calls, not the application's. See [Clock](./clock-advanced.md#attach-several-schedulers).
 
 ## Step grid
 

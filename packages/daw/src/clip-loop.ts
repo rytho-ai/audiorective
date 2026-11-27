@@ -2,7 +2,14 @@ import { AutomationCurve, type AutomationPoint } from "@audiorective/core/automa
 import type { BeatRange, SecondsRange } from "./project-edits";
 
 /** A looped audio clip's loop in whole frames of its recording, and the frame its first pass starts from. */
-export type AudioLoopFrames = Readonly<{ loopStart: number; loopEnd: number; entry: number }>;
+export type AudioLoopFrames = Readonly<{
+  /** Inclusive loop start in whole sample frames of the recording. */
+  loopStart: number;
+  /** Exclusive loop end in whole sample frames of the recording; at least one frame after the start. */
+  loopEnd: number;
+  /** Recording frame of the first pass; an offset at or beyond the loop end enters at the loop start. */
+  entry: number;
+}>;
 
 /**
  * Where a looped audio clip plays in its recording. It starts at `sourceOffset` and runs to the loop end; a start past the loop end enters the
@@ -38,7 +45,20 @@ export function midiContentAt(sourceOffset: number, loop: BeatRange | undefined,
 }
 
 /** One stretch of a MIDI clip's content that plays: content beats `[from, to)` starting `local` beats after the clip's start. */
-export type MidiPass = Readonly<{ from: number; to: number; local: number; pass: number; first: boolean; clipped: boolean }>;
+export type MidiPass = Readonly<{
+  /** Inclusive start of this pass in content beats. */
+  from: number;
+  /** Exclusive end of this pass in content beats, cut at the clip end when necessary. */
+  to: number;
+  /** Offset of this pass from the clip start in beats. */
+  local: number;
+  /** Zero-based pass index; 0 is the initial pass before any wrap. */
+  pass: number;
+  /** True when the pass begins at the clip window start and should retrigger notes already held there. */
+  first: boolean;
+  /** True when the clip end cuts or coincides with this pass end; always true without a loop. */
+  clipped: boolean;
+}>;
 
 /**
  * The passes of content a MIDI clip plays: `[sourceOffset, sourceOffset + duration)`, or with a loop the first pass from the entry to the loop end and

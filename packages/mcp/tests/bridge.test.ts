@@ -5,6 +5,8 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
 import { PageBridge, createMcpServer } from "../src/index";
 
+const ORIGIN = "http://localhost:5173";
+
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
@@ -23,7 +25,7 @@ async function setup(waitMs = 0) {
 
 /** A fake page: serves `echo`, `boom` and a tool that never answers. */
 async function connectPage(port: number) {
-  const socket = new WebSocket(`ws://127.0.0.1:${port}`);
+  const socket = new WebSocket(`ws://127.0.0.1:${port}`, ["audiorective.v1"], { origin: ORIGIN });
   const opened = new Promise((resolve) => socket.once("open", resolve));
   cleanups.push(() => socket.close());
   const calls: unknown[] = [];

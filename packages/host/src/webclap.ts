@@ -10,20 +10,46 @@ import {
   type ValueRange,
 } from "@audiorective/core";
 
-export type WebClapDescriptor = Readonly<{ id: string; name: string; vendor: string; version: string; features: readonly string[] }>;
+export type WebClapDescriptor = Readonly<{
+  /** Stable CLAP plug-in identifier, distinct from a bundle URL or slot index. */
+  id: string;
+  /** Human-readable plug-in display text supplied by its descriptor. */
+  name: string;
+  /** Vendor text supplied by the plug-in descriptor; may be empty. */
+  vendor: string;
+  /** Plug-in-reported version text; no semantic-version parsing is imposed. */
+  version: string;
+  /** CLAP feature identifiers advertised by the plug-in; may be empty. */
+  features: readonly string[];
+}>;
 /** The CLAP wire shape: numeric `id`, `name` and `defaultValue` differ from `ParamSpec`, so only the range is shared. */
 export type WebClapParameter = ValueRange &
   Readonly<{
+    /** Numeric CLAP parameter identifier; registry keys use its decimal string form. */
     id: number;
+    /** Human-readable control text supplied by the plug-in. */
     name: string;
+    /** Plug-in's initial amount in its native parameter units, within min..max. */
     defaultValue: number;
+    /** Current amount in the plug-in's native parameter units, within min..max. */
     value: number;
+    /** Plug-in-formatted current value; may include units or an enumerated choice. */
     text: string;
+    /** Optional CLAP parameter bitmask; bit 0 marks stepped values. */
     flags?: number;
     /** Editing granularity: 1 when the plug-in marks the parameter stepped (`CLAP_PARAM_IS_STEPPED`, flag bit 0), else absent (continuous). */
     step?: number;
   }>;
-export type WebClapBundle = Readonly<{ url: string; pluginId?: string; pluginIndex?: number; workletUrl?: string }>;
+export type WebClapBundle = Readonly<{
+  /** URL of the WebCLAP bundle to load; resolved by the browser. */
+  url: string;
+  /** Optional CLAP identifier to select from the bundle; takes precedence over pluginIndex. */
+  pluginId?: string;
+  /** Zero-based plug-in slot within the bundle; defaults to 0. */
+  pluginIndex?: number;
+  /** Optional processor-worklet URL override; omitted to use the host's bundled worklet. */
+  workletUrl?: string;
+}>;
 export type WebClapEvent = CancellableEvent;
 
 type LoadedMessage = {
@@ -48,6 +74,15 @@ export type WebClapParamAccess = WebClapParams & {
 type HostMessage = LoadedMessage | { type: string; [key: string]: unknown };
 type Waiter<T> = { resolve(value: T): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> };
 
+/** Seconds a continuous parameter takes to move to a new value while the context runs: long enough for no step to be heard, short enough to feel immediate. */
+const PARAM_RAMP_SECONDS = 0.02;
+/** `CLAP_PARAM_IS_ENUM`: a stepped parameter whose values are choices, not amounts. */
+const ENUM_FLAG = 1 << 16;
+/** Fewest distinct values a stepped parameter needs to be moved through its values instead of jumped: 128 is a 7-bit control, which is fine enough to hear as continuous. */
+const RAMP_MIN_VALUES = 128;
+/** Whether a change of this parameter is spread over `PARAM_RAMP_SECONDS`: a continuous one, or a stepped one with many values that is not an enum. A switch, a mode or an enum jumps. */
+const smooth = (info: WebClapParameter): boolean =>
+  !((info.flags ?? 0) & ENUM_FLAG) && (info.step === undefined || (info.max - info.min) / info.step + 1 >= RAMP_MIN_VALUES);
 const withStep = (info: WebClapParameter): WebClapParameter =>
   info.flags !== undefined && info.flags & 1 && info.step === undefined ? { ...info, step: 1 } : info;
 const sameBytes = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((value, index) => value === b[index]);
@@ -69,7 +104,7 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
   /** True when the plug-in has a GUI that `mountEditor` can show. */
   readonly hasEditor: boolean;
 
-  private stateWaiters: Waiter<Uint8Array>[] = [];
+  private stateWaiters: Waiter<Uint8Array<ArrayBuffer>>[] = [];
   private loadStateWaiters: Waiter<void>[] = [];
   private syncWaiters: Waiter<void>[] = [];
   private guiWaiter?: Waiter<string>;
@@ -79,6 +114,11 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
   private readonly pending = new Map<number, Set<() => void>>();
   /** Last value known to both sides, per CLAP id. Param writes equal to it are not echoed to the worklet. */
   private readonly synced: Map<number, number>;
+  /**
+   * Values this host wrote that the plug-in has not reported back yet, per CLAP id. A plug-in that has not processed audio since (a suspended context) still reports its old value
+   * when asked, so a report that differs from a pending write is ignored for that id; a report that matches it, a `paramOut` or a loaded state ends the wait.
+   */
+  private readonly unconfirmed: Map<number, number>;
   private readonly infoStore: Cell<readonly WebClapParameter[]>;
   /** Channels each sounding note was started on, so `noteOff(note)` releases it where it plays. */
   private readonly noteChannels = new Map<number, Map<number, object>>();
@@ -96,6 +136,7 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
 
   private constructor(context: AudioContext, node: AudioWorkletNode, bundleUrl: string, loaded: LoadedMessage, early: HostMessage[]) {
     const synced = new Map<number, number>();
+    const unconfirmed = new Map<number, number>();
     const loadedParams = loaded.params.map(withStep);
     const infoStore = cell<readonly WebClapParameter[]>(Object.freeze(loadedParams));
     super(context, ({ param }) => {
@@ -114,9 +155,14 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
                 params[String(info.id)]!.$(synced.get(info.id) ?? info.value);
                 throw new RangeError("WebCLAP parameter needs a finite value.");
               }
-              if (synced.get(info.id) === value) return;
+              const from = synced.get(info.id);
+              if (from === value) return;
               synced.set(info.id, value);
-              node.port.postMessage({ type: "param", id: info.id, value });
+              unconfirmed.set(info.id, value);
+              // A smooth parameter moves over PARAM_RAMP_SECONDS while audio runs, as several value events on its own grid (CLAP has no smoothing hint, and a plug-in that does not smooth steps);
+              // a switch or an enum jumps. A context that is not running (a render being prepared, a suspended page) takes the value at once.
+              const ramp = smooth(info) && context.state === "running" ? PARAM_RAMP_SECONDS : 0;
+              node.port.postMessage({ type: "param", id: info.id, value, from, ramp, step: info.step });
             },
           },
         });
@@ -124,6 +170,7 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
       return { params: params as WebClapParams, cells: { parameterInfo: readonlyCell(infoStore) }, latency: 0 };
     });
     this.synced = synced;
+    this.unconfirmed = unconfirmed;
     this.node = node;
     this.bundleUrl = bundleUrl.replace(/\/$/, "");
     this.descriptor = loaded.descriptor;
@@ -264,13 +311,16 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
     return result;
   }
 
-  /** The plug-in's state as bytes; pass them to `loadState` later to restore it. Rejects on timeout or `dispose()`. */
-  async saveState(): Promise<Uint8Array> {
-    return this.readState(false);
+  /**
+   * The plug-in's state as bytes; pass them to `loadState` later to restore it. It also refreshes `parameterInfo` and `params` from the plug-in, so a parameter the plug-in changed inside
+   * (loading a preset in its own editor) is in them by the time the bytes arrive; a reported value that differs from one this host wrote and the plug-in has not confirmed yet is ignored (a plug-in that has processed no audio still reports the old value). Rejects on timeout or `dispose()`.
+   */
+  async saveState(): Promise<Uint8Array<ArrayBuffer>> {
+    return this.readState(true);
   }
 
-  private readState(withParams: boolean): Promise<Uint8Array> {
-    const result = this.wait<Uint8Array>((waiter) => this.stateWaiters.push(waiter));
+  private readState(withParams: boolean): Promise<Uint8Array<ArrayBuffer>> {
+    const result = this.wait<Uint8Array<ArrayBuffer>>((waiter) => this.stateWaiters.push(waiter));
     this.node.port.postMessage({ type: "saveState", withParams });
     return result;
   }
@@ -279,6 +329,8 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
   async loadState(bytes: Uint8Array): Promise<void> {
     if (!(bytes instanceof Uint8Array)) throw new TypeError("WebCLAP state needs bytes.");
     const expected = new Uint8Array(bytes);
+    // The loaded state decides every value, including the ones this host wrote before.
+    this.unconfirmed.clear();
     const confirmation = this.wait<void>((waiter) => this.loadStateWaiters.push(waiter));
     this.node.port.postMessage({ type: "loadState", bytes: expected.buffer, settle: this.context.state !== "running" }, [expected.buffer]);
     await confirmation;
@@ -382,13 +434,21 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
   private receive(message: HostMessage): void {
     switch (message.type) {
       case "paramOut":
+        this.unconfirmed.delete(message.id as number);
         this.applyParam(message.id as number, message.value as number);
         break;
       case "params": {
         const infos = (message.params as WebClapParameter[]).map(withStep);
         batch(() => {
           this.infoStore.value = Object.freeze(infos);
-          for (const info of infos) this.applyParam(info.id, info.value);
+          for (const info of infos) {
+            const pending = this.unconfirmed.get(info.id);
+            if (pending !== undefined) {
+              if (pending !== info.value) continue;
+              this.unconfirmed.delete(info.id);
+            }
+            this.applyParam(info.id, info.value);
+          }
         });
         break;
       }

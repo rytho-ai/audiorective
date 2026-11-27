@@ -1,5 +1,12 @@
 /** Linear gain and edge fades measured in clip-local seconds. */
-export type ClipEnvelope = Readonly<{ gain: number; fadeIn: number; fadeOut: number }>;
+export type ClipEnvelope = Readonly<{
+  /** Finite linear gain, 0..∞ with 1 for unity; the neutral envelope uses 1. */
+  gain: number;
+  /** Non-negative fade-in duration in clip-local seconds; 0 disables it and both fades must fit the clip. */
+  fadeIn: number;
+  /** Non-negative fade-out duration in clip-local seconds; 0 disables it and both fades must fit the clip. */
+  fadeOut: number;
+}>;
 
 /** The neutral envelope: gain 1 and no fades. `normalizeClipEnvelope` returns this exact object for neutral input, so `=== unityClipEnvelope` tests for it. */
 export const unityClipEnvelope: ClipEnvelope = Object.freeze({ gain: 1, fadeIn: 0, fadeOut: 0 });

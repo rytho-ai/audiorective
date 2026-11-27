@@ -5,7 +5,16 @@ const resolution = 192;
 const width = 320;
 const height = 100;
 
-export type FrequencyRange = { minHz?: number; maxHz?: number; minDb?: number; maxDb?: number };
+export type FrequencyRange = {
+  /** Positive lower frequency bound in hertz; defaults to 20. */
+  minHz?: number;
+  /** Upper frequency bound in hertz; defaults to 20000, limited to Nyquist for spectra. */
+  maxHz?: number;
+  /** Lower plot bound in dB; defaults to -100 for spectra or -24 for EQ. */
+  minDb?: number;
+  /** Upper plot bound in dB; defaults to 0 for spectra or 24 for EQ. */
+  maxDb?: number;
+};
 
 const unit = (value: number) => Math.max(0, Math.min(1, value));
 
@@ -91,9 +100,13 @@ function mountPlot(root: HTMLElement, label: string, range: Required<FrequencyRa
 }
 
 export type SpectrumOptions = FrequencyRange & {
+  /** Accessible plot caption; defaults to "Frequency spectrum". */
   label?: string;
+  /** Source sample-frame rate in hertz, used to map FFT bins to frequencies. */
   sampleRate: number;
+  /** FFT length in sample frames; the spectrum contains half this many bins. */
   fftSize: number;
+  /** Fills the supplied FFT bins with dB magnitudes; called once per animation frame. */
   read(bins: Float32Array<ArrayBuffer>): void;
 };
 
@@ -160,13 +173,30 @@ export function mountSpectrum(root: HTMLElement, options: SpectrumOptions) {
   };
 }
 
-type NumericControl = { value: number };
-export type EqBand = Readonly<{ id: string; label: string; frequency: NumericControl; gain?: NumericControl; q?: NumericControl }>;
+type NumericControl = {
+  /** Current editable amount in the owning band's native units. */
+  value: number;
+};
+export type EqBand = Readonly<{
+  /** Stable band identifier used to retain the same draggable control across updates. */
+  id: string;
+  /** Accessible band caption; independent of its stable identifier. */
+  label: string;
+  /** Editable center or cutoff in hertz, constrained to the plot's frequency bounds. */
+  frequency: NumericControl;
+  /** Optional editable boost in dB; omitted for bands without a gain control. */
+  gain?: NumericControl;
+  /** Optional editable resonance amount; omitted for bands without a Q control. */
+  q?: NumericControl;
+}>;
 export type EqEditorOptions = FrequencyRange & {
+  /** Accessible plot caption; defaults to "Frequency response". */
   label?: string;
   /** Borrowed live controls; external parameter or preset writes update the mounted controls and response in place. */
   bands: readonly EqBand[];
+  /** Positive lower resonance bound for gestures; defaults to 0.1. */
   minQ?: number;
+  /** Upper resonance bound for gestures, greater than minQ; defaults to 20. */
   maxQ?: number;
   /** Fill linear magnitudes from the caller's effect or composed response. False means unavailable. */
   readResponse(frequencies: Float32Array<ArrayBuffer>, magnitudes: Float32Array<ArrayBuffer>): boolean | void;

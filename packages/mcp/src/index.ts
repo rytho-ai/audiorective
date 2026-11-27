@@ -1,11 +1,44 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { createServer, type IncomingMessage, type Server as HttpServer } from "node:http";
+import type { Duplex } from "node:stream";
 import { WebSocketServer, type WebSocket } from "ws";
+import {
+  BRIDGE_PROTOCOL,
+  DEFAULT_ALLOWED_ORIGINS,
+  checkOriginPatterns,
+  checkToken,
+  describeOrigin,
+  originAllowed,
+  tokenFromProtocolHeader,
+  tokensEqual,
+} from "./security";
+
+export * from "./security";
 
 /** One tool as the page reports it. */
-export type BridgeToolInfo = { name: string; description: string; inputSchema: Record<string, unknown> };
+export type BridgeToolInfo = {
+  /** Unique tool identifier used in bridge calls; matched exactly. */
+  name: string;
+  /** Human-readable usage guidance advertised to MCP clients. */
+  description: string;
+  /** JSON Schema describing accepted arguments; an object schema is expected. */
+  inputSchema: Record<string, unknown>;
+};
 /** What the page returns for a call. */
-export type BridgeToolResult = { content: string; isError?: boolean };
+export type BridgeToolResult = {
+  /** Text returned to the MCP client; may encode structured data. */
+  content: string;
+  /** Whether the result represents a tool failure; defaults to false. */
+  isError?: boolean;
+  /** Optional inline audio payload; omitted for text-only results. */
+  audio?: {
+    /** Media type of the encoded audio, such as audio/wav. */
+    mimeType: string;
+    /** Base64-encoded audio bytes, without a data-URL prefix. */
+    base64: string;
+  };
+};
 
 export type AudiorectiveMcpOptions = {
   /** WebSocket port the page connects to. Default 7777; 0 picks a free one (see `port`). */
@@ -16,6 +49,26 @@ export type AudiorectiveMcpOptions = {
   timeoutMs?: number;
   /** How long `tools/list` waits for a page to connect before answering with an empty list, in ms. Default 10000. */
   waitMs?: number;
+  /**
+   * Origins a page may connect from: exact origins (`https://app.example.com`) or `scheme://host:*` for any port. A handshake from any other
+   * origin gets HTTP 403 before a frame is exchanged, so a web page the person happens to have open cannot take the DAW page's place or
+   * read the agent's tool arguments. Default `DEFAULT_ALLOWED_ORIGINS`: `http`, on `localhost`, `127.0.0.1` and `[::1]`, any port. That is
+   * the safest default an app on a dev server can use without configuration; an app served from another origin names it here.
+   */
+  allowedOrigins?: readonly string[];
+  /**
+   * Accept a handshake that has no `Origin` header. Default false: browsers always send one, so a missing one means a script or tool,
+   * which the origin check cannot judge. Turn it on only for a non-browser client you started yourself.
+   */
+  allowMissingOrigin?: boolean;
+  /**
+   * An optional pairing token (defence in depth on top of the origin check). Default: none, and a page from an allowed origin connects
+   * without one. When set (22 or more characters of letters, digits, `_` and `-`; `createToken()` makes one), a page must offer it as
+   * `connectMcpBridge(tools, url, { token })`. Use it when the page is served from a non-loopback origin or the machine is shared.
+   */
+  token?: string;
+  /** Receives one line for each rejected handshake (it names the rejected origin, never the token). Default: `console.error`. */
+  log?: (line: string) => void;
 };
 
 type Pending = { socket: WebSocket; resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> };
@@ -41,6 +94,12 @@ function describeError(error: unknown): string {
 /** The WebSocket side: accepts one page at a time (the newest) and relays `list` and `call` frames to it. */
 export class PageBridge {
   private readonly wss: WebSocketServer;
+  private readonly http: HttpServer;
+  private readonly origins: readonly string[];
+  private readonly allowMissingOrigin: boolean;
+  private readonly log: (line: string) => void;
+  /** The pairing token a page must offer to connect, or undefined when the server does not require one. */
+  readonly token: string | undefined;
   private page: WebSocket | undefined;
   private nextId = 1;
   private readonly pending = new Map<number, Pending>();
@@ -49,10 +108,30 @@ export class PageBridge {
   /** How long `tools/list` waits for a page, in ms. */
   readonly waitMs: number;
 
-  private constructor(wss: WebSocketServer, timeoutMs: number, waitMs: number) {
+  private constructor(
+    wss: WebSocketServer,
+    http: HttpServer,
+    options: Pick<AudiorectiveMcpOptions, "allowMissingOrigin" | "log"> & { origins: readonly string[]; token: string | undefined },
+    timeoutMs: number,
+    waitMs: number,
+  ) {
     this.wss = wss;
+    this.http = http;
+    this.origins = options.origins;
+    this.allowMissingOrigin = options.allowMissingOrigin === true;
+    this.log = options.log ?? ((line) => console.error(line));
+    this.token = options.token;
     this.timeoutMs = timeoutMs;
     this.waitMs = waitMs;
+    http.on("upgrade", (request, socket, head) => {
+      const refusal = this.refusal(request);
+      if (refusal) {
+        this.log(`audiorective-mcp: rejected a page from origin ${describeOrigin(request.headers.origin)}: ${refusal}`);
+        this.reject(socket);
+        return;
+      }
+      wss.handleUpgrade(request, socket, head, (client) => wss.emit("connection", client, request));
+    });
     wss.on("connection", (socket) => {
       const previous = this.page;
       this.page = socket;
@@ -70,22 +149,61 @@ export class PageBridge {
     });
   }
 
-  /** Starts the WebSocket server on `options.port` (default 7777) bound to `options.host` (default `127.0.0.1`); rejects when the port is taken. */
-  static listen(options: Pick<AudiorectiveMcpOptions, "port" | "host" | "timeoutMs" | "waitMs"> = {}): Promise<PageBridge> {
+  /** Why this handshake is refused, or undefined when it may proceed. The reason never contains the token. */
+  private refusal(request: IncomingMessage): string | undefined {
+    const origin = request.headers.origin;
+    if (origin === undefined) {
+      if (!this.allowMissingOrigin) return "no Origin header (set allowMissingOrigin to accept non-browser clients).";
+    } else if (!originAllowed(origin, this.origins)) return "this origin is not in allowedOrigins.";
+    if (this.token !== undefined) {
+      const offered = tokenFromProtocolHeader(request.headers["sec-websocket-protocol"]);
+      if (!tokensEqual(this.token, offered)) return "the pairing token is missing or wrong.";
+    }
+    return undefined;
+  }
+
+  private reject(socket: Duplex): void {
+    socket.on("error", () => {});
+    socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+  }
+
+  /**
+   * Starts the WebSocket server on `options.port` (default 7777) bound to `options.host` (default `127.0.0.1`); rejects when the port is
+   * taken or when `allowedOrigins` holds an entry that is not an origin or `token` is not a valid pairing token.
+   */
+  static listen(
+    options: Pick<AudiorectiveMcpOptions, "port" | "host" | "timeoutMs" | "waitMs" | "allowedOrigins" | "allowMissingOrigin" | "token" | "log"> = {},
+  ): Promise<PageBridge> {
     return new Promise((resolve, reject) => {
-      const wss = new WebSocketServer({ port: options.port ?? 7777, host: options.host ?? "127.0.0.1" });
-      wss.once("error", reject);
-      wss.once("listening", () => {
-        wss.off("error", reject);
+      const origins = options.allowedOrigins ?? DEFAULT_ALLOWED_ORIGINS;
+      checkOriginPatterns(origins);
+      const token = options.token;
+      if (token !== undefined) checkToken(token);
+      // A plain HTTP request (a browser tab, curl) is answered and closed instead of left waiting; only a WebSocket upgrade is served.
+      const http = createServer((_request, response) => {
+        const body = "Upgrade Required: this is the Audiorective MCP bridge; connect with a WebSocket.\n";
+        response
+          .writeHead(426, { Upgrade: "websocket", Connection: "close", "Content-Type": "text/plain", "Content-Length": Buffer.byteLength(body) })
+          .end(body);
+      });
+      // Only the bridge subprotocol is ever selected, so the token subprotocol is never echoed back to the page.
+      const wss = new WebSocketServer({
+        noServer: true,
+        handleProtocols: (protocols) => (protocols.has(BRIDGE_PROTOCOL) ? BRIDGE_PROTOCOL : false),
+      });
+      http.once("error", reject);
+      http.listen(options.port ?? 7777, options.host ?? "127.0.0.1", () => {
+        http.off("error", reject);
+        http.on("error", () => {});
         wss.on("error", () => {});
-        resolve(new PageBridge(wss, options.timeoutMs ?? 120_000, options.waitMs ?? 10_000));
+        resolve(new PageBridge(wss, http, { ...options, origins, token }, options.timeoutMs ?? 120_000, options.waitMs ?? 10_000));
       });
     });
   }
 
   /** The port the server listens on (useful when `port: 0` picked a free one). */
   get port(): number {
-    const address = this.wss.address();
+    const address = this.http.address();
     return typeof address === "object" && address ? address.port : 0;
   }
 
@@ -174,7 +292,11 @@ export class PageBridge {
     for (const entry of this.pending.values()) clearTimeout(entry.timer);
     this.pending.clear();
     for (const client of this.wss.clients) client.terminate();
-    return new Promise((resolve) => this.wss.close(() => resolve()));
+    return new Promise((resolve) => {
+      this.wss.close();
+      this.http.close(() => resolve());
+      this.http.closeAllConnections();
+    });
   }
 }
 
@@ -200,7 +322,11 @@ export function createMcpServer(bridge: PageBridge): Server {
   server.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
     try {
       const result = await bridge.call(params.name, params.arguments ?? {});
-      return { content: [{ type: "text" as const, text: result.content }], isError: result.isError === true };
+      const audio =
+        result.audio && typeof result.audio.base64 === "string"
+          ? [{ type: "audio" as const, data: result.audio.base64, mimeType: String(result.audio.mimeType) }]
+          : [];
+      return { content: [{ type: "text" as const, text: result.content }, ...audio], isError: result.isError === true };
     } catch (error) {
       return { content: [{ type: "text" as const, text: error instanceof Error ? error.message : String(error) }], isError: true };
     }

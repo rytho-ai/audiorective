@@ -216,4 +216,37 @@ describe("offline render equals the realtime output", () => {
     },
     60_000,
   );
+
+  test("a Session clip with a sustain pedal and a pitch bend: live equals renderSession", async () => {
+    const project = new Project({ bpm: 120 });
+    const keys = project.addTrack("Keys", "midi", { volume: 0.9 });
+    // Short notes: the pedal decides how long they ring (the sampler holds a note-off while CC64 is down). The pedal is still down at the end of the first pass, so
+    // each pass releases it at the wrap. The bend and the mod wheel go to the device too, though a sampler does not respond to them.
+    fillSession(project, keys.id, [
+      {
+        duration: 4,
+        notes: [0, 1, 3].map((start, i) => ({ pitch: 57 + i * 3, velocity: 0.8, start, duration: 0.1 })),
+        events: [
+          { time: 0.5, data: Uint8Array.of(0xb0, 64, 127) },
+          { time: 0.75, data: Uint8Array.of(0xb0, 1, 40) },
+          { time: 1.5, data: Uint8Array.of(0xe0, 0, 96) },
+          { time: 2.5, data: Uint8Array.of(0xb0, 64, 0) },
+          { time: 3.25, data: Uint8Array.of(0xb0, 64, 127) },
+        ],
+      },
+    ]);
+    const [a] = sessionFor(project).scenes.map((scene) => scene.id) as [string];
+    cleanups.push(() => project.dispose());
+    const seconds = 3.5;
+    const run = await live(project, { ...midiTrackOptions(project), arrangement: false }, seconds, (workspace) =>
+      workspace.cells.session.value.launchScene(0),
+    );
+    const rendered = await renderSession(run.workspace, { scenes: [a, a], tailSeconds: 0 });
+    if (rendered.status !== "rendered") throw new Error(rendered.status);
+    const result = { ...compare(run.data, rendered.audio.channels), alignment: run.alignment, dropouts: run.dropouts, gaps: run.gaps };
+    report("session pedal and bend", result);
+    expect(result.peak).toBeGreaterThan(0.05);
+    expect(result.dropouts).toBe(0);
+    expect(result.diff).toBeLessThanOrEqual(TARGET);
+  }, 60_000);
 });

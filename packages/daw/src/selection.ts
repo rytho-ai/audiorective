@@ -4,13 +4,15 @@ import type { BeatRange } from "./project-edits";
 
 /** What a person or agent has selected. JSON-serializable, never saved, and not part of undo or the Project version. */
 export type ProjectSelectionState = Readonly<{
+  /** Opaque selected track ID, or null when no track is selected. */
   trackId: string | null;
+  /** Opaque IDs of selected arrangement clips; empty when none are selected and excludes Session slot clips. */
   clipIds: readonly string[];
-  /** The clip open in an editor such as a piano roll. */
+  /** Opaque arrangement clip ID open in an editor, or null when no clip is open. */
   openClipId: string | null;
-  /** Selected notes of the open MIDI clip. */
+  /** Opaque selected note IDs in the open MIDI clip; empty without selected notes. */
   noteIds: readonly string[];
-  /** A half-open beat range, such as a drag on the ruler. */
+  /** Half-open project-beat range selected on the ruler, or null when no range is selected. */
   range: BeatRange | null;
 }>;
 

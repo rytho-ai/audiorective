@@ -5,6 +5,7 @@ import { mixFrequencyResponse } from "./internal/frequency-response";
 import { normalizeEqualizerBands, type EqualizerBand } from "./equalizer-bands";
 
 export interface EqualizerOptions extends EffectOptions {
+  /** Initial EQ bands in signal-flow order; each band is validated before construction. */
   bands: readonly EqualizerBand[];
 }
 

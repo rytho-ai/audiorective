@@ -23,7 +23,7 @@ queued?.stop(); // removes both the hit and its future choke; manual keeps sound
 // Later: manual?.stop(); instruments.dispose(); context.close();
 ```
 
-```typescript
+```typescript fragment: signature listing, not runnable code
 type PadSpec = Readonly<{ id: string; sound: Sound; group?: string }>;
 type PadBankOptions = Readonly<{ release?: number; signal?: AbortSignal }>;
 class PadBank {
@@ -46,7 +46,7 @@ Choke is carried by a per-event gain gate, so stopping an unstarted hit retracts
 
 **Per-pad routing.** Each pad owns a gain node that feeds the bank `output`. `routePad(id, destination: AudioNode | null)` sends that pad to a node you own instead (a filter, a send), and `routePad(id, null)` sends it back to `output`. Choke acts before the routing, so two pads in one `group` can feed different effects and still cut each other. A routed pad bypasses `params.volume`, which scales only the bank `output`. The bank owns its pad nodes and edges; you own every destination. `dispose()` disconnects only the bank's own nodes and leaves a destination connected to the rest of your graph. An unknown pad ID throws `Unknown pad.`
 
-`assign(id, sound)` replaces that pad's sound, releases its current and future hits, and retracts their future choke. `stopAll(when?)` releases every voice. `cells.activeVoices` is a read-only reactive count of voices sounding (a hit scheduled ahead joins at its start time), `cells.playing` is the read-only list of pad ids with a sounding voice, in pad order, and `cells.pads` is the read-only list of current pad specs, which changes on `assign`; `params.volume` follows the normal schedulable `.value` / `$` contract. `PadBank` owns its nodes and voices, while the caller owns output routing and the `AudioContext`. It has no polyphony cap or voice-stealing policy. For Clock-owned sequenced hits, wrap the voice as a `CancellableEvent` and pass it to `window.own(event, when)`, then call `clock.refresh()` after pattern edits (a `StepSequencer` attached with `clock.attach` re-queues itself, see [Step Sequencer](./sequencer.md#layer-4-hooks)); manual hits remain unregistered. See [Clock](./clock.md#own-cancellable-events-when-transport-edits-must-cut-queued-sound).
+`assign(id, sound)` replaces that pad's sound, releases its current and future hits, and retracts their future choke. `stopAll(when?)` releases every voice. `cells.activeVoices` is a read-only reactive count of voices sounding (a hit scheduled ahead joins at its start time), `cells.playing` is the read-only list of pad ids with a sounding voice, in pad order, and `cells.pads` is the read-only list of current pad specs, which changes on `assign`; `params.volume` follows the normal schedulable `.value` / `$` contract. `PadBank` owns its nodes and voices, while the caller owns output routing and the `AudioContext`. It has no polyphony cap or voice-stealing policy. For Clock-owned sequenced hits, wrap the voice as a `CancellableEvent` and pass it to `window.own(event, when)`, then call `clock.refresh()` after pattern edits (a `StepSequencer` attached with `clock.attach` re-queues itself, see [Step Sequencer](./sequencer.md#layer-4-hooks)); manual hits remain unregistered. See [Clock](./clock-advanced.md#own-cancellable-events-when-transport-edits-must-cut-queued-sound).
 
 ## Common errors
 

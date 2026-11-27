@@ -1,5 +1,10 @@
 /** A step change at a musical beat in the project, rather than an AudioContext time. */
-export type TempoChange = Readonly<{ beat: number; bpm: number }>;
+export type TempoChange = Readonly<{
+  /** Project beat where the tempo starts; stored changes are positive, while setters accept 0 for the initial tempo. */
+  beat: number;
+  /** Positive finite tempo in quarter-note beats per minute. */
+  bpm: number;
+}>;
 
 type Step = TempoChange & Readonly<{ seconds: number }>;
 

@@ -5,7 +5,10 @@ import type { TimeViewPlugin } from "./types";
 
 export interface AutomationOverlayOptions {
   /** Borrowed tracked snapshots; replacement cancels stale drags and updates retained handles/focus in place. */
-  points: { readonly value: readonly AutomationPoint[] };
+  points: {
+    /** Current automation points in the overlay's declared time coordinate system. */
+    readonly value: readonly AutomationPoint[];
+  };
   /** One owner edit after release or a key edit; Escape, pointercancel, capture loss and detach cancel previews. */
   onCommit(points: readonly AutomationPoint[]): void;
   /** Maps a view time (seconds on the waveform) to the curve's own time unit. */
@@ -14,10 +17,13 @@ export interface AutomationOverlayOptions {
   toView(time: number): number;
   /** Interior times where the view-to-source slope changes. Affects drawing only. */
   viewBreakpoints?: readonly number[];
+  /** Inclusive upper editing bound in the target parameter's native units. */
   maxValue: number;
+  /** Amount shown when the curve has no points, in the target parameter's native units. */
   defaultValue: number;
   /** Rounds a candidate curve time (seconds or beats, the curve's own unit) to the grid. */
   snap?(time: number): number;
+  /** Optional curve caption; omitted to use the overlay's built-in caption. */
   label?: string;
   /** True cancels editing and yields input to other tools. Default false. */
   disabled?: Readable<boolean>;

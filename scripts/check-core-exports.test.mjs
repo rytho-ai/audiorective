@@ -28,7 +28,7 @@ test("docs/core.md Exports list matches packages/core/src/index.ts", () => {
   const src = exportedNames(readFileSync(join(root, "packages/core/src/index.ts"), "utf8"));
   const doc = readFileSync(join(root, "docs/core.md"), "utf8");
   const section = doc.slice(doc.indexOf("## Exports"), doc.indexOf("## Common errors"));
-  const block = section.match(/```typescript\n([\s\S]*?)```/)[1];
+  const block = section.match(/```typescript[^\n]*\n([\s\S]*?)```/)[1];
   const listed = exportedNames(block);
   for (const kind of ["values", "types"]) {
     const missing = [...src[kind]].filter((n) => !listed[kind].has(n));

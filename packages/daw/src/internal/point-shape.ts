@@ -16,7 +16,14 @@ export function leavingShapes(arrival: readonly PointShape[]): PointShape[] {
 }
 
 /** A point as a file gives it: `shape` is the file's `interpolation`, how the value arrives. */
-export type ArrivalPoint = Readonly<{ time: number; value: number; shape: PointShape }>;
+export type ArrivalPoint = Readonly<{
+  /** Curve position in the caller units, seconds or beats from the containing XML Points. */
+  time: number;
+  /** Curve value in its declared unit, such as linear gain or controller value. */
+  value: number;
+  /** Interpolation arriving from the previous point, as encoded by the file. */
+  shape: PointShape;
+}>;
 
 /**
  * Points in time order (equal times in file order) with one point per time. Another DAW writes a vertical step as two points at one time (Bitwig Studio writes

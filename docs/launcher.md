@@ -20,7 +20,7 @@ const clock = new Clock({ context, bpm: 120 });
 clock.attach(launcher); // or workspace.transport.attach(launcher)
 clock.start();
 
-launcher.tracks.drums.clips[0].launch(); // clips[0] is the first slot; starts on the next bar
+launcher.tracks.drums.clips[0]?.launch(); // clips[0] is the first slot; starts on the next bar
 launcher.launchScene(1); // clips[1] of every track on one shared boundary
 launcher.tracks.bass.stop(); // silence one track on the next boundary
 launcher.stopAll();
@@ -42,6 +42,7 @@ const launcher = new ClipLauncher(
   { context },
 );
 const clip = launcher.tracks.bass.clips[0];
+if (!clip) throw new Error("The first bass slot is empty");
 clip.gainDb.value = -6; // live
 clip.pitch.value = 3; // semitones, live for a buffer
 clip.configure({ quantize: "1m", loop: false }); // every other option
@@ -83,7 +84,7 @@ effect(() => (positionEl.textContent = launcher.chain.value ? `${launcher.chain.
 
 State is in read-only cells, so an effect or a framework hook tracks it like any other cell:
 
-```ts
+```ts prelude=clip:LauncherClip
 effect(() => render(launcher.queued.value, launcher.playing.value)); // every waiting launch (soonest first) and every playing clip
 effect(() => (cellEl.dataset.state = clip.queued.value ? "queued" : clip.playing.value ? "playing" : "idle"));
 // per clip: playing, queued, startsAt, startedAt, options; per track: playing, queued; position: read it each frame, it is not tracked

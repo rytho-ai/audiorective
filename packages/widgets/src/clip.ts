@@ -7,31 +7,56 @@ import type { WaveformPeaks } from "./types";
 
 /** Reusable arrangement clip gestures over caller-owned elements and timeline data. */
 export type ArrangementTimeMap = Readonly<{
+  /** Maps project seconds to quarter-note project beats for gestures. */
   secondsToBeat(seconds: number): number;
+  /** Maps quarter-note project beats to project seconds for gestures. */
   beatToSeconds(beat: number): number;
+  /** Returns a project-seconds position snapped to the caller's chosen grid. */
   snapSeconds(seconds: number): number;
 }>;
 
 /** One committed move: `time` is the new start in the gesture's `timeUnit` (seconds by default). */
-export type ClipMove = Readonly<{ clipId: string; trackId: string; time: number; kind: "pointer" | "keyboard" }>;
+export type ClipMove = Readonly<{
+  /** Stable identifier of the clip being moved; unchanged by the gesture. */
+  clipId: string;
+  /** Stable identifier of the destination track selected by the gesture. */
+  trackId: string;
+  /** Proposed inclusive clip start in the gesture's timeUnit: seconds by default, or quarter-note beats. */
+  time: number;
+  /** Input source of the committed move: pointer drag or keyboard gesture. */
+  kind: "pointer" | "keyboard";
+}>;
 
 export type ClipGestureOptions = Readonly<{
+  /** Stable identifier forwarded with committed moves and transfers. */
   clipId: string;
   /** Tracked native origin (`time` in `timeUnit`, seconds by default); undefined disables/cancels. Position or track changes cancel stale previews. */
-  origin(): Readonly<{ time: number; trackId: string }> | undefined;
+  origin():
+    | Readonly<{
+        /** Original inclusive clip start in timeUnit: seconds by default, or quarter-note beats. */
+        time: number;
+        /** Original owning track identifier, used when no transfer occurs. */
+        trackId: string;
+      }>
+    | undefined;
   /** Unit of origin.time and onMove.time; default seconds. */
   timeUnit?: "seconds" | "beats";
+  /** Borrowed project beat/seconds mapping and snapping policy. */
   timeMap: ArrangementTimeMap;
+  /** Current positive horizontal scale in pixels per project second. */
   pixelsPerSecond(): number;
   /** Return a valid destination track at the pointer location, or undefined to keep the current track. */
   trackAt(clientX: number, clientY: number): string | undefined;
+  /** Called when the clip is selected by pointer or keyboard input. */
   onSelect(): void;
+  /** Called to open the clip's editor after the widget's activation gesture. */
   onOpen(): void;
   /** Called once after a completed drag or keyboard nudge. The caller owns the edit and undo history. */
   onMove(move: ClipMove): void;
 }>;
 
 export interface ClipGestureHandle {
+  /** Releases resources owned by this attachment or view; safe to call twice. */
   dispose(): void;
 }
 
@@ -299,6 +324,7 @@ export function attachClipWaveform(element: HTMLElement, options: ClipWaveformOp
 }
 
 export interface ClipWaveformHandle {
+  /** Releases resources owned by this attachment or view; safe to call twice. */
   dispose(): void;
 }
 
@@ -306,19 +332,40 @@ export type ClipTrimEdge = "start" | "end";
 
 export type ClipTrimOptions = Readonly<{
   /** Tracked origin of the clip on the timeline (`time` and `duration` in `timeUnit`: seconds or beats); undefined disables trimming and cancels a drag. A changed origin cancels a stale drag. */
-  origin(): Readonly<{ time: number; duration: number }> | undefined;
+  origin():
+    | Readonly<{
+        /** Original inclusive clip start in timeUnit: seconds by default, or quarter-note beats. */
+        time: number;
+        /** Original positive clip extent in timeUnit: seconds by default, or quarter-note beats. */
+        duration: number;
+      }>
+    | undefined;
   /** Unit of origin, snap, bounds and the committed edges; default seconds. */
   timeUnit?: "seconds" | "beats";
+  /** Borrowed project beat/seconds mapping and snapping policy. */
   timeMap: ArrangementTimeMap;
+  /** Current positive horizontal scale in pixels per project second. */
   pixelsPerSecond(): number;
   /** Edges that get a handle; default both. */
   edges?: readonly ClipTrimEdge[];
   /** Round a candidate edge position (in `timeUnit`) to the grid, e.g. a tempo map's beat-grid snapping function. Alt bypasses it while dragging. */
   snap?(time: number): number;
   /** Limits for the edges in `timeUnit`, such as the recording's extent for audio. Read at the start of each drag or key press. */
-  bounds?(): Readonly<{ start?: number; end?: number }>;
+  bounds?(): Readonly<{
+    /** Optional earliest inclusive boundary in timeUnit: seconds by default, or quarter-note beats. */
+    start?: number;
+    /** Optional latest exclusive boundary in timeUnit: seconds by default, or quarter-note beats. */
+    end?: number;
+  }>;
   /** Called once with the edges that changed, as absolute timeline positions in `timeUnit`: for the caller to apply to its own clip. */
-  onCommit(edges: Readonly<{ start?: number; end?: number }>): void;
+  onCommit(
+    edges: Readonly<{
+      /** Edited inclusive boundary in timeUnit (seconds or beats); omitted when that edge is unchanged. */
+      start?: number;
+      /** Edited exclusive boundary in timeUnit (seconds or beats); omitted when that edge is unchanged. */
+      end?: number;
+    }>,
+  ): void;
 }>;
 
 const clipTrimStyles = `
@@ -530,5 +577,6 @@ export function attachClipTrim(element: HTMLElement, options: ClipTrimOptions): 
 }
 
 export interface ClipTrimHandle {
+  /** Releases resources owned by this attachment or view; safe to call twice. */
   dispose(): void;
 }

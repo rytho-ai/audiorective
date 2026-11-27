@@ -2,9 +2,9 @@ import { resamplePCM } from "@audiorective/core";
 import { preservedEntries } from "./project-persistence";
 import { sourceXml } from "./internal/source-xml";
 import type { WorkspaceSource } from "./runtime";
-import { pendingAudioFiles, provideDecodedAudio } from "./internal/decoded-audio";
+import { archiveReaders, pendingAudioFiles } from "./internal/decoded-audio";
 import type { DecodedAudioFiles } from "./internal/decoded-audio";
-import { openDawProject, openDawProjectBlob, saveDawProject, saveDawProjectTo } from "./dawproject";
+import { saveDawProject, saveDawProjectTo } from "./dawproject";
 import { Workspace, type WorkspaceOptions } from "./runtime";
 import { registerSongParser } from "./song-parser";
 import type { OpenDawProjectResult } from "./dawproject";
@@ -12,7 +12,10 @@ import type { Project, ProjectAudio } from "./model";
 import type { ProjectVersion } from "./project-edits";
 
 /** `expectedVersion` refuses to save if the Project has moved on, so a file always holds the state the caller checked. */
-export type SaveWorkspaceOptions = Readonly<{ expectedVersion?: ProjectVersion }>;
+export type SaveWorkspaceOptions = Readonly<{
+  /** Version to save; omitted to save the current state, or throws if the supplied version has changed. */
+  expectedVersion?: ProjectVersion;
+}>;
 
 function assertSaveVersion(project: Project, options: SaveWorkspaceOptions): void {
   if (options.expectedVersion !== undefined && project.cells.version.value !== options.expectedVersion)
@@ -25,7 +28,9 @@ function assertSaveVersion(project: Project, options: SaveWorkspaceOptions): voi
  * A file the browser cannot decode keeps its clips in the file, unplayed, and the warnings name it.
  */
 async function readSong(context: AudioContext, source: WorkspaceSource): Promise<OpenDawProjectResult> {
-  const first = source instanceof Uint8Array ? openDawProject(source) : await openDawProjectBlob(source);
+  const read = (decoded?: DecodedAudioFiles) =>
+    source instanceof Uint8Array ? archiveReaders().bytes(source, decoded) : archiveReaders().blob(source, decoded);
+  const first = await read();
   const pending = pendingAudioFiles.get(first.project);
   if (!pending) return first;
   const files = new Map<string, ProjectAudio | null>();
@@ -52,12 +57,7 @@ async function readSong(context: AudioContext, source: WorkspaceSource): Promise
     throw error;
   }
   first.project.dispose();
-  provideDecodedAudio(source, files as DecodedAudioFiles);
-  try {
-    return source instanceof Uint8Array ? openDawProject(source) : await openDawProjectBlob(source);
-  } finally {
-    provideDecodedAudio(source, undefined);
-  }
+  return read(files as DecodedAudioFiles);
 }
 
 // `workspace.open` reads files through the codec, which the runtime may not import.

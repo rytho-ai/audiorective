@@ -1,17 +1,41 @@
 /** Source I/O behind WavePlayer's loading lifecycle; no playback or view state. */
 export type WaveLoadProgress =
-  | Readonly<{ phase: "download" | "read"; loadedBytes: number; totalBytes: number | null }>
-  | Readonly<{ phase: "decode" }>
-  | Readonly<{ phase: "peaks" }>;
+  | Readonly<{
+      /** Loading-stage discriminator; byte totals exist only during download or read. */
+      phase: "download" | "read";
+      /** Bytes received or read so far, starting at 0. */
+      loadedBytes: number;
+      /** Expected byte count; null when the source does not report its size. */
+      totalBytes: number | null;
+    }>
+  | Readonly<{
+      /** Loading-stage discriminator; byte totals exist only during download or read. */
+      phase: "decode";
+    }>
+  | Readonly<{
+      /** Loading-stage discriminator; byte totals exist only during download or read. */
+      phase: "peaks";
+    }>;
 
 /** A source adapter may borrow a shared decode cache. Respect the signal for this
  * consumer; shared work may continue. The block discards stale progress/results. */
 export type WaveSourceLoader = (
   url: string,
   options: {
+    /** Audio context used to decode the source; borrowed from the player. */
     context: AudioContext;
+    /** Cancellation for this consumer; shared cache work may continue independently. */
     signal: AbortSignal;
-    onProgress: (progress: Exclude<WaveLoadProgress, { phase: "peaks" }>) => void;
+    /** Reports download/read/decode progress; the player owns peak-summary progress. */
+    onProgress: (
+      progress: Exclude<
+        WaveLoadProgress,
+        {
+          /** Peak generation is excluded from adapter progress and owned by the player. */
+          phase: "peaks";
+        }
+      >,
+    ) => void;
   },
 ) => Promise<AudioBuffer>;
 

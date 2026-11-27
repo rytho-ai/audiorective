@@ -1,4 +1,5 @@
 export interface RenderOfflineOptions {
+  /** Requested render duration in seconds, converted to whole sample frames. */
   seconds: number;
   /** Default 2. */
   channels?: number;

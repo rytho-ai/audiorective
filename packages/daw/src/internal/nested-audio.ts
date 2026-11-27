@@ -17,7 +17,12 @@ export type NestedAudioLink = {
   gain?: Element;
 };
 
-export type WarpPoint = Readonly<{ time: number; contentTime: number }>;
+export type WarpPoint = Readonly<{
+  /** Position in the containing clip content unit, beats or seconds as stated by the file. */
+  time: number;
+  /** Corresponding position in seconds of the original audio recording. */
+  contentTime: number;
+}>;
 
 /**
  * The most the warp may differ from the timeline, in seconds of audio: 1.5 frames of the recording (the slack the reader already allows a
@@ -26,10 +31,41 @@ export type WarpPoint = Readonly<{ time: number; contentTime: number }>;
  */
 export const warpTolerance = (sampleRate: number): number => 1.5 / sampleRate;
 
+/** Rounding noise a file's own numbers carry (a float32 beat count is exact to about 6e-8 of its size), in seconds of audio: below it a warp is always the identity. */
+const WARP_NOISE_SECONDS = 2e-6;
+/** The most a warp may differ from the timeline per second of audio before it is a stretch rather than rounding: a relative bound, so a short clip is judged by its slope too. */
+const WARP_SLOPE = 1e-5;
+/** The difference between audio seconds and timeline seconds that still counts as the identity over `timeline` seconds: `tolerance` for a long clip, a slope bound for a short one. */
+const identityBound = (tolerance: number, timeline: number): number =>
+  Math.min(tolerance, Math.max(WARP_NOISE_SECONDS, WARP_SLOPE * Math.abs(timeline)));
+
 export type WarpVerdict =
-  | { identity: true; contentStart: number }
-  | { identity: false; reason: "outside"; contentSpan?: undefined; timelineSpan?: undefined }
-  | { identity: false; reason: "speed"; contentSpan: number; timelineSpan: number };
+  | {
+      /** True when the warp preserves original playback speed within the frame and slope tolerances. */
+      identity: true;
+      /** Recording-second position at the requested window start when the warp is effectively identity. */
+      contentStart: number;
+    }
+  | {
+      /** True when the warp preserves original playback speed within the frame and slope tolerances. */
+      identity: false;
+      /** Failure category: outside lacks valid covering points, while speed changes the recording playback speed. */
+      reason: "outside";
+      /** Recording seconds covered by the window; omitted when valid covering warp points are unavailable. */
+      contentSpan?: undefined;
+      /** Project seconds covered by the window; omitted when valid covering warp points are unavailable. */
+      timelineSpan?: undefined;
+    }
+  | {
+      /** True when the warp preserves original playback speed within the frame and slope tolerances. */
+      identity: false;
+      /** Failure category: outside lacks valid covering points, while speed changes the recording playback speed. */
+      reason: "speed";
+      /** Recording seconds covered by the window; omitted when valid covering warp points are unavailable. */
+      contentSpan: number;
+      /** Project seconds covered by the window; omitted when valid covering warp points are unavailable. */
+      timelineSpan: number;
+    };
 
 export function readWarpPoints(warps: Element): WarpPoint[] {
   const points: WarpPoint[] = [];
@@ -56,6 +92,26 @@ function contentAt(points: readonly WarpPoint[], at: number, slack: number): num
 }
 
 /**
+ * The audio second at the clip's local position `local`. A clip edge that lies within `tolerance` seconds of the first or last warp point takes that point's
+ * audio second: a warp written to end a fraction of a frame short of the clip's end (the stretch ratio is exact, the clip's length a whole number of
+ * frames) still covers the clip, and its end is the audio the warp states. Elsewhere it is `contentAt`.
+ */
+function contentAtEdge(
+  points: readonly WarpPoint[],
+  input: { from: number; start: number; elapsed: (position: number) => number; tolerance: number },
+  local: number,
+): number | undefined {
+  const { from, start, elapsed, tolerance } = input;
+  const origin = elapsed(start);
+  const here = elapsed(start + local) - origin;
+  for (const point of [points[0], points[points.length - 1]]) {
+    const position = start + point.time - from;
+    if (position >= 0 && Math.abs(elapsed(position) - origin - here) <= tolerance) return point.contentTime;
+  }
+  return contentAt(points, from + local, 1e-9);
+}
+
+/**
  * Whether `points` (warp time in the clip's own unit, audio in seconds) play the audio at its original speed over the clip's window
  * `[from, from + length]` when the clip starts at `start` on the project's timeline. `elapsed(position)` is the timeline seconds from the
  * project timeline origin to `position`, in the clip's unit, so the tempo map is applied: audio seconds must advance exactly as timeline
@@ -78,8 +134,9 @@ export function warpVerdict(input: {
   )
     return { identity: false, reason: "outside" };
   const slack = 1e-9;
-  const base = contentAt(points, from, slack);
-  const end = contentAt(points, from + length, slack);
+  const edge = { from, start, elapsed, tolerance };
+  const base = contentAtEdge(points, edge, 0);
+  const end = contentAtEdge(points, edge, length);
   if (base === undefined || end === undefined) return { identity: false, reason: "outside" };
   const locals = new Set<number>([0, length]);
   for (const point of points) if (point.time > from && point.time < from + length) locals.add(point.time - from);
@@ -87,8 +144,8 @@ export function warpVerdict(input: {
   const origin = elapsed(start);
   for (const local of locals) {
     const timeline = elapsed(start + local) - origin;
-    const content = contentAt(points, from + local, slack)! - base;
-    if (Math.abs(content - timeline) > tolerance)
+    const content = (local === 0 || local === length ? contentAtEdge(points, edge, local) : contentAt(points, from + local, slack))! - base;
+    if (Math.abs(content - timeline) > identityBound(tolerance, timeline))
       return { identity: false, reason: "speed", contentSpan: end - base, timelineSpan: elapsed(start + length) - origin };
   }
   return { identity: true, contentStart: base };
@@ -110,7 +167,12 @@ export function identityWarpPoints(input: {
 }
 
 /** A point of a stretched clip's time map: `output` seconds from the clip's start, `content` seconds in the recording. */
-export type WarpKnot = Readonly<{ output: number; content: number }>;
+export type WarpKnot = Readonly<{
+  /** Non-negative output seconds from the clip start. */
+  output: number;
+  /** Corresponding seconds in the original audio recording. */
+  content: number;
+}>;
 
 /**
  * The time map of a clip whose warp stretches its audio, as knots in seconds: the first and last knot are the clip's edges, every one between is
@@ -134,8 +196,10 @@ export function warpKnots(input: {
   const origin = elapsed(start);
   const all: WarpKnot[] = [];
   const last = Math.max(...locals);
+  // `tolerance` is half a frame here; an edge may sit a frame and a half from the warp's last point (a clip's length is a whole number of frames).
+  const edge = { from, start, elapsed, tolerance: 3 * tolerance };
   for (const local of [...locals].sort((a, b) => a - b)) {
-    const content = contentAt(points, from + local, 1e-9);
+    const content = local === 0 || local === length ? contentAtEdge(points, edge, local) : contentAt(points, from + local, 1e-9);
     if (content === undefined) return undefined;
     const knot = { output: elapsed(start + local) - origin, content };
     // A warp marker and a tempo change at the same beat are one place: the file states the marker's beat to 12 digits and the tempo change is
@@ -157,4 +221,28 @@ export function warpKnots(input: {
   }
   kept.push(all[all.length - 1]);
   return kept;
+}
+
+/**
+ * The exact stretch ratio (timeline seconds per second of audio) of a clip whose window lies on one warp segment, from the warp's own two points
+ * rather than from the clip's whole frames: a clip's length and window are whole frames, so their quotient is the ratio only to half a frame over
+ * the window, and a ratio read from it and written again would drift with every edit. Undefined when the window spans more than one segment.
+ */
+export function exactWarpRatio(input: {
+  points: readonly WarpPoint[];
+  from: number;
+  length: number;
+  start: number;
+  elapsed: (position: number) => number;
+}): number | undefined {
+  const { points, from, length, start, elapsed } = input;
+  const middle = from + length / 2;
+  const at = points.findIndex((point, i) => i + 1 < points.length && point.time <= middle && points[i + 1].time >= middle);
+  if (at < 0) return undefined;
+  const a = points[at];
+  const b = points[at + 1];
+  // The tempo is steady across the window (a change inside it would be a knot of its own), so one beat of the file's unit lasts a fixed time there.
+  const perUnit = (elapsed(start + length) - elapsed(start)) / length;
+  const ratio = ((b.time - a.time) * perUnit) / (b.contentTime - a.contentTime);
+  return Number.isFinite(ratio) && ratio > 0 ? ratio : undefined;
 }

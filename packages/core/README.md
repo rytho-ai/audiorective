@@ -118,6 +118,7 @@ class Mixer extends AudioProcessor<{
   volume: SchedulableParam;
   muted: Param<boolean>;
 }> {
+  private readonly gain: GainNode;
   readonly effectiveVolume: () => number;
 
   constructor(ctx: AudioContext) {
@@ -129,13 +130,16 @@ class Mixer extends AudioProcessor<{
       },
     }));
 
+    this.gain = gain;
     this.effectiveVolume = this.computed(() => (this.params.muted.value ? 0 : this.params.volume.value));
 
     this.effect(() => {
       gain.gain.value = this.effectiveVolume();
     });
   }
-  // ...
+  get output() {
+    return this.gain;
+  }
 }
 ```
 
@@ -231,16 +235,16 @@ Lifecycle management for the audio context and processor graph.
 import { createEngine } from "@audiorective/core";
 
 const engine = createEngine((ctx) => {
-  const synth = new Synth(ctx);
+  const synth = new Sampler(ctx, { sound: "C4" });
   synth.output.connect(ctx.destination);
   return { synth };
 });
 
 engine.synth; // fully typed
-await engine.resume();
-engine.state.value; // "running"
-await engine.suspend();
-engine.dispose(); // terminal — processors cleaned up, context closed
+await engine.core.resume();
+engine.core.state.value; // "running"
+await engine.core.suspend();
+engine.core.dispose(); // terminal — processors cleaned up, context closed
 ```
 
 State transitions: `idle` -> `running` <-> `suspended` -> `disposed`
@@ -255,7 +259,7 @@ Works with any UI framework or headless in Node.js:
 import { effect } from "alien-signals";
 
 effect(() => {
-  console.log("Volume:", synth.volume.value);
+  console.log("Volume:", synth.params.volume.value);
 });
 ```
 

@@ -21,6 +21,30 @@
   },
   {
     "pattern": "effects/*.type",
-    "reason": "Static class-name discriminant (`\"Compressor\"`, `\"Filter\"`\u2026) used to serialize and recreate effects; the literal says it."
+    "reason": "Static class-name discriminant (`\"Compressor\"`, `\"Filter\"`…) used to serialize and recreate effects; the literal says it."
+  },
+  {
+    "pattern": "daw/*Edit.type",
+    "reason": "Discriminant of an applyEdits operation: its literal value is the operation's name, documented on the operation type itself."
+  },
+  {
+    "pattern": "daw/*.kind",
+    "reason": "Literal discriminant (`\"audio\" | \"midi\"`, `\"webclap\" | \"rack\"` …); the union of literals says what it is."
+  },
+  {
+    "pattern": "daw/*.id",
+    "reason": "Opaque id string of the object it sits on; ids are never parsed, only compared and passed back (docs/vocabulary.md)."
+  },
+  {
+    "pattern": "daw/*.name",
+    "reason": "Display name of the object it sits on; not unique and never interpreted (docs/vocabulary.md)."
+  },
+  {
+    "pattern": "daw/ProjectOperation.input.type",
+    "reason": "JSON Schema `type`, always \"object\" for an operation's input; the JSON Schema meaning is standard."
+  },
+  {
+    "pattern": "daw/Rack*.type",
+    "reason": "Literal discriminant of a rack effect slot (`\"filter\" | \"delay\" | \"eq\"`); the literal says which effect it is."
   }
 ]

@@ -1,5 +1,12 @@
 /** A time signature that starts at a musical beat, rather than an AudioContext time. */
-export type TimeSignatureChange = Readonly<{ beat: number; numerator: number; denominator: number }>;
+export type TimeSignatureChange = Readonly<{
+  /** Project beat where the signature starts; stored changes are positive, while setters accept 0 for the initial signature. */
+  beat: number;
+  /** Positive integer count of denominator notes per bar; bars in MeterMap count from 1. */
+  numerator: number;
+  /** Positive power-of-two note denominator, such as 4 for quarter notes. */
+  denominator: number;
+}>;
 
 type Segment = Readonly<{ beat: number; numerator: number; denominator: number; startBar: number; barBeats: number }>;
 

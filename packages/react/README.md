@@ -19,10 +19,8 @@ Subscribe to a reactive source. Accepts any `Readable<T>` (`Param`, `Schedulable
 ```tsx
 import { useValue } from "@audiorective/react";
 
-function Display({ synth }) {
-  const volume = useValue(synth.volume); // Param<number>
-  const pattern = useValue(sequencer.pattern); // Cell<StepPattern>
-  const label = useValue(synth.displayLabel); // ComputedAccessor<string>
+function Display({ synth }: { synth: AudioProcessor<{ volume: SchedulableParam }> }) {
+  const volume = useValue(synth.params.volume); // Param<number>
   return <span>{volume.toFixed(2)}</span>;
 }
 ```
@@ -30,8 +28,8 @@ function Display({ synth }) {
 The hook always returns a read-only snapshot. To update state, mutate the source directly:
 
 ```tsx
-function VolumeSlider({ synth }) {
-  const volume = useValue(synth.volume);
+function VolumeSlider({ synth }: { synth: AudioProcessor<{ volume: SchedulableParam }> }) {
+  const volume = useValue(synth.params.volume);
   return (
     <input
       type="range"
@@ -40,7 +38,7 @@ function VolumeSlider({ synth }) {
       step={0.01}
       value={volume}
       onChange={(e) => {
-        synth.volume.value = +e.target.value;
+        synth.params.volume.value = +e.target.value;
       }}
     />
   );
@@ -60,7 +58,7 @@ import { createEngine } from "@audiorective/core";
 import { createEngineContext } from "@audiorective/react";
 
 const engine = createEngine((ctx) => {
-  const synth = new Synth(ctx);
+  const synth = new Sampler(ctx, { sound: "C4" });
   synth.output.connect(ctx.destination);
   return { synth };
 });
@@ -74,7 +72,7 @@ Always renders children immediately. Safe because `createEngine` wires all proce
 
 `autoStart` (default `true`) registers a one-time gesture listener (`click`/`keydown`/`touchstart`) that calls `engine.core.resume()` on first interaction. Re-arms if the engine state drops from running (e.g. mobile background suspend).
 
-```tsx
+```tsx fragment: application sketch; app-specific classes or callbacks omitted
 <EngineProvider>
   <App />
 </EngineProvider>
@@ -86,7 +84,7 @@ The provider does NOT dispose the engine on unmount — engines are module-level
 
 ## Full Example
 
-```tsx
+```tsx fragment: requires application-local modules
 import { useValue } from "@audiorective/react";
 import { EngineProvider, useEngine } from "./audio/engine";
 

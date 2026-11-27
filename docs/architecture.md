@@ -50,9 +50,9 @@ Classes that only hold structured state should **not** extend `AudioProcessor`. 
 
 ### UI layer (React components, etc.)
 
-- Reading param values for display (`useValue(synth.volume)`)
+- Reading param values for display (`useValue(synth.params.volume)`)
 - Reading cell values for display (`useValue(sequencer.pattern)`)
-- Setting param values from user input (`synth.volume.value = 0.8`)
+- Setting param values from user input (`synth.params.volume.value = 0.8`)
 - Calling audio-layer methods (`synth.filterSweep()`, `sequencer.rampBpm(180, 4)`)
 - Layout, styling, conditional rendering
 
@@ -141,31 +141,48 @@ Keep the dependency direction downward. Bind widgets to the module that already 
 ### Wrong — audio scheduling in React
 
 ```typescript
+import { useCallback } from "react";
+
 // Component knows about AudioContext timing and scheduling API
 const handleFilterSweep = useCallback(() => {
   const now = synth.context.currentTime;
-  const currentCutoff = synth.cutoff.value;
-  synth.cutoff.setValueAtTime(currentCutoff, now);
-  synth.cutoff.linearRampToValueAtTime(18000, now + 1);
-  synth.cutoff.linearRampToValueAtTime(currentCutoff, now + 2);
+  const currentCutoff = synth.params.cutoff.value;
+  synth.params.cutoff.setValueAtTime(currentCutoff, now);
+  synth.params.cutoff.linearRampToValueAtTime(18000, now + 1);
+  synth.params.cutoff.linearRampToValueAtTime(currentCutoff, now + 2);
 }, [synth]);
 ```
 
 ### Right — audio method, thin UI call
 
 ```typescript
+import { useCallback } from "react";
+
 // Audio layer — self-contained, testable, no UI dependency
-class StepSynth extends AudioProcessor {
+class StepSynth extends AudioProcessor<{ cutoff: SchedulableParam }> {
+  private readonly filter: BiquadFilterNode;
+
+  constructor(ctx: AudioContext) {
+    const filter = new BiquadFilterNode(ctx);
+    super(ctx, ({ param }) => ({ params: { cutoff: param({ default: 800, bind: filter.frequency }) } }));
+    this.filter = filter;
+  }
+
+  get output() {
+    return this.filter;
+  }
+
   filterSweep(peakFreq = 18000, duration = 2): void {
     const now = this.context.currentTime;
-    const currentCutoff = this.cutoff.value;
-    this.cutoff.setValueAtTime(currentCutoff, now);
-    this.cutoff.linearRampToValueAtTime(peakFreq, now + duration / 2);
-    this.cutoff.linearRampToValueAtTime(currentCutoff, now + duration);
+    const currentCutoff = this.params.cutoff.value;
+    this.params.cutoff.setValueAtTime(currentCutoff, now);
+    this.params.cutoff.linearRampToValueAtTime(peakFreq, now + duration / 2);
+    this.params.cutoff.linearRampToValueAtTime(currentCutoff, now + duration);
   }
 }
 
 // UI layer — just a trigger
+const synth = new StepSynth(ctx);
 const handleFilterSweep = useCallback(() => {
   synth.filterSweep();
 }, [synth]);
@@ -173,9 +190,9 @@ const handleFilterSweep = useCallback(() => {
 
 ### Simple `.value` assignments are fine in UI
 
-```typescript
+```tsx
 // This is OK — .value is the Param public API, not audio scheduling
-<input onChange={(e) => synth.volume.value = Number(e.target.value)} />
+<input onChange={(e) => (synth.params.volume.value = Number(e.target.value))} />
 ```
 
 Setting `.value` is a direct property assignment on the Param abstraction. It's the intended interface between UI and audio. No need to wrap these in setter methods.
@@ -245,7 +262,9 @@ The React component for the imperative view collapses to a DOM host that constru
 
 ### Wrong — React owns state, scene needs back-channels
 
-```typescript
+```typescript fragment: intentional invalid example
+import { useRef, useEffect } from "react";
+
 function SpatialPanner({ selectedId, onSelect }: Props) {
   const selectedIdRef = useRef(selectedId);
   const onSelectRef = useRef(onSelect);
@@ -261,7 +280,9 @@ function SpatialPanner({ selectedId, onSelect }: Props) {
 
 ### Right — engine owns state, React and the scene are peers
 
-```typescript
+```tsx fragment: application sketch; app-specific classes or callbacks omitted
+import { useEffect } from "react";
+
 // engine.ts — selection is engine state, not React state
 export const engine = createEngine((ctx) => {
   const tracks = buildTracks(ctx);

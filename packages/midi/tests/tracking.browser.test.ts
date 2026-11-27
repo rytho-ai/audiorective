@@ -28,6 +28,7 @@ describe("MidiClip readers are tracked", () => {
   const rows: Array<[string, (c: MidiClip) => unknown, (c: MidiClip) => void]> = [
     ["notes (setNotes)", (c) => c.notes.value, (c) => c.setNotes([note("a")])],
     ["notes (edit)", (c) => c.notes.value, (c) => c.edit((draft) => void (draft[0].pitch = 62))],
+    ["messages (setMessages)", (c) => c.messages.value, (c) => c.setMessages([{ beat: 1, data: Uint8Array.of(0xb0, 64, 127) }])],
     ["revision (setNotes)", (c) => c.revision.value, (c) => c.setNotes([note("a")])],
     ["revision (edit)", (c) => c.revision.value, (c) => c.edit((draft) => void draft.push({ ...draft[0], id: "z" }))],
   ];

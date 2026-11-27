@@ -3,7 +3,9 @@ import { fadeTo, SMOOTHING } from "./internal/smoothing";
 import type { SendBus } from "./SendBus";
 
 export interface ChannelOptions {
+  /** Initial linear level, nonnegative with 1 as unity; defaults to 1. */
   gain?: number;
+  /** Initial stereo position, -1 left to 1 right; defaults to 0. */
   pan?: number;
   /** Silence the channel and its sends without changing gain. Default false. */
   muted?: boolean;

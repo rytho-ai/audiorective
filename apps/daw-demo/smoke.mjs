@@ -722,8 +722,11 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 80));
     analyser.getFloatTimeDomainData(frame);
     const unmuted = Math.max(...frame.map(Math.abs));
+    // Pause fades the clip out by 22 ms of graph time, and the analyser frame (2048 samples, 43 ms) still holds that fade 65 ms on. Wait 80 ms of audio-context time,
+    // not wall time: the audio clock lags the wall by up to a render callback under load, and a wall-clock wait then reads the frame while it still holds the fade.
+    const pausedAt = current.context.currentTime;
     workspace.pause();
-    await new Promise((resolve) => setTimeout(resolve, 80));
+    while (current.context.currentTime < pausedAt + 0.08) await new Promise((resolve) => setTimeout(resolve, 5));
     analyser.getFloatTimeDomainData(frame);
     const after = Math.max(...frame.map(Math.abs));
     await workspace.play();

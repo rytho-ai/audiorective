@@ -83,7 +83,7 @@
       "expectations": [
         "Requests MIDI access in response to the click (navigator.requestMIDIAccess) and attaches a message listener to every input, including inputs that connect later (statechange).",
         "Notes are triggered immediately from the message handler (play now / current audio time), not routed through a transport look-ahead or setTimeout delay.",
-        "Decodes status bytes correctly: note-on 0x90 with velocity > 0, note-off 0x80, note-on with velocity 0 as note-off, ignoring the channel nibble; velocity is divided by 127 (or the decoding is delegated to a toolkit input API whose declarations state 0..1 velocity, such as `MidiKeyboard.open` with an `instrument`).",
+        "Decodes status bytes correctly: note-on 0x90 with velocity > 0, note-off 0x80, note-on with velocity 0 as note-off, ignoring the channel nibble; velocity is divided by 127 (or the decoding is delegated to a toolkit input helper whose declarations state 0..1 velocity).",
         "Held notes are released when the input disconnects.",
         "Sustain pedal (CC 64, value >= 64 is down) defers note-offs until the pedal is released."
       ],

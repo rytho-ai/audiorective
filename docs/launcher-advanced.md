@@ -15,7 +15,18 @@ Deep topics for `ClipLauncher` from `@audiorective/launcher`: launch modes, foll
 ## Follow actions, legato, chance
 
 ```ts
-{ buffer, loop: true, follow: { after: "2m", next: [{ clip: "next", weight: 70 }, { clip: 0, weight: 20 }, { clip: "stay", weight: 10 }] } }
+const options: ClipOptions = {
+  buffer: loop,
+  loop: true,
+  follow: {
+    after: "2m",
+    next: [
+      { clip: "next", weight: 70 },
+      { clip: 0, weight: 20 },
+      { clip: "stay", weight: 10 },
+    ],
+  },
+};
 ```
 
 - **`follow`:** `after` the clip's start one of `next` is picked by weight (relative, so weights summing to 100 read as percentages) and launched on the clip's track at that clip's `quantize`, replacing it. Targets are a slot index, `"next"`, `"previous"` (the track's filled slots, wrapping), `"random"` (another clip) or `"stay"`: nothing is launched. A looping clip re-arms its follow after a stay (it draws again one `after` later); a one-shot does not. A pending follow is cancelled when the clip is stopped, replaced by any launch on the track, or the clock stops or seeks; pause freezes it. After a legato start, `after` counts from the new clip's start beat.

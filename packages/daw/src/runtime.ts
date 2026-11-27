@@ -30,7 +30,9 @@ import { createWorkspaceLoop, LoopFold, type WorkspaceLoop } from "./arrangement
 import { ClipScheduler } from "./clip-scheduler";
 import { Mixer, type MixerStrip } from "./mixer";
 import { LevelMeters, type WorkspaceLevels } from "./level-meters";
-import { audioChannelCount, captureDeviceState, MidiClip, Project } from "./model";
+import { audioChannelCount, captureDeviceParameters, captureDeviceState, MidiClip, Project } from "./model";
+import { DeviceParameterLink } from "./device-parameter-link";
+import { rackSlotParameters, splitRackDeviceId, tableParameters, type DeviceParameter, type DeviceParameterRecord } from "./device-parameters";
 import type { TempoMap } from "./tempo-map";
 import type { AudioClipGainAutomation, MediaAudioClip, PcmAudioClip, ProjectClip, ProjectTrack, WebClapDevice } from "./model";
 import type { BeatRange, ProjectVersion, SecondsRange } from "./project-edits";
@@ -72,7 +74,9 @@ export type WorkspaceSource = Uint8Array | Blob;
 export type WorkspaceOpenOptions = Pick<WorkspaceOptions, "workletUrl" | "resolveBundle" | "instruments" | "stretch" | "warnings" | "ownsProject">;
 
 export type WorkspaceOptions = {
+  /** Audio node receiving the master output; default the AudioContext destination. */
   destination?: AudioNode;
+  /** WebCLAP worklet module URL; omitted to use the host bundled worklet URL. */
   workletUrl?: string;
   /** Resolve bundle hints from opened files. Returning undefined declines the URL. */
   resolveBundle?: (device: WebClapDevice) => string | Promise<string | undefined> | undefined;
@@ -81,6 +85,8 @@ export type WorkspaceOptions = {
    * Session and offline renders. `sound` may be a buffer or a `SoundFactory` for page-made sounds. Not saved in the file: pass it again when opening. A track with a WebCLAP device ignores its entry.
    * A function `(track) => TrackInstrument | undefined` picks by the track's `id`, `name` or `kind` instead, so a reopened file needs no id lookup; it runs for every MIDI track without a device,
    * including tracks added before a `sync()`.
+   * A sampler plays notes (velocity from the note-on) and the sustain pedal (CC64, one pedal for every channel); all-notes-off (CC120, CC123) releases at once. It ignores pitch bend, mod wheel and
+   * every other controller, channel and polyphonic pressure, and program change: a track's controller lanes and clip events of those kinds only reach a WebCLAP device.
    */
   instruments?: Readonly<Record<string, TrackInstrument>> | ((track: Pick<ProjectTrack, "id" | "name" | "kind">) => TrackInstrument | undefined);
   /**
@@ -103,14 +109,21 @@ const isOfflineContext = (context: BaseAudioContext): boolean => typeof OfflineA
 
 /** A borrowed transport view that can be passed directly to a player widget. */
 export type WorkspacePlayer = Readonly<{
+  /** Observable playback flag shared with the Workspace transport. */
   isPlaying: Readable<boolean>;
+  /** Starts or resumes playback, resuming the audio context first. */
   play(): Promise<void>;
+  /** Pauses playback while retaining the project position. */
   pause(): void;
+  /** Borrowed timeline view in project seconds; editing and lifecycle remain with the Workspace. */
   timeline: Readonly<{
+    /** Marks this as a clock-driven timeline so widgets poll its advancing position. */
     clock: true;
     /** Length of the song in seconds (where the last clip ends); changes with edits. */
     duration: Readable<number>;
+    /** Returns the current project position in seconds. */
     position(): number;
+    /** Seeks to a non-negative project position in seconds and refreshes scheduled playback. */
     seek(seconds: number): void;
   }>;
 }>;
@@ -132,6 +145,8 @@ export class Workspace {
   /** This Workspace as a player for the widgets: play, pause, seek and the song `duration` and `position` in project seconds. Borrowed; it needs no dispose. */
   readonly player: WorkspacePlayer;
   private readonly topologyPending = cell(false);
+  /** `dispose()` is stopping playback: devices are about to be disposed, so a stop sends them no controller resets. */
+  private disposing = false;
   private readonly mediaError = cell<string | null>(null);
   private readonly applicationError = cell<string | null>(null);
   private readonly warningMessages = cell<readonly string[]>(Object.freeze([]));
@@ -144,7 +159,7 @@ export class Workspace {
     /**
      * The Session view's launcher over this Workspace's audio and MIDI tracks. `session.value.tracks[trackId].clips[i]` is the slot clip of scene i on that track
      * (`null` for an empty slot); launch it with `clip.launch()` or a whole scene with `launchScene(i)`. It follows `workspace.transport`, is built on first read
-     * and is replaced by `sync()` and `open()`, so read `session.value` inside the effect that uses it. See `sessionClip` and docs/daw.md.
+     * and is replaced by `sync()` and `open()`: a launcher read once and kept goes stale, so read `session.value` inside an effect (or subscribe to this cell) to follow the replacement. See `sessionClip` and docs/daw.md.
      */
     session: ReadonlyCell<ClipLauncher>;
     /** The id of the audio clip `auditionAudioClip` is playing or loading, or null. */
@@ -627,7 +642,8 @@ export class Workspace {
       throw error;
     }
     if (!present()) throw new Error("Workspace device was removed before it finished loading.");
-    return device;
+    // The stored device now carries the parameter table the running plug-in reported.
+    return project.tracks.flatMap((track) => track.devices).find((item) => item.id === device.id) ?? device;
   }
 
   /**
@@ -636,26 +652,30 @@ export class Workspace {
    * song rejects with the error `openWorkspace` or `Workspace.create` would throw and the current song plays on untouched until the new one is ready.
    * On success playback stops at 0, `project` becomes the new Project, `cells.warnings` hold the new file's, `cells.needsSync` and `cells.error` clear, `cells.session` is rebuilt and the loop is cleared (region off: its beats belong to the old song).
    * `options` entries replace the workspace's own for this song and later syncs.
-   * Ownership: a song read from a file belongs to this Workspace. A `Project` you pass belongs to you, as with `Workspace.create`, unless `options.ownsProject` is true, and then the Workspace disposes it
-   * (also when this call fails). The Workspace disposes the Project it replaces only if it owned it. Passing the Project already open throws; call `sync()` to rebuild it.
+   * Ownership: a song read from a file belongs to this Workspace. A `Project` you pass belongs to you, as with `Workspace.create`, unless `options.ownsProject` is true, and then the Workspace
+   * takes it over once the call succeeds and disposes it when it is replaced or the Workspace is disposed. A call that rejects leaves your `Project` alone, whatever `ownsProject` says.
+   * The Workspace disposes the Project it replaces only if it owned it. Passing the Project already open throws; call `sync()` to rebuild it.
+   * Edits made to the new `Project` while it loads are applied after the swap: light edits (clips, mixer, tempo) play at once, a new or removed track sets `cells.needsSync`.
    */
   async open(source: WorkspaceSource | Project, options: WorkspaceOpenOptions = {}): Promise<void> {
     if (this.disposed) throw new Error("Workspace is disposed.");
     if (source instanceof Project) {
       if (source === untracked(() => this.project))
         throw new Error("Workspace open needs a Project other than the one already open; call sync() to rebuild it.");
-      return this.serialize(() => this.swapSong({ project: source, warnings: [] }, options, options.ownsProject === true));
+      return this.serialize(() => this.swapSong({ project: source, warnings: [] }, options, options.ownsProject === true, false));
     }
     const parse = songParser();
     if (!parse) throw new Error("Workspace open needs the @audiorective/daw root entry: import it once so the file reader is registered.");
     const opened = await parse(source, this.context);
-    return this.serialize(() => this.swapSong(opened, options, true));
+    return this.serialize(() => this.swapSong(opened, options, true, true));
   }
 
   private async swapSong(
     opened: Readonly<{ project: Project; warnings: readonly string[] }>,
     options: WorkspaceOpenOptions,
     owns: boolean,
+    /** A song this call read from a file is nobody else's: a failure disposes it. A `Project` the caller passed is theirs again. */
+    disposeOnFailure: boolean,
   ): Promise<void> {
     const project = opened.project;
     const warnings = [...opened.warnings, ...(options.warnings ?? [])];
@@ -667,8 +687,11 @@ export class Workspace {
       loaded: new Map(),
     };
     const built = new Map<string, TrackRuntime>();
+    let builtRevision = 0;
     try {
       await renderOpenedStretches(project, stage.options.stretch, stage.warn, () => this.disposed);
+      // What the tracks below are built from: an edit after this point is applied once the song is swapped in.
+      builtRevision = untracked(() => project.cells.revision.value);
       for (const track of project.tracks) {
         const runtime = await this.createTrack(track, stage);
         built.set(track.id, runtime);
@@ -676,7 +699,7 @@ export class Workspace {
       }
     } catch (error) {
       for (const runtime of built.values()) this.disposeTrack(runtime);
-      if (owns) project.dispose();
+      if (disposeOnFailure) project.dispose();
       throw error;
     }
     // Everything is ready: no await from here, so the swap is one step.
@@ -694,10 +717,15 @@ export class Workspace {
       }
       this.ownedProject = owns ? project : undefined;
       this.projectSource.value = project;
-      this.recordCurrentProject();
+      this.appliedProject = project;
+      this.appliedRevision = builtRevision;
       this.activeTempoMap = project.tempoMap;
       this.clock.meter.value = [...project.signature];
-      this.mixer.applyRouting(project.tracks);
+      // A track the Project gained while this loaded has no runtime yet: routing wires the ones built, and the edit applied after the swap reports the rest.
+      const wired = (id: string | null) => id === null || built.has(id);
+      this.mixer.applyRouting(
+        project.tracks.filter(({ id, routing }) => built.has(id) && wired(routing.outputBusId) && routing.sends.every(({ busId }) => wired(busId))),
+      );
       this.mixer.applyMixer();
       this.sessionRevision.value++;
       this.sessionClipEdits.value++;
@@ -712,6 +740,7 @@ export class Workspace {
       this.topologyPending.value = false;
     });
     old?.dispose();
+    if (!this.isCurrentProject()) this.scheduleProjectEdit();
   }
 
   private async rebuildTracks(position = this.position): Promise<void> {
@@ -773,11 +802,81 @@ export class Workspace {
       if (!stage.loaded.has(device.pluginId)) stage.loaded.set(device.pluginId, new Set());
       stage.loaded.get(device.pluginId)!.add(bundleUrl);
       if (device.state.length) await host.loadState(device.state);
+      this.reconcileParameters(stage.project, device, host);
       return host;
     } catch (error) {
       host?.dispose();
       stage.warn(`Device ${device.name} could not load: ${String(error)}`);
       return undefined;
+    }
+  }
+
+  /**
+   * The parameter table of a loaded plug-in against what the plug-in reports. The table is the authority: its values are written into the plug-in (after its state loaded, so a table
+   * wins over the values inside the state bytes). A table that is empty or describes other parameters (a new plug-in version, a state replaced with `setDeviceState`) is made again
+   * from the plug-in's report, keeping the values it already had for parameters that still exist, and stored in the Project without an Undo step.
+   */
+  private reconcileParameters(project: Project, device: WebClapDevice, host: WebClapHost): void {
+    const infos = host.parameterInfo;
+    const stored = device.parameters;
+    const same =
+      stored.length === infos.length &&
+      !stored.some((record) => record.normalized) &&
+      infos.every((info, index) => {
+        const record = stored[index];
+        return (
+          record.id === String(info.id) &&
+          record.name === info.name &&
+          record.min === info.min &&
+          record.max === info.max &&
+          record.default === info.defaultValue &&
+          record.step === info.step
+        );
+      });
+    const table = same ? stored : hostTable(host, stored);
+    for (const record of table) {
+      const param = host.param(record.id);
+      if (param && param.value !== record.value) param.value = record.value;
+    }
+    if (!same) this.captureTable(project, device.id, table);
+  }
+
+  /** Stores a parameter table in the Project as a capture (no Undo step, no new version). A table the Project cannot hold (a name with characters XML cannot carry) stays out. */
+  private captureTable(project: Project, deviceId: string, table: readonly DeviceParameterRecord[]): void {
+    const store = () => {
+      try {
+        captureDeviceParameters(project, deviceId, table);
+      } catch (error) {
+        this.warn(`Device parameters of ${deviceId} could not be stored: ${String(error)}`);
+      }
+    };
+    if (project === this.project) this.reflectProjectEdit(store);
+    else store();
+  }
+
+  /** Starts keeping a live device's parameter table equal to what its plug-in reports. */
+  private linkDevice(runtime: TrackRuntime, project: Project, deviceId: string, host: WebClapHost): void {
+    runtime.links.get(deviceId)?.dispose();
+    runtime.links.set(
+      deviceId,
+      new DeviceParameterLink(host, (moved) => {
+        if (this.disposed) return;
+        const device = project.tracks.flatMap((track) => track.devices).find((item) => item.id === deviceId);
+        if (!device) return;
+        const table = device.parameters.map((record) => {
+          const value = moved.get(record.id);
+          return value === undefined || value < record.min || value > record.max ? record : { ...record, value };
+        });
+        this.captureTable(project, deviceId, table);
+      }),
+    );
+  }
+
+  /** Writes the song's parameter values into every running plug-in that does not hold them yet; a parameter edit, Undo or Redo reaches the sound here without a rebuild. */
+  private applyDeviceParameters(tracks: readonly ProjectTrack[]): void {
+    for (const track of tracks) {
+      const runtime = this.tracks.get(track.id);
+      if (runtime) for (const device of track.devices) runtime.links.get(device.id)?.apply(device.parameters);
     }
   }
 
@@ -968,6 +1067,7 @@ export class Workspace {
       controllerLanes: track.controllerLanes,
       deviceKeys: deviceKeys(track),
       deviceStates: new Map(track.devices.map((device) => [device.id, device.state])),
+      links: new Map(),
       channel: strip.channel,
       automationGain,
       rack,
@@ -982,7 +1082,10 @@ export class Workspace {
       runtime.rack.output.connect(automationGain);
       for (const device of track.devices) {
         const host = await this.loadDeviceHost(device, stage);
-        if (host) runtime.hosts.set(device.id, host);
+        if (host) {
+          runtime.hosts.set(device.id, host);
+          this.linkDevice(runtime, stage.project, device.id, host);
+        }
       }
       this.wireDevices(runtime);
       this.pointMidi(runtime, track, stage.options.instruments);
@@ -1011,7 +1114,7 @@ export class Workspace {
       if (track.devices.some((device) => device.id === id)) continue;
       try {
         const state = await host.saveState();
-        if (!this.disposed) captureDeviceState(project, id, state);
+        if (!this.disposed) captureDeviceState(project, id, state, hostTable(host, []));
       } catch {
         // The device then comes back with the state its step recorded.
       }
@@ -1041,6 +1144,8 @@ export class Workspace {
     const widthBefore = this.channelWidth(runtime, track);
     for (const [id, host] of leaving) {
       host.allNotesOff();
+      runtime.links.get(id)?.dispose();
+      runtime.links.delete(id);
       // The old chain keeps running while the new one fades in; the device is disposed once the old chain is gone.
       if (fade) this.afterAudio(chainLead + chainFadeSeconds + 0.06, () => host.dispose());
       else host.dispose();
@@ -1052,7 +1157,10 @@ export class Workspace {
       const host = loaded.get(device.id) ?? runtime.hosts.get(device.id);
       if (!host) continue;
       hosts.set(device.id, host);
-      if (loaded.has(device.id)) runtime.deviceStates.set(device.id, device.state);
+      if (loaded.has(device.id)) {
+        runtime.deviceStates.set(device.id, device.state);
+        this.linkDevice(runtime, project, device.id, host);
+      }
     }
     runtime.hosts = hosts;
     runtime.deviceKeys = keys;
@@ -1092,6 +1200,7 @@ export class Workspace {
         const runtime = this.tracks.get(track.id);
         if (runtime?.kind === track.kind) updateRack(runtime, track);
       }
+      this.applyDeviceParameters(tracks);
       this.topologyPending.value = true;
       return;
     }
@@ -1114,9 +1223,17 @@ export class Workspace {
         if (host && device.state.length) await host.loadState(device.state);
         if (this.disposed) return;
         runtime.deviceStates.set(device.id, device.state);
+        if (host) {
+          // The state brought its own parameter values: the table (or, when the state replaced it, the plug-in's report) decides again.
+          this.reconcileParameters(project, device, host);
+          runtime.links
+            .get(device.id)
+            ?.apply(project.tracks.flatMap((item) => item.devices).find((item) => item.id === device.id)?.parameters ?? [], true);
+        }
         if (this.project !== project || project.tracks !== tracks) return this.applyLight();
       }
     }
+    this.applyDeviceParameters(tracks);
 
     const created = new Map<string, TrackRuntime>();
     try {
@@ -1258,9 +1375,15 @@ export class Workspace {
         // A MIDI track hands over at `when`, to a clip or back to Arrangement: notes sounding there are released, and the look-ahead is refilled for whoever plays next.
         const host = runtime.midi;
         const releases = Array.from({ length: 16 }, (_, channel) => host.scheduleMidi([0xb0 | channel, 123, 0], when));
+        // A track returning to the Arrangement (a stop, or the end of a one-shot) is brought to the controller state the Arrangement needs at that position.
+        const backAt = clip === null ? when : endsAt;
+        const chased =
+          backAt !== null && this.clock.state.value === "playing" && untracked(() => this.arrangement.value)
+            ? this.scheduler.handBack(runtime, backAt, this.fold.toBeat(this.timeline.timeToBeat(backAt)))
+            : [];
         void this.clock.refresh();
         const withdraw = () => {
-          for (const release of releases) release.cancel();
+          for (const release of [...releases, ...chased]) release.cancel();
         };
         return {
           cancel: () => {
@@ -1452,7 +1575,7 @@ export class Workspace {
     this.scheduler.retryFailures();
     const prefetched = playing ? this.prefetchMediaAt(seconds) : undefined;
     this.resumingSeek = !!prefetched;
-    this.allNotesOff();
+    this.allNotesOff(false);
     this.cancelAudio(playing);
     this.activeTempoMap = this.project.tempoMap;
     const beat = this.activeTempoMap.secondsToBeat(seconds);
@@ -1629,6 +1752,29 @@ export class Workspace {
     return this.mixer.tap(trackId);
   }
 
+  /**
+   * The parameters of a device, one row shape for a WebCLAP plug-in (its device ID) and a built-in rack effect (`rackDeviceId(trackId, slotId)`): `id`, `name`, `min`, `max`,
+   * `default`, `value` and, where known, `unit`, `step` and the display `text`. The values are the song's (the Project's), which a running plug-in keeps equal to what it reports;
+   * `text` is the plug-in's own display string and appears while it matches `value`. Tracked: an effect that reads it re-runs when a value changes. Change one with
+   * `project.setDeviceParameter(deviceId, row.id, value)`. Throws for an unknown device. A WebCLAP device that no Workspace has loaded yet has no rows.
+   */
+  deviceParameters(deviceId: string): readonly DeviceParameter[] {
+    const tracks = this.project.tracks;
+    const device = tracks.flatMap((track) => track.devices).find((item) => item.id === deviceId);
+    if (device) {
+      const info = this.host(deviceId)?.parameterInfo;
+      return tableParameters(device.parameters, (id) => {
+        const reported = info?.find((item) => String(item.id) === id);
+        const record = device.parameters.find((item) => item.id === id);
+        return reported && record && reported.value === record.value ? reported.text : undefined;
+      });
+    }
+    const at = splitRackDeviceId(deviceId);
+    const slot = at && tracks.find((track) => track.id === at.trackId)?.effects.find((item) => item.id === at.slotId);
+    if (!slot) throw new Error(`Workspace device "${deviceId}" does not exist; a built-in effect is addressed as "trackId:slotId".`);
+    return rackSlotParameters(slot);
+  }
+
   /** The plug-in host of a WebCLAP device by its device ID, or `undefined` when no running track has it (before `sync()`, after removal). */
   host(deviceId: string): WebClapHost | undefined {
     for (const track of this.tracks.values()) {
@@ -1730,6 +1876,7 @@ export class Workspace {
   /** Arrangement switched while playing: off releases its sound on tracks no Session clip holds; on refills the look-ahead. */
   private arrangementChanged(on: boolean): void {
     if (this.disposed || this.clock.state.value !== "playing") return;
+    if (on) this.scheduler.requestChase();
     if (!on) {
       this.cancelAudio();
       const now = this.context.currentTime;
@@ -1738,11 +1885,18 @@ export class Workspace {
     void this.clock.refresh();
   }
 
-  private allNotesOff(): void {
+  /**
+   * Silence every held note. A stop or a pause (`reset`) then puts the pedal, bend and the other performance controllers playback moved back to rest, so nothing
+   * is left sounding or stuck down. A seek does not: the run that follows chases its position and sends only what differs from where the device is.
+   */
+  private allNotesOff(reset = true): void {
     for (const track of this.tracks.values()) {
       for (const host of track.hosts.values()) host.allNotesOff();
       if (track.sampler) track.midi?.allNotesOff();
     }
+    if (this.disposing) return;
+    if (reset) this.scheduler.resetControllers(this.context.currentTime);
+    else this.scheduler.forgetPedals();
   }
 
   private cancelAudio(crossfade = false): void {
@@ -1752,6 +1906,7 @@ export class Workspace {
   private disposeTrack(runtime: TrackRuntime): void {
     runtime.session?.dispose();
     runtime.rack.dispose();
+    for (const link of runtime.links.values()) link.dispose();
     for (const host of runtime.hosts.values()) host.dispose();
     runtime.sampler?.dispose();
     runtime.automationBinding?.dispose();
@@ -1775,6 +1930,8 @@ export class Workspace {
     if (this.disposed) return;
     this.stopWatchingProject?.();
     this.stopWatchingArrangement?.();
+    // The devices go with the Workspace: there is nothing left to reset.
+    this.disposing = true;
     this.stop();
     this.disposed = true;
     for (const run of [...this.pending]) run();
@@ -1787,4 +1944,35 @@ export class Workspace {
     this.ownedProject?.dispose();
     this.ownedProject = undefined;
   }
+}
+
+/** A device's parameter table from a running plug-in's report: ranges and defaults from the plug-in, values from `stored` where it still has the parameter (and the value is inside the range), else the plug-in's own. */
+function hostTable(host: WebClapHost, stored: readonly DeviceParameterRecord[]): readonly DeviceParameterRecord[] {
+  return host.parameterInfo.map((info) => {
+    const id = String(info.id);
+    const record = stored.find((item) => item.id === id);
+    const live = host.param(info.id)?.value ?? info.value;
+    // A row from another application's `unit="normalized"` is a fraction of this plug-in's range.
+    const mapped = record?.normalized ? info.min + record.value * (info.max - info.min) : undefined;
+    const wanted = (info.step === 1 && mapped !== undefined ? Math.round(mapped) : mapped) ?? record?.value ?? live;
+    return {
+      id,
+      name: xmlSafe(info.name),
+      min: info.min,
+      max: info.max,
+      default: info.defaultValue,
+      value: Math.min(info.max, Math.max(info.min, wanted)),
+      ...(info.step === 1 ? { step: 1 as const } : {}),
+    };
+  });
+}
+
+/** `text` with every character XML 1.0 cannot carry (control characters, unpaired surrogates, U+FFFE and U+FFFF) replaced by `?`, so a plug-in's parameter name always fits the project file. */
+function xmlSafe(text: string): string {
+  return Array.from(text, (char) => {
+    const code = char.codePointAt(0)!;
+    return code === 0x9 || code === 0xa || code === 0xd || (code >= 0x20 && code <= 0xd7ff) || (code >= 0xe000 && code <= 0xfffd) || code >= 0x10000
+      ? char
+      : "?";
+  }).join("");
 }

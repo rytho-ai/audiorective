@@ -14,6 +14,7 @@ const MAX_EVENTS = 512;
 const SCRATCH_BYTES = 1 << 20; // for page messages and state blobs
 
 const STATE_SETTLE_QUANTA = 1024;
+const RAMP_STEP = 32; // frames between the value events of a parameter ramp
 const EVENT = { NOTE_ON: 0, NOTE_OFF: 1, NOTE_CHOKE: 2, PARAM_VALUE: 5, GESTURE_BEGIN: 7, GESTURE_END: 8, MIDI: 10 };
 const EXT = {
   PARAMS: "clap.params",
@@ -241,6 +242,8 @@ class ClapHost extends AudioWorkletProcessor {
     this.disposed = false;
     this.events = []; // [{type, ...}] for the next process call
     this.scheduled = []; // prototype: absolute AudioContext times from Audiorective Clock
+    this.paramValues = new Map(); // CLAP id -> the last value this host sent, so a ramp starts where the plug-in is
+    this.ramps = new Map(); // CLAP id -> { from, to, length, elapsed } of a continuous parameter moving to its new value
     this.mainThreadRequested = false;
     this.flushRequested = false;
     this.honourCallbacks = true;
@@ -321,9 +324,18 @@ class ClapHost extends AudioWorkletProcessor {
         if (!this.ready || !this.webview) return;
         this.fn(this.webview + 8)(this.plugin, this.copyIn(m.bytes), m.bytes.byteLength);
         break;
-      case "param":
-        this.events.push({ type: EVENT.PARAM_VALUE, id: m.id, value: m.value });
+      case "param": {
+        // A message with `ramp` (seconds) moves a parameter there in steps of RAMP_STEP frames, so a plug-in without smoothing of its own does not step; a stepped parameter (`step`) takes values on its grid only. Without it the value is one event.
+        const from = this.paramValues.get(m.id) ?? m.from;
+        if (m.ramp > 0 && Number.isFinite(from) && from !== m.value) {
+          this.ramps.set(m.id, { from, to: m.value, step: m.step, length: Math.max(RAMP_STEP, Math.round(m.ramp * sampleRate)), elapsed: 0 });
+        } else {
+          this.ramps.delete(m.id);
+          this.paramValues.set(m.id, m.value);
+          this.events.push({ type: EVENT.PARAM_VALUE, id: m.id, value: m.value });
+        }
         break;
+      }
       case "note":
         this.events.push({ type: m.on ? EVENT.NOTE_ON : EVENT.NOTE_OFF, key: m.key, velocity: m.velocity });
         break;
@@ -345,8 +357,12 @@ class ClapHost extends AudioWorkletProcessor {
         this.flushParamEvents();
         this.afterMainThreadCall();
         if (m.withParams) this.port.postMessage({ type: "params", params: this.paramInfos() });
-        return this.port.postMessage({ type: "state", bytes: this.saveState() });
+        this.port.postMessage({ type: "state", bytes: this.saveState() });
+        this.resumeRamps();
+        return;
       case "loadState":
+        this.ramps.clear();
+        this.paramValues.clear();
         this.loadState(m.bytes);
         if (m.settle) this.settleLoadedState(m.bytes);
         this.port.postMessage({ type: "params", params: this.paramInfos() });
@@ -700,8 +716,32 @@ class ClapHost extends AudioWorkletProcessor {
   // ---------------------------------------------------------------------------------------------------------
   // Events
 
+  /** The value events of every running ramp for the next quantum, one every RAMP_STEP frames; the last one is the target itself. */
+  rampEvents() {
+    for (const [id, ramp] of this.ramps) {
+      for (let offset = 0; offset < QUANTUM; offset += RAMP_STEP) {
+        ramp.elapsed += RAMP_STEP;
+        const done = ramp.elapsed >= ramp.length;
+        if (offset === 0) ramp.sent = []; // the values of this quantum: the plug-in's echo of them arrives with the same process call
+        let value = done ? ramp.to : ramp.from + (ramp.to - ramp.from) * (ramp.elapsed / ramp.length);
+        if (ramp.step && !done) value = Math.round(value / ramp.step) * ramp.step;
+        if (value !== this.paramValues.get(id)) {
+          this.events.push({ type: EVENT.PARAM_VALUE, id, value, offset });
+          this.paramValues.set(id, value);
+          ramp.sent.push(value);
+        }
+        if (done) {
+          this.ramps.delete(id);
+          break;
+        }
+      }
+    }
+  }
+
   writeEvents() {
     const v = this.view;
+    // The plug-in takes a quantum's events in time order; the sort is stable, so events at one time keep the order they arrived in.
+    this.events.sort((a, b) => (a.offset ?? 0) - (b.offset ?? 0));
     const events = this.events.splice(0, MAX_EVENTS);
     events.forEach((e, i) => {
       const p = this.eventSlots + i * EVENT_SLOT;
@@ -740,6 +780,14 @@ class ClapHost extends AudioWorkletProcessor {
     if (type === EVENT.PARAM_VALUE) {
       const id = v.getUint32(ptr + 16, true),
         value = v.getFloat64(ptr + 40, true);
+      // The plug-in echoing the steps of a ramp is not news: the page hears of the value when the ramp is done.
+      // A value that is not one of those steps is the plug-in's own change (its automation, the person at its GUI): it ends the ramp and is reported.
+      const ramp = this.ramps.get(id);
+      if (ramp) {
+        if ((ramp.sent ?? []).some((sent) => Math.abs(sent - value) <= 1e-9 * Math.max(1, Math.abs(sent)))) return;
+        this.ramps.delete(id);
+      }
+      this.paramValues.set(id, value);
       this.port.postMessage({ type: "paramOut", id, value, text: this.valueText(id, value) });
     } else if (type === EVENT.GESTURE_BEGIN || type === EVENT.GESTURE_END) {
       this.port.postMessage({ type: "gesture", id: v.getUint32(ptr + 16, true), begin: type === EVENT.GESTURE_BEGIN });
@@ -795,7 +843,9 @@ class ClapHost extends AudioWorkletProcessor {
   flushParamEvents() {
     if (!this.ready || !this.params) return false;
     const queued = this.events;
-    const params = queued.filter((event) => event.type === EVENT.PARAM_VALUE);
+    // A ramp still running is saved at the value it moves to; `resumeRamps` puts the sound back where the ramp is once the state has been read.
+    const targets = [...this.ramps].map(([id, ramp]) => ({ type: EVENT.PARAM_VALUE, id, value: ramp.to }));
+    const params = [...queued.filter((event) => event.type === EVENT.PARAM_VALUE), ...targets];
     if (!params.length) return false;
     this.events = params;
     while (this.events.length) {
@@ -805,6 +855,11 @@ class ClapHost extends AudioWorkletProcessor {
     }
     this.events = queued.filter((event) => event.type !== EVENT.PARAM_VALUE);
     return true;
+  }
+
+  /** After a save that applied the targets of the running ramps: the next quantum starts from where each ramp is. */
+  resumeRamps() {
+    for (const id of this.ramps.keys()) this.events.push({ type: EVENT.PARAM_VALUE, id, value: this.paramValues.get(id) });
   }
 
   // Some plug-ins apply loaded state inside process(), which never runs on a context that is not rendering yet (an
@@ -870,6 +925,7 @@ class ClapHost extends AudioWorkletProcessor {
           data: e.data,
           offset: Math.max(0, Math.min(QUANTUM - 1, Math.round((e.when - currentTime) * sampleRate))),
         });
+      this.rampEvents();
       this.writeEvents();
       v.setBigUint64(this.processPtr, this.steadyTime, true);
       v.setUint32(this.processPtr + 8, QUANTUM, true);

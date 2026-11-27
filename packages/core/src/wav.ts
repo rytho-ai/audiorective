@@ -17,7 +17,7 @@ function writeAscii(view: DataView, at: number, value: string): void {
  * The WAV bytes of `pcm`: a 44-byte header and interleaved little-endian samples. Same checks and layout as `encodeWav`, for callers that want bytes
  * (Node, workers, zip entries) instead of a `Blob`.
  */
-export function encodeWavBytes(pcm: PCMData, options: EncodeWavOptions = {}): Uint8Array {
+export function encodeWavBytes(pcm: PCMData, options: EncodeWavOptions = {}): Uint8Array<ArrayBuffer> {
   const bitDepth = options.bitDepth ?? 16;
   if (bitDepth !== 16 && bitDepth !== 24 && bitDepth !== 32) throw new RangeError("encodeWav: bitDepth must be 16, 24 or 32");
   const { channels, sampleRate } = pcm;

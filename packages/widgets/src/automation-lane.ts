@@ -3,31 +3,46 @@ import { effect } from "./detached-effect";
 import type { AutomationPoint } from "@audiorective/core/automation";
 
 type LaneLabels = Readonly<{
+  /** Position-input caption; defaults to "Time (s)" or "Time (beats)" according to timeUnit. */
   time: string;
+  /** Parameter-amount caption; defaults to "Value". */
   value: string;
+  /** Interpolation-picker caption; defaults to "Shape". */
   shape: string;
+  /** Ramp-interpolation choice caption; defaults to "Linear". */
   linear: string;
+  /** Constant-interpolation choice caption; defaults to "Hold". */
   hold: string;
+  /** Point-insertion caption; defaults to "Add point". */
   add: string;
+  /** Point-deletion caption; defaults to "Delete point". */
   remove: string;
 }>;
 
 export interface AutomationLaneOptions {
   /** Positive length in timeUnit (seconds or beats) at mount. Tracked changes cancel previews; later non-positive/non-finite lengths disable input until valid. */
   readonly duration: () => number;
+  /** Inclusive upper editing bound in the target parameter's native units. */
   readonly maxValue: number;
+  /** Amount shown when the curve has no points, in the target parameter's native units. */
   readonly defaultValue: number;
   /** Borrowed tracked snapshots; AutomationCurve and readonlyCell projections fit directly. */
-  readonly points: { readonly value: readonly AutomationPoint[] };
+  readonly points: {
+    /** Current automation points; positions follow the lane's declared time unit. */
+    readonly value: readonly AutomationPoint[];
+  };
   /** Picker/input coordinates; default seconds. No unit conversion is performed. */
   readonly timeUnit?: "seconds" | "beats";
+  /** Optional curve caption; omitted to use the lane's built-in caption. */
   readonly label?: string;
+  /** Optional control-text overrides; missing entries use the built-in English labels. */
   readonly labels?: LaneLabels;
   /** One owner command per finished gesture, in timeUnit and the caller's scalar unit. */
   onCommit(points: readonly AutomationPoint[]): void;
 }
 
 export interface AutomationLaneHandle {
+  /** Releases resources owned by this attachment or view; safe to call twice. */
   dispose(): void;
 }
 

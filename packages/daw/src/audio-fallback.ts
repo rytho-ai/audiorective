@@ -10,9 +10,11 @@ import type { StoredZipEntry } from "./internal/stored-zip";
 import { wavMediaStereoPairEntry } from "./internal/wav";
 
 export type AudioFallbackOptions = Readonly<{
-  /** Captures effects after the final clip; default one second. */
+  /** Effect tail after the final clip in seconds, 0..60; default 1. */
   tailSeconds?: number;
+  /** Cancels rendering and archive writing; omitted to run until completion. */
   signal?: AbortSignal;
+  /** Receives render progress from 0 to 1, with 1 after the archive is written; omitted for no notifications. */
   onProgress?: (fraction: number) => void;
 }>;
 

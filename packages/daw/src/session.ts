@@ -7,7 +7,12 @@ import { slotKey, splitSlotKey, type SessionScene, type SessionState } from "./s
 export type { SessionScene } from "./session-state";
 
 /** One cell of the Session grid: the scene (row) and the track (column). */
-export type SessionSlot = Readonly<{ trackId: string; sceneId: string }>;
+export type SessionSlot = Readonly<{
+  /** Opaque track ID naming the Session grid column. */
+  trackId: string;
+  /** Opaque scene ID naming the Session grid row. */
+  sceneId: string;
+}>;
 
 const unknownSlot = () => new RangeError("Project session has no scene or track with that id.");
 const wrongKind = () => new RangeError("Project session slot clip must match its track kind.");

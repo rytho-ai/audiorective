@@ -1,8 +1,8 @@
-// Rule A2: every public class member and exported function or const in a shipped declaration has a JSDoc comment.
+// Rule A2: every public class member, exported function or const, and enabled public type field in a shipped declaration has a JSDoc comment.
 // A coding agent that reads only `packages/*/dist/**/*.d.ts` learns units, ranges, defaults and edge behaviour from it.
 //
 // Scope: the in-scope packages (see scripts/lib/entries.mjs). A class needs a comment on itself and on each non-private
-// member (constructors excluded: their parameters are described on the class). Interfaces and type aliases are not checked.
+// member (constructors excluded: their parameters are described on the class). Interface and object-alias fields are enabled per package below.
 // Self-evident members are listed in scripts/check-jsdoc.exemptions.json, one reason per entry.
 // A violation that is not exempt fails the check, in any package. `--list` prints every violation.
 //
@@ -13,6 +13,21 @@ import { fileURLToPath } from "node:url";
 import { IN_SCOPE, loadPackage, position, root, ts } from "./lib/entries.mjs";
 
 const here = join(root, "scripts");
+
+/** Field checks roll out independently of the existing class/function checks. */
+export const FIELD_CHECKS = {
+  core: "enabled",
+  clock: "enabled",
+  effects: "enabled",
+  launcher: "enabled",
+  midi: "enabled",
+  host: "enabled",
+  player: "enabled",
+  recorder: "enabled",
+  widgets: "enabled",
+  mcp: "enabled",
+  daw: "enabled",
+};
 
 /** Wildcard (`*`) match of a pattern against a violation key such as `core/Cell.value`. */
 export function matchKey(pattern, key) {
@@ -37,15 +52,38 @@ function isPrivate(member) {
 }
 
 /** Undocumented public declarations of one package directory: `[{ key, kind, file, line }]`. Overloads and accessor pairs count as documented when any one is. */
-export function findUndocumented(pkgDir, pkgName) {
-  const { exports } = loadPackage(pkgDir);
-  /** key -> { documented, node, kind } */
+export function findUndocumented(pkgDir, pkgName, { fields = FIELD_CHECKS[pkgName] === "enabled" } = {}) {
+  const { exports, checker } = loadPackage(pkgDir);
+  /** Declaration identity -> { key, documented, node, kind }; union fields remain independent. */
   const items = new Map();
   const note = (key, kind, node) => {
-    const prev = items.get(key);
+    const callable = ts.isMethodSignature(node) || ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node);
+    const identity = kind === "field" ? (callable ? (checker.getSymbolAtLocation(node.name) ?? node) : node) : key;
+    const prev = items.get(identity);
     const documented = hasDoc(node) || (prev?.documented ?? false);
-    if (!prev || (!prev.documented && documented) || !prev.node) items.set(key, { documented, node: prev?.node ?? node, kind });
+    if (!prev || (!prev.documented && documented) || !prev.node) items.set(identity, { key, documented, node: prev?.node ?? node, kind });
     else prev.documented = documented;
+  };
+  const fieldNodes = new Set();
+  const visitType = (node, owner) => {
+    if (!node || fieldNodes.has(node) || node.getSourceFile().fileName.includes("/node_modules/")) return;
+    fieldNodes.add(node);
+    if (ts.isPropertySignature(node) || ts.isMethodSignature(node) || ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)) {
+      const name = ts.isComputedPropertyName(node.name) ? node.name.expression.getText() : node.name.getText();
+      owner = `${owner}.${name}`;
+      note(`${pkgName}/${owner}`, "field", node);
+    }
+    // Follow local aliases and base interfaces, including helpers hidden by a declaration bundle.
+    if (ts.isTypeReferenceNode(node) || ts.isExpressionWithTypeArguments(node)) {
+      const ref = ts.isTypeReferenceNode(node) ? node.typeName : node.expression;
+      let symbol = checker.getSymbolAtLocation(ref);
+      if (symbol?.flags & ts.SymbolFlags.Alias) symbol = checker.getAliasedSymbol(symbol);
+      for (const decl of symbol?.declarations ?? []) {
+        if (ts.isInterfaceDeclaration(decl) || ts.isTypeAliasDeclaration(decl)) visitType(decl, decl.name.text);
+      }
+    }
+    // Stay in type syntax: never traverse class implementations or dependency declarations.
+    ts.forEachChild(node, (child) => visitType(child, owner));
   };
   const seen = new Set();
   for (const { symbol } of exports) {
@@ -54,7 +92,9 @@ export function findUndocumented(pkgDir, pkgName) {
       seen.add(decl);
       // Re-exports of a dependency (`export { effect } from "alien-signals"`) are documented upstream.
       if (decl.getSourceFile().fileName.includes("/node_modules/")) continue;
-      if (ts.isClassDeclaration(decl) && decl.name) {
+      if (fields && (ts.isInterfaceDeclaration(decl) || ts.isTypeAliasDeclaration(decl))) {
+        visitType(decl, decl.name.text);
+      } else if (ts.isClassDeclaration(decl) && decl.name) {
         const owner = decl.name.text;
         note(`${pkgName}/${owner}`, "class", decl);
         for (const m of decl.members) {
@@ -73,7 +113,7 @@ export function findUndocumented(pkgDir, pkgName) {
     }
   }
   const out = [];
-  for (const [key, { documented, node, kind }] of items) {
+  for (const { key, documented, node, kind } of items.values()) {
     if (documented) continue;
     out.push({ key, kind, ...position(node) });
   }

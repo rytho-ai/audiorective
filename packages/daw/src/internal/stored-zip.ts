@@ -1,7 +1,10 @@
 /** Conventional stored ZIP with CRC/size in each local header. Media can be read twice without buffering it. */
 export type StoredZipEntry = Readonly<{
+  /** Relative path of the entry inside the ZIP archive. */
   path: string;
+  /** Declared byte count; yielded chunks must total exactly this size. */
   size: number;
+  /** Produces entry bytes in order without compression; an empty entry may yield no chunks. */
   chunks(): AsyncIterable<Uint8Array>;
 }>;
 

@@ -2,6 +2,7 @@ import { untracked } from "@audiorective/core";
 
 /** Borrowed mono PCM. The view measures genuine sample peak and RMS. */
 export type LevelMeterPCMSource = Readonly<{
+  /** Fills the supplied mono buffer with linear PCM samples; called once per animation frame. */
   read(samples: Float32Array<ArrayBuffer>): void;
   /** Buffer length, default 2048. */
   sampleCount?: number;
@@ -10,15 +11,25 @@ export type LevelMeterPCMSource = Readonly<{
 /** Peak in dBFS, read once per animation frame; no tracked state is required. NaN/-Infinity mean silence; +Infinity is full scale with overload. Or genuine linear PCM. */
 export type LevelMeterSource = (() => number) | LevelMeterPCMSource;
 /** Linear amplitudes; RMS is unknown for a peak-only dBFS source. */
-export type LevelSnapshot = Readonly<{ peak: number; rms: number | null }>;
+export type LevelSnapshot = Readonly<{
+  /** Nonnegative linear sample peak; 1 is full scale and values above 1 indicate overload. */
+  peak: number;
+  /** Nonnegative linear root-mean-square amplitude; null for a peak-only source. */
+  rms: number | null;
+}>;
 export type LevelMeterOptions = {
+  /** Borrowed dBFS peak reader or mono PCM reader; disposal does not release the source. */
   source: LevelMeterSource;
+  /** Accessible meter caption; defaults to "Sample peak". */
   label?: string;
 };
 
 export interface LevelMeterHandle {
+  /** Mounted meter root; removed when this view is disposed. */
   readonly element: HTMLDivElement;
+  /** Returns the most recent linear peak and RMS snapshot; RMS may be null. */
   getLevel(): LevelSnapshot;
+  /** Releases resources owned by this attachment or view; safe to call twice. */
   dispose(): void;
 }
 

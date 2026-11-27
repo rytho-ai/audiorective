@@ -568,3 +568,56 @@ describe("clipRecording", () => {
     reopened.dispose();
   });
 });
+
+describe("state set before a window is carried to its start", () => {
+  const priorEvents = [
+    { time: 0, data: Uint8Array.of(0xb0, 0, 3) },
+    { time: 0, data: Uint8Array.of(0xc0, 12) },
+    { time: 0, data: Uint8Array.of(0xb0, 7, 90) },
+    { time: 0, data: Uint8Array.of(0xe0, 0x50, 0x0f) },
+    { time: 0, data: Uint8Array.of(0xd0, 40) },
+    { time: 0, data: Uint8Array.of(0xa0, 60, 33) },
+    { time: 1, data: Uint8Array.of(0xc0, 20) },
+  ];
+  const at0 = (clip: ProjectClip) =>
+    (clip as Extract<ProjectClip, { kind: "midi" }>)
+      .playbackEvents()
+      .filter((event) => event.beat === 0)
+      .map((event) => [...event.data]);
+
+  test("program, bank, bend, channel and poly pressure reach the start, ordered bank, program, controllers, bend and pressure", () => {
+    const project = new Project();
+    const track = project.addTrack("Keys", "midi");
+    const clip = project.addMidiClip(track.id, { duration: 4, sourceOffset: 4, notes: [], events: priorEvents }, 0);
+    expect(at0(clip)).toEqual([
+      [0xb0, 0, 3],
+      [0xc0, 20],
+      [0xb0, 7, 90],
+      [0xe0, 0x50, 0x0f],
+      [0xd0, 40],
+      [0xa0, 60, 33],
+    ]);
+    project.dispose();
+  });
+
+  test("a loop pass start carries them again", () => {
+    const project = new Project();
+    const track = project.addTrack("Keys", "midi");
+    const added = project.addMidiClip(track.id, { duration: 8, notes: [], events: [...priorEvents, { time: 5, data: Uint8Array.of(0xc0, 21) }] }, 0);
+    project.setClipLoop(added.id, { startBeat: 4, endBeat: 6 });
+    const clip = project.tracks[0]!.clips[0]!;
+    if (clip.kind !== "midi") throw new Error("Expected MIDI");
+    const events = clip.playbackEvents();
+    const programs = events.filter((event) => event.data[0] === 0xc0).map((event) => [event.beat, event.data[1]]);
+    // Pass 0 plays content 0 to 6; the loop pass at beat 6 repeats [4, 6) and starts on the state in force at beat 4.
+    expect(programs).toEqual([
+      [0, 12],
+      [1, 20],
+      [5, 21],
+      [6, 20],
+      [7, 21],
+    ]);
+    expect(events.filter((event) => event.data[0] === 0xe0).map((event) => event.beat)).toEqual([0, 6]);
+    project.dispose();
+  });
+});

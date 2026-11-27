@@ -31,7 +31,7 @@ The `AudioContext` starts suspended by browser autoplay policy. Resume it from a
 
 The provider auto-starts the engine on the first gesture; `useValue` subscribes a component to a param and the component writes back directly:
 
-```tsx
+```tsx fragment: requires application-local modules
 import { createEngineContext, useValue } from "@audiorective/react";
 import { engine } from "./audio/engine";
 
@@ -77,7 +77,7 @@ Full text of the table cells that the skill abbreviates:
 - **Automate a non-looping waveform selection in source seconds:** `WavePlayer.attachSourceAutomation(binding)` with core automation. Not an app-owned play token and duplicated time mapping.
 - **Play, edit and save a DAWproject with WebCLAP devices:** `@audiorective/daw` + `@audiorective/host/webclap`; pass `workspace.player` to `mountPlayer`. Not separate project or player state.
 - **Read, edit or write `.dawproject` files in Node (no audio):** `@audiorective/daw/project` + `@audiorective/daw/dawproject` only (`portabilityReport(project)` lives there). Not the `@audiorective/daw` root or `daw/runtime`.
-- **Step patterns, a drum machine, humanize, ratchets, per-step values:** `clock` + `sequencer` (+ `pads` for choke groups); `new StepSequencer({ kick: "X...", hat: { pattern, rate, swing, sound } }, { context, onHit, transform })` then `clock.attach(seq)` (or `workspace.transport.attach(seq)`), add `widgets` `mountStepGrid`; [Sequencer](./sequencer.md) (includes the runnable drum machine), and [Sequencer advanced](./sequencer-advanced.md) only for a custom `transform`, per-step field semantics or shared transports. No `daw`. If the pattern is not a lane/step grid, skip `StepSequencer`: schedule `window.rulers.<r>.grid(n)` points in `onTick` with `window.own`, [Clock](./clock.md#typing-the-window). Not a private scheduling loop, forking the sequencer, or pulling in a Project.
+- **Step patterns, a drum machine, humanize, ratchets, per-step values:** `clock` + `sequencer` (+ `pads` for choke groups); `new StepSequencer({ kick: "X...", hat: { pattern, rate, swing, sound } }, { context, onHit, transform })` then `clock.attach(seq)` (or `workspace.transport.attach(seq)`), add `widgets` `mountStepGrid`; [Sequencer](./sequencer.md) (includes the runnable drum machine), and [Sequencer advanced](./sequencer-advanced.md) only for a custom `transform`, per-step field semantics or shared transports. No `daw`. If the pattern is not a lane/step grid, skip `StepSequencer`: schedule `window.rulers.<r>.grid(n)` points in `onTick` with `window.own`, [Clock](./clock-advanced.md#typing-the-window). Not a private scheduling loop, forking the sequencer, or pulling in a Project.
 - **Session view, clip launcher, scene launching:** standalone `launcher` `ClipLauncher` (buffers, source factories or step-sequencer pattern clips on a clock): [Launcher](./launcher.md). The DAW Session (`workspace.cells.session`) is the same launcher over the song's scenes and slot clips (`sessionFor(project)`), audio in memory and MIDI through a device or instrument; pattern clips go standalone.
 - **An editable curve driving a parameter, rack macro, or clip gain:** `core/automation` for parameters or `workspace.trackMacroAutomation(trackId, macroId)`. For clips use `Project.setAudioClipGainAutomation` and `createAutomationOverlay`. Not hand-scheduled ramps.
 

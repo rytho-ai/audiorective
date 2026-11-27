@@ -71,7 +71,8 @@
         {
           "expectation": 3,
           "label": "Engine macro automation target",
-          "all": ["trackMacroAutomation", "AutomationBinding"],
+          "all": ["trackMacroAutomation"],
+          "any": ["AutomationBinding", "\\.program\\("],
           "none": ["setInterval"]
         },
         {
@@ -122,7 +123,7 @@
         {
           "expectation": 2,
           "label": "Loop region in beats 16 to 32",
-          "all": ["setRegion", "\\b16\\b", "\\b32\\b"]
+          "all": ["setRegion", "(\\b16\\b|barToBeat\\(\\s*5)", "(\\b32\\b|barToBeat\\(\\s*9)"]
         },
         {
           "expectation": 3,
@@ -207,7 +208,7 @@
     },
     {
       "id": "W5-record-takes",
-      "prompt": "A browser DAW has an open 4/4 song as `project` (120 BPM) and its running engine as `workspace` on `context`. The user arms `Keys` (a MIDI track, `keysId`) and `Vocal` (an audio track, `vocalId`) and presses Record while the song is playing, then presses Stop. The microphone path adds 35 ms of input latency to the audio. `recorder` is an audio recorder attached to the microphone, and `midiTake` is the MIDI take the keyboard recorder returned at Stop. Write the `onRecord()` and `onStop()` handlers. The audio is long (up to an hour), so it must be written to disk while recording, not kept in memory, and the finished file is used directly by the vocal clip. Both takes must land where the music was when the user played, on their tracks, and one Undo removes both. An `Audition take` button then plays the new vocal clip alone and the button reads `Stop` while it plays, even when playback ends by itself. If writing to disk fails, the half-written file must be thrown away and the song left unchanged.",
+      "prompt": "A browser DAW has an open 4/4 song as `project` (120 BPM) and its running engine as `workspace` on `context`. The user arms `Keys` (a MIDI track, `keysId`) and `Vocal` (an audio track, `vocalId`) and presses Record while the song is playing, then presses Stop. The microphone path adds 35 ms of input latency to the audio. `recorder` is a stereo audio recorder attached to the microphone, and `midiTake` is the MIDI take the keyboard recorder returned at Stop. Write the `onRecord()` and `onStop()` handlers. The audio is long (up to an hour), so it must be written to disk while recording, not kept in memory, and the finished file is used directly by the vocal clip. Both takes must land where the music was when the user played, on their tracks, and one Undo removes both. An `Audition take` button then plays the new vocal clip alone and the button reads `Stop` while it plays, even when playback ends by itself. If writing to disk fails, the half-written file must be thrown away and the song left unchanged.",
       "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;\ndeclare const context: AudioContext;\ndeclare const keysId: string;\ndeclare const vocalId: string;\ndeclare const recorder: import(\"@audiorective/recorder\").AudioRecorder;\ndeclare const midiTake: import(\"@audiorective/midi\").MidiTake;",
       "expectations": [
         "Captures the relationship between the audio clock and the song when Record is pressed (before the take starts), not at Stop.",

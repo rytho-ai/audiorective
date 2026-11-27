@@ -4,7 +4,16 @@
 import type { Project } from "./model";
 
 /** A JSON value, as extension data is stored. */
-export type JsonValue = string | number | boolean | null | readonly JsonValue[] | { readonly [key: string]: JsonValue };
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | readonly JsonValue[]
+  | {
+      /** JSON object members; values cannot contain undefined, functions or non-JSON objects. */
+      readonly [key: string]: JsonValue;
+    };
 
 /**
  * App data that belongs to the song: `const chain = defineExtension({ id: "groovebox.chain", defaultValue: () => [] as number[] })`, then `project.extension(chain)`.
@@ -53,11 +62,18 @@ export const EXTENSION_ID = /^[A-Za-z0-9][A-Za-z0-9.-]{0,127}$/;
  * Inside `project.edit(label, () => …)` the change joins that Undo step; on its own it is not an Undo step.
  */
 export interface ProjectExtension<T> {
+  /** Definition that supplies this extension storage ID, format version and validation rules. */
   readonly definition: ExtensionDefinition<T>;
   /** The data now (tracked by an effect). */
   readonly value: T;
   /** Call `listener` with the data whenever it changes, including after undo, redo and opening; returns the unsubscribe function. */
-  subscribe(listener: (value: T) => void, options?: { immediate?: boolean }): () => void;
+  subscribe(
+    listener: (value: T) => void,
+    options?: {
+      /** Calls the listener with the current value on registration when true; default false. */
+      immediate?: boolean;
+    },
+  ): () => void;
   /** Replace the data. It must be JSON (no functions, dates or undefined); it is stored as a frozen copy. Data equal to the current value is no change. Throws when the file holds data from a newer version of this extension. */
   set(value: T): void;
   /** Change a mutable copy of the data in place, or return the new value: `chain.update((scenes) => { scenes.push(2); })`, `count.update((n) => n + 1)`. Data left equal is no change. */
@@ -69,15 +85,23 @@ export type Mutable<T> = T extends readonly (infer U)[] ? Mutable<U>[] : T exten
 
 /** The JSON Schema subset an operation's `input` uses; the same shape AI tool calls take. */
 export type JsonSchema = Readonly<{
+  /** Expected JSON value type; omitted to apply only the other supplied constraints. */
   type?: "object" | "array" | "string" | "number" | "integer" | "boolean" | "null";
+  /** Explanation for callers and tool schemas; omitted when no description is needed. */
   description?: string;
+  /** Schemas by object property name; omitted to skip property-specific checks. */
   properties?: Readonly<Record<string, JsonSchema>>;
   /** An object with `properties` accepts only those names; `true` lets other names through. Default: unknown names are rejected. */
   additionalProperties?: boolean;
+  /** Object property names that must be present; omitted when none are required. */
   required?: readonly string[];
+  /** Schema checked against every array entry; omitted to allow arbitrary entries. */
   items?: JsonSchema;
+  /** Allowed JSON values compared by serialization; omitted for no enumeration constraint. */
   enum?: readonly JsonValue[];
+  /** Inclusive numeric lower bound in the argument units; omitted for no lower bound. */
   minimum?: number;
+  /** Inclusive numeric upper bound in the argument units; omitted for no upper bound. */
   maximum?: number;
 }>;
 
@@ -98,6 +122,7 @@ export interface ProjectOperation<Args extends object = Readonly<Record<string, 
   readonly label?: string;
   /** `true` for a query: `call` runs it without an Undo step, `run` may only read, and a call that changes the song throws. Default `false`. */
   readonly readOnly?: boolean;
+  /** Synchronously reads or edits the project with validated arguments; throws to roll back an editing operation. */
   run(project: Project, args: Args): Result;
 }
 
@@ -112,10 +137,22 @@ export function defineOperation<Args extends object, Result>(operation: ProjectO
 }
 
 /** What `project.operations.list()` reports for each operation. */
-export type OperationInfo = Readonly<{ name: string; description: string; input: JsonSchema; readOnly: boolean }>;
+export type OperationInfo = Readonly<{
+  name: string;
+  /** Plain-language purpose shown to callers and agents. */
+  description: string;
+  /** JSON Schema used to validate arguments before the operation runs. */
+  input: JsonSchema;
+  /** True for a query that cannot change the project or create an Undo step. */
+  readOnly: boolean;
+}>;
 
 /** What `project.extensionSummaries()` reports: the agent-facing view of one extension's data. */
-export type ExtensionSummary = Readonly<{ id: string; summary: JsonValue }>;
+export type ExtensionSummary = Readonly<{
+  id: string;
+  /** JSON view returned by the registered extension summary function for agents. */
+  summary: JsonValue;
+}>;
 
 /** The operations registered on one song. */
 export interface ProjectOperations {

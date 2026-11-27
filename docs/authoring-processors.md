@@ -19,7 +19,7 @@ Declare both registries explicitly, for example `AudioProcessor<{}, {}>` for a p
 
 ### Wrong — nodes on `this` before `super()`, no `output`
 
-```typescript
+```typescript fragment: intentional invalid example
 class Wobble extends AudioProcessor<{ depth: Param<number> }> {
   constructor(ctx: AudioContext) {
     this._gain = new GainNode(ctx); // error: 'this' before super()
@@ -114,7 +114,7 @@ it in an `AudioProcessor` that declares `latency` instead).
 
 ### Wrong — hand-rolled connect/disconnect for a conditional bypass
 
-```typescript
+```typescript fragment: intentional invalid example
 class Distortion extends AudioProcessor<{ bypass: Param<boolean> }> {
   constructor(ctx: AudioContext, shaper: WaveShaperNode, dry: GainNode) {
     super(ctx, ({ param }) => ({
@@ -204,7 +204,7 @@ only covers the authoring decision, not the mechanism.
 
 ### Wrong — sample-count literal for a time-based delay
 
-```typescript
+```typescript fragment: partial class body
 super(ctx, ({ param }) => ({
   params: {
     /* ... */
@@ -215,7 +215,7 @@ super(ctx, ({ param }) => ({
 
 ### Right — derive from ctx.sampleRate
 
-```typescript
+```typescript fragment: partial class body
 super(ctx, ({ param }) => ({
   params: {
     /* ... */
@@ -312,7 +312,7 @@ it's the default test for that shape of processor, not optional coverage. It sen
 single-sample impulse into `input`, renders offline at each configured sample rate, and checks
 where the impulse arrives at `output` against the declared `latency`:
 
-```ts
+```ts fragment: requires application-local modules
 import { assertLatency } from "@audiorective/devtools";
 import { MyEffect } from "../src/MyEffect";
 

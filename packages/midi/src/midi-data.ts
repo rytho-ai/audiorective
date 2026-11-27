@@ -18,19 +18,39 @@ export type MidiNote = Readonly<{
 /** A note to add: `id` and `channel` may be omitted. */
 export type NoteInit = Omit<MidiNote, "id" | "channel"> & Partial<Pick<MidiNote, "id" | "channel">>;
 /** A note inside `clip.edit`: every field but `id` is writable. */
-export type DraftNote = { -readonly [K in keyof Omit<MidiNote, "id">]: MidiNote[K] } & { readonly id: string };
+export type DraftNote = { -readonly [K in keyof Omit<MidiNote, "id">]: MidiNote[K] } & {
+  /** Immutable note identifier; preserved while editable note fields change. */
+  readonly id: string;
+};
 /** The draft array inside `clip.edit`: existing notes keep their `id`; `push` and `unshift` also take a new note without `id` or `channel` (as `NoteInit`), which get a generated id and channel 0. */
 export type NoteDraft = DraftNote[] & {
+  /** Appends notes and returns the new count; assigns identifiers to initializers without one. */
   push(...notes: (DraftNote | NoteInit)[]): number;
+  /** Prepends notes and returns the new count; assigns identifiers to initializers without one. */
   unshift(...notes: (DraftNote | NoteInit)[]): number;
 };
 /** A beat interval (a selection, a view window). */
-export type MidiRange = Readonly<{ start: number; end: number }>;
+export type MidiRange = Readonly<{
+  /** Inclusive boundary in quarter-note beats. */
+  start: number;
+  /** Exclusive boundary in quarter-note beats. */
+  end: number;
+}>;
 /** Notes with the clip length they sit in, in beats. */
-export type MidiData = Readonly<{ notes: readonly MidiNote[]; duration: number }>;
+export type MidiData = Readonly<{
+  /** Immutable note data in quarter-note beats, with normalized 0..1 velocity. */
+  notes: readonly MidiNote[];
+  /** Content extent in quarter-note beats. */
+  duration: number;
+}>;
 
 /** A channel message other than a note (controller, pitch bend, program change, pressure), `beat` from the file's start. */
-export type MidiFileEvent = Readonly<{ beat: number; data: Uint8Array }>;
+export type MidiFileEvent = Readonly<{
+  /** Event position in quarter-note beats from the file's origin. */
+  beat: number;
+  /** Raw MIDI message bytes, preserving wire-level channel and controller encoding. */
+  data: Uint8Array;
+}>;
 /** One track chunk of a standard MIDI file. */
 export type ParsedMidiTrack = Readonly<{
   /** Position of the chunk in the file (0 is the first, often a tempo-only conductor track). */
@@ -54,9 +74,21 @@ export type ParsedMidi = Readonly<{
   /** Ticks per quarter note. */
   ppq: number;
   /** The file's tempo map, for display: BPM from a beat on. */
-  tempos: readonly Readonly<{ beat: number; bpm: number }>[];
+  tempos: readonly Readonly<{
+    /** Quarter-note beat position at which this tempo takes effect. */
+    beat: number;
+    /** Positive tempo in quarter-note beats per minute. */
+    bpm: number;
+  }>[];
   /** The file's time signatures from a beat on. */
-  signatures: readonly Readonly<{ beat: number; numerator: number; denominator: number }>[];
+  signatures: readonly Readonly<{
+    /** Quarter-note beat position at which this meter takes effect. */
+    beat: number;
+    /** Number of denominator note values per bar. */
+    numerator: number;
+    /** Meter note-value denominator; 4 denotes a quarter note. */
+    denominator: number;
+  }>[];
   /** Every track chunk in file order, each with its name, notes and non-note channel messages. */
   tracks: readonly ParsedMidiTrack[];
 }>;
@@ -64,15 +96,35 @@ export type ParsedMidi = Readonly<{
 /** What notes play into: a `Sampler` or `WebClapHost` is one; for your own synth, pass an object with these two methods. */
 export interface Instrument {
   /** Start `note` (0-127) at audio-context time `options.when` (default now) with `options.velocity` 0..1 (default 1) on `options.channel` 0-15 (default 0). */
-  noteOn(note: number, options?: Readonly<{ velocity?: number; when?: number; channel?: number }>): unknown;
+  noteOn(
+    note: number,
+    options?: Readonly<{
+      /** Normalized strike strength, 0..1; defaults to 1. */
+      velocity?: number;
+      /** Absolute AudioContext seconds; omitted to start immediately. */
+      when?: number;
+      /** Zero-based MIDI channel, 0..15; defaults to 0. */
+      channel?: number;
+    }>,
+  ): unknown;
   /**
    * Release `note` at audio-context time `when` (default now). `since` is when the note-on this release answers started: an instrument that tracks its voices releases only the voices that began at or before it, so a note of the same pitch another clip started later keeps sounding.
    */
   noteOff(note: number, when?: number, since?: number): unknown;
+  /**
+   * Optional: one raw MIDI message (a controller, pitch bend, program change or pressure) at audio-context time `when`. A `MidiClip` with `messages` sends them here; an instrument without it never hears them.
+   * Return a `{ cancel(time?) }` event when the message can be withdrawn.
+   */
+  scheduleMidi?(data: Uint8Array, when: number): unknown;
 }
 
 /** A message other than a note, at a beat from the take's start. */
-export type MidiTakeEvent = Readonly<{ beat: number; data: Uint8Array }>;
+export type MidiTakeEvent = Readonly<{
+  /** Take event position in quarter-note beats. */
+  beat: number;
+  /** Raw non-note MIDI message bytes, including controllers, pitch bend and program changes. */
+  data: Uint8Array;
+}>;
 /** One recorded take. */
 export type MidiTake = Readonly<{
   /** Notes in beats from the take's start (at the clock's tempo; 120 BPM when no clock is attached), velocity 0..1. Notes still held at the end are closed there; anything played before the start or after the end is left out. Ready for `new MidiClip(take.notes)`. */

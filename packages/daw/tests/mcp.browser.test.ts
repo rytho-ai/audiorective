@@ -53,13 +53,14 @@ async function song(save?: (bytes: Uint8Array, name: string) => void) {
 const parse = (result: McpToolResult) => JSON.parse(result.content);
 
 describe("mcpTools", () => {
-  test("lists the ten tools with object schemas", async () => {
+  test("lists the eleven tools with object schemas", async () => {
     const { tools } = await song();
     expect(tools.map((tool) => tool.name)).toEqual([
       "read_project",
       "find",
       "read_notes",
       "read_automation",
+      "read_device_params",
       "apply_edits",
       "run_operation",
       "listen",

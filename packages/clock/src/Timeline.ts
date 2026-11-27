@@ -45,7 +45,7 @@ export class Timeline<TRulers extends Record<string, Ruler<unknown, unknown>> = 
     return this._audioContext.currentTime;
   }
 
-  /** @internal Raw audio-clock time, for the Clock tick loop. Timeline is the only holder of the time source. */
+  /** The audio-context time now, in seconds. Clips attached with `clock.attach` read it to hold or schedule from the present. */
   get now(): number {
     return this._now();
   }

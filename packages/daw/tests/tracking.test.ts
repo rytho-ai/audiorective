@@ -37,7 +37,15 @@ function fixture(): Ctx {
   const beatClip = watch(project.addMidiClip(trackId, { duration: 1, notes: [] }, 8), touchedClip);
   const audioClipId = project.addAudioClip(audioTrackId, { sampleRate: 8000, channels: [new Float32Array(800)] }, 0).id;
   const busId = project.addTrack("Bus", "bus").id;
-  const deviceId = project.addDevice(trackId, { kind: "webclap", pluginId: "q", name: "Q", vendor: "v", version: "1", bundleUrl: "/q" }).id;
+  const deviceId = project.addDevice(trackId, {
+    kind: "webclap",
+    pluginId: "q",
+    name: "Q",
+    vendor: "v",
+    version: "1",
+    bundleUrl: "/q",
+    parameters: [{ id: "1", name: "Cutoff", min: 0, max: 10, default: 5, value: 5 }],
+  }).id;
   const session = watch(sessionFor(project), touchedSession);
   const sceneId = session.addScene({ name: "Intro" }).id;
   session.setMidiClip({ trackId, sceneId }, { duration: 1, notes: [] });
@@ -171,6 +179,11 @@ const rows: Array<{ name: string; read: (ctx: Ctx) => unknown; mutate: (ctx: Ctx
     name: "Project.tracks (setDeviceState)",
     read: (c) => c.project.tracks[0].devices[0].state,
     mutate: (c) => c.project.setDeviceState(c.deviceId, new Uint8Array([1, 2, 3])),
+  },
+  {
+    name: "Project.tracks (setDeviceParameter)",
+    read: (c) => c.project.tracks[0].devices[0].parameters,
+    mutate: (c) => c.project.setDeviceParameter(c.deviceId, "1", 7),
   },
   {
     name: "Project.tracks (moveDevice)",
@@ -402,6 +415,7 @@ const commands: Array<{ name: string; run: (ctx: Ctx) => unknown }> = [
   { name: "rippleDelete", run: (c) => c.project.rippleDelete({ startSeconds: 0.02, endSeconds: 0.04 }, { crossfade: 0.01 }) },
   { name: "MidiClip.playbackEvents", run: (c) => c.clip.playbackEvents() },
   { name: "moveDevice", run: (c) => c.project.moveDevice(c.deviceId, 0) },
+  { name: "setDeviceParameter", run: (c) => c.project.setDeviceParameter(c.deviceId, "1", 8) },
   { name: "ProjectSession.addScene", run: (c) => c.session.addScene() },
   { name: "ProjectSession.moveScene", run: (c) => c.session.moveScene(c.session.addScene().id, 0) },
   {

@@ -149,7 +149,7 @@
         {
           "expectation": 2,
           "label": "Ramp and sync interval",
-          "all": ["register\\(", "DEFAULT_SYNC_INTERVAL_MS"],
+          "all": ["register\\(", "\\b50\\b"],
           "any": ["linearRampToValueAtTime", "exponentialRampToValueAtTime"]
         },
         {
@@ -161,7 +161,7 @@
     },
     {
       "id": "L1-launcher-scenes",
-      "prompt": "A headless groovebox on `context` and a transport `clock`. The tracks are Drums, Bass and Keys. The scenes in order are Intro, Verse, Fill, Chorus, and `buffers` holds each track's loop per scene (`null` means empty slot; Keys is empty in Fill). Build the clip launcher and hook it to the clock: launching a scene must also stop every track that has an empty slot in that scene (so Keys falls silent in Fill) instead of leaving what plays alone, and scene launches wait for the next bar. While the groovebox is playing, the user: inserts a new empty scene `Bridge` after Verse; removes Chorus; drags Fill to the end; renames the third scene to `Breakdown`. Nothing that plays may stop or restart because of these edits, and the `scenes` list on the screen (`list`) must follow the scene names and order by itself. A label next to each scene shows its length in beats from the strings `2m`, `4n` and `1m` for scenes of 4/4 (eight, one and four beats).",
+      "prompt": "A headless groovebox on `context` and a transport `clock`. The tracks are Drums, Bass and Keys. The scenes in order are Intro, Verse, Fill, Chorus, and `buffers` holds each track's loop per scene (`null` means empty slot; Keys is empty in Fill). Build the clip launcher and hook it to the clock: launching a scene must also stop every track that has an empty slot in that scene (so Keys falls silent in Fill) instead of leaving what plays alone, and scene launches wait for the next bar. While the groovebox is playing the Verse scene (Chorus is not playing), the user: inserts a new empty scene `Bridge` after Verse; removes Chorus; drags Fill to the end; renames the third scene to `Breakdown`. Nothing that plays may stop or restart because of these edits, and the `scenes` list on the screen (`list`) must follow the scene names and order by itself. A label next to each scene shows its length in beats from the strings `2m`, `4n` and `1m` for scenes of 4/4 (eight, one and four beats).",
       "hostDeclarations": "declare const context: AudioContext;\ndeclare const clock: import(\"@audiorective/clock\").Clock;\ndeclare const buffers: Record<\"drums\" | \"bass\" | \"keys\", readonly (AudioBuffer | null)[]>;\ndeclare const list: HTMLElement;",
       "expectations": [
         "The launcher is created with the four scenes and a rule that launching a scene stops tracks whose slot is empty there, and is attached to the clock with a one-bar launch quantize.",

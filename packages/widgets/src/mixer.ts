@@ -3,15 +3,24 @@ import { effect } from "./detached-effect";
 import { mountLevelMeter, type LevelMeterSource } from "./level-meter";
 
 export type MixerStripSettings = Readonly<{
+  /** User volume as a linear factor, 0..1; 1 is unity. */
   volume: number;
+  /** Stereo position, -1 left to 1 right; 0 is centered. */
   pan: number;
   /** Omit when mute is unsupported. */
   muted?: boolean;
   /** Omit when solo is unsupported; the caller implements solo routing. */
   solo?: boolean;
 }>;
-export type MixerStrip = MixerStripSettings & Readonly<{ id: string; name: string }>;
+export type MixerStrip = MixerStripSettings &
+  Readonly<{
+    /** Stable strip identifier passed to edit and selection callbacks. */
+    id: string;
+    /** Visible strip caption; independent of its stable identifier. */
+    name: string;
+  }>;
 export type MixerState = Readonly<{
+  /** Track strips in display order; an empty list leaves only the master strip. */
   tracks: readonly MixerStrip[];
   /** Omit when a master fader is unsupported. */
   masterVolume?: number;
@@ -19,20 +28,40 @@ export type MixerState = Readonly<{
 /**
  * Borrowed dBFS or PCM for one strip/master. Optional cleanup releases caller resources when its meter is removed.
  */
-export type MixerMeter = Readonly<{ source: LevelMeterSource; dispose?(): void }>;
+export type MixerMeter = Readonly<{
+  /** Borrowed dBFS peak reader or PCM source; the mixer samples it through a meter view. */
+  source: LevelMeterSource;
+  /** Releases resources owned by this attachment or view; safe to call twice. */
+  dispose?(): void;
+}>;
 export type MixerOptions = {
   /** Expose tracked owner getters through readonlyCell(() => ...). */
   state: Readable<MixerState>;
+  /** Commits a partial strip edit by identifier; values retain linear volume and -1..1 pan. */
   editTrack(id: string, patch: Partial<MixerStripSettings>): void;
   /** Shown only with masterVolume; the caller owns the audio routing. */
   editMaster?(gain: number): void;
   /** Called once per strip, and once for the master with `null`. Return undefined to show no meter. */
   meter?(id: string | null): MixerMeter | undefined;
+  /** Optional callback when a strip is selected; receives its stable identifier. */
   onSelect?(id: string): void;
+  /** Optional selection predicate by strip identifier; omitted means no selected highlight. */
   selected?(id: string): boolean;
   /** Return strip cleanup; also run it when independently removing your appended controls. */
   appendControls?(id: string, root: HTMLElement): void | (() => void);
-  labels?: Partial<{ pan: string; volume: string; master: string; mute: string; solo: string }>;
+  /** Optional control-caption overrides; missing entries use built-in English text. */
+  labels?: Partial<{
+    /** Stereo-position caption; defaults to "Pan". */
+    pan: string;
+    /** Linear-volume caption; defaults to "Volume". */
+    volume: string;
+    /** Master-strip caption; defaults to "Master". */
+    master: string;
+    /** Mute-button caption; defaults to "Mute". */
+    mute: string;
+    /** Solo-button caption; defaults to "Solo". */
+    solo: string;
+  }>;
 };
 
 /** Find focus in the strip's own tree, including caller controls in nested open shadows. */

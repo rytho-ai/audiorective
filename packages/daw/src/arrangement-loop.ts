@@ -5,9 +5,11 @@ import type { BeatRange } from "./project-edits";
 export type LoopSegment = Readonly<{
   /** Continuous transport beats. */
   transportStart: number;
+  /** Exclusive end in continuous transport beats, before folding onto the arrangement. */
   transportEnd: number;
   /** Arrangement beats these transport beats play. */
   beatStart: number;
+  /** Exclusive end in project beats, at or before the loop boundary. */
   beatEnd: number;
   /** -1 before the first wrap, then 0, 1, ... for each repeat. */
   cycle: number;
@@ -96,8 +98,9 @@ export class LoopFold {
 const noteKey = (channel: number, pitch: number) => (channel << 8) | pitch;
 
 /**
- * MIDI to send at a wrap so nothing hangs: a note-off for each note still held at the region's end, and each controller or pitch bend the region
- * changed put back to its value at the region's start.
+ * MIDI to send at a wrap so nothing hangs: a note-off for each note still held at the region's end. The controllers and pitch bend the region changed are not
+ * put back here: the segment that begins the next pass chases the region's start (`ClipScheduler`), which sends the values it needs and the rest value of what
+ * nothing there drives.
  */
 export function loopWrapMessages(clips: readonly ProjectClip[], region: BeatRange): Uint8Array[] {
   const events: { beat: number; data: Uint8Array }[] = [];
@@ -107,8 +110,6 @@ export function loopWrapMessages(clips: readonly ProjectClip[], region: BeatRang
   }
   events.sort((a, b) => a.beat - b.beat);
   const held = new Set<number>();
-  const atStart = new Map<number, Uint8Array>();
-  const changed = new Map<number, number>();
   for (const { beat, data } of events) {
     const status = data[0] & 0xf0;
     const channel = data[0] & 15;
@@ -116,20 +117,9 @@ export function loopWrapMessages(clips: readonly ProjectClip[], region: BeatRang
       if (status === 0x90 && data[2] > 0) held.add(noteKey(channel, data[1]));
       else held.delete(noteKey(channel, data[1]));
     }
-    const control = status === 0xb0 && data[1] < 120 ? (channel << 8) | data[1] : status === 0xe0 ? (channel << 8) | 0x1000 : undefined;
-    if (control === undefined) continue;
-    if (beat <= region.startBeat + 1e-9) atStart.set(control, data);
-    else if (beat < region.endBeat - 1e-9) changed.set(control, status === 0xe0 ? -1 : data[1]);
   }
   const out: Uint8Array[] = [];
   for (const key of held) out.push(Uint8Array.of(0x80 | (key >> 8), key & 0xff, 0));
-  for (const [control, controller] of changed) {
-    const restored = atStart.get(control);
-    const channel = (control >> 8) & 15;
-    if (restored) out.push(restored);
-    else if (controller === -1) out.push(Uint8Array.of(0xe0 | channel, 0, 0x40));
-    else if (controller === 64) out.push(Uint8Array.of(0xb0 | channel, 64, 0));
-  }
   return out;
 }
 

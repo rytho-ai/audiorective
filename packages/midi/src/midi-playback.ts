@@ -2,8 +2,18 @@
 import { noteProblem, type MidiData } from "./midi-data";
 
 /** A message captured with a take: a beat from the take's start, MIDI bytes and, for a note message, the note it belongs to. */
-export type MidiPlaybackSourceEvent = Readonly<{ beat: number; data: Uint8Array; noteId?: string }>;
-export type MidiPlaybackSource = Readonly<{ events: readonly MidiPlaybackSourceEvent[] }>;
+export type MidiPlaybackSourceEvent = Readonly<{
+  /** Source event position in quarter-note beats. */
+  beat: number;
+  /** Raw MIDI message bytes; wire velocity is converted at the playback boundary. */
+  data: Uint8Array;
+  /** Optional stable note identity for pairing note-on and note-off events. */
+  noteId?: string;
+}>;
+export type MidiPlaybackSource = Readonly<{
+  /** Source messages in quarter-note beats; an empty list schedules no events. */
+  events: readonly MidiPlaybackSourceEvent[];
+}>;
 export type MidiPlaybackEvent = Readonly<{
   /** Beats from the source start. */
   beat: number;

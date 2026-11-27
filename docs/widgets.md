@@ -55,7 +55,7 @@ Selection callbacks, viewport, playhead and renderer times use committed **outpu
 
 Use a [FilePlayer](./core.md#fileplayer) for a long track or stream; a control bar does not decode a waveform. Given an existing player:
 
-```typescript
+```typescript prelude=player:FilePlayer
 import { fromFilePlayer, mountPlayer } from "@audiorective/widgets/player";
 
 const controls = mountPlayer(root, { player: fromFilePlayer(player) });
@@ -73,7 +73,7 @@ Adapters support `FilePlayer`, `WavePlayer` and `BufferPlayer`; a Workspace's `p
 
 Bind a slider, fader or knob directly to a numeric `.value`. `mountParameter(root, { param, orientation, scale, min, max, step, label, format })` follows tracked changes and uses parameter metadata when options are omitted. `orientation` is `horizontal`, `vertical` or `rotary`; log scale needs a positive minimum. Home/End set endpoints; arrows adjust; drag a knob vertically and use Shift for finer movement. For an app-owned command, a structural `value` getter reads the tracked owner and its setter invokes the command.
 
-```typescript
+```typescript prelude=filter:Filter
 import { mountParameter, mountLevelMeter } from "@audiorective/widgets";
 
 const cutoff = mountParameter(controls, {
@@ -95,7 +95,7 @@ Use the callback for an existing dBFS peak such as Channel's `cells.level`; `-In
 
 When the app already has genuine PCM to analyse, pass a PCM source:
 
-```typescript
+```typescript prelude=analyser:AnalyserNode
 import { mountLevelMeter } from "@audiorective/widgets";
 
 const pcm = mountLevelMeter(meters, {
@@ -143,6 +143,7 @@ const mixer = mountMixer(root, {
 import { mountAutomationLane } from "@audiorective/widgets";
 
 // curve is the existing AutomationCurve; length is the owner's tracked beat length.
+const length = cell(4);
 const lane = mountAutomationLane(root, {
   points: curve,
   duration: () => length.value,

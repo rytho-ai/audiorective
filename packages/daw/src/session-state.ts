@@ -5,6 +5,7 @@ export type SessionScene = Readonly<{ id: string; name: string }>;
 
 /** The Session grid a Project saves: its scenes in order, and the clip held by each scene and track, at most one per slot. */
 export type SessionState = Readonly<{
+  /** Session rows in launch and display order; empty for a project without scenes. */
   scenes: readonly SessionScene[];
   /** Slot clips by `slotKey(sceneId, trackId)`. A slot clip is not on the timeline: its `time` is 0. */
   slots: ReadonlyMap<string, ProjectClip>;

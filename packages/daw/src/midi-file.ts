@@ -1,5 +1,5 @@
 import { parseMidi, writeMidi, type MidiFileEvent, type MidiWriteTrack } from "@audiorective/midi";
-import { compileControllerLane, controllerMessage } from "./controller-lane";
+import { compileControllerLane, controllerLaneKey, controllerMessage, messageLaneKey } from "./controller-lane";
 import { MidiClip, type Project, type ProjectTrack } from "./model";
 
 /** What `importMidiFile` did. */
@@ -106,27 +106,35 @@ export type MidiFileExportOptions = Readonly<{
 /**
  * The song's MIDI tracks as a Standard MIDI File, format 1: a first track with the title, tempo changes and time signatures, then one track per MIDI track.
  * Each track holds its timeline clips as they play: windows (`sourceOffset`), loops and linked clips are expanded, notes cut at clip edges as playback cuts them,
- * channels and controller, pedal, pitch-bend and program events are kept, and the track's controller lanes are sampled into events as playback sends them. Audio and bus tracks, Session slot clips, volume, pan, mute and devices are not exported.
+ * channels and controller, pedal, pitch-bend and program events are kept, and the track's controller lanes are sampled into events as playback sends them. A lane
+ * replaces the clips' own events for the same expression, channel and controller. At one beat the lane's messages come before the clips' notes. Audio and bus tracks, Session slot clips, volume, pan, mute and devices are not exported.
  * Bytes only: the caller saves them, for example `new Blob([bytes], { type: "audio/midi" })`.
  */
-export function exportMidiFile(project: Project, options: MidiFileExportOptions = {}): Uint8Array {
+export function exportMidiFile(project: Project, options: MidiFileExportOptions = {}): Uint8Array<ArrayBuffer> {
   const tracks: MidiWriteTrack[] = [];
   for (const track of project.tracks) {
     if (track.kind !== "midi") continue;
     const events: MidiFileEvent[] = [];
     let end = 0;
-    for (const clip of track.clips) {
-      if (!(clip instanceof MidiClip)) continue;
-      end = Math.max(end, clip.time + clip.duration);
-      for (const { beat, data } of clip.playbackEvents()) events.push({ beat: clip.time + beat, data });
-    }
-    // The track's controller lanes, as the messages playback sends, merged in by beat (a clip's event first at the same beat).
-    for (const lane of track.controllerLanes)
+    // The track's controller lanes come first, program changes before the rest, so at one beat they precede the clips' notes (the file writer puts note-offs
+    // before them and note-ons after). A lane replaces the clips' own events for the same controller, as in playback.
+    const lanes = [...track.controllerLanes].sort((a, b) => Number(b.expression === "programChange") - Number(a.expression === "programChange"));
+    const laneKeys = new Set(lanes.map(controllerLaneKey));
+    for (const lane of lanes)
       for (const { beat, value } of compileControllerLane(lane)) {
         events.push({ beat, data: controllerMessage(lane, value) });
         end = Math.max(end, beat);
       }
-    events.sort((a, b) => a.beat - b.beat);
+    for (const clip of track.clips) {
+      if (!(clip instanceof MidiClip)) continue;
+      end = Math.max(end, clip.time + clip.duration);
+      for (const { beat, data } of clip.playbackEvents()) {
+        const key = messageLaneKey(data);
+        if (key === undefined || !laneKeys.has(key)) events.push({ beat: clip.time + beat, data });
+      }
+    }
+    const isProgram = ({ data }: MidiFileEvent) => (data[0] & 0xf0) === 0xc0;
+    events.sort((a, b) => a.beat - b.beat || Number(isProgram(b)) - Number(isProgram(a)));
     tracks.push({ name: track.name, events, end });
   }
   return writeMidi({

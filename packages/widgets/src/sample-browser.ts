@@ -2,25 +2,55 @@ import { effect } from "./detached-effect";
 import type { Readable } from "@audiorective/core";
 
 export type SampleRow = Readonly<{
+  /** Stable sample identifier forwarded to library commands. */
   id: string;
+  /** Visible sample caption; independent of its stable identifier. */
   name: string;
+  /** Import lifecycle phase; error indicates that the sample is unavailable for playback. */
   status: "loading" | "ready" | "error";
   /** Seconds; absent until decoded. */
   duration?: number;
+  /** Optional import failure text; absent when no failure is reported. */
   error?: string;
 }>;
-export type SampleBrowserState = Readonly<{ rows: readonly SampleRow[]; previewId: string | null; previewPlaying: boolean }>;
+export type SampleBrowserState = Readonly<{
+  /** Visible library entries in display order; may be empty. */
+  rows: readonly SampleRow[];
+  /** Identifier of the previewed sample; null when no sample is selected for preview. */
+  previewId: string | null;
+  /** Whether library preview audio is currently playing. */
+  previewPlaying: boolean;
+}>;
 
 export type SampleBrowserOptions = {
+  /** Borrowed library state and commands; disposing the view does not dispose the library. */
   library: {
+    /** Reactive library snapshot; changes refresh the visible rows and preview controls. */
     state: Readable<SampleBrowserState>;
+    /** Starts preview by stable sample identifier; rejects when loading or playback fails. */
     preview(id: string): Promise<void>;
+    /** Stops current preview playback; leaves imported samples in the library. */
     stopPreview(): void;
+    /** Removes a sample by stable identifier; caller owns any persistence consequences. */
     remove(id: string): void;
   };
+  /** Accepts a sample by stable identifier; may complete asynchronously. */
   choose(id: string): void | Promise<void>;
+  /** Receives failures from preview, choose or removal commands. */
   onError(error: unknown): void;
-  labels?: Partial<{ preview: string; stop: string; use: string; remove: string; loading: string }>;
+  /** Optional control-caption overrides; missing entries use built-in English text. */
+  labels?: Partial<{
+    /** Preview-button caption; defaults to "Preview". */
+    preview: string;
+    /** Preview-stop caption; defaults to "Stop". */
+    stop: string;
+    /** Choose-button caption; defaults to "Use". */
+    use: string;
+    /** Delete-button caption; defaults to "Remove". */
+    remove: string;
+    /** Pending-import caption; defaults to "Loading…". */
+    loading: string;
+  }>;
 };
 
 /** Browse a caller-owned Sample Library. Import controls and placement belong to the caller. */

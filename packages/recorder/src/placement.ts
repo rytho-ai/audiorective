@@ -1,7 +1,19 @@
 import type { BeatTiming, PCMData } from "@audiorective/core";
 
 /** Where a loop's beats are in seconds: a constant tempo (`bpm`), or a transport's timing (`timeline`, e.g. `clock.timeline`, which follows a tempo curve). */
-export type LoopTiming = { bpm: number; timeline?: never } | { timeline: Pick<BeatTiming, "beatToTime">; bpm?: never };
+export type LoopTiming =
+  | {
+      /** Positive constant tempo in quarter-note beats per minute; excluded when timeline is supplied. */
+      bpm: number;
+      /** Beat/audio-time mapping for tempo-varying placement; excluded when bpm is supplied. */
+      timeline?: never;
+    }
+  | {
+      /** Beat/audio-time mapping for tempo-varying placement; excluded when bpm is supplied. */
+      timeline: Pick<BeatTiming, "beatToTime">;
+      /** Positive constant tempo in quarter-note beats per minute; excluded when timeline is supplied. */
+      bpm?: never;
+    };
 
 export type OverdubOptions = LoopTiming & {
   /** Transport beat the loop's first frame sounds at (the beat the loop was launched on). */
@@ -13,9 +25,11 @@ export type OverdubOptions = LoopTiming & {
 };
 
 export type PunchOptions = LoopTiming & {
+  /** Transport beat aligned to the loop buffer's first sample frame. */
   loopStartBeat: number;
   /** The region replaced, in transport beats: [fromBeat, toBeat). It may wrap across the loop end, and must be shorter than the loop. */
   fromBeat: number;
+  /** Exclusive replacement boundary in quarter-note transport beats; may wrap past the loop end. */
   toBeat: number;
   /** Transport beat the take starts at. Default `take.startBeat`, else `fromBeat`. */
   atBeat?: number;
@@ -24,7 +38,10 @@ export type PunchOptions = LoopTiming & {
 };
 
 /** A take as placement sees it: PCM plus, when known, the beat it started at (`RecordedAudio` fits). */
-export type PlacedTake = PCMData & { readonly startBeat?: number | null };
+export type PlacedTake = PCMData & {
+  /** Transport beat of the first captured frame; omitted or null when timing is unknown. */
+  readonly startBeat?: number | null;
+};
 
 function seconds(timing: LoopTiming, loopStartBeat: number, beat: number): number {
   if ("timeline" in timing && timing.timeline) return timing.timeline.beatToTime(beat) - timing.timeline.beatToTime(loopStartBeat);

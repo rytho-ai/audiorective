@@ -55,7 +55,7 @@ describe("LoopFold", () => {
 });
 
 describe("loopWrapMessages", () => {
-  it("releases held notes, restores changed controllers, and resets ones with no earlier value", () => {
+  it("releases the notes held at the region end and leaves the controllers to the chase of the next pass", () => {
     const project = new Project();
     const track = project.addTrack("K", "midi");
     project.addMidiClip(
@@ -80,8 +80,7 @@ describe("loopWrapMessages", () => {
     expect(messages).toContainEqual([0x80, 60, 0]);
     expect(messages).toContainEqual([0x82, 64, 0]);
     expect(messages).not.toContainEqual([0x80, 62, 0]);
-    expect(messages).toContainEqual([0xb0, 7, 100]);
-    expect(messages).toContainEqual([0xb0, 64, 0]);
-    expect(messages).toContainEqual([0xe0, 0, 0x40]);
+    // the controllers the region changed are put back by the segment that begins the next pass (see `ClipScheduler`), not here
+    expect(messages.filter(([status]) => (status & 0xf0) !== 0x80)).toEqual([]);
   });
 });

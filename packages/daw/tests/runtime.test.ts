@@ -66,6 +66,8 @@ vi.mock("@audiorective/host/webclap", () => ({
         loadState: vi.fn(async (bytes: Uint8Array) => fakes.loadStateImpl?.(bytes)),
         saveState: vi.fn(async () => new Uint8Array([9, 9])),
         allNotesOff: vi.fn(),
+        parameterInfo: [],
+        param: vi.fn(() => undefined),
         dispose: vi.fn(),
       };
       fakes.hosts.push(host);
@@ -439,6 +441,8 @@ describe("workspace addWebClapDevice", () => {
               loadState: vi.fn(),
               saveState: vi.fn(),
               allNotesOff: vi.fn(),
+              parameterInfo: [],
+              param: vi.fn(() => undefined),
             } as never);
         }),
     );

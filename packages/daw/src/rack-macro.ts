@@ -4,13 +4,18 @@ import { AutomationCurve, type AutomationPoint, type AutomationTarget } from "@a
 
 export interface RackMacro {
   readonly id: string;
+  /** Normalized macro control 0..1 that fans out to its mapped insert parameters. */
   readonly param: Param<number>;
+  /** Scheduling target for normalized macro curves with audio-context start times. */
   readonly automation: AutomationTarget;
 }
 
 export type MacroTarget = {
+  /** Insert parameter and output range driven by the macro. */
   mapping: RackMacroMapping;
+  /** Native-backed parameter receiving mapped values in its own units. */
   param: SchedulableParam;
+  /** Forces scheduled target values to zero while this insert target is bypassed. */
   muted: boolean;
 };
 

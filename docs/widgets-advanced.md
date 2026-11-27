@@ -414,12 +414,17 @@ Initial cell setup propagates the original exception after rolling back that reg
 ```typescript
 import { mountStepGrid, stepGridModel } from "@audiorective/widgets";
 
+const clip = project.tracks.flatMap((track) => track.clips).find((item) => item.id === clipId);
+if (!clip || clip.kind !== "midi") throw new Error("Select a MIDI clip");
+const bars = cell(1);
+const history = project;
+const beatInClip = () => project.tempoMap.secondsToBeat(workspace.position ?? 0) - project.tempoMap.secondsToBeat(clip.time);
 const model = stepGridModel(clip.midi, {
   lanes: { hat: 42, snare: 38, kick: 36 }, // lane name to pitch, top to bottom
   stepsPerBar: 16, // default
   bars: () => bars.value, // number or tracked getter; default 1
-  edit: (recipe) => history.record("Edit pattern", () => clip.midi.edit(recipe)), // one Undo step per grid edit
-  position: () => (workspace.playing.value ? beatInClip() : null), // optional playhead, beats from the clip start
+  edit: (recipe) => history.edit("Edit pattern", () => clip.midi.edit(recipe)), // one Undo step per grid edit
+  position: () => (workspace.transport.state.value === "playing" ? beatInClip() : null), // optional playhead, beats from the clip start
 });
 mountStepGrid(root, { sequencer: model });
 ```
@@ -467,7 +472,7 @@ Pass `renderer: PlayerRenderer` to replace the markup while keeping these intera
 
 `@audiorective/widgets/arrangement` borrows caller-rendered DOM. The app owns keyed clip elements, lane appearance, selection, compatible-track hit testing and history. The widget owns gesture listeners, capture, local preview and one command per finished edit; it creates no AudioContext, Project or rendering engine.
 
-```typescript
+```typescript fragment: application sketch; app-specific classes or callbacks omitted
 import { attachClipGesture } from "@audiorective/widgets/clip";
 
 const clipOrigins = new Map<string, { time: number; trackId: string }>();
@@ -547,7 +552,7 @@ const ruler = mountBarRuler(rulerRow, {
   pixelsPerSecond: () => scale.value,
   duration: () => workspace.duration,
   viewport: scroller, // optional: draw only the visible bars; a scroll redraws
-  playhead: () => workspace.position.value, // optional line, seconds or null
+  playhead: () => workspace.position, // optional line, seconds or null
   onSeek: (seconds) => workspace.seek(seconds), // optional: a click, not a drag
 });
 attachTimelineZoom({ viewport: scroller, ruler: () => ruler.element, getScale: () => scale.value, onScale });
@@ -560,7 +565,7 @@ A bar is `numerator * 4 / denominator` quarter-note beats and a beat tick is one
 
 `@audiorective/widgets/clip` holds the three gestures and drawings an audio clip element needs on a timeline: `attachClipGesture` (move), `attachClipTrim` (edge trim) and `attachClipWaveform` (the played window as a thumbnail). It is the one import path for `attachClipGesture`. Each function borrows a caller-owned element, returns `{ dispose() }`, and stays free of any DAW import: it takes structural contracts, and your code connects them to `Project`.
 
-```typescript
+```typescript fragment: partial gesture options; see Arrangement gestures
 import { cell, effect } from "@audiorective/core";
 import { attachClipGesture, attachClipTrim, attachClipWaveform } from "@audiorective/widgets/clip";
 import type { AudioClip } from "@audiorective/daw";

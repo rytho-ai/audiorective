@@ -73,8 +73,10 @@ test("streams the original file-backed window even when the current rendered cli
   expect(stretched.channels).toEqual(rendered.channels);
   const restored = reopened.applyAudioClipStretch(stretched, 1);
   expect(restored.duration).toBe(0.2);
-  // A stretched clip's original is read into memory when the file is reopened.
-  expect(restored.channels?.[0]).toEqual(original.subarray(10, 30));
+  // The original stays file-backed: only the window the stretch plays was read to build the clip.
+  expect(restored.channels).toBeUndefined();
+  expect(restored.media).toBeDefined();
+  expect(await restored.media!.readFrames(restored.startFrame!, 20)).toEqual([original.subarray(10, 30)]);
 });
 
 test("warp windows preserve source history, anchor interpolation and gain after splitting and saving", () => {

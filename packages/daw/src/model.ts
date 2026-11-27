@@ -2,12 +2,23 @@ import {
   assertProjectActive,
   collidesWithProjectId,
   importedBundles,
+  keptContent,
   preservedEntries,
   markProjectDisposed,
   nextProjectId,
   validateXmlText,
   validProjectId,
 } from "./project-persistence";
+import {
+  assertParameterValue,
+  mergeParameterValues,
+  rackSlotParameters,
+  rackDeviceId,
+  sameParameterTables,
+  splitRackDeviceId,
+  withRackParameter,
+  type DeviceParameterRecord,
+} from "./device-parameters";
 import {
   normalizeRackEffects,
   normalizeRackPreset,
@@ -20,7 +31,7 @@ import type { PCMData } from "@audiorective/core";
 import { batch, Cell, readonlyCell, ReadonlyCell, untracked } from "@audiorective/core";
 import { AutomationCurve, type AutomationPoint } from "@audiorective/core/automation";
 import { controllerLaneKey, normalizeControllerLane, type ControllerLane } from "./controller-lane";
-import { compileMidiPlaybackEvents, MidiClip as MidiNotes } from "@audiorective/midi";
+import { compileMidiPlaybackEvents, controllerStateKey, MidiClip as MidiNotes } from "@audiorective/midi";
 import type { MidiNote, MidiPlaybackEvent, MidiTake, NoteInit } from "@audiorective/midi";
 import { AudioMedia } from "./media";
 import {
@@ -42,6 +53,7 @@ import { ClipTimeMap, normalizeClipAnchors, type ClipStretchAnchor } from "./cli
 import { normalizeClipEnvelope, unityClipEnvelope, type ClipEnvelope } from "./clip-envelope";
 import {
   findProjectClips,
+  ProjectEditConflict,
   ProjectEditFailure,
   projectOverview,
   runProjectEdits,
@@ -62,11 +74,28 @@ import { emptySession, registerSessionReader, slotKey, splitSlotKey, type Sessio
 
 export type TrackKind = "audio" | "midi" | "bus";
 export type BusRole = "submix" | "effect";
-export type ProjectSend = Readonly<{ busId: string; gain: number }>;
-export type TrackRouting = Readonly<{ outputBusId: string | null; sends: readonly ProjectSend[] }>;
+export type ProjectSend = Readonly<{
+  /** Opaque ID of the destination bus track; routes must not form cycles. */
+  busId: string;
+  /** Finite post-fader send gain, 0..∞ linear with 1 for unity. */
+  gain: number;
+}>;
+export type TrackRouting = Readonly<{
+  /** Opaque destination bus ID, or null to route directly to the master. */
+  outputBusId: string | null;
+  /** Post-fader sends to distinct bus tracks; empty for no sends and cycles are rejected. */
+  sends: readonly ProjectSend[];
+}>;
 const masterRouting: TrackRouting = Object.freeze({ outputBusId: null, sends: Object.freeze([]) });
-/** A message at a clip-relative time in beats. */
-export type ProjectMidiEvent = Readonly<{ time: number; data: Uint8Array; noteId?: string }>;
+/** A MIDI message in content beats, before the clip window is applied. */
+export type ProjectMidiEvent = Readonly<{
+  /** Non-negative position in MIDI content beats, before applying the clip source offset or loop. */
+  time: number;
+  /** Non-empty MIDI message bytes copied on input; velocity bytes use MIDI wire units. */
+  data: Uint8Array;
+  /** Opaque associated note ID when provided; omitted for unassociated events and later loop passes. */
+  noteId?: string;
+}>;
 export type ProjectAudio = Pick<PCMData, "sampleRate" | "channels">;
 export type ProjectMarker = Readonly<{
   /** Position in project seconds. */
@@ -74,12 +103,21 @@ export type ProjectMarker = Readonly<{
   name: string;
 }>;
 
-export type PcmAudioSource = ProjectAudio & Readonly<{ media?: never }>;
+export type PcmAudioSource = ProjectAudio &
+  Readonly<{
+    /** Excluded in this union branch; omit this field. */
+    media?: never;
+  }>;
 export type MediaAudioSource = Readonly<{
+  /** Positive integer sample rate in hertz, matching the backing media. */
   sampleRate: number;
+  /** File-backed recording from which the clip reads its frame window. */
   media: AudioMedia;
+  /** Inclusive zero-based sample frame per channel in the backing recording. */
   startFrame: number;
+  /** Positive sample frame count per channel; the window must fit the backing media. */
   frameCount: number;
+  /** Excluded in this union branch; omit this field. */
   channels?: never;
 }>;
 export type AudioClipSource = PcmAudioSource | MediaAudioSource;
@@ -91,22 +129,42 @@ export type AudioSourceSpan = Readonly<{
   sourceLength: number;
 }>;
 /** What a caller supplies to stretch a clip. The project describes the stored source with `sourceOffset` and `sourceLength`. */
-export type AudioClipStretchInit = Readonly<{ ratio: number; source: AudioClipSource; anchors?: readonly ClipStretchAnchor[] }>;
-export type AudioClipStretch = Readonly<{ ratio: number; source: AudioClipSource & AudioSourceSpan; anchors?: readonly ClipStretchAnchor[] }>;
+export type AudioClipStretchInit = Readonly<{
+  /** Positive finite output-duration/source-duration ratio; 1 leaves the overall duration unchanged. */
+  ratio: number;
+  /** Original audio window before stretching, retained so later stretches do not compound processing. */
+  source: AudioClipSource;
+  /** Interior source/output sample-frame anchors; omitted for a uniform stretch with implicit endpoints. */
+  anchors?: readonly ClipStretchAnchor[];
+}>;
+export type AudioClipStretch = Readonly<{
+  /** Positive finite output-duration/source-duration ratio; 1 leaves the overall duration unchanged. */
+  ratio: number;
+  /** Original audio window with its offset and total length in recording seconds. */
+  source: AudioClipSource & AudioSourceSpan;
+  /** Interior source/output sample-frame anchors; omitted for a uniform stretch with implicit endpoints. */
+  anchors?: readonly ClipStretchAnchor[];
+}>;
 export type AudioClipGainAutomation = Readonly<{
   /**
    * Original source seconds at the start of this clip's current window. Point times are source seconds; on a looped clip they are positions
    * in the recording, so the curve repeats with every pass of the loop.
    */
   sourceStart: number;
+  /** Gain curve in original recording seconds with finite linear gains 0..∞; an empty list clears automation. */
   points: readonly AutomationPoint[];
 }>;
 
 export type AudioClipOptions = {
+  /** Opaque unique clip ID; omitted to allocate a new project ID. */
   id?: string;
+  /** Optional display name; omitted or blank to leave the clip unnamed. */
   name?: string;
+  /** Clip gain and fades in seconds; omitted for unity gain and no fades. */
   envelope?: ClipEnvelope;
+  /** Original source and stretch map; omitted for unstretched audio. */
   stretch?: AudioClipStretchInit;
+  /** Gain curve in original recording seconds; omitted for no clip gain automation. */
   gainAutomation?: AudioClipGainAutomation;
 };
 
@@ -117,8 +175,11 @@ export interface AudioClipBase extends AudioSourceSpan {
   readonly time: number;
   /** Length on the project timeline, in seconds (after any stretch); greater than 0. */
   readonly duration: number;
+  /** Clip gain and edge fades in seconds; omitted for unity gain and no fades. */
   readonly envelope?: ClipEnvelope;
+  /** Gain curve in original recording seconds; omitted for no clip gain automation. */
   readonly gainAutomation?: AudioClipGainAutomation;
+  /** Original source and stretch map; omitted for unstretched audio. */
   readonly stretch?: AudioClipStretch;
   /** The part of the recording that repeats, in seconds of the recording (the frame `sourceOffset` uses). Set with `Project.setClipLoop`. */
   readonly loop?: SecondsRange;
@@ -365,9 +426,13 @@ function normalizeClipName(name: string | undefined): string | undefined {
  * (default 0, may be negative: empty content before the first note).
  */
 export type ProjectMidiData = Readonly<{
+  /** MIDI notes placed in non-negative content beats, independent of the clip timeline position. */
   notes: readonly NoteInit[];
+  /** Non-negative finite clip-window duration in beats, independent of the content length; 0 is empty. */
   duration: number;
+  /** Non-note MIDI messages in content beats; omitted for no extra messages. */
   events?: readonly ProjectMidiEvent[];
+  /** Content beat at the clip start; default 0, with negative values allowing empty lead-in. */
   sourceOffset?: number;
 }>;
 
@@ -433,7 +498,7 @@ export class MidiClip {
 
   /**
    * The clip's MIDI messages in order, `beat` in beats from the clip's start: the window `[sourceOffset, sourceOffset + duration)` of the content (or its
-   * loop passes). A note crossing a window edge is shortened, the latest controller values before the window are carried to its start, and a sustain
+   * loop passes). A note crossing a window edge is shortened, the latest controller, bend, pressure and program values before the window are carried to its start and to each loop pass start (bank select, program change, controllers, then bend and pressure), and a sustain
    * pedal still down at a pass end is released there, whether or not the content goes on. The stored notes are not changed.
    */
   playbackEvents(): readonly MidiPlaybackEvent[] {
@@ -454,22 +519,37 @@ export class MidiClip {
             duration: end - start,
           });
       }
-      const priors = new Map<string, Uint8Array>();
+      const priors = new Map<string, { data: Uint8Array; time: number; order: number }>();
+      let order = 0;
       const sustain = new Map<number, number>();
+      const passEvents: { beat: number; data: Uint8Array; noteId?: string }[] = [];
+      const replaced = new Set<string>();
       for (const { time, data, noteId } of this.sourceEvents) {
-        if ((data[0] & 0xf0) === 0xb0 && data.length >= 3 && data[1] < 120) {
-          if (time < pass.from && pass.pass === 0) priors.set(`${data[0] & 15}:${data[1]}`, data);
-          if ((time < pass.to || (pass.clipped && time <= pass.to)) && data[1] === 64) sustain.set(data[0] & 15, data[2]);
+        if ((data[0] & 0xf0) === 0xb0 && data.length >= 3 && data[1] < 120 && (time < pass.to || (pass.clipped && time <= pass.to)) && data[1] === 64)
+          sustain.set(data[0] & 15, data[2]);
+        const key = controllerStateKey(data);
+        if (key !== undefined) {
+          if (time < pass.from) {
+            const held = priors.get(key);
+            if (!held || time >= held.time) priors.set(key, { data, time, order: order++ });
+          } else if (time === pass.from) replaced.add(key);
         }
         const inside = time >= pass.from && (time < pass.to || (pass.clipped && time <= pass.to));
         if (!inside || (pass.pass > 0 && isNote(data))) continue;
-        events.push({ beat: pass.local + time - pass.from, data, ...(noteId && pass.pass === 0 ? { noteId } : {}) });
+        passEvents.push({ beat: pass.local + time - pass.from, data, ...(noteId && pass.pass === 0 ? { noteId } : {}) });
       }
-      if (pass.pass === 0)
-        for (const data of priors.values()) {
-          const replaced = this.sourceEvents.some((event) => event.time === pass.from && event.data[0] === data[0] && event.data[1] === data[1]);
-          if (!replaced) events.unshift({ beat: 0, data });
-        }
+      // The state in force at the pass start goes first: bank select, program change, controllers, then bend and pressure.
+      const group = (data: Uint8Array) => {
+        const status = data[0] & 0xf0;
+        return status === 0xb0 ? (data[1] === 0 || data[1] === 32 ? 0 : 2) : status === 0xc0 ? 1 : 3;
+      };
+      const carried = [...priors]
+        .filter(([key]) => !replaced.has(key))
+        .map(([, held]) => held)
+        .sort((x, y) => group(x.data) - group(y.data) || x.time - y.time || x.order - y.order)
+        .map(({ data }) => data);
+      for (const data of carried) events.push({ beat: pass.local, data });
+      events.push(...passEvents);
       for (const [channel, value] of sustain)
         if (value >= 64) events.push({ beat: pass.local + pass.to - pass.from, data: new Uint8Array([0xb0 | channel, 64, 0]) });
     }
@@ -491,48 +571,90 @@ export type ProjectClip = AudioClip | MidiClip;
 export type WebClapDevice = Readonly<{
   kind: "webclap";
   id: string;
+  /** Plug-in identifier used to select the plug-in inside its WebCLAP bundle. */
   pluginId: string;
   name: string;
+  /** Plug-in vendor metadata stored in the project. */
   vendor: string;
+  /** Plug-in version metadata, independent of the project revision. */
   version: string;
+  /** Bundle location hint resolved when opening; an empty hint needs an app-supplied resolver. */
   bundleUrl: string;
+  /** Opaque plug-in state bytes; an empty array uses the plug-in initial state. */
   state: Uint8Array;
+  /**
+   * The device's parameter table: id, name, range, default and the value the song sets, for every parameter the plug-in reported. It is empty until a Workspace has loaded the plug-in
+   * once (or a file carried it). The table is the authority for these values: the Workspace applies it after loading `state`, and keeps it equal to what the plug-in reports. Set a
+   * value with `project.setDeviceParameter`.
+   */
+  parameters: readonly DeviceParameterRecord[];
 }>;
 export type ProjectDevice = WebClapDevice;
-/** What `project.addDevice` takes: a device without the parts the Project assigns, `id` and `state` optional. */
-export type NewDevice = Omit<WebClapDevice, "id" | "state"> & { id?: string; state?: Uint8Array };
+/** What `project.addDevice` takes: a device without the parts the Project assigns; `id`, `state` and `parameters` are optional. */
+export type NewDevice = Omit<WebClapDevice, "id" | "state" | "parameters"> & {
+  /** Opaque unique device ID; omitted to allocate a new project ID. */
+  id?: string;
+  /** Opaque plug-in state bytes copied into the project; omitted for an empty initial state. */
+  state?: Uint8Array;
+  /** Initial parameter table; omitted for an empty table populated when the plug-in is loaded. */
+  parameters?: readonly DeviceParameterRecord[];
+};
 export type ProjectTrack = Readonly<{
   id: string;
   name: string;
+  /** Track role: audio clips, MIDI clips, or a routing bus without clips. */
   kind: TrackKind;
+  /** Bus purpose, submix or effect; defaults to submix for buses and is absent on other tracks. */
   busRole?: BusRole;
+  /** Main output and post-fader sends; new tracks go to the master with no sends. */
   routing: TrackRouting;
+  /** Finite linear gain, 0..∞ with 1 for unity; new tracks start at 1. */
   volume: number;
+  /** Silences this track even when soloed; new tracks start false. */
   muted: boolean;
+  /** Selects this track and its audible routing paths while any solo is active; new tracks start false. */
   solo: boolean;
+  /** Stereo position -1..1, left to right; new tracks start centred at 0. */
   pan: number;
+  /** Track gain points in project seconds with linear gains 0..∞; empty for no automation. */
   volumeAutomation: readonly AutomationPoint[];
   /**
    * MIDI controller movement of a MIDI track (sustain, mod wheel, any controller, pitch bend, pressure, program), one lane per (expression, channel,
    * controller), points in project beats. It plays in Arrangement alongside the track's clips; empty for other tracks. Set with `setControllerLane`.
    */
   controllerLanes: readonly ControllerLane[];
+  /** Ordered WebCLAP device chain; empty when no plug-ins are assigned. */
   devices: readonly ProjectDevice[];
+  /** Ordered built-in insert settings; empty for a dry rack. */
   effects: readonly RackEffect[];
+  /** Normalized macro controls and their insert-parameter mappings; empty for none. */
   effectMacros: readonly RackMacroSettings[];
+  /** Arrangement clips in their own units: audio in project seconds, MIDI in project beats; excludes Session slots. */
   clips: readonly ProjectClip[];
 }>;
 
 /** Everything a Project persists: its structural revision plus each MIDI clip's notes, which the clip's `midi` model owns. */
 export type ProjectContent = Readonly<{
+  /** Structural revision counter, including live device-state captures. */
   revision: number;
   /** Each MIDI clip's notes by clip ID, with the clip's `duration` in beats. */
-  midi: ReadonlyMap<string, Readonly<{ notes: readonly MidiNote[]; duration: number }>>;
+  midi: ReadonlyMap<
+    string,
+    Readonly<{
+      /** Frozen note snapshots in content beats, keyed by their owning clip ID. */
+      notes: readonly MidiNote[];
+      /** Saved MIDI clip-window duration in beats. */
+      duration: number;
+    }>
+  >;
 }>;
 
 export type ProjectOptions = Readonly<{
+  /** Initial song title; default Untitled. */
   title?: string;
+  /** Initial positive finite tempo in quarter-note beats per minute; default 120. */
   bpm?: number;
+  /** Initial numerator and power-of-two denominator; default [4, 4], with MeterMap bars counted from 1. */
   signature?: readonly [number, number];
 }>;
 
@@ -555,7 +677,12 @@ type ProjectState = Readonly<{
 }>;
 
 /** One extension's saved data and the format version it was written with. */
-export type ExtensionRecord = Readonly<{ version: number; data: JsonValue }>;
+export type ExtensionRecord = Readonly<{
+  /** Positive integer format version used when the extension data was saved. */
+  version: number;
+  /** Frozen JSON payload preserved even when the app has no definition for the extension. */
+  data: JsonValue;
+}>;
 
 const clipSeconds = (tempoMap: TempoMap, clip: ProjectClip, localTime = 0): number => {
   const position = clip.time + localTime;
@@ -653,6 +780,8 @@ type EditEntry = {
   readonly masterVolume: boolean;
   /** IDs of the devices this edit gave another state; every other device keeps the state it has now when the step is applied. */
   readonly deviceStates: ReadonlySet<string>;
+  /** For each device this edit changed parameter values of, the IDs of those parameters; every other parameter keeps the value it has now when the step is applied. */
+  readonly deviceParameters: ReadonlyMap<string, readonly string[]>;
   before: EditSide;
   after: EditSide;
 };
@@ -679,7 +808,7 @@ function sameSceneOrder(a: readonly SessionScene[], b: readonly SessionScene[]):
   return left.every((scene, index) => scene.id === right[index].id);
 }
 
-/** Whether two device lists hold the same devices in the same order; `withState` also compares each device's saved state bytes. */
+/** Whether two device lists hold the same devices in the same order; `withState` also compares each device's saved state bytes and parameter values. */
 function sameDevices(a: readonly ProjectDevice[], b: readonly ProjectDevice[], withState: boolean): boolean {
   return (
     a === b ||
@@ -694,7 +823,10 @@ function sameDevices(a: readonly ProjectDevice[], b: readonly ProjectDevice[], w
             device.name === other.name &&
             device.vendor === other.vendor &&
             device.version === other.version &&
-            (!withState || (device.state.length === other.state.length && device.state.every((byte, i) => byte === other.state[i]))))
+            (!withState ||
+              (device.state.length === other.state.length &&
+                device.state.every((byte, i) => byte === other.state[i]) &&
+                sameParameterTables(device.parameters, other.parameters))))
         );
       }))
   );
@@ -732,13 +864,142 @@ const clipFrameTolerance = (clip: ProjectClip) => (clip.kind === "audio" ? 1 / c
 /** Whether two plain data values have the same content (key order included, which the Project's own normalisers keep stable). */
 const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
 /** The mixer-facing fields of a track that an edit records for Undo (routing has its own record). */
-const trackShellKeys = ["name", "volume", "muted", "solo", "pan", "effects", "effectMacros", "controllerLanes"] as const;
-type TrackShellKey = (typeof trackShellKeys)[number];
+const trackShellKeys = ["name", "volume", "muted", "solo", "pan", "effects", "effectMacros"] as const;
+/** A shell field, or one controller lane of the track (`lane:` + its `controllerLaneKey`): lanes are recorded one by one, so an edit to one lane does not conflict with a later change to another. */
+type TrackShellKey = (typeof trackShellKeys)[number] | `lane:${string}` | `rack:${string}`;
+/** The shell key of one parameter of one rack effect slot (`rack:` + slot ID + `:` + parameter ID; parameter IDs hold no `:`). */
+const rackKey = (slotId: string, parameterId: string): TrackShellKey => `rack:${slotId}:${parameterId}`;
+const splitRackKey = (key: string) => {
+  const at = key.lastIndexOf(":");
+  return { slotId: key.slice(5, at), parameterId: key.slice(at + 1) };
+};
+const rackValue = (track: ProjectTrack | undefined, key: string): number | undefined => {
+  const { slotId, parameterId } = splitRackKey(key);
+  const slot = track?.effects.find((item) => item.id === slotId);
+  return slot && rackSlotParameters(slot).find((item) => item.id === parameterId)?.value;
+};
+const laneOf = (track: ProjectTrack, key: string) => track.controllerLanes.find((lane) => controllerLaneKey(lane) === key);
+/** The shell keys of `now` that differ from `was`: changed fields, and the lanes added, removed or replaced. */
+const changedShellKeys = (was: ProjectTrack, now: ProjectTrack, rackSet?: ReadonlySet<TrackShellKey>): TrackShellKey[] => {
+  const keys: TrackShellKey[] = trackShellKeys.filter((key) => was[key] !== now[key]);
+  // Parameter values of rack effects that `setDeviceParameter` set are recorded one by one, so a later change to another parameter of the rack does not conflict.
+  // A change of the rack that is anything else (slots added, moved, retyped, or a whole-rack replace) stays under `effects`.
+  const rack = was.effects !== now.effects && rackSet?.size ? rackParameterKeys(was, now) : undefined;
+  if (rack && rack.every((key) => rackSet!.has(key))) keys.splice(keys.indexOf("effects"), 1, ...rack);
+  if (was.controllerLanes !== now.controllerLanes)
+    for (const key of new Set([...was.controllerLanes, ...now.controllerLanes].map(controllerLaneKey)))
+      if (laneOf(was, key) !== laneOf(now, key)) keys.push(`lane:${key}`);
+  return keys;
+};
+/** The rack parameter keys `now` differs from `was` in when that is the only difference between their effects, else `undefined`. */
+const rackParameterKeys = (was: ProjectTrack, now: ProjectTrack): TrackShellKey[] | undefined => {
+  if (was.effects.length !== now.effects.length) return undefined;
+  const keys: TrackShellKey[] = [];
+  try {
+    for (const [index, before] of was.effects.entries()) {
+      const after = now.effects[index];
+      if (before === after) continue;
+      if (before.id !== after.id || before.type !== after.type) return undefined;
+      const wasRows = rackSlotParameters(before);
+      const nowRows = rackSlotParameters(after);
+      if (wasRows.length !== nowRows.length) return undefined;
+      let rebuilt = before;
+      for (const [row, next] of nowRows.entries()) {
+        if (wasRows[row].id !== next.id) return undefined;
+        if (wasRows[row].value === next.value) continue;
+        keys.push(rackKey(before.id, next.id));
+        rebuilt = withRackParameter(rebuilt, next.id, next.value);
+      }
+      if (!sameJson(rebuilt, after)) return undefined;
+    }
+  } catch {
+    return undefined;
+  }
+  return keys;
+};
 /** Whether `a` and `b` hold the same value for every one of `keys`; false when either track is missing. */
 const sameShellKeys = (a: ProjectTrack | undefined, b: ProjectTrack | undefined, keys: readonly TrackShellKey[]) =>
-  !!a && !!b && keys.every((key) => a[key] === b[key]);
+  !!a &&
+  !!b &&
+  keys.every((key) =>
+    key.startsWith("rack:")
+      ? rackValue(a, key) === rackValue(b, key)
+      : key.startsWith("lane:")
+        ? laneOf(a, key.slice(5)) === laneOf(b, key.slice(5))
+        : a[key as keyof ProjectTrack] === b[key as keyof ProjectTrack],
+  );
+/** `track` with the fields and lanes `keys` name taken from `shell`; a lane `shell` lacks is removed, a new one is added after the others. */
+const withShellKeys = (track: ProjectTrack, shell: ProjectTrack, keys: readonly TrackShellKey[]): ProjectTrack => {
+  let lanes = track.controllerLanes;
+  let effects = track.effects;
+  const fields: Record<string, unknown> = {};
+  for (const key of keys) {
+    if (key.startsWith("rack:")) {
+      const { slotId, parameterId } = splitRackKey(key);
+      const value = rackValue(shell, key);
+      if (value !== undefined)
+        effects = Object.freeze(effects.map((slot) => (slot.id === slotId ? withRackParameter(slot, parameterId, value) : slot)));
+      continue;
+    }
+    if (!key.startsWith("lane:")) {
+      fields[key] = shell[key as keyof ProjectTrack];
+      continue;
+    }
+    const name = key.slice(5);
+    const next = laneOf(shell, name);
+    const at = lanes.findIndex((lane) => controllerLaneKey(lane) === name);
+    const list = [...lanes];
+    if (!next) list.splice(at, at < 0 ? 0 : 1);
+    else if (at < 0) list.push(next);
+    else list[at] = next;
+    lanes = Object.freeze(list);
+  }
+  return Object.freeze({ ...track, effects, ...fields, controllerLanes: lanes });
+};
 
-let captureDeviceHook: (project: Project, deviceId: string, bytes: Uint8Array) => void;
+/** Validates and copies a device's parameter table: unique non-empty IDs, finite ranges with `min <= max`, and a value inside the range. */
+function checkedParameters(table: readonly DeviceParameterRecord[] | undefined): readonly DeviceParameterRecord[] {
+  if (table === undefined) return Object.freeze([]);
+  const invalid = () => new Error("Project WebCLAP device parameters need unique IDs, names and finite ranges with the value inside.");
+  if (!Array.isArray(table)) throw invalid();
+  const ids = new Set<string>();
+  return Object.freeze(
+    table.map((item) => {
+      if (
+        !item ||
+        typeof item.id !== "string" ||
+        !item.id ||
+        ids.has(item.id) ||
+        typeof item.name !== "string" ||
+        ![item.min, item.max, item.default, item.value].every(Number.isFinite) ||
+        item.min > item.max ||
+        item.value < item.min ||
+        item.value > item.max ||
+        (item.step !== undefined && item.step !== 1) ||
+        (item.normalized !== undefined && (item.normalized !== true || item.min !== 0 || item.max !== 1))
+      )
+        throw invalid();
+      validateXmlText(item.name);
+      ids.add(item.id);
+      return Object.freeze({
+        id: item.id,
+        name: item.name,
+        min: item.min,
+        max: item.max,
+        default: item.default,
+        value: item.value,
+        ...(item.step === undefined ? {} : { step: item.step }),
+        ...(item.normalized === true ? { normalized: true as const } : {}),
+      });
+    }),
+  );
+}
+
+let captureDeviceHook: (
+  project: Project,
+  deviceId: string,
+  capture: Readonly<{ state?: Uint8Array; parameters?: readonly DeviceParameterRecord[] }>,
+) => void;
 let borrowSnapshotHook: (project: Project) => Project;
 let extensionRecordsHook: (project: Project, records?: ReadonlyMap<string, ExtensionRecord>) => ReadonlyMap<string, ExtensionRecord>;
 let sessionBridgeHook: (project: Project) => SessionBridge;
@@ -752,30 +1013,67 @@ export type SessionBridge = Readonly<{
   state(): SessionState;
   /** The grid, read untracked. */
   peek(): SessionState;
+  /** Returns the role of an opaque track ID, or undefined if it is absent. */
   trackKind(trackId: string): TrackKind | undefined;
+  /** Reserves and returns a fresh opaque project-wide scene ID. */
   newSceneId(): string;
   /** A clip made for a slot, at time 0, with its ID reserved. */
-  midi(data: ProjectMidiData, name: string | undefined): { clip: MidiClip; name: string | undefined };
-  audio(audio: ProjectAudio, name: string | undefined): { clip: AudioClip; name: string | undefined };
+  midi(
+    data: ProjectMidiData,
+    name: string | undefined,
+  ): {
+    /** Detached MIDI clip at project beat 0, with its project ID reserved. */
+    clip: MidiClip;
+    /** Optional display name to store separately; undefined leaves the clip unnamed. */
+    name: string | undefined;
+  };
+  /** Builds a detached audio clip at project second 0 with a reserved ID and optional name. */
+  audio(
+    audio: ProjectAudio,
+    name: string | undefined,
+  ): {
+    /** Detached audio clip at project second 0, with its project ID reserved. */
+    clip: AudioClip;
+    /** Optional display name to store separately; undefined leaves the clip unnamed. */
+    name: string | undefined;
+  };
   /** A copy of a clip with its own ID, name, loop and envelope; `linked` makes a MIDI copy share the source's notes. */
-  clone(clip: ProjectClip, time: number, linked?: boolean): { clip: ProjectClip; name: string | undefined };
+  clone(
+    clip: ProjectClip,
+    time: number,
+    linked?: boolean,
+  ): {
+    /** Detached copy with a new ID at the requested project time, in its audio or MIDI unit. */
+    clip: ProjectClip;
+    /** Optional copied display name; undefined when the source is unnamed. */
+    name: string | undefined;
+  };
   /** A clip on the timeline or in a slot, by ID. */
   find(clipId: string): ProjectClip | undefined;
   /** Replace the grid. `named` clips take their names; `dropped` clips and `droppedIds` leave the project. */
   write(
     next: SessionState,
-    change?: Readonly<{ named?: ReadonlyMap<string, string>; dropped?: readonly ProjectClip[]; droppedIds?: readonly string[] }>,
+    change?: Readonly<{
+      /** Display names keyed by opaque clip ID; omitted when no names change. */
+      named?: ReadonlyMap<string, string>;
+      /** Clips removed from the grid and project ownership; omitted when none are removed. */
+      dropped?: readonly ProjectClip[];
+      /** Additional opaque clip IDs to remove; omitted when none are removed. */
+      droppedIds?: readonly string[];
+    }>,
   ): void;
   /** Put a detached clip on a track of its kind. */
   place(trackId: string, clip: ProjectClip, name: string | undefined): void;
+  /** Returns a clip display name, or undefined when it has no stored name. */
   clipName(clipId: string): string | undefined;
+  /** Returns the current map between project beats and project seconds. */
   tempoMap(): TempoMap;
 }>;
 
 /** Headless project content. AudioContext and UI state are not part of the file. */
 export class Project {
   static {
-    captureDeviceHook = (project, deviceId, bytes) => project.captureDevice(deviceId, bytes);
+    captureDeviceHook = (project, deviceId, capture) => project.captureDevice(deviceId, capture);
     borrowSnapshotHook = (project) => untracked(() => project.snapshotUntracked(true));
     extensionRecordsHook = (project, records) => {
       if (records) project.commit({ extensions: records }, false);
@@ -805,7 +1103,7 @@ export class Project {
   private readonly historyLabels = new Cell<Readonly<{ undo?: string; redo?: string }>>(Object.freeze({}));
   private undoStack: EditEntry[] = [];
   private redoStack: EditEntry[] = [];
-  private editing?: { retired: Set<MidiClip> };
+  private editing?: { retired: Set<MidiClip>; rack: Map<string, Set<TrackShellKey>> };
   /** The read-only operation running now; any Project change while it runs throws. */
   private queryName: string | undefined;
   /** Note revisions spent by rolled-back edits, so a failed edit leaves the version unchanged. */
@@ -1164,6 +1462,7 @@ export class Project {
       }).entry;
       return this.appliedReceipt(entry, "after", run);
     } catch (error) {
+      if (error instanceof ProjectEditConflict) return { status: "conflict", version, reason: error.message };
       if (error instanceof ProjectEditFailure)
         return {
           status: "rejected",
@@ -1279,7 +1578,7 @@ export class Project {
         const previousNextId = nextProjectId.get(this);
         const previousRevisions = this.noteRevisions(previous);
         const before = this.captureSide();
-        const editing = { retired: new Set<MidiClip>() };
+        const editing = { retired: new Set<MidiClip>(), rack: new Map<string, Set<TrackShellKey>>() };
         this.editing = editing;
         try {
           const result = action();
@@ -1303,7 +1602,7 @@ export class Project {
           const shells = new Map<string, readonly TrackShellKey[]>();
           for (const [id, now] of after.tracks) {
             const was = before.tracks.get(id);
-            const keys = was ? trackShellKeys.filter((key) => was[key] !== now[key]) : [];
+            const keys = was ? changedShellKeys(was, now, editing.rack.get(id)) : [];
             if (keys.length) shells.set(id, keys);
           }
           const title = before.title !== after.title;
@@ -1338,14 +1637,24 @@ export class Project {
             !shells.size &&
             !title &&
             !masterVolume
-          )
+          ) {
+            keptContent.commit(this, undefined);
             return { result, entry: undefined };
+          }
           const deviceStates = new Set<string>();
+          const deviceParameters = new Map<string, readonly string[]>();
           for (const [trackId, list] of before.devices) {
             const next = after.devices.get(trackId) ?? [];
             for (const device of list) {
               const other = next.find((item) => item.id === device.id);
-              if (other && !sameDevices([device], [other], true)) deviceStates.add(device.id);
+              if (!other) continue;
+              // A table that came or went with the state (setDeviceState empties it) belongs to the state bytes: the step puts both back.
+              if (!sameDevices([{ ...device, parameters: other.parameters }], [other], true) || device.parameters.length !== other.parameters.length)
+                deviceStates.add(device.id);
+              const changed = other.parameters
+                .filter((item) => device.parameters.find(({ id }) => id === item.id)?.value !== item.value)
+                .map(({ id }) => id);
+              if (changed.length) deviceParameters.set(device.id, Object.freeze(changed));
             }
           }
           const entry: EditEntry = {
@@ -1364,13 +1673,16 @@ export class Project {
             title,
             masterVolume,
             deviceStates,
+            deviceParameters,
             before,
             after,
           };
           this.pushHistory(entry);
+          keptContent.commit(this, entry);
           return { result, entry };
         } catch (error) {
           this.editing = undefined;
+          keptContent.discard(this);
           for (const track of this.s.tracks)
             for (const clip of track.clips) if (clip instanceof MidiClip && before.clips.get(clip.id)?.clip !== clip) clip.dispose();
           for (const clip of this.s.session.slots.values()) if (clip instanceof MidiClip && before.clips.get(clip.id)?.clip !== clip) clip.dispose();
@@ -1469,6 +1781,7 @@ export class Project {
       batch(() => {
         this.applySide(entry, entry[to]);
         entry[to] = this.captureSide();
+        keptContent.step(this, entry, kind === "redo");
         stack.pop();
         (kind === "undo" ? this.redoStack : this.undoStack).push(entry);
         this.publishHistory();
@@ -1541,6 +1854,18 @@ export class Project {
         const now = current.devices.get(id);
         const there = side.devices.get(id);
         return now !== undefined && there !== undefined && sameDevices(now, there, false);
+      }) &&
+      // A parameter this step set must still hold the value the step left; one the plug-in moved by itself since belongs to someone else's change.
+      [...entry.deviceParameters].every(([deviceId, ids]) => {
+        const find = (devices: ReadonlyMap<string, readonly ProjectDevice[]>) =>
+          [...devices.values()].flat().find((device) => device.id === deviceId);
+        const now = find(current.devices);
+        const there = find(side.devices);
+        return (
+          !now ||
+          !there ||
+          ids.every((id) => now.parameters.find((item) => item.id === id)?.value === there.parameters.find((item) => item.id === id)?.value)
+        );
       })
     );
   }
@@ -1647,12 +1972,17 @@ export class Project {
       const touchesAutomation = entry.automation.includes(track.id);
       const incomingRouting = entry.routing.includes(track.id) ? side.routing.get(track.id) : undefined;
       const incomingDevices = entry.devices.includes(track.id) ? side.devices.get(track.id) : undefined;
-      // A plug-in's saved state keeps refreshing while it runs: only a device this step added, removed or gave another state takes the side's bytes.
+      // A plug-in's saved state and parameter table keep refreshing while it runs: only a device this step added, removed or gave another state takes the side's bytes,
+      // and a device that stays takes back only the parameters this step set.
       const devices = incomingDevices?.map((device) => {
         const now = track.devices.find((other) => other.id === device.id);
-        if (!now || now.state === device.state) return device;
-        if (entry.deviceStates.has(device.id) || !entry.before.devices.get(track.id)?.some((other) => other.id === device.id)) return device;
-        return Object.freeze({ ...device, state: now.state });
+        if (!now || !entry.before.devices.get(track.id)?.some((other) => other.id === device.id)) return device;
+        const state = entry.deviceStates.has(device.id) ? device.state : now.state;
+        const parameters = entry.deviceStates.has(device.id)
+          ? device.parameters
+          : mergeParameterValues(now.parameters, device.parameters, entry.deviceParameters.get(device.id) ?? []);
+        if (state === device.state && parameters === device.parameters) return device;
+        return Object.freeze({ ...device, state, parameters });
       });
       if (devices) {
         for (const device of track.devices) this.ids.delete(device.id);
@@ -1668,8 +1998,7 @@ export class Project {
       const shell = shellKeys ? side.tracks.get(track.id) : undefined;
       if (!touchesAutomation && sameClips && !devices && !incomingRouting && !shell) return track;
       return Object.freeze({
-        ...track,
-        ...(shell && shellKeys ? Object.fromEntries(shellKeys.map((key) => [key, shell[key]])) : {}),
+        ...(shell && shellKeys ? withShellKeys(track, shell, shellKeys) : track),
         ...(devices ? { devices } : {}),
         ...(incomingRouting ? { routing: incomingRouting } : {}),
         clips: sameClips ? track.clips : this.sortClips([...track.clips.filter((clip) => !ids.has(clip.id)), ...incoming]),
@@ -1730,7 +2059,10 @@ export class Project {
     return extensions;
   }
 
-  /** True when any clip (timeline or Session slot) plays from a file-backed `AudioMedia` instead of in-memory PCM. Tracked. */
+  /**
+   * True when any clip (timeline or Session slot) plays from a file-backed `AudioMedia` (a long take on disk, a clip read from a `.dawproject`) instead of in-memory PCM. Tracked.
+   * Such a song cannot be written by `saveDawProject` (it throws): save it with `saveDawProjectTo` (or `saveWorkspaceTo`), which streams the audio, or `saveWorkspace`, which reads it into bytes.
+   */
   get hasFileBackedAudio(): boolean {
     const fileBacked = (clip: ProjectClip) => clip.kind === "audio" && !!(clip.media || clip.stretch?.source.media);
     const state = this.store.value;
@@ -2158,43 +2490,121 @@ export class Project {
       version: details.version,
       bundleUrl: details.bundleUrl,
       state: new Uint8Array(details.state ?? []),
+      parameters: checkedParameters(details.parameters),
     });
     this.replace(track, { devices: Object.freeze([...track.devices, stored]) });
     return stored;
   }
 
-  /** Replace a device's saved plug-in state with `bytes` (the plug-in's own binary format). */
+  /**
+   * Replace a device's saved plug-in state with `bytes` (the plug-in's own binary format). The state carries the plug-in's own parameter values, so the device's parameter
+   * table is emptied: a running Workspace loads the bytes and fills the table again from what the plug-in then reports. Set one parameter with `setDeviceParameter` instead.
+   */
   setDeviceState(deviceId: string, bytes: Uint8Array): void {
     assertProjectActive(this);
     if (!(bytes instanceof Uint8Array)) throw new TypeError("Project device state needs bytes.");
     const track = this.s.tracks.find((item) => item.devices.some((device) => device.id === deviceId));
     if (!track) throw new Error("Project device needs an existing track.");
-    const devices = track.devices.map((device) => (device.id === deviceId ? Object.freeze({ ...device, state: new Uint8Array(bytes) }) : device));
+    const current = track.devices.find((device) => device.id === deviceId)!;
+    if (current.state.length === bytes.length && current.state.every((byte, index) => byte === bytes[index])) return;
+    const devices = track.devices.map((device) =>
+      device.id === deviceId ? Object.freeze({ ...device, state: new Uint8Array(bytes), parameters: Object.freeze([]) }) : device,
+    );
     this.replace(track, { devices: Object.freeze(devices) });
   }
 
-  /** Fold a running plug-in's state into the Project. It is not an edit: the version and undo history ignore it. Reached through `captureDeviceState`. */
-  private captureDevice(deviceId: string, bytes: Uint8Array): void {
+  /**
+   * Fold a running plug-in's state and parameter table into the Project. It is not an edit: the version and undo history ignore it. Reached through `captureDeviceState`.
+   * A `parameters` table replaces the stored one only when its parameters (IDs, names, ranges) differ or a value differs; `state` is optional.
+   */
+  private captureDevice(deviceId: string, capture: Readonly<{ state?: Uint8Array; parameters?: readonly DeviceParameterRecord[] }>): void {
     assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.devices.some((device) => device.id === deviceId));
+    const state = capture.state && new Uint8Array(capture.state);
+    const parameters = capture.parameters && checkedParameters(capture.parameters);
     if (!track) {
-      // A device Undo or an edit just took away: its last state goes into the history steps that bring it back.
-      const state = new Uint8Array(bytes);
+      // A device Undo or an edit just took away: its last state and parameters go into the history steps that bring it back.
       for (const entry of [...this.undoStack, ...this.redoStack])
         for (const side of [entry.before, entry.after])
           for (const [trackId, list] of side.devices)
             if (list.some((device) => device.id === deviceId))
               (side.devices as Map<string, readonly ProjectDevice[]>).set(
                 trackId,
-                Object.freeze(list.map((device) => (device.id === deviceId ? Object.freeze({ ...device, state }) : device))),
+                Object.freeze(
+                  list.map((device) =>
+                    device.id === deviceId
+                      ? Object.freeze({ ...device, ...(state ? { state } : {}), ...(parameters ? { parameters } : {}) })
+                      : device,
+                  ),
+                ),
               );
       return;
     }
-    const devices = track.devices.map((device) => (device.id === deviceId ? Object.freeze({ ...device, state: new Uint8Array(bytes) }) : device));
+    if (parameters && !state) {
+      const current = track.devices.find((device) => device.id === deviceId)!;
+      if (sameParameterTables(current.parameters, parameters)) return;
+    }
+    const devices = track.devices.map((device) =>
+      device.id === deviceId ? Object.freeze({ ...device, ...(state ? { state } : {}), ...(parameters ? { parameters } : {}) }) : device,
+    );
     this.commit(
       { tracks: Object.freeze(this.s.tracks.map((item) => (item === track ? Object.freeze({ ...item, devices: Object.freeze(devices) }) : item))) },
       false,
     );
+  }
+
+  /**
+   * Set one parameter of a device to `value`, in the parameter's own units and range (`workspace.deviceParameters(deviceId)` lists the IDs, ranges and values). `deviceId` is a
+   * WebCLAP device's ID or, for a built-in rack effect, `rackDeviceId(trackId, slotId)`; a rack effect parameter writes the same Project data `setTrackEffects` does. The value is
+   * song content: it is saved, joins the Undo step of the surrounding `project.edit` or `applyEdits` (like every Project edit method it makes no step of its own) and a running Workspace applies it without a rebuild. Setting the value it
+   * already has changes nothing. Throws for an unknown device or parameter, a value outside the range or not a whole number for a stepped parameter, a WebCLAP device whose
+   * parameter table is still empty (no Workspace has loaded it yet) and a rack parameter that a macro drives (set the macro with `setTrackMacroValue`).
+   */
+  setDeviceParameter(deviceId: string, parameterId: string, value: number): void {
+    assertProjectActive(this);
+    const track = this.s.tracks.find((item) => item.devices.some((device) => device.id === deviceId));
+    if (track) {
+      const device = track.devices.find((item) => item.id === deviceId)!;
+      const record = device.parameters.find((item) => item.id === parameterId);
+      if (!record) {
+        throw new Error(
+          device.parameters.length
+            ? `Project device "${deviceId}" has no parameter "${parameterId}".`
+            : `Project device "${deviceId}" has no parameter table yet; a Workspace lists it once the plug-in has loaded.`,
+        );
+      }
+      assertParameterValue(record, value);
+      if (record.value === value) return;
+      const parameters = device.parameters.map((item) => (item === record ? Object.freeze({ ...item, value }) : item));
+      this.replace(track, {
+        devices: Object.freeze(
+          track.devices.map((item) => (item === device ? Object.freeze({ ...item, parameters: Object.freeze(parameters) }) : item)),
+        ),
+      });
+      return;
+    }
+    const at = splitRackDeviceId(deviceId);
+    const owner = at && this.s.tracks.find((item) => item.id === at.trackId);
+    const slot = owner?.effects.find((item) => item.id === at!.slotId);
+    if (!owner || !slot) {
+      const hint = this.s.tracks.flatMap((item) => item.effects.filter(({ id }) => id === deviceId).map(({ id }) => rackDeviceId(item.id, id)));
+      throw new Error(
+        `Project device "${deviceId}" does not exist${hint.length ? `; a built-in effect is addressed as ${hint.map((id) => `"${id}"`).join(" or ")}` : ""}.`,
+      );
+    }
+    const macro = owner.effectMacros.find(({ targets }) => targets.some((target) => target.slotId === slot.id && target.parameter === parameterId));
+    if (macro) throw new Error(`Project effect parameter "${parameterId}" is driven by macro "${macro.id}"; set the macro with setTrackMacroValue.`);
+    this.setTrackEffects(
+      owner.id,
+      owner.effects.map((item) => (item === slot ? withRackParameter(slot, parameterId, value) : item)),
+    );
+    // Recorded after the write so a value that changed nothing leaves no key; Undo of this parameter compares and restores only it.
+    const marks = this.editing?.rack;
+    if (marks && owner.effects !== this.s.tracks.find((item) => item.id === owner.id)?.effects) {
+      const keys = marks.get(owner.id) ?? new Set<TrackShellKey>();
+      keys.add(rackKey(slot.id, parameterId));
+      marks.set(owner.id, keys);
+    }
   }
 
   /** Remove a device from its track's chain; the devices after it move up one place. */
@@ -3137,6 +3547,11 @@ export function adoptRenderedStretch(project: Project, expected: AudioClip, rend
   adoptRenderHook(project, expected, rendered);
 }
 
-export function captureDeviceState(project: Project, deviceId: string, bytes: Uint8Array): void {
-  captureDeviceHook(project, deviceId, bytes);
+export function captureDeviceState(project: Project, deviceId: string, bytes: Uint8Array, parameters?: readonly DeviceParameterRecord[]): void {
+  captureDeviceHook(project, deviceId, { state: bytes, ...(parameters ? { parameters } : {}) });
+}
+
+/** Runtime-only: store a running plug-in's parameter table (metadata and the values it reports now) without counting it as an edit. */
+export function captureDeviceParameters(project: Project, deviceId: string, parameters: readonly DeviceParameterRecord[]): void {
+  captureDeviceHook(project, deviceId, { parameters });
 }

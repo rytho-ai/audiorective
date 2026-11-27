@@ -8,7 +8,14 @@ import { timeRangeKind } from "./ripple-delete";
 import type { Workspace } from "./runtime";
 
 /** A file to import: a `File` or `Blob` from an input or a drop, or bytes with the name to give the track. */
-export type AudioFileInput = Blob | File | Readonly<{ name: string; bytes: Uint8Array }>;
+export type AudioFileInput =
+  | Blob
+  | File
+  | Readonly<{
+      name: string;
+      /** Encoded audio file bytes, decoded and resampled to the Workspace sample rate on import. */
+      bytes: Uint8Array;
+    }>;
 
 export type ImportAudioFilesOptions = Readonly<{
   /** The project beat where every clip starts. Default 0. */
@@ -18,7 +25,7 @@ export type ImportAudioFilesOptions = Readonly<{
 export type ImportAudioFilesResult = Readonly<{
   /** The new audio tracks in file order, as the project holds them after the import. */
   tracks: readonly ProjectTrack[];
-  /** The Workspace's sample rate, which every clip now has. */
+  /** Workspace sample rate in hertz, shared by all imported clips. */
   sampleRate: number;
 }>;
 
@@ -94,26 +101,43 @@ export type RenderStemsOptions = Readonly<{
   tailSeconds?: number;
   /** Also return the full mix, rendered the same way. Default true. */
   includeMix?: boolean;
-  /** The version to hear. Another current version returns `conflict` without rendering. */
+  /** Version to render; a mismatch returns conflict without rendering, while omission uses the current version. */
   expectedVersion?: ProjectVersion;
+  /** Cancels the offline render with AbortError; omitted to render until completion. */
   signal?: AbortSignal;
 }>;
 
 export type StemsResult = Readonly<
   | {
+      /** Outcome tag; rendered carries audio and conflict carries the current version without rendering. */
       status: "rendered";
+      /** Project version captured for rendering, or the current version when a conflict prevents rendering. */
       version: ProjectVersion;
+      /** Sample rate in hertz shared by every returned stem and the optional mix. */
       sampleRate: number;
       /** One entry per audio and MIDI track, in track order. A muted track, or a MIDI track with no device and no `instruments` entry, has a silent stem. */
-      stems: readonly Readonly<{ trackId: string; name: string; audio: PCMData }>[];
+      stems: readonly Readonly<{
+        /** Opaque ID of the source audio or MIDI track. */
+        trackId: string;
+        name: string;
+        /** Stereo PCM after the track chain, output buses and master; excludes send returns. */
+        audio: PCMData;
+      }>[];
       /** The full mix as heard (mute, solo, sends, buses, master); absent when `includeMix` is false. */
       mix?: PCMData;
-      /** The length of every stem and of the mix. */
+      /** Duration in seconds of every stem and the optional mix, including the effect tail. */
       durationSeconds: number;
       /** One sentence per silent stem with its reason (muted, or a MIDI track with no instrument or plug-in); empty when every stem can sound. */
       warnings: readonly string[];
     }
-  | { status: "conflict"; version: ProjectVersion; reason: string }
+  | {
+      /** Outcome tag; rendered carries audio and conflict carries the current version without rendering. */
+      status: "conflict";
+      /** Project version captured for rendering, or the current version when a conflict prevents rendering. */
+      version: ProjectVersion;
+      /** Human-readable explanation of the version conflict; no audio was rendered. */
+      reason: string;
+    }
 >;
 
 /**

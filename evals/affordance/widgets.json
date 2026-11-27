@@ -131,7 +131,7 @@
       "prompt": "A browser DAW stores a drum pattern as a MIDI clip: `drums` has the clip's notes (kick 36, snare 38, closed hat 42, quarter-note beats) and one bar of 16 steps. Show it as a 16-step drum grid with a row per drum, where clicking a cell adds or removes the note for that drum at that step, and changing a step's velocity changes that note's velocity. Notes edited elsewhere (a piano roll, Undo) must show up in the grid, and every grid edit is one Undo step through the app's `history.record(label, fn)`. Do not copy the notes into a separate sequencer. Mount it in `root` and clean up when the view closes.",
       "hostDeclarations": "declare const drums: import(\"@audiorective/midi\").MidiClip;\ndeclare const root: HTMLElement;\ndeclare const history: { record(label: string, run: () => void): void };",
       "expectations": [
-        "Uses the toolkit step grid over the clip's notes, not a hand-built grid of buttons or a StepSequencer copy of the pattern.",
+        "Uses the toolkit step grid over the clip's notes, not a hand-built grid of buttons or a second copy of the pattern in a separate sequencer object.",
         "Each row maps to its drum pitch (36, 38, 42), and a step is a 16th note (0.25 beats) slot.",
         "Toggling a cell adds or removes the note at that pitch and slot; a velocity edit changes only that note.",
         "The view reads the clip's tracked notes, so external edits and Undo redraw it.",

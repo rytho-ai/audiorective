@@ -9,12 +9,16 @@ import type { CoreTickWindow, TimeSignature, TimeSource, TransportState } from "
 export type { BeatTiming, CancellableEvent };
 
 export interface MissedGap {
+  /** Inclusive beginning of missed scheduling coverage, in absolute AudioContext seconds. */
   gapStart: number;
+  /** Exclusive end of missed scheduling coverage, in absolute AudioContext seconds. */
   gapEnd: number;
+  /** Missed scheduling coverage in seconds, gapEnd - gapStart. */
   gapDuration: number;
 }
 
 export type TickWindow<TRulers extends Record<string, Ruler<unknown, unknown>>> = CoreTickWindow & {
+  /** Readings for each configured ruler over this half-open scheduling window. */
   rulers: { [K in keyof TRulers]: TRulers[K] extends Ruler<infer TWin, unknown> ? TWin : never };
   /** Register an event and its absolute audio start time for transport and edit cancellation. */
   own(event: CancellableEvent, when: number): void;
@@ -22,8 +26,19 @@ export type TickWindow<TRulers extends Record<string, Ruler<unknown, unknown>>> 
 
 /** The part of a tick window an attached scheduler reads: the beat span to fill, the audio time now, and `own` for cancellable events. */
 export interface SchedulerWindow {
-  beat: { start: number; end: number };
-  time: { current: number };
+  /** Quarter-note beat interval to schedule, half-open [start, end). */
+  beat: {
+    /** Inclusive lower boundary in quarter-note beats. */
+    start: number;
+    /** Exclusive upper boundary in quarter-note beats. */
+    end: number;
+  };
+  /** Audio-clock snapshot for this scheduling tick, in seconds. */
+  time: {
+    /** Absolute AudioContext seconds at this scheduling tick. */
+    current: number;
+  };
+  /** Registers an event at absolute AudioContext `when` seconds for transport cancellation. */
   own(event: CancellableEvent, when: number): void;
 }
 
@@ -38,8 +53,11 @@ export type TransportChangeType = "start" | "stop" | "pause" | "resume" | "seek"
  * `when`: where it starts, resumes, pauses or jumps to, `0` for a stop, and for a tempo change the beat the changed curve passes at `when`.
  */
 export type TransportChange = Readonly<{
+  /** Transport operation that produced this notification; redundant operations emit nothing. */
   type: TransportChangeType;
+  /** Absolute AudioContext seconds at which the change takes effect. */
   when: number;
+  /** Quarter-note beat position at the effective audio time; 0 on stop. */
   beat: number;
 }>;
 
@@ -48,6 +66,7 @@ export type TransportChange = Readonly<{
  * with `window.own`; `reset` runs when the transport jumps, with the reason, after owned events are cancelled.
  */
 export interface Scheduler {
+  /** Fills one half-open beat window using the supplied beat/audio-time mapping. */
   schedule(window: SchedulerWindow, timing: BeatTiming): void;
   /**
    * Called before the transport state changes, after owned events are cancelled. "start": `clock.start()` was called (the first window begins at its
@@ -97,16 +116,21 @@ export interface ClockOptions<TRulers extends Record<string, Ruler<unknown, unkn
   timeline?: Timeline<TRulers>;
   /** The AudioContext (or any `{ currentTime }`): the Clock creates and owns its own Timeline. `audioContext` is the same option under Timeline's name. */
   context?: TimeSource;
+  /** Alternative to context for creating an owned Timeline; omit when supplying timeline. */
   audioContext?: TimeSource;
   /** Starting tempo of the Clock's own Timeline. Default 120. Only with `context`. */
   bpm?: number;
   /** Time signature, `clock.meter`'s starting value. Default `[4, 4]`. */
   meter?: TimeSignature;
+  /** Scheduling horizon in seconds; defaults to 0.1. */
   lookAhead?: number;
+  /** Worker wake-up period in seconds; defaults to 0.025. */
   tickInterval?: number;
   /** Called with every window. Optional: schedulers can instead follow the clock with `attach`. */
   onTick?: (window: TickWindow<TRulers>) => void;
+  /** Optional callback for an interval missed by the scheduling loop; bounds are audio-clock seconds. */
   onMiss?: (gap: MissedGap) => void;
+  /** Borrowed tick driver; defaults to an owned WorkerTickSource. */
   tickSource?: TickSource;
 }
 

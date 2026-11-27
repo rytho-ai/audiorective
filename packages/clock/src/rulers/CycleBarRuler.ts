@@ -4,7 +4,9 @@ import { assertFiniteOffset, assertPositiveLength, beatsPerBar, cycleGridPoints 
 import type { CycleGridPoint, Ruler } from "./Ruler";
 
 export interface CycleBarRulerOptions {
+  /** Positive meter numerator, counted in denominator note values per bar. */
   numerator: number;
+  /** Positive meter denominator; 4 denotes a quarter note. */
   denominator: number;
   /** Cycle length, in bars. */
   bars: number;
@@ -24,7 +26,9 @@ export interface CycleBarPoint {
 }
 
 export interface CycleSpan {
+  /** Inclusive cycle-relative boundary in quarter-note beats. */
   fromCycle: number;
+  /** Exclusive cycle-relative boundary in quarter-note beats. */
   toCycle: number;
   /** Converts a cycle-relative position back to absolute audio-clock time for this pass. */
   toTime(cyclePosition: number): number;

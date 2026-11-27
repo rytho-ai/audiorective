@@ -1,8 +1,9 @@
-import type { MidiSink } from "./midi-sink";
+import { SamplerSink, type MidiSink } from "./midi-sink";
 import { fadeSeconds, minLead, playbackLead, stopSource, VoiceGain } from "./internal/playback-gain";
 import type { TickWindow, Timeline } from "@audiorective/clock";
 import { AutomationBinding, AutomationCurve, audioParamTarget, type AutomationPoint } from "@audiorective/core/automation";
-import { controllerMessagesIn } from "./controller-lane";
+import { chaseMessages, claimController, controllerRestOf, controllerStateKey } from "@audiorective/midi";
+import { controllerLaneKey, controllerMessagesIn, controllerStartMessage, messageLaneKey } from "./controller-lane";
 import { loopWrapMessages, type LoopFold, type LoopSegment } from "./arrangement-loop";
 import { clipGainAt } from "./clip-envelope";
 import { scheduleClipEnvelope } from "./schedule-clip-envelope";
@@ -13,6 +14,11 @@ import type { SecondsRange } from "./project-edits";
 import type { AudioMedia } from "./media";
 import type { TempoMap } from "./tempo-map";
 import { audioChunkSeconds, type AudioClipWindow, type AudioHandle, type TrackRuntime } from "./track-runtime";
+
+/** The latest message playback sent a device for one state key, when, and what puts it back at rest (undefined for a controller that is never reset). */
+type DeviceState = { data: Uint8Array; rest?: Uint8Array; atRest: boolean; when: number };
+
+const sameMessage = (a: Uint8Array, b: Uint8Array) => a[0] === b[0] && a[1] === b[1] && (a[2] ?? 0) === (b[2] ?? 0);
 
 /**
  * Turns clips into scheduled Web Audio sources: arrangement windows, media chunk loading and
@@ -34,6 +40,14 @@ export class ClipScheduler {
   private readonly loading = new Set<Promise<void>>();
   /** Devices that were sent MIDI since the last `settled()`. */
   private readonly messaged = new Set<MidiSink>();
+  /**
+   * Per device, what playback has set (a controller, pitch bend, pressure, a program: whatever `controllerStateKey` names) as the latest message sent for it
+   * (the one with the latest time), that time, and the message that puts it back at rest when it has a rest value (`rest`; the curated performance controllers
+   * only). A run that begins compares what its position needs with this and sends the difference; a stop or pause puts every `rest` back.
+   */
+  private readonly state = new Map<MidiSink, Map<string, DeviceState>>();
+  /** The next segment of every track begins a run: the arrangement was switched back on, so the devices are brought to what its position needs. */
+  private chasePending = false;
   private refolds = 0;
   /**
    * The cut of the last live clip edit that faded a sounding source: that source fades out from `at`, and a source that takes over from it starts no
@@ -105,29 +119,167 @@ export class ClipScheduler {
         if (runtime.session?.playingAt(when)) return;
         window.own(host.scheduleMidi(data, when), when);
         this.messaged.add(host);
+        this.note(host, data, when);
+      };
+      // A track lane replaces the clips' own events for the same controller (the lane wins, as an automation lane does over clip content in a DAW).
+      const laneKeys = new Set(runtime.controllerLanes.map(controllerLaneKey));
+      const clipOwns = (data: Uint8Array) => {
+        const key = messageLaneKey(data);
+        return key === undefined || !laneKeys.has(key);
       };
       for (const segment of segments) {
         // A note-off at the wrap goes first, so a note restarting on that exact time is not cut by it.
         if (fold.region && segment.cycle >= 0 && segment.beatStart <= fold.region.startBeat + 1e-9) {
           const when = timeline.beatToTime(segment.transportStart);
-          for (const data of loopWrapMessages(runtime.clips, fold.region)) send(data, when);
+          for (const data of loopWrapMessages(runtime.clips, fold.region)) if (clipOwns(data)) send(data, when);
+        }
+        // At one time: note-offs, then program changes, then controllers and bend, then note-ons, so a note always sounds with the program and controllers of its beat.
+        const queue: Array<{ when: number; rank: number; data: Uint8Array }> = [];
+        const enqueue = (data: Uint8Array, when: number) => {
+          const status = data[0] & 0xf0;
+          const bank = status === 0xb0 && (data[1] === 0 || data[1] === 32);
+          const rank = status === 0x80 || (status === 0x90 && data[2] === 0) ? 0 : bank ? 0.9 : status === 0xc0 ? 1 : status === 0x90 ? 3 : 2;
+          queue.push({ when, rank, data });
+        };
+        // A segment that begins a run (the start, a seek, a loop wrap, the arrangement switched back on) first brings the device to what the position needs.
+        const begins =
+          (this.chasePending && segment === segments[0]) ||
+          (segment.cycle < 0
+            ? Math.abs(segment.transportStart - fold.originTransport) < 1e-9
+            : !!fold.region && segment.beatStart <= fold.region.startBeat + 1e-9);
+        if (begins) {
+          const needed = this.neededAt(runtime, segment.beatStart);
+          const at = timeline.beatToTime(segment.transportStart);
+          let order = 0;
+          // The chase goes before the segment's own messages at its time, in the order the song set them (a bank select before its program change).
+          for (const data of this.chase(host, needed, window.time.current)) queue.push({ when: at, rank: 0.5 + order++ * 1e-6, data });
         }
         for (const clip of runtime.clips) {
           if (clip.kind !== "midi") continue;
           for (const event of clip.playbackEvents()) {
             const beat = clip.time + event.beat;
             if (beat < segment.beatStart - 1e-8 || beat >= segment.beatEnd - 1e-8) continue;
-            send(event.data, timeline.beatToTime(segment.transportStart + beat - segment.beatStart));
+            if (clipOwns(event.data)) enqueue(event.data, timeline.beatToTime(segment.transportStart + beat - segment.beatStart));
           }
         }
-        // Controller lanes: a segment that begins a run (the start, a seek or a loop wrap) first sets each lane to the value in force there.
-        const begins =
-          segment.cycle < 0
-            ? Math.abs(segment.transportStart - fold.originTransport) < 1e-9
-            : !!fold.region && segment.beatStart <= fold.region.startBeat + 1e-9;
-        for (const lane of runtime.controllerLanes)
-          for (const { beat, data } of controllerMessagesIn(lane, segment.beatStart, segment.beatEnd, begins))
-            send(data, timeline.beatToTime(segment.transportStart + beat - segment.beatStart));
+        for (const lane of runtime.controllerLanes) {
+          const messages = controllerMessagesIn(lane, segment.beatStart, segment.beatEnd, begins);
+          // The first message of a beginning segment is the lane's start value, which the chase already decided.
+          for (const { beat, data } of begins && controllerStartMessage(lane, segment.beatStart) ? messages.slice(1) : messages)
+            enqueue(data, timeline.beatToTime(segment.transportStart + beat - segment.beatStart));
+        }
+        queue.sort((a, b) => a.when - b.when || a.rank - b.rank);
+        for (const { data, when } of queue) send(data, when);
+      }
+    }
+    this.chasePending = false;
+  }
+
+  /**
+   * The state the Arrangement needs on `runtime`'s track at `beat`: the latest message for each controller key the clips set before it (a lane replaces its clips'
+   * events for its controller, with its value in force or its rest value before its first point).
+   */
+  private neededAt(runtime: TrackRuntime, beat: number): Map<string, Uint8Array> {
+    const laneKeys = new Set(runtime.controllerLanes.map(controllerLaneKey));
+    const events: Array<{ beat: number; data: Uint8Array }> = [];
+    for (const clip of runtime.clips)
+      if (clip.kind === "midi")
+        for (const event of clip.playbackEvents()) {
+          const key = messageLaneKey(event.data);
+          if (key === undefined || !laneKeys.has(key)) events.push({ beat: clip.time + event.beat, data: event.data });
+        }
+    const needed = new Map<string, Uint8Array>();
+    for (const { data } of chaseMessages(events, beat - 1e-8)) needed.set(controllerStateKey(data)!, data);
+    for (const lane of runtime.controllerLanes) {
+      const start = controllerStartMessage(lane, beat);
+      if (start) needed.set(controllerStateKey(start)!, start);
+    }
+    return needed;
+  }
+
+  /**
+   * A Session clip stopped or ended and `runtime`'s track returns to the Arrangement at audio time `when`, which plays `beat`: the device is sent everything the
+   * Arrangement needs there, whatever the Session clip left on it (the Session scheduler plays outside this one, so what it set is not known here). Returns the
+   * scheduled messages so a withdrawn change can cancel them.
+   */
+  handBack(runtime: TrackRuntime, when: number, beat: number): Array<{ cancel(): void }> {
+    const host = runtime.midi;
+    if (!host) return [];
+    const handles: Array<{ cancel(): void }> = [];
+    for (const data of this.neededAt(runtime, beat).values()) {
+      handles.push(host.scheduleMidi(data, when));
+      // The Session clip that just stopped puts back its controllers a moment later; what the Arrangement needs stays.
+      claimController(host, data, when);
+      this.messaged.add(host);
+      this.note(host, data, when);
+    }
+    return handles;
+  }
+
+  /** The next window of the arrangement begins a run on every track: it brings each device to what its position needs (the arrangement was switched back on). */
+  requestChase(): void {
+    this.chasePending = true;
+  }
+
+  /**
+   * A seek silenced the devices. A sampler's `allNotesOff` also lifts its pedal (the one thing it forgets), so the pedal state it was last sent is no longer where
+   * it stands and the run that follows sends the position's pedal again; a plug-in keeps its pedal through all-notes-off, and its state stays.
+   */
+  forgetPedals(): void {
+    for (const [host, states] of this.state)
+      if (host instanceof SamplerSink) for (const key of [...states.keys()]) if (key.endsWith(":64") && key.startsWith("cc:")) states.delete(key);
+  }
+
+  /** Records that `data` was sent to `host` for `when`, if it sets something a later run has to compare with. */
+  private note(host: MidiSink, data: Uint8Array, when: number): void {
+    const key = controllerStateKey(data);
+    if (key === undefined) return;
+    const states = this.state.get(host) ?? new Map<string, DeviceState>();
+    this.state.set(host, states);
+    if (when < (states.get(key)?.when ?? -Infinity)) return;
+    const moved = controllerRestOf(data);
+    states.set(key, { data, rest: moved?.rest, atRest: moved?.atRest ?? false, when });
+  }
+
+  /**
+   * What a run that begins at the device `host` has to send, in order, given the `needed` state at its position (one message per state key). A key the device
+   * was last sent exactly this value for, at or before `now`, is skipped; every other needed key is sent. A controller playback moved that nothing at the position
+   * drives goes back to its rest value (only the curated performance controllers have one; selectors, data entry, banks and programs stay where they are).
+   */
+  private chase(host: MidiSink, needed: ReadonlyMap<string, Uint8Array>, now: number): Uint8Array[] {
+    const states = this.state.get(host);
+    const out: Uint8Array[] = [];
+    for (const [key, data] of needed) {
+      const held = states?.get(key);
+      if (held && held.when <= now + 1e-6 && sameMessage(held.data, data)) continue;
+      out.push(data);
+    }
+    if (states)
+      for (const [key, held] of states) {
+        if (needed.has(key) || !held.rest) continue;
+        if (held.atRest && held.when <= now + 1e-6) continue;
+        out.push(held.rest);
+      }
+    return out;
+  }
+
+  /**
+   * Puts every performance controller playback moved off rest back, on each device a message was sent to, at `when`: pedal up, pitch bend centre, pressure and
+   * the controllers of the curated list (`controllerRestValue`) at their rest value. A controller whose last message was a rest value sent at or before `when` is
+   * left alone, and one without a rest value (bank select, data entry, RPN and NRPN selectors, programs) is never touched. A stop or a pause calls it after
+   * the devices' own all-notes-off; a seek does not, because the run that follows chases the position (`chase`).
+   */
+  resetControllers(when: number): void {
+    for (const [host, states] of this.state) {
+      for (const [key, held] of states) {
+        if (!held.rest || (held.atRest && held.when <= when)) continue;
+        try {
+          host.scheduleMidi(held.rest, when);
+          this.messaged.add(host);
+        } catch {
+          // A device that was disposed has nothing to reset.
+        }
+        states.set(key, { data: held.rest, rest: held.rest, atRest: true, when });
       }
     }
   }

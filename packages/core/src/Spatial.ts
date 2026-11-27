@@ -2,12 +2,19 @@ import { AudioProcessor } from "./AudioProcessor";
 import type { Param } from "./Param";
 
 export interface SpatialOptions {
+  /** Distance attenuation law; defaults to "inverse". */
   distanceModel?: DistanceModelType;
+  /** Reference distance in scene units, nonnegative; defaults to 1. */
   refDistance?: number;
+  /** Maximum attenuation distance in scene units, nonnegative; defaults to 10000. */
   maxDistance?: number;
+  /** Dimensionless distance attenuation strength, nonnegative; defaults to 1. */
   rolloffFactor?: number;
+  /** Full-volume cone angle in degrees, 0..360; defaults to 360. */
   coneInnerAngle?: number;
+  /** Outer cone angle in degrees, 0..360; defaults to 0. */
   coneOuterAngle?: number;
+  /** Linear level outside the outer cone, 0..1; defaults to 0. */
   coneOuterGain?: number;
 }
 

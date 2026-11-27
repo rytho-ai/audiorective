@@ -7,23 +7,35 @@ export type { BarRulerHandle, BarRulerOptions, BarRulerTempoMap } from "./bar-ru
 /** Timeline zoom and range gestures. Clip gestures live in `@audiorective/widgets/clip`. */
 
 export type TimelineZoomOptions = Readonly<{
+  /** Scrollable container whose horizontal position anchors zoom gestures. */
   viewport: HTMLElement;
   /** The time-axis element inside the viewport; it may be replaced during onScale. */
   ruler(): HTMLElement | null;
   /** Tracked pixels per second; external changes synchronize the native slider and cancel pending zoom. */
   getScale(): number;
+  /** Applies a positive pixels-per-second scale before the viewport anchor is restored. */
   onScale(pixelsPerSecond: number): void;
+  /** Optional native range input synchronized to the logarithmic zoom scale. */
   slider?: HTMLInputElement;
+  /** Smallest positive pixels-per-second scale; defaults to 2. */
   minScale?: number;
+  /** Largest pixels-per-second scale, greater than minScale; defaults to 2000. */
   maxScale?: number;
   /** Slider text for the current scale. Default: "<n> px/s". */
-  labels?: Partial<{ scale(pixelsPerSecond: number): string }>;
+  labels?: Partial<{
+    /** Formats pixels per second for the slider; defaults to rounded "<n> px/s". */
+    scale(pixelsPerSecond: number): string;
+  }>;
 }>;
 
 export interface TimelineZoomHandle {
+  /** Queues a clamped pixels-per-second scale, anchored at clientX pixels or the viewport center. */
   zoomTo(pixelsPerSecond: number, clientX?: number): void;
+  /** Multiplies the current scale by a positive factor, preserving the pointer or center anchor. */
   zoomBy(factor: number, clientX?: number): void;
+  /** Discards pending zoom work without changing the current scale. */
   cancel(): void;
+  /** Releases resources owned by this attachment or view; safe to call twice. */
   dispose(): void;
 }
 
@@ -32,7 +44,9 @@ export type TimelineRange = readonly [start: number, end: number];
 export type TimeRangeGestureOptions = Readonly<{
   /** Map pointer X to timeline time, including any duration limits and grid snapping. */
   timeAt(clientX: number, bypassSnap: boolean): number;
+  /** Reports an ordered half-open interval in timeline seconds; undefined clears the preview. */
   onPreview(range: TimelineRange | undefined): void;
+  /** Commits a nonempty half-open interval in timeline seconds after pointer release. */
   onSelect(range: TimelineRange): void;
 }>;
 

@@ -10,7 +10,9 @@ export interface CycleTimeRulerOptions {
 }
 
 export interface CycleTimePoint {
+  /** Zero-based repetition of the seconds region; may be negative before its origin. */
   cycle: number;
+  /** Elapsed seconds within this cycle, from 0 up to its duration. */
   secondsInCycle: number;
   /** Position within the cycle, in [0, 1). */
   phase: number;

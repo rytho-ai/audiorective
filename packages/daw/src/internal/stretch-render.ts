@@ -12,31 +12,45 @@ import type { AudioClip } from "../model";
 export const renderPrefix = "audiorective/render/";
 
 export type StoredRender = {
-  /** The WAV in the archive and where the clip's audio starts in it, in frames. */
+  /** Archive path of the stored rendered WAV. */
   path: string;
+  /** Start of this clip in the stored WAV, in sample frames per channel. */
   offset: number;
-  /** The clip's frames, the sample rate and the channel count. */
+  /** Clip output length in sample frames per channel. */
   frames: number;
+  /** Rendered and original source sample rate in hertz. */
   rate: number;
+  /** Integer audio channel count shared by source and rendered output. */
   channels: number;
-  /** What it was rendered from: the original file's path, the window of that file in frames, and a hash of the window's PCM when it was in memory. */
+  /** Archive path of the original recording used to produce this render. */
   source: string;
+  /** Inclusive original-source window start in sample frames per channel. */
   from: number;
+  /** Original-source window length in sample frames per channel. */
   length: number;
+  /** Hash of the in-memory source PCM; omitted when no PCM hash was recorded. */
   hash?: string;
-  /** The stretch: its ratio and the warp anchors inside the window (source and output frames of the window and the clip). */
+  /** Positive output-duration/source-duration ratio of the rendered stretch. */
   ratio: number;
+  /** Interior source/output sample-frame anchors defining the rendered stretch. */
   anchors: readonly ClipStretchAnchor[];
 };
 
 /** What the standard XML of a stretched clip says, in the units a `StoredRender` states. */
 export type StretchDescription = {
+  /** Archive path of the original audio recording. */
   source: string;
+  /** Inclusive original-source window start in sample frames per channel. */
   from: number;
+  /** Original-source window length in sample frames per channel. */
   length: number;
+  /** Rendered clip length in sample frames per channel. */
   output: number;
+  /** Audio sample rate in hertz. */
   rate: number;
+  /** Integer number of audio channels. */
   channels: number;
+  /** Interior source/output sample-frame anchors reconstructed from the standard warp XML. */
   anchors: readonly ClipStretchAnchor[];
 };
 

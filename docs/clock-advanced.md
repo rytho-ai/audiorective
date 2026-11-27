@@ -34,7 +34,7 @@ pattern.update((d) => {
 ### `ClockOptions`
 
 ```typescript
-interface ClockOptions<TRulers> {
+interface ClockOptions<TRulers extends Record<string, Ruler<unknown, unknown>>> {
   timeline?: Timeline<TRulers>; // borrow this Timeline ...
   context?: TimeSource; // ... or create one from this AudioContext (alias: audioContext)
   bpm?: number; // starting tempo of the created Timeline. Default 120; only with `context`
@@ -58,7 +58,7 @@ Keep `tickInterval` below `lookAhead`. `tickInterval` has no effect when you pas
 
 A grid point's **`when`** is an absolute `AudioContext` timestamp in seconds. Pass it directly to core's players: `trigger({ when })` or `start(when)`.
 
-```typescript
+```typescript prelude=window:TickWindow
 for (const { when } of window.rulers.bar.grid(16)) {
   sampler.trigger({ when }); // Sampler
   bufferPlayer.start(when); // BufferPlayer takes it positionally
@@ -104,7 +104,7 @@ If you're an LLM writing an `onTick` callback: always iterate `grid()`/`spans()`
 
 `new RangeLoop({ start, end }, when)` maps a half-open source interval onto repeated absolute audio times. Every repeat is measured from the original `when` anchor. The projection leaves the supplied Clock running on its own timeline and works without Workspace or any audio source.
 
-```ts
+```ts prelude=window:TickWindow fragment: application sketch; app-specific classes or callbacks omitted
 const loop = new RangeLoop({ start: 1, end: 2.5 }, context.currentTime + 0.05);
 // Inside your Clock's onTick:
 const audioStart = timeline.beatToTime(window.beat.start);
@@ -128,7 +128,7 @@ clock.beat; // the same, as a plain getter on the Clock: advances while playing,
 
 `timeline.bpm` is a standalone, event-list-backed tempo curve (`TempoParam`) — not an `AudioParam`. It mirrors the Web Audio scheduling methods (`setValueAtTime`, `linearRampToValueAtTime`, `exponentialRampToValueAtTime`, `setTargetAtTime`, `setValueCurveAtTime`, `cancelScheduledValues`, `cancelAndHoldAtTime`) plus a `valueAtTime(t)` query the AudioParam-backed `SchedulableParam` in `@audiorective/core` can never support (Web Audio gives no way to ask an `AudioParam` "what will your value be at time T?"). A direct write — `bpm.value = x` or `bpm.$(x)` — is a step at the current audio time. It leaves later scheduled events intact, so a queued step or ramp still overrides it when its time comes; the Clock refreshes the displayed value from the curve every tick.
 
-```typescript
+```typescript fragment: signature listing, not runnable code
 class TempoParam extends Param<number> {
   setValueAtTime(value: number, time: number): this; // step at an absolute audio time
   linearRampToValueAtTime(value: number, endTime: number): this; // linear in time from the previous event to `value` at `endTime`
@@ -239,7 +239,7 @@ clock.start(undefined, -0.5); // beat 0, the first launch boundary, is half a be
 
 The default remains unchanged: `Clock` does not cancel sound scheduled by `onTick`, so an unowned event may keep playing for up to the look-ahead interval after `pause()`. For a hard stop or an editable pattern, register a returned event handle with `window.own(event, when)`. `when` is its finite, nonnegative absolute `AudioContext` start time. The handle is a core `CancellableEvent` (`cancel(time?)` and `onEnded(listener)`, re-exported by this package; `time` is when the retraction takes effect, so an event that is already sounding can stop there); Clock drops naturally ended events from its registry. A core `Voice` (from `PadBank.trigger()` in [Pads](./pads.md#pad-bank) or `Sampler.trigger()`) is wrapped as one: `{ cancel: (time) => voice.stop(time), onEnded: (done) => void voice.playing.subscribe((playing) => playing || done()) }`. `Timeline` satisfies core's `BeatTiming`, so it can be passed to `StepSequencer.schedule(window, timing)` without any other package in between.
 
-```typescript
+```typescript prelude=timeline:CycleTimeline
 const clock = new Clock({
   timeline,
   onTick(window) {
@@ -283,8 +283,8 @@ Pausing leaves already-committed **unowned** audio alone: up to `lookAhead` seco
 Musical rulers project the quarter-note beat axis into bars and cycles. Time rulers read the timeline’s pause-aware seconds position directly. Both are **rulers** registered on one Timeline and hold no separate playback position; each reading comes from that shared owner.
 
 ```typescript
-timeline.addRuler("bar", new LinearBarRuler({ numerator: 4, denominator: 4 }));
-timeline.rulers.bar.current.value; // tracked read-only point reading, refreshed every tick -- for UI/visuals
+const withBars = timeline.addRuler("bar", new LinearBarRuler({ numerator: 4, denominator: 4 }));
+withBars.rulers.bar.current.value; // tracked read-only point reading, refreshed every tick -- for UI/visuals
 ```
 
 `current` is the visual-sync surface: a step sequencer lights its current step, a DAW draws its playhead, from the `current` of the ruler that represents the timeline the app is showing.
@@ -309,7 +309,7 @@ The two kinds of ruler yield different grid points, and the difference is the wh
 
 Pass a pattern's length as `division` on a cycle ruler and `step` indexes that pattern directly — the cycle region holds exactly one pass, so no `% length` is needed at the call site:
 
-```typescript
+```typescript prelude=window:TickWindow
 for (const { when, step } of window.rulers.pattern.grid(steps.length)) {
   if (steps[step]) sampler.trigger({ when });
 }
@@ -381,7 +381,7 @@ const wav = await renderTimeline({ seconds: 8, channels: 2, sampleRate: 44100 },
     timeline,
     tickSource, // the one injection -- everything else is the live code
     onTick(window) {
-      for (const { when, step } of window.rulers.pattern.grid(16)) if (pattern[step]) kick.trigger({ when });
+      for (const { when, step } of window.rulers.pattern.grid(16)) if (pattern.value[step]) kick.trigger({ when });
     },
   });
   clock.start(); // inside setup: the first window is emitted as soon as setup returns
@@ -395,7 +395,7 @@ Two rules carry over from live playback. Keep `tickInterval` below the clock's `
 To launch a clip, edit a pattern or change tempo at a named audio time, wrap the injected tick source and run the actions from inside the tick, on the clock's own schedule:
 
 ```typescript
-const actions = [{ at: 2, run: () => launcher.tracks.drums.clips[1].launch({ quantize: "1m" }) }];
+const actions = [{ at: 2, run: () => launcher.tracks.drums.clips[1]?.launch({ quantize: "1m" }) }];
 
 const wav = await renderTimeline({ seconds: 8, channels: 2, sampleRate: 44100 }, (ctx, source) => {
   const tickSource: TickSource = {
@@ -443,7 +443,7 @@ Every assertion is then exact — no tolerances, no polling, no flake.
 
 The two parameters above are the right approach when the code under test _takes_ a `Timeline` or a `Clock`. A class that builds its own — as `apps/web/src/demos/sequencer`'s `DrumMachine` does — shouldn't grow constructor options that exist only for tests (`tickSource` earns its place there because offline rendering needs it; a fake `currentTime` would not). Mock the seams instead:
 
-```typescript
+```typescript fragment: application sketch; app-specific classes or callbacks omitted
 // "now": an own property shadowing the prototype getter on a real context
 let now = 0;
 Object.defineProperty(ctx, "currentTime", { get: () => now, configurable: true });

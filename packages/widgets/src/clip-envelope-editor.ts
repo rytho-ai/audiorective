@@ -2,13 +2,23 @@ import { untracked, type Readable } from "@audiorective/core";
 import { effect } from "./detached-effect";
 
 /** Linear gain and edge fades in clip-local seconds. */
-export type ClipEnvelope = Readonly<{ gain: number; fadeIn: number; fadeOut: number }>;
+export type ClipEnvelope = Readonly<{
+  /** Nonnegative linear amplitude factor; 1 is unity. */
+  gain: number;
+  /** Leading fade length in clip-local seconds, constrained by the remaining clip duration. */
+  fadeIn: number;
+  /** Trailing fade length in clip-local seconds, constrained by the remaining clip duration. */
+  fadeOut: number;
+}>;
 
 export type ClipEnvelopeEditorOptions = Readonly<{
   /** Tracked clip-local seconds; updates mounted fade limits in place. */
   duration: () => number;
+  /** Borrowed reactive settings; the widget reports edits without replacing this reader. */
   envelope: Readable<ClipEnvelope>;
+  /** Reports edited linear gain and second-based fades; caller commits them to the model. */
   onChange(envelope: ClipEnvelope): void;
+  /** Optional captions for gain and fades; omitted entries use built-in English text. */
   labels?: Partial<Record<keyof ClipEnvelope, string>>;
 }>;
 

@@ -27,7 +27,9 @@ export interface RenderTimelineOptions extends RenderOfflineOptions {
 
 /** One closure `renderTimeline` runs at audio time `at` (seconds); a returned promise is awaited while the render is suspended. */
 export interface RenderAction {
+  /** Absolute offline audio-clock time in seconds at which to run the action. */
   at: number;
+  /** Invoked once at the requested offline audio time; may return an asynchronous result. */
   run: () => unknown;
 }
 

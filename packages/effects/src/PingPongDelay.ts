@@ -4,7 +4,9 @@ import { fanout } from "./internal/fanout";
 import { SMOOTHING } from "./internal/smoothing";
 
 export interface PingPongDelayOptions extends EffectOptions {
+  /** Echo spacing in seconds; defaults to 0.25. */
   delayTime?: number;
+  /** Recirculated linear level, 0..0.99; defaults to 0.2. */
   feedback?: number;
   /** Ceiling for delayTime, seconds. Default 1. */
   maxDelay?: number;

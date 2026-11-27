@@ -7,13 +7,17 @@ import type { TimeViewPlugin } from "./types";
 export interface WarpMarkerOptions {
   /** Borrowed snapshots; replacement cancels stale drags and updates retained handles/focus in place. */
   anchors: Readable<readonly WaveStretchAnchor[]>;
+  /** Original source sample-frame rate in hertz. */
   sampleRate: number;
+  /** Total original source sample frames per channel. */
   sourceFrames: number;
+  /** Maps committed output seconds to an original source sample-frame position. */
   sourceFrameAt(outputSeconds: number): number;
   /** Default false; true cancels input while keeping markers visible. */
   disabled?: Readable<boolean>;
   /** One owner edit after release or a key edit; Escape, pointercancel, capture loss and detach cancel previews. */
   onCommit(points: readonly WaveStretchAnchor[]): void;
+  /** Optional accessible marker caption; omitted to use the built-in warp-marker caption. */
   label?: string;
 }
 

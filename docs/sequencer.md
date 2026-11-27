@@ -72,7 +72,7 @@ const seq = new StepSequencer(lanes, {
 - **`transform(hit, random)`** runs just before scheduling and may move, reshape or drop each hit. Move `hit.beat` for musical shifts (tempo-locked: `beat: hit.beat + 0.125` is always a 32nd late), `hit.when` for millisecond nudges (a fixed `when` push drifts when the tempo changes); for a fixed per-step push the simplest is `swing` or `steps[i].offset`, which need no code. `random(key?)` is stable for the same `seed`, lane, loop, index and `key`, so a re-queued hit gets the same number. If the transform reads state that can change (a humanize amount, a mode flag), call `clock.refresh()` (`workspace.transport.refresh()` for a Workspace) after changing it: a running sequencer re-queues pending hits only for its own edits. Details and validation in [advanced](./sequencer-advanced.md#custom-transform).
 - **Seeding.** `seed` (default 0) fixes `chance` draws and `random`. The `random` option replaces the `chance` draw with a sequential source that changes on re-queue; use it only to script exact draws in tests.
 - **Teardown.** `seq.dispose()` (also `using seq = ...`, or the `signal` option) detaches from every transport, retracts pending hits and runs their cleanups, releases lane outputs and removes listeners. The transport keeps running, so dispose the sequencer, not a clock others share. A disposed sequencer cannot be attached again.
-- **Shared transports.** One sequencer attached to two clocks queues on both. See [advanced](./sequencer-advanced.md#sharing-a-transport) and [Clock](./clock.md#attach-several-schedulers).
+- **Shared transports.** One sequencer attached to two clocks queues on both. See [advanced](./sequencer-advanced.md#sharing-a-transport) and [Clock](./clock-advanced.md#attach-several-schedulers).
 
 ## Standalone drum machine
 
@@ -131,7 +131,7 @@ The same wiring runs in `packages/sequencer/tests/drum-machine-doc.browser.test.
 
 ## When not to use it
 
-`StepSequencer` fits lanes of steps with per-step velocity, offset, length, repeat, pitch and chance. For per-lane state machines, polyrhythm rules of your own or note logic that is not a step edit, schedule directly: iterate `window.rulers.<name>.grid(division)` in a `Clock` `onTick`, trigger the sound at each point's `when`, and register the handle with `window.own(hit, when)` so transport edits cut it. See [Clock](./clock.md#own-cancellable-events-when-transport-edits-must-cut-queued-sound).
+`StepSequencer` fits lanes of steps with per-step velocity, offset, length, repeat, pitch and chance. For per-lane state machines, polyrhythm rules of your own or note logic that is not a step edit, schedule directly: iterate `window.rulers.<name>.grid(division)` in a `Clock` `onTick`, trigger the sound at each point's `when`, and register the handle with `window.own(hit, when)` so transport edits cut it. See [Clock](./clock-advanced.md#own-cancellable-events-when-transport-edits-must-cut-queued-sound).
 
 ## Common errors
 

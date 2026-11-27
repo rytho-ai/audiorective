@@ -2,7 +2,9 @@ import type { Readable } from "@audiorective/core";
 
 /** A tracked value that can also be written. `Param` and `Cell` satisfy it. */
 export interface WritableValue<T> {
+  /** Tracked accessor for the current state; reads the same value as `.value`. */
   readonly $: () => T;
+  /** Mutable tracked state; writes update the borrowed owner's value directly. */
   value: T;
 }
 
@@ -26,6 +28,7 @@ export interface PlayerTimeline {
 
 /** The smallest surface a plain player UI needs. The widget borrows it and never ends its life. */
 export interface PlayerLike {
+  /** Borrowed reactive playback flag; true may include a queued future start. */
   readonly isPlaying: Readable<boolean>;
   /**
    * Start or resume. Reject (or throw) when playback could not start; the widget shows the reason.
@@ -38,6 +41,7 @@ export interface PlayerLike {
   readonly resumes?: boolean;
   /** Linear gain 0..1. Omit for no volume control. */
   readonly volume?: WritableValue<number>;
+  /** Optional borrowed beat/audio-time mapping; absent when the player is unattached. */
   readonly timeline?: PlayerTimeline;
   /** Notifications for changes no tracked value reports (e.g. a seek while paused on a clock-derived position). */
   subscribe?(listener: () => void): () => void;
@@ -45,6 +49,7 @@ export interface PlayerLike {
 
 /** One coherent state to draw. All numbers are finite. */
 export interface PlayerFrame {
+  /** Playback flag for this render frame; false shows stopped or paused controls. */
   readonly isPlaying: boolean;
   /** False: the halt control stops rather than pauses. */
   readonly resumes: boolean;
@@ -74,12 +79,14 @@ export interface PlayerActions {
   commit(): void;
   /** Abandon the gesture without seeking. */
   cancel(): void;
+  /** Writes a normalized linear user volume, 0..1; 1 is unity. */
   setVolume(value: number): void;
 }
 
 export interface PlayerRendererInstance {
   /** Called once after mounting and again whenever the frame changes. */
   render(frame: PlayerFrame): void;
+  /** Releases resources owned by this attachment or view; safe to call twice. */
   dispose?(): void;
 }
 
@@ -87,7 +94,9 @@ export interface PlayerRendererInstance {
 export type PlayerRenderer = (container: HTMLElement, actions: PlayerActions) => PlayerRendererInstance;
 
 export interface PlayerOptions {
+  /** Borrowed headless player; the view observes state and invokes its commands. */
   player: PlayerLike;
+  /** Optional controls factory; omitted to use the built-in player renderer. */
   renderer?: PlayerRenderer;
   /** Accessible name of the group. Default "Player". */
   label?: string;

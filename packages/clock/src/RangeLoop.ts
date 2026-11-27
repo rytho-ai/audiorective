@@ -1,7 +1,21 @@
-export type LoopRange = Readonly<{ start: number; end: number }>;
+export type LoopRange = Readonly<{
+  /** Inclusive source boundary in seconds; must be finite and nonnegative. */
+  start: number;
+  /** Exclusive source boundary in seconds; must be finite and greater than start. */
+  end: number;
+}>;
 
 /** A half-open window on the source range and its matching absolute audio time. */
-export type LoopSlice = Readonly<{ cycle: number; start: number; end: number; when: number }>;
+export type LoopSlice = Readonly<{
+  /** Zero-based loop pass; increases as the unwrapped beat axis advances. */
+  cycle: number;
+  /** Inclusive source boundary of this slice, in seconds. */
+  start: number;
+  /** Exclusive source boundary of this slice, in seconds. */
+  end: number;
+  /** Absolute AudioContext seconds corresponding to this slice's first beat. */
+  when: number;
+}>;
 
 /** Map one shared source interval onto a continuously advancing audio clock. */
 export class RangeLoop {

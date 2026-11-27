@@ -1,7 +1,15 @@
-import { assertProjectActive, importedBundles, nextProjectId, preservedEntries, validProjectId, validateXmlText } from "./project-persistence";
+import {
+  assertProjectActive,
+  importedBundles,
+  nextProjectId,
+  preservedEntries,
+  registerKeptContent,
+  validProjectId,
+  validateXmlText,
+} from "./project-persistence";
 import { DOMImplementation, DOMParser, XMLSerializer } from "@xmldom/xmldom";
 import type { Document, Element } from "@xmldom/xmldom";
-import { unzipSync, zipSync, Unzip, UnzipInflate } from "fflate";
+import { zipSync, Unzip, UnzipInflate } from "fflate";
 import { untracked } from "@audiorective/core";
 import {
   controllerEvents,
@@ -15,6 +23,7 @@ import {
 } from "./controller-lane";
 import type { NoteInit } from "@audiorective/midi";
 import type { RackEffect, RackMacroSettings } from "./rack-preset";
+import type { DeviceParameterRecord } from "./device-parameters";
 import {
   MidiClip,
   Project,
@@ -45,15 +54,16 @@ import type {
   ProjectMidiEvent,
   ProjectTrack,
 } from "./model";
+import { collectKeptTimed, commitKeptShifts, discardKeptShifts, keptClipSpans, shiftKeptContent, stepKeptShifts } from "./internal/kept-timeline";
 import { decodeWav, encodeWav, mediaFromWav, wavMediaEntry } from "./internal/wav";
 import { sourceXml, unmodeledPoints } from "./internal/source-xml";
-import { decodedAudioFor, pendingAudioFiles, provideDecodedAudio, wavPcmFiles } from "./internal/decoded-audio";
+import { pendingAudioFiles, registerArchiveReaders, wavPcmFiles } from "./internal/decoded-audio";
 import type { DecodedAudioFiles } from "./internal/decoded-audio";
 import { encodedAudioMedia } from "./media";
 import { applySourcePatch, snapshot } from "./internal/patch-source";
 import type { FreshIndex } from "./internal/patch-source";
 import type { GainCurveLink, SourceXml, TrackLink } from "./internal/source-xml";
-import { readWarpPoints, warpKnots, warpTolerance, warpVerdict } from "./internal/nested-audio";
+import { exactWarpRatio, readWarpPoints, warpKnots, warpTolerance, warpVerdict } from "./internal/nested-audio";
 import type { NestedAudioLink, WarpKnot } from "./internal/nested-audio";
 import { noteOpenedStretch } from "./internal/open-stretch";
 import { RenderCollector, hashPcm, readStoredRender, renderMatches, renderPrefix } from "./internal/stretch-render";
@@ -61,7 +71,7 @@ import type { StoredRender } from "./internal/stretch-render";
 import { varispeedAudio } from "./internal/varispeed";
 import { crc32, writeStoredZip } from "./internal/stored-zip";
 import type { StoredZipEntry } from "./internal/stored-zip";
-import { zipDirectory, zipBlobDirectory, safeArchivePath } from "./internal/zip-directory";
+import { zipDirectory, zipBlobDirectory, readZipEntry, safeArchivePath } from "./internal/zip-directory";
 import { arrivalShapes, foldSteps, leavingShapes } from "./internal/point-shape";
 import { ARRIVAL_STATE_VERSION, migrateLeavingToArrival, writesLeavingShapes } from "./internal/legacy-interpolation";
 
@@ -83,7 +93,18 @@ type StoredClip = {
   gainAutomation?: AudioClipGainAutomation;
 };
 type PrivateState = { version: 1 | 2 | 3 | 4; nextId?: number; clips: StoredClip[]; rackMacros?: Record<string, readonly RackMacroSettings[]> };
-type HostManifest = { version: 1; devices: Record<string, { kind: "webclap"; bundleUrl: string }> };
+type HostManifest = {
+  version: 1;
+  devices: Record<
+    string,
+    {
+      kind: "webclap";
+      bundleUrl: string;
+      /** What `RealParameter` has no place for: a parameter's default and whole-number step, by CLAP parameter ID. */
+      parameters?: Record<string, { default: number; step?: 1 }>;
+    }
+  >;
+};
 const midiExpressions = {
   0xa0: "polyPressure",
   0xb0: "channelController",
@@ -119,17 +140,27 @@ function eventFromControl({ time, channel, controller, value, expression }: Cont
 type MediaEntry = { blob: Blob; header: Uint8Array };
 type ArchiveEntries = Record<string, Uint8Array | MediaEntry>;
 export type PortabilityReport = Readonly<{
+  /** Descriptions of content represented by the standard DAWproject elements. */
   standardContent: readonly string[];
+  /** Descriptions of plug-ins another host must provide to reproduce the song. */
   pluginDependencies: readonly string[];
+  /** Interoperability limits and caller warnings, including baseline host-compatibility caveats. */
   limitations: readonly string[];
 }>;
-export type OpenDawProjectResult = Readonly<{ project: Project; warnings: readonly string[] }>;
+export type OpenDawProjectResult = Readonly<{
+  /** Opened project owned by the caller, including preserved content from the archive. */
+  project: Project;
+  /** Non-fatal file-reading or playback limitations in plain sentences; empty when none were found. */
+  warnings: readonly string[];
+}>;
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
 const rackDevicePrefix = "audiorective.insert.";
 const rackDeviceNames: Record<RackEffect["type"], string> = { filter: "Filter", delay: "Ping Pong Delay", eq: "Equalizer" };
 const sourcePrefix = "audiorective/source/";
+/** XML and JSON entries (project.xml, metadata.xml, `audiorective/*.json`): parsed whole, so the Blob reader holds each to 8 MiB and all of them to 32 MiB. */
+const isTextPath = (path: string) => /\.(?:xml|json)$/i.test(path);
 const isAudioPath = (path: string) => path.startsWith("audio/") || path.startsWith(sourcePrefix) || path.startsWith(renderPrefix);
 
 function append(parent: Element, name: string, attrs: Record<string, string | number | boolean> = {}): Element {
@@ -337,9 +368,14 @@ function stretchWarpPoints(clip: AudioClip, tempo: TempoMap): Array<{ local: num
     // A tempo change that falls on a point already there adds nothing.
     if (at > 0 && at < clip.duration && !near(at)) locals.add(at);
   }
-  return [...locals]
+  const points = [...locals]
     .sort((a, b) => a - b)
     .map((local) => ({ local, content: stretch.source.sourceOffset + (local === clip.duration ? map.sourceDuration : map.outputToSource(local)) }));
+  // One speed all along: the end point is where the exact ratio puts the end of the window, a fraction of a frame from the clip's end, so a reader
+  // gets back the ratio and not the quotient of two rounded frame counts (which would drift with every save).
+  if (points.length === 2 && Number.isFinite(stretch.ratio) && stretch.ratio > 0)
+    points[1] = { ...points[1], local: map.sourceDuration * stretch.ratio };
+  return points;
 }
 
 /**
@@ -640,12 +676,39 @@ function prepareDawProject(
           deviceRole: track.kind === "midi" ? "instrument" : "audioFX",
           loaded: true,
         });
+        // The parameter table is the song's own values for the plug-in's parameters (other applications can read them); `parameterID` is the CLAP parameter ID.
+        if (device.parameters.length) {
+          const parameters = append(plugin, "Parameters");
+          for (const record of device.parameters)
+            append(parameters, "RealParameter", {
+              id: `${device.id}-param-${record.id}`,
+              parameterID: record.id,
+              name: record.name,
+              unit: record.normalized ? "normalized" : "linear",
+              min: record.min,
+              max: record.max,
+              value: record.value,
+            });
+        }
         if (device.state.length) {
           const path = `plugins/${device.id}.bin`;
           append(plugin, "State", { path });
           entries[path] = new Uint8Array(device.state);
         }
-        manifest.devices[device.id] = { kind: "webclap", bundleUrl: device.bundleUrl };
+        manifest.devices[device.id] = {
+          kind: "webclap",
+          bundleUrl: device.bundleUrl,
+          ...(device.parameters.length
+            ? {
+                parameters: Object.fromEntries(
+                  device.parameters.map((record) => [
+                    record.id,
+                    { default: record.default, ...(record.step === undefined ? {} : { step: record.step }) },
+                  ]),
+                ),
+              }
+            : {}),
+        };
         index.set(`device:${track.id}:${device.id}`, plugin);
       }
       for (const effect of track.effects) {
@@ -844,12 +907,12 @@ const extensionPath = (id: string) => `extensions/${id}/data.json`;
 const EXTENSION_PATH = /^extensions\/([^/]+)\/data\.json$/;
 
 /** Turn a Project into `.dawproject` file bytes you can download or store. Use it for a song held in memory, in Node or the browser; a song with file-backed audio throws, use `saveDawProjectTo`. */
-export function saveDawProject(project: Project): Uint8Array {
+export function saveDawProject(project: Project): Uint8Array<ArrayBuffer> {
   const { entries, mediaEntries, preserved } = prepareDawProject(project);
   if (mediaEntries.size || preserved.some(([, bytes]) => !(bytes instanceof Uint8Array)))
     throw new Error("Project file-backed audio needs saveDawProjectTo().");
   for (const [path, bytes] of preserved) entries[path] = bytes as Uint8Array;
-  return zipSync(entries, { level: 6 });
+  return zipSync(entries, { level: 6 }) as Uint8Array<ArrayBuffer>;
 }
 
 /** Write a Project as a `.dawproject` file into a stream (a file you picked, a download) without holding the whole file in memory. Use it for large songs and any song with file-backed audio. */
@@ -912,7 +975,7 @@ function readNestedAudio(input: {
   curve?: { points: Element; unit: "seconds" | "beats"; values: GainCurveValues };
   link: NestedAudioLink;
   /** Set when the warp stretches the audio: its time map, and whether the file asks for a pitch-preserving stretch. */
-  stretch?: { knots: WarpKnot[]; pitchPreserving: boolean };
+  stretch?: { knots: WarpKnot[]; pitchPreserving: boolean; exactRatio?: number };
 } {
   const { outer, clips, unit, start, length, tempoBreaks } = input;
   const elapsed = unit === "beats" ? input.toSeconds : (position: number) => position;
@@ -995,7 +1058,7 @@ function readNestedAudio(input: {
   }
   let startSeconds: number;
   let stopSeconds: number;
-  let stretch: { knots: WarpKnot[]; pitchPreserving: boolean } | undefined;
+  let stretch: { knots: WarpKnot[]; pitchPreserving: boolean; exactRatio?: number } | undefined;
   if (found) {
     const points = readWarpPoints(found);
     const from = inner.hasAttribute("playStart") ? numberAttr(inner, "playStart", -Infinity) : 0;
@@ -1017,7 +1080,9 @@ function readNestedAudio(input: {
       });
       if (!knots) throw new Unmodeled("Audio clip whose warp markers run backwards or stand still");
       const algorithm = audio.getAttribute("algorithm");
-      stretch = { knots, pitchPreserving: algorithm === null || algorithm === "stretch" };
+      // One speed over the window: its ratio is the warp's own, not the quotient of the clip's rounded frame counts (see `exactWarpRatio`).
+      const exactRatio = knots.length === 2 ? exactWarpRatio({ points, from, length, start, elapsed }) : undefined;
+      stretch = { knots, pitchPreserving: algorithm === null || algorithm === "stretch", ...(exactRatio === undefined ? {} : { exactRatio }) };
       startSeconds = knots[0].content;
       stopSeconds = knots[knots.length - 1].content;
     }
@@ -1103,6 +1168,83 @@ function readPrivate(bytes: Uint8Array | undefined, warnings: string[]): Private
     warnings.push("Audiorective project details are invalid; standard project data was used.");
     return undefined;
   }
+}
+
+/**
+ * A ClapPlugin's `Parameters` as a device parameter table: a `RealParameter`, `IntegerParameter` or `BoolParameter` with a whole-number `parameterID` (the CLAP ID), a finite `value`
+ * and, for the number kinds, a finite `min` and `max` around it. `defaults` (the sidecar's `parameters`) gives each one's default and step; without it the default is the value.
+ * Anything else is skipped with a warning, and the plug-in's own report replaces the table when it loads.
+ */
+function readDeviceParameters(
+  element: Element | undefined,
+  defaults: Readonly<Record<string, { default?: unknown; step?: unknown }>> | undefined,
+  warn: (message: string) => void,
+): DeviceParameterRecord[] {
+  const table: DeviceParameterRecord[] = [];
+  if (!element) return table;
+  const seen = new Set<string>();
+  let skipped = 0;
+  const foreign = new Set<string>();
+  for (let node = element.firstChild; node; node = node.nextSibling) {
+    if (node.nodeType !== 1) continue;
+    const item = node as Element;
+    const id = item.getAttribute("parameterID") ?? "";
+    const bool = item.tagName === "BoolParameter";
+    const flag = boolText(item.getAttribute("value"));
+    const value = bool ? (flag === null ? Number.NaN : Number(flag)) : Number(item.getAttribute("value"));
+    const min = bool ? 0 : Number(item.getAttribute("min"));
+    const max = bool ? 1 : Number(item.getAttribute("max"));
+    const unit = item.getAttribute("unit");
+    // `normalized` is a 0..1 fraction of the plug-in's range, mapped when the plug-in loads; `linear` or no unit is the plug-in's own value. Any other unit has no mapping here.
+    if (item.tagName === "RealParameter" && unit !== null && unit !== "linear" && unit !== "normalized") {
+      foreign.add(unit);
+      continue;
+    }
+    const known = defaults && Object.hasOwn(defaults, id) ? defaults[id] : undefined;
+    const fallback = typeof known?.default === "number" && Number.isFinite(known.default) ? known.default : value;
+    if (
+      !["RealParameter", "IntegerParameter", "BoolParameter"].includes(item.tagName) ||
+      !/^(?:0|[1-9]\d{0,9})$/.test(id) ||
+      seen.has(id) ||
+      ![min, max, value].every(Number.isFinite) ||
+      min > max ||
+      value < min ||
+      value > max ||
+      (item.getAttribute("value") ?? "") === ""
+    ) {
+      skipped++;
+      continue;
+    }
+    seen.add(id);
+    if (item.tagName === "RealParameter" && unit === "normalized" && max > min) {
+      // Whatever `min` and `max` say, the value is a fraction of the plug-in's range.
+      table.push({
+        id,
+        name: item.getAttribute("name") ?? id,
+        min: 0,
+        max: 1,
+        default: Math.min(1, Math.max(0, (fallback - min) / (max - min))),
+        value: (value - min) / (max - min),
+        normalized: true,
+      });
+      continue;
+    }
+    table.push({
+      id,
+      name: item.getAttribute("name") ?? id,
+      min,
+      max,
+      default: Math.min(max, Math.max(min, fallback)),
+      value,
+      ...(known?.step === 1 || bool || item.tagName === "IntegerParameter" ? { step: 1 as const } : {}),
+    });
+  }
+  if (foreign.size)
+    warn(
+      `parameters with the unit ${[...foreign].map((unit) => `"${unit}"`).join(", ")} cannot be mapped to the plug-in's values and were skipped; the plug-in's saved state sets them.`,
+    );
+  if (skipped) warn(`${skipped} parameter${skipped === 1 ? "" : "s"} in the file could not be read and were skipped.`);
+  return table;
 }
 
 function readHostManifest(bytes: Uint8Array | undefined, warnings: string[]): HostManifest | undefined {
@@ -1327,25 +1469,36 @@ function readMidi(
 
 /** Read `.dawproject` file bytes into a Project, without a Workspace, so it also runs in Node. Use it to inspect or edit a song; use `openWorkspace` to play it. Returns the Project and the warnings for what it kept but cannot play. */
 export function openDawProject(bytes: Uint8Array): OpenDawProjectResult {
+  return readDawProjectBytes(bytes);
+}
+
+/** The most one entry, and all entries together, may hold once unpacked from an archive in memory; each entry is also held to the size its directory declares. */
+/** Frames a decoded compressed file may fall short of the end a clip window asks for (MP3 and AAC decoders drop up to 1105 priming frames and pad the last block). */
+const DECODER_PADDING_FRAMES = 2048;
+const MAX_ENTRY_BYTES = 128 * 1024 * 1024;
+const MAX_UNPACKED_BYTES = 512 * 1024 * 1024;
+/** The Blob reader's limits for XML and JSON entries; every other entry that is not audio (plug-in state, sampler presets) gets `MAX_ENTRY_BYTES` and `MAX_UNPACKED_BYTES`, as in the bytes reader. */
+const MAX_TEXT_ENTRY_BYTES = 8 * 1024 * 1024;
+const MAX_TEXT_BYTES = 32 * 1024 * 1024;
+/** Compressed bytes pushed to the inflater at once. */
+const INFLATE_SLICE = 16 * 1024;
+
+function readDawProjectBytes(bytes: Uint8Array, decoded?: DecodedAudioFiles): OpenDawProjectResult {
   if (!(bytes instanceof Uint8Array) || bytes.length > 128 * 1024 * 1024) throw new Error("Project archive is missing or too large.");
   const directory = zipDirectory(bytes);
+  // The directory's sizes bound the work before any entry is inflated; each entry is then held to its own declared size while it inflates.
   let total = 0;
-  const unpacked = unzipSync(bytes, {
-    filter: (file) => {
-      if (file.name.endsWith("/") && file.originalSize === 0) return false;
-      total += file.originalSize;
-      if (file.originalSize > 128 * 1024 * 1024 || total > 512 * 1024 * 1024) throw new Error("Project archive is too large.");
-      return true;
-    },
-  });
-  // The directory decides what an entry is called; the unpacker keys it by its own reading of the name bytes.
+  for (const entry of directory.values()) {
+    total += entry.size;
+    if (entry.size > MAX_ENTRY_BYTES || total > MAX_UNPACKED_BYTES) throw new Error("Project archive is too large.");
+  }
   const entries: ArchiveEntries = Object.create(null) as ArchiveEntries;
   for (const [name, entry] of directory) {
-    const data = unpacked[entry.zipName];
-    verifyZipEntry(name, entry, data?.length ?? -1, crc32(0xffffffff, data ?? new Uint8Array()));
+    const data = readZipEntry(bytes, entry);
+    verifyZipEntry(name, entry, data.length, crc32(0xffffffff, data));
     entries[name] = data;
   }
-  return parseDawProjectEntries(entries, bytes);
+  return parseDawProjectEntries(entries, decoded);
 }
 
 function verifyZipEntry(name: string, entry: { size: number; crc: number }, size: number, crc: number): void {
@@ -1354,13 +1507,18 @@ function verifyZipEntry(name: string, entry: { size: number; crc: number }, size
 
 /** Read a `.dawproject` Blob or File into a Project, without a Workspace. Use it for a file you picked: large WAV audio stays on disk instead of being copied into memory. */
 export async function openDawProjectBlob(blob: Blob): Promise<OpenDawProjectResult> {
+  return readDawProjectBlob(blob);
+}
+
+async function readDawProjectBlob(blob: Blob, decoded?: DecodedAudioFiles): Promise<OpenDawProjectResult> {
   if (!(blob instanceof Blob) || blob.size < 1 || blob.size > 4 * 1024 * 1024 * 1024) throw new Error("Project archive is missing or too large.");
   const directory = await zipBlobDirectory(blob);
   const entries: ArchiveEntries = Object.create(null) as ArchiveEntries;
   const files = new Map<string, { chunks: (Uint8Array | Blob)[]; size: number; media: boolean }>();
   let failure: unknown;
   let total = 0;
-  let nonMediaTotal = 0;
+  let textTotal = 0;
+  let binaryTotal = 0;
   const byReaderName = new Map([...directory.values()].map((entry) => [entry.zipName, entry] as const));
   const unzip = new Unzip((file) => {
     if (file.name.endsWith("/")) return;
@@ -1377,6 +1535,7 @@ export async function openDawProjectBlob(blob: Blob): Promise<OpenDawProjectResu
     }
     let crc = 0xffffffff;
     const media = isAudioPath(name);
+    const text = !media && isTextPath(name);
     const record = { chunks: [] as (Uint8Array | Blob)[], size: 0, media };
     files.set(name, record);
     file.ondata = (error, chunk, final) => {
@@ -1387,13 +1546,19 @@ export async function openDawProjectBlob(blob: Blob): Promise<OpenDawProjectResu
       if (failure) return;
       record.size += chunk?.length ?? 0;
       total += chunk?.length ?? 0;
-      if (!media) nonMediaTotal += chunk?.length ?? 0;
-      if (record.size > (media ? 0xffffffff : 8 * 1024 * 1024) || nonMediaTotal > 32 * 1024 * 1024 || total > 8 * 1024 * 1024 * 1024) {
+      if (text) textTotal += chunk?.length ?? 0;
+      else if (!media) binaryTotal += chunk?.length ?? 0;
+      if (
+        record.size > (media ? 0xffffffff : text ? MAX_TEXT_ENTRY_BYTES : MAX_ENTRY_BYTES) ||
+        textTotal > MAX_TEXT_BYTES ||
+        binaryTotal > MAX_UNPACKED_BYTES ||
+        total > 8 * 1024 * 1024 * 1024
+      ) {
         failure = new Error("Project archive is too large.");
         return;
       }
       if (record.size > declared.size) {
-        failure = new Error(`Project archive entry is corrupt: ${name}.`);
+        failure = new Error(`Project archive entry is larger than its directory declares: ${name}.`);
         return;
       }
       if (chunk?.length) {
@@ -1423,8 +1588,12 @@ export async function openDawProjectBlob(blob: Blob): Promise<OpenDawProjectResu
   unzip.register(UnzipInflate);
   for (let at = 0; at < blob.size; at += 1024 * 1024) {
     const bytes = new Uint8Array(await blob.slice(at, Math.min(blob.size, at + 1024 * 1024)).arrayBuffer());
-    unzip.push(bytes, at + bytes.length === blob.size);
-    if (failure) throw failure;
+    // A slice of compressed data expands to at most about 1000 times its length: small pushes keep an entry that lies about its size from filling memory in one step.
+    for (let part = 0; part < bytes.length; part += INFLATE_SLICE) {
+      const last = part + INFLATE_SLICE >= bytes.length;
+      unzip.push(bytes.subarray(part, part + INFLATE_SLICE), last && at + bytes.length === blob.size);
+      if (failure) throw failure;
+    }
   }
   if ([...directory.keys()].some((path) => !entries[path])) throw new Error("Project archive is incomplete.");
   const projectXml = entries["project.xml"] instanceof Uint8Array ? decoder.decode(entries["project.xml"]) : "";
@@ -1440,26 +1609,37 @@ export async function openDawProjectBlob(blob: Blob): Promise<OpenDawProjectResu
       entries[path] = new Uint8Array(await entry.blob.arrayBuffer());
     }
   }
-  const first = parseDawProjectEntries(entries, blob);
+  const first = parseDawProjectEntries(entries, decoded);
   const wanted = wavPcmFiles.get(first.project);
   if (!wanted?.size) return first;
-  // A stretched clip needs the PCM of a WAV the first reading kept file-backed: read those files into memory and read the archive again.
-  const decodedWavs = new Map(decodedAudioFor(blob) ?? []);
+  // A stretched clip needs the PCM of the window it plays from a WAV the first reading kept file-backed (and the renders the file holds): read those and read the archive again.
+  const decodedWavs = new Map(decoded ?? []);
   try {
-    for (const [path, wav] of wanted) decodedWavs.set(path, decodeWav(new Uint8Array(await wav.arrayBuffer())));
+    for (const [key, { blob: wav, window }] of wanted) {
+      if (!window) {
+        decodedWavs.set(key, decodeWav(new Uint8Array(await wav.arrayBuffer())));
+        continue;
+      }
+      // Only the window the stretch plays: the original itself stays on disk.
+      const media = mediaFromWav(wav, new Uint8Array(await wav.slice(0, 44).arrayBuffer()));
+      decodedWavs.set(key, { sampleRate: media.sampleRate, channels: await media.readFrames(window.from, window.to - window.from) });
+    }
   } catch (error) {
     first.project.dispose();
     throw error;
   }
   first.project.dispose();
-  const earlier = decodedAudioFor(blob);
-  provideDecodedAudio(blob, decodedWavs);
-  try {
-    return parseDawProjectEntries(entries, blob);
-  } finally {
-    provideDecodedAudio(blob, earlier);
-  }
+  return parseDawProjectEntries(entries, decodedWavs);
 }
+
+registerArchiveReaders({ bytes: readDawProjectBytes, blob: readDawProjectBlob });
+registerKeptContent({
+  shift: (project, edit, verb) => shiftKeptContent(project, sourceXml.get(project), edit, verb),
+  spans: (project, trackId) => keptClipSpans(project, sourceXml.get(project), trackId),
+  commit: (project, entry) => commitKeptShifts(sourceXml.get(project), entry),
+  discard: (project) => discardKeptShifts(sourceXml.get(project)),
+  step: (project, entry, applied) => stepKeptShifts(sourceXml.get(project), entry, applied),
+});
 
 function readExtensionRecord(bytes: Uint8Array): ExtensionRecord | undefined {
   try {
@@ -1486,11 +1666,11 @@ function entryBytes(entries: ArchiveEntries, path: string): Uint8Array | undefin
   return entry;
 }
 
-function parseDawProjectEntries(entries: ArchiveEntries, input: Uint8Array | Blob): OpenDawProjectResult {
+function parseDawProjectEntries(entries: ArchiveEntries, decoded: DecodedAudioFiles | undefined): OpenDawProjectResult {
   const kept: string[] = [];
   keptSink = kept;
   try {
-    return parseProjectEntries(entries, kept, decodedAudioFor(input));
+    return parseProjectEntries(entries, kept, decoded);
   } finally {
     keptSink = undefined;
   }
@@ -1582,6 +1762,9 @@ function parseProjectEntries(entries: ArchiveEntries, kept: string[], browserAud
     metadata: meta.ownerDocument!,
     overlay: false,
     kept,
+    keptTimed: [],
+    keptShifts: [],
+    keptTexts: new Map(),
     tracks: new Map(),
     channelToTrack: new Map(),
     clips: new Map(),
@@ -1610,7 +1793,7 @@ function parseProjectEntries(entries: ArchiveEntries, kept: string[], browserAud
   const matchedAudio = new Set<StoredClip>();
   const decodedFiles = new Map<string, AudioClipSource>();
   const pendingFiles = new Map<string, Blob>();
-  const wavPcmNeeded = new Map<string, Blob>();
+  const wavPcmNeeded = new Map<string, { blob: Blob; window?: { from: number; to: number } }>();
   /** The renders of the file's sidecar, decoded once. A file-backed one is read into memory by `openDawProjectBlob`, which opens the archive again. */
   const renderFiles = new Map<string, ProjectAudio | undefined>();
   const loadRender = (path: string): ProjectAudio | undefined => {
@@ -1621,7 +1804,7 @@ function parseProjectEntries(entries: ArchiveEntries, kept: string[], browserAud
       if (entry instanceof Uint8Array) audio = decodeWav(entry);
       else if (entry) {
         audio = browserAudio?.get(path) ?? undefined;
-        if (!audio && !browserAudio?.has(path)) wavPcmNeeded.set(path, entry.blob);
+        if (!audio && !browserAudio?.has(path)) wavPcmNeeded.set(path, { blob: entry.blob });
       }
     } catch {
       audio = undefined;
@@ -1894,6 +2077,9 @@ function parseProjectEntries(entries: ArchiveEntries, kept: string[], browserAud
           const location = hostManifest?.devices[id];
           if (!location || location.kind !== "webclap" || typeof location.bundleUrl !== "string")
             warnings.push(`WebCLAP device ${id} needs a bundle location.`);
+          const parameters = readDeviceParameters(one(plugin, "Parameters", false), location?.parameters, (message) =>
+            warnings.push(`WebCLAP device ${id}: ${message}`),
+          );
           project.addDevice(track.id, {
             kind: "webclap",
             id,
@@ -1903,6 +2089,7 @@ function parseProjectEntries(entries: ArchiveEntries, kept: string[], browserAud
             version: plugin.getAttribute("pluginVersion") ?? "",
             bundleUrl: location?.kind === "webclap" && typeof location.bundleUrl === "string" ? location.bundleUrl : "",
             state,
+            parameters,
           });
           source.devices.set(id, plugin);
           untrusted.add(id);
@@ -2148,14 +2335,12 @@ function parseProjectEntries(entries: ArchiveEntries, kept: string[], browserAud
             decodedFiles.set(path, decoded);
           }
         }
-        if (nested?.stretch && decoded.media) {
-          // A stretched clip is made from PCM, and this file is read as media: a compressed file (still pending) is decoded by the browser first, as
-          // `openWorkspace` does; a WAV kept file-backed is read into memory by `openDawProjectBlob`. Either way the file is read again with its PCM.
+        if (nested?.stretch && decoded.media && pendingFiles.has(path)) {
+          // A stretched clip is made from PCM, and this compressed file is still pending: the browser decodes it first, as `openWorkspace` does, and
+          // the file is read again with its PCM. (A WAV kept file-backed is read by window further down, so the original stays file-backed.)
           const pcm = browserAudio?.get(path);
           if (!pcm) {
-            if (pcm === null || (pendingFiles.has(path) && browserAudio))
-              throw new Unmodeled(`Audio file "${path}" that the browser could not decode`);
-            if (!pendingFiles.has(path) && !(asset instanceof Uint8Array)) wavPcmNeeded.set(path, asset!.blob);
+            if (pcm === null || browserAudio) throw new Unmodeled(`Audio file "${path}" that the browser could not decode`);
             throw new Unmodeled(
               `Audio clip stretched by warp markers, whose audio ("${path}") is decoded when the file is opened with openWorkspace`,
             );
@@ -2169,20 +2354,23 @@ function parseProjectEntries(entries: ArchiveEntries, kept: string[], browserAud
         const windowed = nested !== undefined || clip.hasAttribute("playStart") || clip.hasAttribute("playStop");
         // A window that is not exactly the clip's length means the audio is stretched or looped: the model has a window and a loop, not a ratio.
         const slack = foreign ? 1.5 / rate : 1e-9;
+        // A compressed file decodes a little shorter than the duration its encoder states (priming and padding frames at either end), so a window that
+        // reaches the stated end is accepted up to this many frames past the decoded audio and clamped to it; a longer shortfall means the file is not the one the clip describes.
+        const decoderSlack = browserAudio?.get(path) ? DECODER_PADDING_FRAMES : 0;
         let from = 0;
         let to = frames;
         if (nested?.stretch) {
           // The window is the stretch's: the part of the file the warp markers cover over the clip.
           from = Math.round(nested.startSeconds * rate);
           to = Math.round(nested.stopSeconds * rate);
-          if (nested.startSeconds < -slack || from < 0 || from >= to || from >= frames || to > frames + 1)
+          if (nested.startSeconds < -slack || from < 0 || from >= to || from >= frames || to > frames + 1 + decoderSlack)
             throw new Unmodeled("Audio clip whose warp markers reach outside its audio");
           to = Math.min(to, frames);
         } else if (nested) {
           // The window is the inner clip's: the warp was checked to leave the audio at its speed, so it is as long as the clip.
           from = Math.round(nested.startSeconds * rate);
           to = Math.round(nested.stopSeconds * rate);
-          if (nested.startSeconds < 0 || from >= to || from >= frames || to > frames + 1)
+          if (nested.startSeconds < 0 || from >= to || from >= frames || to > frames + 1 + decoderSlack)
             fail(new Error("Project audio asset does not match its XML metadata."));
           to = Math.min(to, frames);
         } else if (loop) {
@@ -2205,7 +2393,7 @@ function parseProjectEntries(entries: ArchiveEntries, kept: string[], browserAud
           if (
             !(playStart < playStop) ||
             from < 0 ||
-            to > frames + (foreign ? 1 : 0) ||
+            to > frames + (foreign ? 1 : 0) + decoderSlack ||
             from >= to ||
             Math.abs(playStop - playStart - duration) > slack
           )
@@ -2296,11 +2484,40 @@ function parseProjectEntries(entries: ArchiveEntries, kept: string[], browserAud
             if (sourceFrame > last.sourceFrame && outputFrame > last.outputFrame && sourceFrame < sourceFrames && outputFrame < outputFrames)
               interior.push({ sourceFrame, outputFrame });
           }
-          stretched = { ratio: outputFrames / sourceFrames, knots: interior, outputFrames };
+          // The warp's exact ratio is used when it puts the clip's end within a frame and a half of its length; else the frames' quotient is.
+          const exact = nested.stretch.exactRatio;
+          const ratio =
+            exact !== undefined && interior.length === 0 && Math.abs(sourceFrames * exact - outputFrames) <= 1.5
+              ? exact
+              : outputFrames / sourceFrames;
+          stretched = { ratio, knots: interior, outputFrames };
         }
         let added: AudioClip;
-        if (stretched && nested?.stretch && !decoded.media) {
-          const stretch = { ratio: stretched.ratio, source: windowOfRecording(decoded, from, to), anchors: stretched.knots };
+        // A WAV kept file-backed stays the stretch's original: the clip keeps a window of the file, and only the PCM of that window is read, once, to hash
+        // and to make the placeholder (`openDawProjectBlob` reads it and opens the archive again).
+        let windowPcm: ProjectAudio | undefined;
+        const fileBacked = decoded.media ? decoded : undefined;
+        if (stretched && nested?.stretch && fileBacked) {
+          const key = `${path}#${from}:${to}`;
+          windowPcm = browserAudio?.get(key) ?? undefined;
+          if (!windowPcm) {
+            if (asset instanceof Uint8Array) throw new Unmodeled(`Audio file "${path}" that the reader could not read as PCM`);
+            wavPcmNeeded.set(key, { blob: asset!.blob, window: { from: fileBacked.startFrame + from, to: fileBacked.startFrame + to } });
+            throw new Unmodeled(
+              `Audio clip stretched by warp markers, whose audio ("${path}") is decoded when the file is opened with openWorkspace`,
+            );
+          }
+        }
+        if (stretched && nested?.stretch) {
+          const pcmWindow: ProjectAudio = windowPcm ?? windowOfRecording(decoded as ProjectAudio, from, to);
+          const mediaWindow = () =>
+            Object.freeze({
+              sampleRate: rate,
+              media: fileBacked!.media!,
+              startFrame: fileBacked!.startFrame + from,
+              frameCount: to - from,
+            }) as AudioClipSource;
+          const stretch = { ratio: stretched.ratio, source: windowPcm ? mediaWindow() : pcmWindow, anchors: stretched.knots };
           // The file's own render of this clip, when it still describes this stretch: no placeholder, no engine, no warning.
           const stored = aligned ? readStoredRender(match.render) : undefined;
           const render =
@@ -2308,7 +2525,7 @@ function parseProjectEntries(entries: ArchiveEntries, kept: string[], browserAud
             renderMatches(
               stored,
               { source: path, from, length: to - from, output: stretched.outputFrames, rate, channels, anchors: stretched.knots },
-              () => hashPcm(stretch.source.channels),
+              () => hashPcm(pcmWindow.channels),
             )
               ? loadRender(stored.path)
               : undefined;
@@ -2325,14 +2542,14 @@ function parseProjectEntries(entries: ArchiveEntries, kept: string[], browserAud
             };
             added = project.addAudioClip(trackId, audio, time, { ...options, stretch });
           } else {
-            const placeholder = varispeedAudio(windowOfRecording(decoded, from, to), [
+            const placeholder = varispeedAudio(pcmWindow, [
               { sourceFrame: 0, outputFrame: 0 },
               ...stretched.knots,
               { sourceFrame: to - from, outputFrame: stretched.outputFrames },
             ]);
             added = project.addAudioClip(trackId, placeholder, time, {
               ...options,
-              stretch: { ...stretch, source: windowOfRecording(decoded, from, to) },
+              stretch: { ...stretch, source: windowPcm ? mediaWindow() : windowOfRecording(decoded as ProjectAudio, from, to) },
             });
             markVarispeed(added);
             if (nested.stretch.pitchPreserving) noteOpenedStretch(project, { clip: added, name: options.name ?? added.id });
@@ -2701,6 +2918,7 @@ function parseProjectEntries(entries: ArchiveEntries, kept: string[], browserAud
     if (stored?.clips.some((item) => !item.noteIds && !matchedAudio.has(item)))
       warnings.push("Audiorective audio clip details no longer match the arrangement and were skipped.");
     source.overlay = foreign || kept.length > 0;
+    if (source.overlay) source.keptTimed = collectKeptTimed(source, arrangement);
     if (source.overlay) {
       for (const path of decodedFiles.keys()) {
         const entry = entries[path];
@@ -2716,7 +2934,7 @@ function parseProjectEntries(entries: ArchiveEntries, kept: string[], browserAud
       for (const item of stored?.clips ?? []) {
         const render = readStoredRender(item.render);
         const entry = render && entries[render.path];
-        if (render && entry && !(entry instanceof Uint8Array)) wavPcmNeeded.set(render.path, entry.blob);
+        if (render && entry && !(entry instanceof Uint8Array)) wavPcmNeeded.set(render.path, { blob: entry.blob });
       }
       wavPcmFiles.set(project, wavPcmNeeded);
     }

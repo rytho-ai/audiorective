@@ -15,12 +15,29 @@ import type { AutomationBinding } from "@audiorective/core/automation";
 import { loadSource, type WaveLoadProgress, type WaveSourceLoader } from "./source";
 export type { WaveLoadProgress, WaveSourceLoader } from "./source";
 
-export type WaveStretchAnchor = Readonly<{ sourceFrame: number; outputFrame: number }>;
+export type WaveStretchAnchor = Readonly<{
+  /** Source position in sample frames per channel, measured from frame 0. */
+  sourceFrame: number;
+  /** Corresponding output position in sample frames per channel, measured from frame 0. */
+  outputFrame: number;
+}>;
 /** A processor is borrowed; its lifetime belongs to the caller. `TimeStretch` from `@audiorective/effects/time-stretch` satisfies it. */
 export interface WaveStretchProcessor {
-  process(input: AudioBuffer, options: { ratio: number; anchors?: readonly WaveStretchAnchor[]; signal?: AbortSignal }): Promise<AudioBuffer>;
+  /** Returns a stretched buffer; the borrowed processor must honor cancellation when supplied. */
+  process(
+    input: AudioBuffer,
+    options: {
+      /** Positive output-duration / input-duration factor; 1 preserves duration. */
+      ratio: number;
+      /** Optional source/output frame correspondences for nonuniform stretching. */
+      anchors?: readonly WaveStretchAnchor[];
+      /** Optional cancellation signal for this processing request. */
+      signal?: AbortSignal;
+    },
+  ): Promise<AudioBuffer>;
 }
 export interface WavePlayerOptions {
+  /** Borrowed stretch processor; without one stretch requests cannot be processed. */
   stretch?: WaveStretchProcessor;
   /** Optional URL/cache adapter. Files use native loading; the player owns lifecycle and summary. */
   loadSource?: WaveSourceLoader;
@@ -32,9 +49,23 @@ export type Quantize = "none" | `${number}m` | `${number}n`;
 /** The part of a clock's `SchedulerHandle` a player reads; `clock.attach(player)` supplies it. */
 export type PlayerTransport = Readonly<{
   /** `timeToBeat` takes audio-context time in seconds; `beatToTime` returns it. */
-  timeline: { timeToBeat(time: number): number; beatToTime(beat: number): number };
-  state: Readonly<{ value: "stopped" | "playing" | "paused" }>;
-  meter: Readonly<{ value: readonly [number, number] }>;
+  timeline: {
+    /** Maps absolute AudioContext seconds to quarter-note transport beats. */
+    timeToBeat(time: number): number;
+    /** Maps quarter-note transport beats to absolute AudioContext seconds. */
+    beatToTime(beat: number): number;
+  };
+  /** Borrowed transport-state reader used by quantized playback. */
+  state: Readonly<{
+    /** Current playback phase: stopped, playing or paused. */
+    value: "stopped" | "playing" | "paused";
+  }>;
+  /** Borrowed meter reader used to resolve bar-based quantization. */
+  meter: Readonly<{
+    /** Meter tuple [numerator, denominator]; [4, 4] means four quarter notes per bar. */
+    value: readonly [number, number];
+  }>;
+  /** Stops following the clock; later quantized playback requires another attachment. */
   detach(): void;
 }>;
 /** Why a clock resets its schedulers: it started, stopped, paused or jumped, or the scheduler is leaving. */
@@ -58,27 +89,41 @@ export interface WavePlayOptions {
   quantize?: Quantize;
 }
 export interface PlaybackVersion {
+  /** Committed playback revision; changes when a load or stretch result is adopted. */
   readonly revision: number;
+  /** Original-source revision; retained across stretches of the same source. */
   readonly sourceRevision: number;
+  /** Committed playback audio; its duration and frame positions use output coordinates. */
   readonly buffer: AudioBuffer;
+  /** Peak summary of the committed playback buffer, aligned to its sample frames. */
   readonly peaks: PeakSummary;
   /** Requested output duration / original duration, rounded to a whole frame. */
   readonly ratio: number;
 }
 
 /** Seconds in the currently committed playback buffer, independent of any view. */
-export type AudioRange = { start: number; end: number };
+export type AudioRange = {
+  /** Inclusive selection boundary in committed output seconds. */
+  start: number;
+  /** Exclusive selection boundary in committed output seconds. */
+  end: number;
+};
 export type WavePlayerSource = string | File | AudioBuffer;
 /** Observable state. Effects and `useValue` track these; they are read-only, and change through the player's methods. */
 export type WavePlayerCells = {
   /** Committed selection in output seconds; the object is frozen. */
   selection: ReadonlyCell<Readonly<AudioRange> | null>;
+  /** Whether playback repeats its selection or full buffer; initially false. */
   isLooping: ReadonlyCell<boolean>;
   /** Transport flag: true from the moment a start is issued, including one queued for a future `when`, until playback stops. */
   isPlaying: ReadonlyCell<boolean>;
+  /** Whether source loading is in progress; initially false. */
   loading: ReadonlyCell<boolean>;
+  /** Current loading phase and byte progress; null when no load is active. */
   loadProgress: ReadonlyCell<WaveLoadProgress | null>;
+  /** Latest failure text; null when no error is recorded. */
   error: ReadonlyCell<string | null>;
+  /** Whether a stretch request is in progress; initially false. */
   processing: ReadonlyCell<boolean>;
   /** The committed audio/peaks revision; null while empty or loading. */
   version: ReadonlyCell<PlaybackVersion | null>;
@@ -86,7 +131,14 @@ export type WavePlayerCells = {
    * Changes whenever the playhead is moved or restarted (play, pause, stop, seek, loop or selection change, load, stretch): `position` is the playhead at that moment
    * and `startedAt` the audio-context time it began advancing, null while it holds still. While advancing, read `player.position` per frame.
    */
-  playhead: ReadonlyCell<Readonly<{ position: number; startedAt: number | null }>>;
+  playhead: ReadonlyCell<
+    Readonly<{
+      /** Committed output-seconds anchor from which the playhead advances or holds. */
+      position: number;
+      /** Absolute AudioContext seconds when advancement began; null while held. */
+      startedAt: number | null;
+    }>
+  >;
   /** Audio-context time a queued start (a future `when` or a quantize boundary) begins sounding; null once it has begun or when none is queued. */
   startsAt: ReadonlyCell<number | null>;
 };

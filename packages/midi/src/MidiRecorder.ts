@@ -14,9 +14,26 @@ export type NoteLength = Exclude<Quantize, "none">;
 export type MidiRecorderState = "idle" | "armed" | "recording" | "disposed";
 /** The part of a clock's `SchedulerHandle` a recorder reads; `clock.attach(recorder)` supplies it. */
 export type RecorderTransport = Readonly<{
-  timeline: BeatTiming & Readonly<{ bpm?: Readonly<{ value: number }> }>;
-  state: Readonly<{ value: "stopped" | "playing" | "paused" }>;
-  meter: Readonly<{ value: readonly [number, number] }>;
+  /** Borrowed beat/audio-time mapping; tempo metadata may be absent. */
+  timeline: BeatTiming &
+    Readonly<{
+      /** Optional live tempo reader in quarter-note beats per minute. */
+      bpm?: Readonly<{
+        /** Current tempo in quarter-note beats per minute. */
+        value: number;
+      }>;
+    }>;
+  /** Borrowed transport-state reader; recording follows its playing state. */
+  state: Readonly<{
+    /** Current playback phase: stopped, playing or paused. */
+    value: "stopped" | "playing" | "paused";
+  }>;
+  /** Borrowed meter reader used to resolve bar-based recording lengths. */
+  meter: Readonly<{
+    /** Meter tuple [numerator, denominator]; [4, 4] means four quarter notes per bar. */
+    value: readonly [number, number];
+  }>;
+  /** Stops following the transport; subsequent transport changes no longer reach the recorder. */
   detach(): void;
 }>;
 /** Why a clock resets its schedulers: it started, stopped, paused or jumped, or the scheduler is leaving. */

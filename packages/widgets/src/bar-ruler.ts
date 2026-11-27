@@ -3,7 +3,9 @@ import { effect } from "./detached-effect";
 
 /** The beat-to-seconds functions of a tempo map: any object with these two methods, such as `{ beatToSeconds: (b) => (b * 60) / bpm, secondsToBeat: (s) => (s * bpm) / 60 }`. */
 export interface BarRulerTempoMap {
+  /** Maps quarter-note project beats to project seconds, following tempo changes. */
   beatToSeconds(beat: number): number;
+  /** Maps project seconds to quarter-note project beats, following tempo changes. */
   secondsToBeat(seconds: number): number;
 }
 
@@ -25,7 +27,10 @@ export type BarRulerOptions = Readonly<{
   /** Smallest distance in pixels between two bar labels; labels thin out by powers of two below it. Default 56. */
   minLabelSpacing?: number;
   /** Text of a bar label from its one-based bar number. Default: the number. */
-  labels?: Partial<{ bar(bar: number): string }>;
+  labels?: Partial<{
+    /** Formats a 1-based bar number; defaults to the decimal number itself. */
+    bar(bar: number): string;
+  }>;
 }>;
 
 export interface BarRulerHandle {
@@ -33,6 +38,7 @@ export interface BarRulerHandle {
   readonly element: HTMLElement;
   /** Redraw now, for example after the viewport scrolled by script without a scroll event. */
   refresh(): void;
+  /** Releases resources owned by this attachment or view; safe to call twice. */
   dispose(): void;
 }
 

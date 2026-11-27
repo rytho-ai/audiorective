@@ -32,7 +32,7 @@ mic.dispose(); // stops every track and releases the device; `using mic = ...` d
 recorder.dispose();
 ```
 
-Without `onChunk`, `record(options?)` returns `Promise<RecordedAudio>`. `when` is absolute AudioContext seconds (default now; a time already past starts at the first available frame). `length` is seconds, or a note value such as `"4m"` (see below); without it the take runs until `stop({ when? })`. `signal` discards the take with `AbortError`, like `cancel()`. `stop()` ends the take early and resolves `record()` with what was captured; `cancel()` discards it and rejects `record()` with `AbortError`, so an app's Stop button calls `stop()`. All `stop()` failures reject its Promise, so callers can use `.catch()`. On a take with `length`, Stop can only shorten it. `await recorder.ready` preloads AudioWorklet registration before a precise start; it does not mean capture has begun. On a live context, `cells.startedAt` becomes non-null after the worklet starts capturing. A workflow that starts playback only after capture begins can observe that cell; the DAW audio-fallback helper handles this internally. An `OfflineAudioContext` renders only what is armed: wait for `cells.startsAt` to be non-null before `startRendering()`. Whatever is wired to `recorder.input` is processed from the start, armed or not (a silent path pulls it), so a source or automation that reaches only the recorder runs on the audio clock and a take holds what played at that audio time. In an offline render, take delivery is asynchronous: return the take's promise from a [`renderTimeline` action](./clock.md#rendering-offline--rendertimeline) so the render waits for it.
+Without `onChunk`, `record(options?)` returns `Promise<RecordedAudio>`. `when` is absolute AudioContext seconds (default now; a time already past starts at the first available frame). `length` is seconds, or a note value such as `"4m"` (see below); without it the take runs until `stop({ when? })`. `signal` discards the take with `AbortError`, like `cancel()`. `stop()` ends the take early and resolves `record()` with what was captured; `cancel()` discards it and rejects `record()` with `AbortError`, so an app's Stop button calls `stop()`. All `stop()` failures reject its Promise, so callers can use `.catch()`. On a take with `length`, Stop can only shorten it. `await recorder.ready` preloads AudioWorklet registration before a precise start; it does not mean capture has begun. On a live context, `cells.startedAt` becomes non-null after the worklet starts capturing. A workflow that starts playback only after capture begins can observe that cell; the DAW audio-fallback helper handles this internally. An `OfflineAudioContext` renders only what is armed: wait for `cells.startsAt` to be non-null before `startRendering()`. Whatever is wired to `recorder.input` is processed from the start, armed or not (a silent path pulls it), so a source or automation that reaches only the recorder runs on the audio clock and a take holds what played at that audio time. In an offline render, take delivery is asynchronous: return the take's promise from a [`renderTimeline` action](./clock-advanced.md#rendering-offline--rendertimeline) so the render waits for it.
 
 Stop uses **audio time**, not whether the main thread has received the capture-begin notification. It samples `now` once and computes `effective = Math.max(when ?? now, now)`, rounding up to the closing sample frame. Past Stop times therefore mean now, even if they precede the take's start time.
 
@@ -70,7 +70,7 @@ detach();
 
 A take resolves after its end, so a loop made from it starts late. Launch it with `clip.launch({ at: beat })` ([launcher](./launcher.md#launch-as-if-it-started-earlier)) so it plays in phase. Two pure helpers return a new `AudioBuffer` (the target, often a playing clip's `clip.buffer.value`, is not modified) for `clip.configure({ buffer })`, which swaps the playing loop gaplessly:
 
-```typescript
+```typescript prelude=clip:LauncherClip
 import { overdub, punch } from "@audiorective/recorder";
 
 const layered = overdub(clip.buffer.value!, take, { loopStartBeat, bpm }); // sums the take at take.startBeat, wrapping across the loop end
@@ -82,7 +82,7 @@ clip.configure({ buffer: punched });
 
 `fromBeat` and `toBeat` are **absolute transport beats for this capture occurrence**, not offsets inside the loop. For a four-bar loop launched at beat 12, bars 3–4 of its second cycle are beats 36–44: use `punchStartBeat = 36` and `punchEndBeat = 44`, not 8 and 16. Advancing to a later cycle advances the planned range as well as the recording start. Keep that planned range if capture begins late; the helper leaves frames not covered by the take unchanged. For an existing four-bar loop at fixed 120 BPM in 4/4, choose a future bars-3–4 occurrence directly from the shared timeline, without attaching a temporary scheduler:
 
-```typescript
+```typescript prelude=clip:LauncherClip
 const firstPunchBeat = loopStartBeat + 8;
 const earliestBeat = clock.timeline.timeToBeat(context.currentTime + 0.05);
 const cycle = Math.max(0, Math.ceil((earliestBeat - firstPunchBeat) / 16));

@@ -2,6 +2,7 @@ import type { CoreTickWindow } from "../types";
 import type { Ruler, TimelineLike } from "./Ruler";
 
 export interface LinearTimePoint {
+  /** Pause-aware transport position in seconds. */
   seconds: number;
 }
 

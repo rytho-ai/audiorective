@@ -2,7 +2,12 @@ import { resamplePCM } from "@audiorective/core";
 import type { ProjectAudio } from "../model";
 
 /** A point of a stretch's time map in frames of the clip's rate: a source frame and the output frame it lands on. */
-export type FrameKnot = Readonly<{ sourceFrame: number; outputFrame: number }>;
+export type FrameKnot = Readonly<{
+  /** Position in sample frames per channel from the source window start. */
+  sourceFrame: number;
+  /** Corresponding position in sample frames per channel from the stretched output start. */
+  outputFrame: number;
+}>;
 
 /**
  * The audio of a time-stretched clip made by varispeed: every segment between two knots is resampled to the length it has on the timeline, so

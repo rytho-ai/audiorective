@@ -1,7 +1,12 @@
 import { AutomationCurve, type AutomationPoint } from "@audiorective/core/automation";
 
 /** A warp marker mapping a source frame to a stretched output frame; structurally the same as the player's anchor. */
-export type ClipStretchAnchor = Readonly<{ sourceFrame: number; outputFrame: number }>;
+export type ClipStretchAnchor = Readonly<{
+  /** Position in sample frames per channel from the source window start. */
+  sourceFrame: number;
+  /** Corresponding position in sample frames per channel from the stretched output start. */
+  outputFrame: number;
+}>;
 
 export function normalizeClipAnchors(
   anchors: readonly ClipStretchAnchor[],

@@ -2,27 +2,43 @@ import { untracked } from "@audiorective/core";
 import { effect } from "./detached-effect";
 
 export type ParameterValue = {
+  /** Editable amount in the parameter's native units; never implicitly normalized. */
   value: number;
+  /** Optional inclusive native-unit bound; required on the value or widget options. */
   readonly min?: number;
+  /** Optional inclusive native-unit bound; required on the value or widget options. */
   readonly max?: number;
+  /** Optional positive native-unit increment; omission permits continuous editing. */
   readonly step?: number;
+  /** Optional control caption; used unless widget options override it. */
   readonly label?: string;
+  /** Optional native-value formatter; presentation only, without changing stored values. */
   readonly display?: (value: number) => string;
 };
 
 export type ParameterOptions = {
+  /** Borrowed mutable parameter; all edits write directly to its value. */
   param: ParameterValue;
+  /** Inclusive native-unit bound; defaults to param.min and must be finite. */
   min?: number;
+  /** Inclusive native-unit bound; defaults to param.max and must exceed min. */
   max?: number;
+  /** Positive native-unit increment; defaults to param.step, otherwise continuous. */
   step?: number;
+  /** Pointer-to-value mapping; defaults to "linear", and "log" requires a positive minimum. */
   scale?: "linear" | "log";
+  /** Control presentation; defaults to "horizontal". */
   orientation?: "horizontal" | "vertical" | "rotary";
+  /** Accessible caption; defaults to param.label, then "Parameter". */
   label?: string;
+  /** Readout formatter; defaults to param.display, then five-significant-digit text. */
   format?: (value: number) => string;
 };
 
 export interface ParameterHandle {
+  /** Mounted control root; removed when this view is disposed. */
   readonly element: HTMLElement;
+  /** Releases resources owned by this attachment or view; safe to call twice. */
   dispose(): void;
 }
 

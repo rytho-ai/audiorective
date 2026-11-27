@@ -1,7 +1,21 @@
 /** The fields of a recorder chunk that media storage reads; a recorder's output satisfies it. */
-export type AudioMediaChunk = Readonly<{ startFrame: number; channels: readonly Float32Array[] }>;
+export type AudioMediaChunk = Readonly<{
+  /** Absolute capture frame index per channel; successive chunks must be consecutive. */
+  startFrame: number;
+  /** Equal-length non-empty planar float32 PCM channels with finite samples. */
+  channels: readonly Float32Array[];
+}>;
 /** The fields of a finished recorder span that media storage reads. */
-export type AudioMediaSpan = Readonly<{ sampleRate: number; channelCount: number; startFrame: number; endFrame: number }>;
+export type AudioMediaSpan = Readonly<{
+  /** Capture sample rate in hertz; must match the media writer. */
+  sampleRate: number;
+  /** Integer number of captured channels, 1..32; must match the media writer. */
+  channelCount: number;
+  /** Inclusive absolute capture frame index per channel. */
+  startFrame: number;
+  /** Exclusive absolute capture frame index per channel; the span must be covered by written chunks. */
+  endFrame: number;
+}>;
 
 /** The compressed file behind a pending `AudioMedia`, and the archive path it came from. */
 const encodedFiles = new WeakMap<AudioMedia, Readonly<{ blob: Blob; path: string }>>();
@@ -132,8 +146,11 @@ export class AudioMedia {
 }
 
 export interface AudioMediaStorage {
+  /** Appends interleaved little-endian float32 PCM bytes; resolves when the write is accepted. */
   write(bytes: Uint8Array): Promise<void>;
+  /** Closes storage and returns its PCM Blob after all writes complete. */
   finish(): Promise<Blob>;
+  /** Releases unfinished storage, including temporary files; called on cancellation or failure. */
   abort(): Promise<void>;
 }
 

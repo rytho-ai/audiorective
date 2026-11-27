@@ -6,7 +6,9 @@ import type { Instrument } from "./midi-data";
 
 /** Anything that emits `midimessage` events: a `MIDIInput`, or a `MidiKeyboard` (which re-emits hardware messages and its own `press`, `release` and `setSustain`). A `MidiRecorder` records from one. */
 export interface MidiSource {
+  /** Subscribes to raw midimessage events using the browser EventTarget contract. */
   addEventListener(type: "midimessage", listener: EventListener): void;
+  /** Removes the same midimessage listener previously registered with addEventListener. */
   removeEventListener(type: "midimessage", listener: EventListener): void;
 }
 

@@ -289,7 +289,7 @@ For a preset Load button, use `await chain.restore(json, { types, signal? })` on
 A successful restore publishes the complete target order once and queues its existing remove/insert crossfades as one batch behind earlier edits. The chain keeps the same `input` and `output`, so the caller does not reconnect audio, run timers, or write a second fade engine. The promise resolves when that target is committed and queued; the audio handovers can still be running. Edits made by subscribers or after the restore queue behind the whole replacement.
 
 ```typescript
-const types = { Filter, PingPongDelay, Distortion, Equalizer: (c) => new Equalizer(c, { bands }) };
+const types = { Filter, PingPongDelay, Distortion, Equalizer: (c: BaseAudioContext) => new Equalizer(c, { bands }) };
 localStorage.setItem("board", JSON.stringify(chain));
 try {
   const issues = await chain.restore(JSON.parse(localStorage.getItem("board")!), {

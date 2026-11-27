@@ -27,7 +27,7 @@ const clock = new Clock({
     for (const { when, index } of window.rulers.bar.grid(16)) {
       // `when` is already an absolute AudioContext time, which is what
       // core's Sampler takes as `when`
-      if (pattern[index % 16]) sampler.trigger({ when });
+      if (pattern.value[index % 16]) sampler.trigger({ when });
     }
   },
 });
@@ -85,7 +85,7 @@ Four built-ins, crossed along two axes — **unit** (bar vs. raw time) × **topo
 
 Its grid points fold too. A linear ruler yields `{ beat, when, index }` counting forever; a cycle ruler yields `{ beat, when, step, cycle }` where `step` is cycle-relative and `division` means steps _per cycle_. Pass a pattern's length and `step` indexes it directly:
 
-```typescript
+```typescript prelude=window:TickWindow
 for (const { when, step } of window.rulers.pattern.grid(steps.length)) {
   if (steps[step]) sampler.trigger({ when });
 }
@@ -124,7 +124,7 @@ Remedy: raise `lookAhead`.
 
 ## Rendering offline
 
-`renderTimeline(options, setup)` is `renderOffline` for a clock-driven graph: `setup(ctx, tickSource)` builds the `Clock` on the tick source it is handed and starts the transport, and the render is suspended, ticked, and resumed every `tickInterval` (default 25 ms) so the clock keeps emitting windows against the context's real `currentTime`. Keep `tickInterval` below the clock's `lookAhead`, as live. See [`docs/clock.md`](https://github.com/audiorective/audiorective/blob/main/docs/clock.md#rendering-offline--rendertimeline).
+`renderTimeline(options, setup)` is `renderOffline` for a clock-driven graph: `setup(ctx, tickSource)` builds the `Clock` on the tick source it is handed and starts the transport, and the render is suspended, ticked, and resumed every `tickInterval` (default 25 ms) so the clock keeps emitting windows against the context's real `currentTime`. Keep `tickInterval` below the clock's `lookAhead`, as live. See [`docs/clock.md`](https://github.com/audiorective/audiorective/blob/main/docs/clock-advanced.md#rendering-offline--rendertimeline).
 
 ## Design
 

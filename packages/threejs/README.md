@@ -27,7 +27,7 @@ import { createEngine } from "@audiorective/core";
 import { attach } from "@audiorective/threejs";
 
 const engine = createEngine((ctx) => {
-  const synth = new MySynth(ctx);
+  const synth = new Sampler(ctx, { sound: "C4" });
   return { synth };
 });
 
@@ -45,7 +45,7 @@ import { createEngine, Spatial } from "@audiorective/core";
 import { attach, PannerAnchor } from "@audiorective/threejs";
 
 const engine = createEngine((ctx) => {
-  const synth = new MySynth(ctx);
+  const synth = new Sampler(ctx, { sound: "C4" });
   const spatial = new Spatial(ctx, { distanceModel: "inverse" });
   synth.output.connect(spatial.input);
   spatial.output.connect(ctx.destination);
@@ -70,13 +70,13 @@ The anchor does **not** own the panner's lifetime — construct the `Spatial` in
 
 ### Vanilla three.js
 
-`attach` and `PannerAnchor` are plain TypeScript — no React required. See [`apps/sequencer-poc/src/scene/SpatialScene.ts`](../../apps/sequencer-poc/src/scene/SpatialScene.ts) for a worked example: a class that owns its own renderer / scene / camera, calls `attach(engine, renderer)` in the constructor, creates one `PannerAnchor` per track, and bridges core signals into the scene with `effect(...)` from [alien-signals](https://github.com/stackblitz/alien-signals).
+`attach` and `PannerAnchor` are plain TypeScript — no React required. A plain class can own its own renderer / scene / camera, call `attach(engine, renderer)` in the constructor, create one `PannerAnchor` per track, and bridge core signals into the scene with `effect(...)` from [alien-signals](https://github.com/stackblitz/alien-signals).
 
 ### React Three Fiber
 
 `PannerAnchor` is a plain `Object3D`, so it works as a primitive:
 
-```tsx
+```tsx fragment: requires React Three Fiber JSX registration
 import { useRef } from "react";
 import type { Spatial } from "@audiorective/core";
 import { PannerAnchor } from "@audiorective/threejs";
