@@ -9,7 +9,7 @@ import { parseTree, projectXmlOf, treeDifferences } from "./helpers/xml-tree";
 
 /**
  * Audio clips in the form Bitwig Studio writes (tests/fixtures/dawproject/SOURCES.md): an outer Clip around a Clips with one inner Clip that holds
- * the Audio, directly, with a gain Points or inside Warps. `a-bitwig-export` is the song `blueprints/probes/bitwig-roundtrip-001/build-a.mjs`
+ * the Audio, directly, with a gain Points or inside Warps. `a-bitwig-export` is the song a maintainer probe script (kept outside this repository)
  * wrote, edited in Bitwig (Pad late moved from 2.4 s to 7.2 s) and exported, so every other value is the one that script wrote.
  */
 const file = (name: string) => new Uint8Array(readFileSync(fileURLToPath(new URL(`./fixtures/dawproject/${name}`, import.meta.url))));

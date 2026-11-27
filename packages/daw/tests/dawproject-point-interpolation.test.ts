@@ -7,7 +7,7 @@ import { arrivalShapes, foldSteps, leavingShapes } from "../src/internal/point-s
 
 /**
  * A DAWproject point's `interpolation` says how the value ARRIVES at that point from the previous one (Bitwig Studio 6.1.7 reads it so on track volume,
- * clip gain and controller lanes; blueprints/probes/bitwig-roundtrip-001/report.md, section F). The model's `shape` says how a point LEAVES toward the next.
+ * clip gain and controller lanes; maintainer probe bitwig-roundtrip-001, section F). The model's `shape` says how a point LEAVES toward the next.
  */
 const bitwig = new Uint8Array(readFileSync(fileURLToPath(new URL("./fixtures/dawproject/bitwig-6.1.7-interpolation.dawproject", import.meta.url))));
 const xmlOf = (archive: Uint8Array) => strFromU8(unzipSync(archive)["project.xml"]);

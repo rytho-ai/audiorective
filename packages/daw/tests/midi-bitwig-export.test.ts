@@ -1,6 +1,6 @@
 /**
  * `fixtures/midi/d-bitwig-rich-export.mid`: a Standard MIDI File that Bitwig Studio 6.1.7 exported (File > Export MIDI) from a project built with this SDK
- * (`blueprints/probes/bitwig-roundtrip-001/build-rich.mjs`). `d-bitwig-rich-expected.json` is what we wrote into that project.
+ * (by a maintainer probe script kept outside this repository). `d-bitwig-rich-expected.json` is what we wrote into that project.
  * What Bitwig does to it is Bitwig's behaviour, asserted here exactly so a change in our reading is not mistaken for it:
  * - velocity 1..63 comes back one higher, 64..127 unchanged;
  * - tempos are whole microseconds per beat, so 84 BPM becomes 84.000084 and 132 BPM 132.00013;

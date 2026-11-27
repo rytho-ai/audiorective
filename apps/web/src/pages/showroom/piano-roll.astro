@@ -41,6 +41,9 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
   async function example() {
     const token = ++request;
     try {
+      // public/showroom/midi.mid (93 bytes) is hand-built for this repository with the helpers in
+      // packages/midi/tests/midi-fixture.ts: format 1, PPQ 96, 4/4, 120 then 60 BPM at tick 192, C4 (velocity 100)
+      // and G4 (velocity 80, channel 2). No third-party material; MIT, the same licence as the repository.
       const response = await fetch("/showroom/midi.mid");
       if (!response.ok) throw new Error("Example score could not be loaded.");
       const bytes = await response.arrayBuffer();

@@ -1,6 +1,6 @@
 # Bitwig Studio stem excerpts
 
-`click-a.wav`, `click-b.wav` and `master.wav` (92,824 bytes each, 278,472 in all) are excerpts of the three stems Bitwig Studio 6.1.7 exported from a project the maintainer built from generated content (a click on each of two audio tracks; probe `blueprints/probes/bitwig-roundtrip-001`, originals `files/stems/01 Click A.wav`, `02 Click B.wav` and `Master.wav`). Licence: written for this repository, same licence as the repository.
+`click-a.wav`, `click-b.wav` and `master.wav` (92,824 bytes each, 278,472 in all) are excerpts of the three stems Bitwig Studio 6.1.7 exported from a project the maintainer built from generated content (a click on each of two audio tracks; maintainer probe `bitwig-roundtrip-001`, kept outside this repository; originals `files/stems/01 Click A.wav`, `02 Click B.wav` and `Master.wav`). Licence: written for this repository, same licence as the repository.
 
 Evidence of the writer: each file's `LIST/INFO` chunk holds `ISFT` = `Bitwig Studio 6.1.7`, and it carries Bitwig's `BWBM` chunk and a `JUNK` chunk before `fmt `. Format: PCM 24-bit, 2 channels, 44,100 Hz.
 
