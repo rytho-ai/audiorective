@@ -8,7 +8,6 @@ Modular toolkit for web audio development. Independent, composable packages that
 - `docs/` — full API reference per package, also rendered on the site
 - `skills/` — consumer-facing skills (install via `npx skills add audiorective/audiorective`): `audiorective` for building apps, `audio-processor-authoring` for writing processors. See "Skills" below.
 - `evals/` — trigger and functional test sets for the skills, and API-affordance suites (`evals/affordance/`)
-- `.claude/skills/` — contributor skills for developing audiorective itself (not shipped): `ar-affordance` (design an API agents guess right, measured by desire/guess runs), `ar-dogfood` (a fresh agent builds a page from a brief; judge by its friction log), `ar-eval` (measure skill/docs changes and classify failures)
 
 ## Monorepo Structure
 
@@ -190,7 +189,7 @@ The skills are the product's front door for agents, so they're maintained like p
 
 **Evals.** `evals/<skill>/trigger_eval.json` checks the description fires for the right requests and stays quiet for near-misses; `evals/<skill>/evals.json` checks output quality with verifiable expectations. Run them after editing a description or a rule (`evals/README.md`).
 
-**Judging a change.** Agent correctness decides; tokens and cost are reported beside it. Measure isolated from personal Claude settings (the runners' default), with three runs per eval and deterministic checks before the LLM grader (`ar-eval`). Before implementing a reshaped API, list the decisions already made for that component and keep each one unless the maintainer revisits it (`ar-affordance`).
+**Judging a change.** Agent correctness decides; tokens and cost are reported beside it. Measure isolated from personal Claude settings (the runners' default), with three runs per eval and deterministic checks before the LLM grader. Before implementing a reshaped API, list the decisions already made for that component and keep each one unless the maintainer revisits it.
 
 ## Showroom demos
 
