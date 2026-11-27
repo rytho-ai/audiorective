@@ -29,7 +29,7 @@ function host(): HTMLElement {
   return root;
 }
 function context(): AudioContext {
-  const ctx = new AudioContext();
+  const ctx = new AudioContext({ sampleRate: 48_000 });
   disposers.push(() => ctx.close());
   return ctx;
 }

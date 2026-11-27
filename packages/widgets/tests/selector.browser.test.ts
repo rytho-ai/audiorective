@@ -5,7 +5,7 @@ import { mountWaveformSelector, type WaveformSelectorOptions } from "../src";
 import { bandsFile, cleanup, delay, drag, element, host, own, pointer } from "./helpers";
 
 function fixture(options: Partial<Omit<WaveformSelectorOptions, "player" | "createPlayer">> = {}) {
-  const context = new AudioContext();
+  const context = new AudioContext({ sampleRate: 48_000 });
   own(() => context.close());
   const root = host();
   const handle = mountWaveformSelector(root, { createPlayer: () => new WavePlayer(context), ...options });

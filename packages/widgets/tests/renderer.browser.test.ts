@@ -287,7 +287,7 @@ describe("public custom waveform renderers", () => {
   });
 
   test("the complete selector forwards Canvas drawing while retaining loading, selection and owned audio cleanup", async () => {
-    const context = new AudioContext();
+    const context = new AudioContext({ sampleRate: 48_000 });
     own(() => context.close());
     const root = host();
     const custom = canvasRenderer();
@@ -347,7 +347,7 @@ describe("public custom waveform renderers", () => {
   });
 
   test.each(["factory", "initial render"])("a failed %s removes pure-view and selector DOM and disconnects observation", (failure) => {
-    const context = new AudioContext();
+    const context = new AudioContext({ sampleRate: 48_000 });
     own(() => context.close());
     const root = host();
     const sentinel = document.createElement("span");
@@ -439,7 +439,7 @@ describe("public custom waveform renderers", () => {
   });
 
   test("a throwing drawing teardown cannot interrupt selector audio and animation cleanup", async () => {
-    const context = new AudioContext();
+    const context = new AudioContext({ sampleRate: 48_000 });
     own(() => context.close());
     const root = host();
     const custom = canvasRenderer();

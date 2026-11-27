@@ -9,7 +9,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 async function fixture() {
-  const context = new AudioContext();
+  const context = new AudioContext({ sampleRate: 48_000 });
   const player = new WavePlayer(context);
   own(() => context.close());
   own(() => player.dispose());

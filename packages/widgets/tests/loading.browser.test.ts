@@ -10,7 +10,7 @@ afterEach(async () => {
 });
 
 test("shared views render bytes, indeterminate decode and cancellation from the same block", async () => {
-  const context = new AudioContext();
+  const context = new AudioContext({ sampleRate: 48_000 });
   own(() => context.close());
   let report!: Parameters<WaveSourceLoader>[1]["onProgress"];
   let finish!: (buffer: AudioBuffer) => void;
@@ -62,7 +62,7 @@ test("shared views render bytes, indeterminate decode and cancellation from the 
 });
 
 test("owned selector cancellation stops its request and a retry succeeds", async () => {
-  const context = new AudioContext();
+  const context = new AudioContext({ sampleRate: 48_000 });
   own(() => context.close());
   let signal!: AbortSignal;
   let finish!: (response: Response) => void;

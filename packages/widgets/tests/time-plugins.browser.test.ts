@@ -319,7 +319,7 @@ test("an automation overlay edits a shared curve with output-to-source time proj
 });
 
 test("one time plugin mounts on all three views, follows units and cleans up each attachment", async () => {
-  const context = new AudioContext();
+  const context = new AudioContext({ sampleRate: 48_000 });
   own(() => context.close());
   const player = new WavePlayer(context);
   own(() => player.dispose());

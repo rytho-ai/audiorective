@@ -23,7 +23,7 @@ const stretch: WaveStretchProcessor = {
   },
 };
 async function fixture() {
-  const context = new AudioContext(),
+  const context = new AudioContext({ sampleRate: 48_000 }),
     player = new WavePlayer(context, { stretch });
   own(() => context.close());
   own(() => player.dispose());
@@ -96,7 +96,7 @@ test("selector maps source beat grid into committed output seconds before native
 });
 
 test("failed render keeps coherent displayed data and rejects to the caller; a new source resets both views", async () => {
-  const context = new AudioContext();
+  const context = new AudioContext({ sampleRate: 48_000 });
   own(() => context.close());
   const player = new WavePlayer(context, {
     stretch: {
