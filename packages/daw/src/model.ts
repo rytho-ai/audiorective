@@ -10,7 +10,7 @@ import {
   validProjectId,
 } from "./project-persistence";
 import {
-  assertParameterValue,
+  snapParameterValue,
   mergeParameterValues,
   rackSlotParameters,
   rackDeviceId,
@@ -1451,7 +1451,7 @@ export class Project {
       } finally {
         rehearsal.dispose();
       }
-      let run: ProjectEditRun = { copies: {}, createdNotes: [], createdTracks: [], createdScenes: [] };
+      let run: ProjectEditRun = { copies: {}, createdNotes: [], createdTracks: [], createdScenes: [], deviceParameters: [] };
       if (this.editing) {
         // Inside an open edit the ops join its Undo step; the rehearsal above already proved they apply.
         run = runProjectEdits(this, request.ops);
@@ -1726,13 +1726,25 @@ export class Project {
   private appliedReceipt(
     entry: EditEntry | undefined,
     side: "before" | "after",
-    run: ProjectEditRun = { copies: {}, createdNotes: [], createdTracks: [], createdScenes: [] },
+    run: ProjectEditRun = { copies: {}, createdNotes: [], createdTracks: [], createdScenes: [], deviceParameters: [] },
   ): ProjectEditReceipt {
-    const { copies, createdNotes, createdTracks, createdScenes } = run;
+    const { copies, createdNotes, createdTracks, createdScenes, deviceParameters } = run;
     const version = untracked(() => this.cells.version.value);
     const none = { changedTracks: [], removedTracks: [], changedScenes: [], removedScenes: [], song: [] };
     if (!entry)
-      return { status: "applied", version, created: [], createdNotes, createdTracks, createdScenes, changed: [], removed: [], ...none, copies };
+      return {
+        status: "applied",
+        version,
+        created: [],
+        createdNotes,
+        createdTracks,
+        createdScenes,
+        deviceParameters,
+        changed: [],
+        removed: [],
+        ...none,
+        copies,
+      };
     const target = entry[side];
     const source = side === "after" ? entry.before : entry.after;
     const removedTracks = entry.tracks.filter((id) => !target.tracks.has(id));
@@ -1753,6 +1765,7 @@ export class Project {
       createdNotes,
       createdTracks,
       createdScenes,
+      deviceParameters,
       changed: entry.ids.filter((id) => target.clips.has(id) && source.clips.has(id)),
       removed: entry.ids.filter((id) => !target.clips.has(id)),
       changedTracks,
@@ -2557,10 +2570,10 @@ export class Project {
    * Set one parameter of a device to `value`, in the parameter's own units and range (`workspace.deviceParameters(deviceId)` lists the IDs, ranges and values). `deviceId` is a
    * WebCLAP device's ID or, for a built-in rack effect, `rackDeviceId(trackId, slotId)`; a rack effect parameter writes the same Project data `setTrackEffects` does. The value is
    * song content: it is saved, joins the Undo step of the surrounding `project.edit` or `applyEdits` (like every Project edit method it makes no step of its own) and a running Workspace applies it without a rebuild. Setting the value it
-   * already has changes nothing. Throws for an unknown device or parameter, a value outside the range or not a whole number for a stepped parameter, a WebCLAP device whose
+   * already has changes nothing. A stepped parameter (`step: 1`) snaps the value to the nearest whole step from `min` (a tie goes up), so `53.9` applies as `54`; the method returns the value applied. Throws for an unknown device or parameter, a value outside the range, a WebCLAP device whose
    * parameter table is still empty (no Workspace has loaded it yet) and a rack parameter that a macro drives (set the macro with `setTrackMacroValue`).
    */
-  setDeviceParameter(deviceId: string, parameterId: string, value: number): void {
+  setDeviceParameter(deviceId: string, parameterId: string, value: number): number {
     assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.devices.some((device) => device.id === deviceId));
     if (track) {
@@ -2573,15 +2586,15 @@ export class Project {
             : `Project device "${deviceId}" has no parameter table yet; a Workspace lists it once the plug-in has loaded.`,
         );
       }
-      assertParameterValue(record, value);
-      if (record.value === value) return;
+      value = snapParameterValue(record, value);
+      if (record.value === value) return value;
       const parameters = device.parameters.map((item) => (item === record ? Object.freeze({ ...item, value }) : item));
       this.replace(track, {
         devices: Object.freeze(
           track.devices.map((item) => (item === device ? Object.freeze({ ...item, parameters: Object.freeze(parameters) }) : item)),
         ),
       });
-      return;
+      return value;
     }
     const at = splitRackDeviceId(deviceId);
     const owner = at && this.s.tracks.find((item) => item.id === at.trackId);
@@ -2605,6 +2618,8 @@ export class Project {
       keys.add(rackKey(slot.id, parameterId));
       marks.set(owner.id, keys);
     }
+    const row = rackSlotParameters(withRackParameter(slot, parameterId, value)).find(({ id }) => id === parameterId)!;
+    return row.value;
   }
 
   /** Remove a device from its track's chain; the devices after it move up one place. */

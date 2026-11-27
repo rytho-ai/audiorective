@@ -73,11 +73,41 @@ describe("setDeviceParameter on a WebCLAP device", () => {
     project.dispose();
   });
 
-  test("refuses a value outside the range, a fraction on a stepped parameter, an unknown parameter and an empty table", () => {
+  test("a stepped parameter snaps to the nearest whole step and reports it; a continuous one and a rack parameter keep the value", () => {
+    const { project, device, track } = song();
+    expect(project.setDeviceParameter(device.id, "5", 2.4)).toBe(2);
+    expect(value(project, "5")).toBe(2);
+    expect(project.setDeviceParameter(device.id, "5", 2.5)).toBe(3);
+    expect(project.setDeviceParameter(device.id, "3", 53.9)).toBe(53.9);
+    expect(value(project, "3")).toBe(53.9);
+    expect(project.setDeviceParameter(rackDeviceId(track.id, "lp"), "frequency", 1234.5)).toBe(1234.5);
+    expect(project.setDeviceParameter(rackDeviceId(track.id, "lp"), "mode", 0.7)).toBe(1);
+    expect(effect(project, "lp").mode).toBe("highpass");
+    project.dispose();
+  });
+
+  test("a stepped range that does not end on a step never snaps past max", () => {
+    const project = new Project({ bpm: 120 });
+    const track = project.addTrack("K", "midi");
+    const device = project.addDevice(track.id, {
+      kind: "webclap",
+      pluginId: "p",
+      name: "P",
+      vendor: "v",
+      version: "1",
+      bundleUrl: "/p",
+      parameters: [{ id: "1", name: "S", min: 0.5, max: 2.3, default: 0.5, value: 0.5, step: 1 }],
+    });
+    expect(project.setDeviceParameter(device.id, "1", 2.3)).toBe(1.5);
+    expect(project.setDeviceParameter(device.id, "1", 2.2)).toBe(1.5);
+    project.dispose();
+  });
+
+  test("refuses a value outside the range, an unknown parameter and an empty table", () => {
     const { project, device, track } = song();
     expect(() => project.setDeviceParameter(device.id, "3", 128)).toThrow('Project device parameter "3" needs a number from 0 to 127.');
     expect(() => project.setDeviceParameter(device.id, "3", Number.NaN)).toThrow(RangeError);
-    expect(() => project.setDeviceParameter(device.id, "5", 1.5)).toThrow("stepped and needs a whole number");
+    expect(() => project.setDeviceParameter(device.id, "5", 4.5)).toThrow('Project device parameter "5" needs a number from 0 to 4.');
     expect(() => project.setDeviceParameter(device.id, "77", 1)).toThrow(`Project device "${device.id}" has no parameter "77".`);
     const bare = project.addDevice(track.id, { kind: "webclap", pluginId: "b", name: "B", vendor: "v", version: "1", bundleUrl: "/b" });
     expect(() => project.setDeviceParameter(bare.id, "1", 1)).toThrow("has no parameter table yet");
@@ -281,6 +311,26 @@ describe("applyEdits setDeviceParameter", () => {
     expect(project.undo().status).toBe("applied");
     expect(value(project, "3")).toBe(64);
     expect(effect(project, "lp").frequency).toBe(1000);
+    project.dispose();
+  });
+
+  test("a stepped value snaps and the receipt reports the value applied for each operation", () => {
+    const { project, device, track } = song();
+    const receipt = apply(project, [
+      { type: "setDeviceParameter", deviceId: device.id, parameterId: "5", value: 2.695, expectedValue: 1 },
+      { type: "setDeviceParameter", deviceId: device.id, parameterId: "3", value: 53.9 },
+      { type: "setDeviceParameter", deviceId: rackDeviceId(track.id, "lp"), parameterId: "mode", value: 0.6 },
+    ]);
+    expect(receipt.status).toBe("applied");
+    if (receipt.status === "applied")
+      expect(receipt.deviceParameters).toEqual([
+        { deviceId: device.id, parameterId: "5", value: 3 },
+        { deviceId: device.id, parameterId: "3", value: 53.9 },
+        { deviceId: rackDeviceId(track.id, "lp"), parameterId: "mode", value: 1 },
+      ]);
+    expect(value(project, "5")).toBe(3);
+    const rejected = apply(project, [{ type: "setDeviceParameter", deviceId: device.id, parameterId: "5", value: 4.6 }]);
+    expect(rejected.status).toBe("rejected");
     project.dispose();
   });
 

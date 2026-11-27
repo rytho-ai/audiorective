@@ -606,7 +606,7 @@ export type MoveDeviceEdit = Readonly<{
 
 /**
  * Set one parameter of a device to `value`: `deviceId` is a WebCLAP device's ID or a built-in effect's `trackId:slotId`, `parameterId` is the `id` of a row of
- * `read_device_params` (the CLAP id as a string, or `wet`, `frequency`, ...), `value` is in that row's units. `expectedValue` is the value you read: if the parameter holds another
+ * `read_device_params` (the CLAP id as a string, or `wet`, `frequency`, ...), `value` is in that row's units; a `step: 1` row snaps it to the nearest whole step from `min` (a tie goes up) and the receipt's `deviceParameters` lists the value applied, while a value outside `min`..`max` is rejected. `expectedValue` is the value you read: if the parameter holds another
  * value now (the person or the plug-in moved it) the request returns `conflict` with the current value in its reason and changes nothing. The comparison allows a relative
  * tolerance of 1e-6 (an absolute 1e-9 near 0), so a float32 value printed and copied back (`0.30000001` for `0.3`) is not a conflict.
  */
@@ -811,6 +811,15 @@ export type ProjectEditReceipt = Readonly<
         /** Opaque IDs of the added notes, in operation input order. */
         ids: readonly string[];
       }>[];
+      /** Per `setDeviceParameter` operation, in request order: the value actually applied, which differs from the requested `value` when a stepped parameter snapped it (`53.9` applies as `54`). */
+      deviceParameters: readonly Readonly<{
+        /** The device operated on: a WebCLAP device ID or `trackId:slotId` of a built-in effect. */
+        deviceId: string;
+        /** The parameter row `id` that was set. */
+        parameterId: string;
+        /** The value now held, in the parameter's own units. */
+        value: number;
+      }>[];
       /** Per `addTrack` operation, in request order: the new track's ID and its `as` name, if any. */
       createdTracks: readonly Readonly<{
         id: string;
@@ -889,6 +898,7 @@ export type ProjectEditCreatedNotes = {
   /** Opaque IDs of newly added notes in input order. */
   ids: string[];
 }[];
+export type ProjectEditDeviceParameters = { deviceId: string; parameterId: string; value: number }[];
 export type ProjectEditCreated = {
   id: string;
   /** Alias supplied by the creating operation; omitted when no alias was requested. */
@@ -900,6 +910,8 @@ export type ProjectEditRun = {
   copies: ProjectEditCopies;
   /** New note IDs grouped by addNotes operation, in request order. */
   createdNotes: ProjectEditCreatedNotes;
+  /** The value each setDeviceParameter operation applied, in request order. */
+  deviceParameters: ProjectEditDeviceParameters;
   /** New tracks and their optional request-local aliases, in request order. */
   createdTracks: ProjectEditCreated;
   /** New scenes and their optional request-local aliases, in request order. */
@@ -1573,6 +1585,7 @@ type Ctx = {
   project: Project;
   copies: ProjectEditCopies;
   createdNotes: ProjectEditCreatedNotes;
+  deviceParameters: ProjectEditDeviceParameters;
   createdTracks: ProjectEditCreated;
   createdScenes: ProjectEditCreated;
   /** Timeline clips a request moved, resized or created, with the index of the operation that did; the final arrangement is checked for overlap on each. */
@@ -1876,7 +1889,7 @@ function deviceRef(project: Project, op: Rec): string {
 }
 
 /** The row a device-parameter operation names, or the reason it cannot: a WebCLAP device's table row, or a rack effect slot's row. */
-function deviceParameterOp(project: Project, op: SetDeviceParameterEdit): void {
+function deviceParameterOp(project: Project, op: SetDeviceParameterEdit, applied: ProjectEditDeviceParameters): void {
   const deviceId = requiredString(op as unknown as Rec, "deviceId");
   const parameterId = requiredString(op as unknown as Rec, "parameterId");
   const value = requiredNumber(op as unknown as Rec, "value");
@@ -1901,7 +1914,7 @@ function deviceParameterOp(project: Project, op: SetDeviceParameterEdit): void {
       `Parameter "${parameterId}" of device "${deviceId}" is ${row!.value} now, not the ${expected} you read. Read it again and decide whether to still set ${value}.`,
     );
   try {
-    project.setDeviceParameter(deviceId, parameterId, value);
+    applied.push({ deviceId, parameterId, value: project.setDeviceParameter(deviceId, parameterId, value) });
   } catch (error) {
     if (error instanceof RangeError) fail("invalid-operation", error.message);
     throw error;
@@ -2005,7 +2018,7 @@ const RUNNERS: Runners = {
   setMarkers: markersOp,
   removeDevice: (ctx, op) => ctx.project.removeDevice(deviceRef(ctx.project, op)),
   moveDevice: (ctx, op) => ctx.project.moveDevice(deviceRef(ctx.project, op), requiredNumber(op, "index", { integer: true, min: 0 })),
-  setDeviceParameter: (ctx, op) => deviceParameterOp(ctx.project, op),
+  setDeviceParameter: (ctx, op) => deviceParameterOp(ctx.project, op, ctx.deviceParameters),
   addScene: (ctx, op) => {
     const as = claimName(ctx, op);
     const name = optionalString(op, "name");
@@ -2040,6 +2053,7 @@ export function runProjectEdits(project: Project, ops: readonly ProjectEditOpera
     project,
     copies: {},
     createdNotes: [],
+    deviceParameters: [],
     createdTracks: [],
     createdScenes: [],
     moved: new Map<string, number>(),
@@ -2093,6 +2107,6 @@ export function runProjectEdits(project: Project, ops: readonly ProjectEditOpera
     if (kept)
       throw new ProjectEditFailure("overlap", `Clip "${clipId}" would overlap kept clip "${kept.name}", which the file keeps unchanged.`, index);
   }
-  const { copies, createdNotes, createdTracks, createdScenes } = ctx;
-  return { copies, createdNotes, createdTracks, createdScenes };
+  const { copies, createdNotes, createdTracks, createdScenes, deviceParameters } = ctx;
+  return { copies, createdNotes, createdTracks, createdScenes, deviceParameters };
 }

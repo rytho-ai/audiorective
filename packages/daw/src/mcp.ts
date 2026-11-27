@@ -524,7 +524,10 @@ export const EDIT_OP_SPECS: Readonly<Record<ProjectEditOperation["type"], OpSpec
     properties: {
       deviceId: STR('A device ID from read_project (devices), or "trackId:slotId" for a built-in effect (read_project effectDevices).'),
       parameterId: STR("The `id` of a read_device_params row."),
-      value: prop("number", "In the row's units, within its min and max; a stepped row needs a whole number."),
+      value: prop(
+        "number",
+        "In the row's units, within its min and max; a stepped row (`step: 1`) snaps it to the nearest whole step, and the receipt's deviceParameters reports the value applied.",
+      ),
       expectedValue: prop(
         "number",
         "The row's value as you read it; a different current value (beyond a relative 1e-6, so a float32 value copied back still matches) returns status conflict with the current value and changes nothing.",
@@ -1063,10 +1066,20 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
               const lane = track.controllerLanes.find(
                 (item) => item.expression === args.expression && item.channel === args.channel && item.controller === (args.controller ?? 0),
               );
-              if (!lane)
-                return fail(
-                  `Track "${trackId}" has no controller lane ${String(args.expression)} channel ${String(args.channel)}${args.controller === undefined ? "" : ` controller ${String(args.controller)}`}. read_project lists controllerLanes.`,
-                );
+              if (!lane) {
+                const expression = args.expression as ControllerExpression;
+                return toon({
+                  trackId,
+                  expression,
+                  channel: args.channel,
+                  ...(numberedLane(expression) ? { controller: args.controller ?? 0 } : {}),
+                  version,
+                  total: 0,
+                  count: 0,
+                  points: [],
+                  note: "This lane does not exist yet; setControllerLane creates it from points in these rows.",
+                });
+              }
               const laneShape = controllerCurve(project);
               const inside = lane.points.filter((point) => keep(project.tempoMap.beatToSeconds(point.time)));
               return toon({
@@ -1108,7 +1121,7 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
       name: "read_device_params",
       category: "read",
       description:
-        "List the parameters of one device in one shape for a WebCLAP plug-in and a built-in effect: `deviceId` is an ID from read_project `devices`, or `trackId:slotId` from `effectDevices`. Each row has `id`, `name`, `kind` (webclap or rack), `min`, `max`, `default`, `value` (what plays now, in the row's units), and where known `unit`, `step` (1: whole numbers only) and `text` (the plug-in's display string of the value). To change one, send apply_edits `{ type: \"setDeviceParameter\", deviceId, parameterId: row.id, value, expectedValue: row.value }`; `expectedValue` makes a value the person moved meanwhile come back as a conflict instead of being overwritten. A plug-in that has not loaded yet has no rows (ask the person to open the project in the page). The returned `version` is the project version the rows were read at.",
+        "List the parameters of one device in one shape for a WebCLAP plug-in and a built-in effect: `deviceId` is an ID from read_project `devices`, or `trackId:slotId` from `effectDevices`. Each row has `id`, `name`, `kind` (webclap or rack), `min`, `max`, `default`, `value` (what plays now, in the row's units), and where known `unit`, `step` (1: whole numbers; a set value snaps to the nearest one) and `text` (the plug-in's display string of the value). To change one, send apply_edits `{ type: \"setDeviceParameter\", deviceId, parameterId: row.id, value, expectedValue: row.value }`; `expectedValue` makes a value the person moved meanwhile come back as a conflict instead of being overwritten. A plug-in that has not loaded yet has no rows (ask the person to open the project in the page). The returned `version` is the project version the rows were read at.",
       inputSchema: { type: "object", properties: { deviceId: { type: "string" } }, required: ["deviceId"], additionalProperties: false },
       call: guard((args) => {
         const unknown = Object.keys(args).find((key) => key !== "deviceId");
@@ -1135,7 +1148,7 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
         `If the person changed the project since, you get status "conflict" and nothing changes: call read_project, re-plan and send again.`,
         `Operations run in order and the whole request is all-or-nothing: a step that cannot run returns status "rejected" with its opIndex and a code, and nothing changes.`,
         `Positions: atBeat is project beats (quarter notes from the start), atSeconds is project seconds; give atBeat or atSeconds where an operation takes a position (both are accepted when they name the same moment, within 1e-6 s, so a row from read_project goes back unchanged). resizeClip start/end are absolute project beats for every clip; note start/duration, sourceOffset and setClipLoop beats are CONTENT beats (what read_notes shows); setClipSourceRange is content beats for MIDI and seconds of the recording for audio. Volumes, sends and gains are linear gain (0 or more, 1 is unity); pan is -1 (left) to 1 (right).`,
-        `Naming results: give an operation that makes clips, tracks or scenes \`as: "name"\`; later steps select clips as { fromCopy: "name", trackName? } and tracks and scenes as { fromCopy: "name" } in trackId or sceneId. The receipt lists created, changed and removed clip IDs, createdNotes, copies, createdTracks and createdScenes, changedTracks and removedTracks, changedScenes (scenes renamed or moved in the order; a filled slot is a clip in created or changed) and removedScenes, and song (any of tempo, timeSignature, markers, title, masterVolume).`,
+        `Naming results: give an operation that makes clips, tracks or scenes \`as: "name"\`; later steps select clips as { fromCopy: "name", trackName? } and tracks and scenes as { fromCopy: "name" } in trackId or sceneId. The receipt lists created, changed and removed clip IDs, createdNotes, deviceParameters (the value each setDeviceParameter applied), copies, createdTracks and createdScenes, changedTracks and removedTracks, changedScenes (scenes renamed or moved in the order; a filled slot is a clip in created or changed) and removedScenes, and song (any of tempo, timeSignature, markers, title, masterVolume).`,
         `Set-style operations (setTempoChanges, setTimeSignatureChanges, setMarkers, setVolumeAutomation, setControllerLane, setTrackEffects, ...) REPLACE the whole list: read the current one from read_project (read_automation for a curve of more than 32 points) and send the full new list; a row from read_project goes back unchanged.`,
         `Field shapes: clip = { clipId } or { fromCopy, trackId?, trackName?, name? }; trackId, sceneId, afterSceneId, busId, outputBusId = an ID string or { fromCopy } (outputBusId also null); slot = { sceneId, trackId }; notes = [{ pitch 0-127, start, duration, velocity? 0-1 }] in content beats; editNotes notes = [{ id, pitch?, start?, duration?, velocity? }]; range = { startBeat, endBeat } (rippleDelete also { startSeconds, endSeconds }); moveClip position = { atBeat } or { byBeats }; setClipLoop loop = null, { startBeat, endBeat } (MIDI) or { startSeconds, endSeconds } (audio); routing = { outputBusId, sends: [{ busId, gain }] }; tempo changes = [{ beat, bpm }]; time signature changes = [{ beat, numerator, denominator }]; markers = [{ name, atBeat and/or atSeconds }]; volume points = [{ atBeat and/or atSeconds, value, shape? "linear"|"hold" }]; controller lane points = [{ atBeat and/or atSeconds, value (integer), shape? }]; clip gain points = [{ atSourceSeconds, value, shape? }]; effects and preset as read_project shows trackEffects.`,
         `Operations (fields ending in ? are optional):`,
@@ -1206,6 +1219,7 @@ export function mcpTools(workspace: Workspace, options: McpToolsOptions = {}): r
           undoLabel: `${prefix}${label}`,
           created: receipt.created,
           createdNotes: receipt.createdNotes,
+          deviceParameters: receipt.deviceParameters,
           createdTracks: receipt.createdTracks,
           createdScenes: receipt.createdScenes,
           changed: receipt.changed,

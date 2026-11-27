@@ -1,0 +1,183 @@
+{
+  "area": "daw-agent-capabilities",
+  "description": "API-shape experiment for what an agent can do with a running DAW: read and conditionally write device parameters, render chosen tracks, limit and secure the MCP tools, and write controller lanes. Expectations describe behaviour, not names.",
+  "tasks": [
+    {
+      "id": "G1-plugin-cutoff",
+      "prompt": "A browser DAW has an open song as `project` and its running engine as `workspace`. The track called \"Lead\" (its id is `leadTrackId`) plays a synth plug-in that is already loaded. Write `async function darkenLead(): Promise<string>`. It prints every parameter of that plug-in to the console as `name = value (min to max)`, finds the filter cutoff (the parameter whose name contains \"cutoff\" or \"filter freq\", any letter case), and lowers it to 70% of the value it just read. Other people may be turning knobs while this runs: the write must only happen if nobody has changed that cutoff since you read it. If someone has, change nothing and return `changed: <the value it has now>`; otherwise return `set: <old> -> <new>`. The change must be one step of the song's Undo history.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;\ndeclare const leadTrackId: string;",
+      "expectations": [
+        "Lists every parameter of the Lead track's plug-in with its name, current value and range, read from the running engine, without parsing the plug-in's saved state.",
+        "Finds the cutoff parameter by its name, ignoring letter case, among the listed parameters.",
+        "Computes the new value as 70% of the value it read and keeps it inside the parameter's range; the value it reports in `set: <old> -> <new>` is the one the song actually holds afterwards (a parameter that only takes whole numbers ends on a whole number, whether the code rounds or reports what the API applied).",
+        "The write is guarded by the value that was read: it changes nothing and returns the `changed: <value>` result when the cutoff no longer holds that value, and otherwise returns `set: <old> -> <new>`.",
+        "The change is one Undo step and nothing else in the song is changed."
+      ],
+      "checks": [
+        {
+          "expectation": 3,
+          "label": "Guard by the value that was read",
+          "any": ["expectedValue"],
+          "none": ["setTimeout\\(", "setInterval\\("]
+        },
+        {
+          "expectation": 0,
+          "label": "Reads the parameter table from the engine",
+          "any": ["deviceParameters\\("]
+        }
+      ]
+    },
+    {
+      "id": "G2-delay-feedback",
+      "prompt": "A browser DAW has an open song as `project` and its running engine as `workspace`. The track called \"Keys\" (its id is `keysTrackId`) has one built-in delay effect on it (its slot id is `\"echo\"`). Write `async function longerEchoes(): Promise<string>`. It prints every setting of that delay effect to the console as `name = value (min to max)`, then raises its feedback by 0.1 (but never above the largest value the feedback is allowed to have). Someone else may be turning the same knob while this runs: the write must only happen if the feedback still has the value you read. If it has changed, change nothing and return `changed: <the value it has now>`; otherwise return `set: <old> -> <new>`. The change must be one step of the song's Undo history.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;\ndeclare const keysTrackId: string;",
+      "expectations": [
+        "Lists every setting of the Keys track's delay effect with its name, current value and range, read from the song or engine, without hand-parsing the track's effect list.",
+        "Finds the feedback setting of that delay effect (not another setting such as wet or delay time).",
+        "Computes the new value as the old one plus 0.1, capped at the setting's own maximum.",
+        "The write is guarded by the value that was read: it changes nothing and returns the `changed: <value>` result when the feedback no longer holds that value, and otherwise returns `set: <old> -> <new>`.",
+        "The change is one Undo step and the effect's other settings and the rest of the song are unchanged."
+      ],
+      "checks": [
+        {
+          "expectation": 3,
+          "label": "Guard by the value that was read",
+          "any": ["expectedValue"]
+        },
+        {
+          "expectation": 2,
+          "label": "Capped at the maximum",
+          "any": ["Math\\.min\\(", "\\.max\\b"]
+        }
+      ]
+    },
+    {
+      "id": "G3-two-track-peak",
+      "prompt": "A browser DAW has an open song as `project` (4/4, 120 BPM) and its running engine as `workspace`. The song has tracks named \"Drums\", \"Bass\", \"Keys\" and \"Lead\". Write `async function checkKeysAndLead(): Promise<{ peakDb: number; loudnessLufs: number | null }>`. It listens to just the keys and the lead (nothing else sounding, but each still going through its own effects, volume and pan) in bars 5 to 8, offline, and returns the peak level in dBFS and the loudness in LUFS of what it heard. If the song changes while it renders, it must not return numbers for the wrong version: throw an error saying so. It must not change the song, the mute or solo buttons, or the playback that is running.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;",
+      "expectations": [
+        "Renders only the Keys and Lead tracks, through their own effects, volume and pan, without muting or soloing any track and without building a second project.",
+        "Renders exactly bars 5 to 8 (beats 16 to 32 at four beats per bar).",
+        "Renders offline from the running engine's current song version, and throws an error when the song's version has changed instead of returning numbers.",
+        "Returns the peak level in dBFS and the loudness in LUFS from the render's own measurements, without hand-computing them from the samples.",
+        "Leaves the song, the mute and solo buttons and the running playback unchanged."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "Track list, no mute or solo",
+          "any": ["trackIds"],
+          "none": ["setTrackMuted", "setTrackSolo", "\\.solo\\s*=", "\\.muted\\s*=", "new Project\\("]
+        },
+        {
+          "expectation": 1,
+          "label": "Bars 5 to 8 as beats",
+          "any": ["\\b16\\b[\\s\\S]*\\b32\\b", "barToBeat\\(\\s*5[\\s\\S]*barToBeat\\(\\s*9"]
+        },
+        {
+          "expectation": 2,
+          "label": "Version guard",
+          "any": ["expectedVersion"]
+        }
+      ]
+    },
+    {
+      "id": "G4-read-only-agent",
+      "prompt": "A browser DAW has an open song as `project` and its running engine as `workspace`. Write `function offerToAgent(): void`, which connects the page to an AI agent's local tool server at port 7777 on this machine (the server is already running and needs no password). The agent may look at the song and listen to it, but only as numbers: no audio of the song may be sent to it. It must not be able to change the song, run any of the app's own song-changing commands, or save or export anything. Do not give it any way to save files at all.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;",
+      "expectations": [
+        "Serves the agent the song's tools through the toolkit's agent bridge to the server on this machine's port 7777.",
+        "Limits the agent to reading and listening: it has no way to edit the song, run the app's song-changing commands or export.",
+        "Does not give the agent a way to save files and does not enable sending sound to the agent.",
+        "Does not wrap or re-implement the tools by hand to remove some of them."
+      ],
+      "checks": [
+        {
+          "expectation": 1,
+          "label": "Only read is allowed",
+          "all": ["allow\\s*:\\s*\\[\\s*[\"']read[\"']\\s*\\]"]
+        },
+        {
+          "expectation": 2,
+          "label": "No save handler, no audio",
+          "none": ["\\bsave\\s*:", "listenAudio"]
+        },
+        {
+          "expectation": 3,
+          "label": "No hand-filtering of tools",
+          "none": ["\\.filter\\(", "\\.map\\(\\s*\\(?\\s*tool"]
+        }
+      ]
+    },
+    {
+      "id": "G5-lan-pairing",
+      "prompt": "The person opens their browser DAW from their laptop at the address http://192.168.1.20:8080 (a LAN address, not localhost), and an AI agent works with it. Write one TypeScript file with two exported functions. `startAgentServer(token: string)` runs on the same laptop in Node: it starts the agent-side bridge server on port 7777, accepting only that page (the exact address above) and only when the page shows the pairing token, and returns the running server. `connectPage(token: string)` runs in the page: it serves the song's tools (`workspace` is the running engine) to that server on the same laptop with the token. Other web pages the person has open, and other computers on the network, must not be able to connect or to read what the agent sends.",
+      "hostDeclarations": "declare const workspace: import(\"@audiorective/daw\").Workspace;",
+      "expectations": [
+        "The server accepts a connecting page only from the exact origin http://192.168.1.20:8080, not from every origin and not from every port.",
+        "The server requires the pairing token it was given, and the page presents that same token when it connects.",
+        "The server is only reachable from this laptop (it is not opened to the network), and does not accept connections that carry no origin.",
+        "The page serves the song's tools from `workspace` to the server on port 7777 of the same machine.",
+        "Uses the toolkit's own bridge server and page connection rather than a hand-written WebSocket server or client."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "Exact origin",
+          "all": ["192\\.168\\.1\\.20:8080"],
+          "none": ["192\\.168\\.1\\.20:\\*", "allowedOrigins\\s*:\\s*\\[\\s*[\"']\\*"]
+        },
+        {
+          "expectation": 1,
+          "label": "Token on both sides",
+          "all": ["token"]
+        },
+        {
+          "expectation": 2,
+          "label": "Not opened to the network, origin required",
+          "none": ["host\\s*:\\s*[\"']0\\.0\\.0\\.0", "host\\s*:\\s*[\"']::[\"']", "allowMissingOrigin\\s*:\\s*true"]
+        },
+        {
+          "expectation": 4,
+          "label": "No hand-written socket server",
+          "none": ["new WebSocketServer", "from [\"']ws[\"']"]
+        }
+      ]
+    },
+    {
+      "id": "G6-pedal-and-program",
+      "prompt": "A browser DAW has an open song as `project` (4/4, 120 BPM). Its MIDI track named \"Keys\" has an id in `keysTrackId`. Write `function pedalAndPatch(): void`. On the Keys track it adds a sustain pedal pass: pedal down at the start of bar 5 and released at the end of bar 8. And at the start of bar 9 the Keys switch to patch number 5 of the usual General MIDI list (that list counts from 1; the instrument takes the 0-based number). Both changes must be one step of the song's Undo history, and nothing else may change.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const keysTrackId: string;",
+      "expectations": [
+        "Adds a sustain pedal (MIDI controller 64) lane to the Keys track with the pedal down (a value of 64 or more) at beat 16 and released (a value below 64) at beat 32.",
+        "Adds a program change at beat 32 (the start of bar 9) with the value 4 (patch 5 counted from 1, sent 0-based).",
+        "Uses the song's own controller lanes for both, rather than adding MIDI notes or clips.",
+        "Both changes are one Undo step and nothing else in the song changes."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "Pedal controller 64 from beat 16 to 32",
+          "all": ["\\b64\\b"],
+          "any": ["\\b16\\b[\\s\\S]*\\b32\\b", "barToBeat\\(\\s*5[\\s\\S]*barToBeat\\(\\s*9"]
+        },
+        {
+          "expectation": 1,
+          "label": "Program 4 at beat 32",
+          "all": ["programChange", "value\\s*:\\s*4\\b"]
+        },
+        {
+          "expectation": 2,
+          "label": "Lanes, not notes",
+          "all": ["setControllerLane"],
+          "none": ["addMidiClip", "addNotes"]
+        },
+        {
+          "expectation": 3,
+          "label": "One edit",
+          "any": ["\\.edit\\(", "applyEdits\\("]
+        }
+      ]
+    }
+  ]
+}

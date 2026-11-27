@@ -4,7 +4,7 @@ import type { RackEffect } from "./rack-preset";
 /**
  * What a `Project` stores for one parameter of a WebCLAP device (the device's `parameters` table). `id` is the CLAP parameter id as a decimal string; `min`, `max`,
  * `default` and `value` are in the plug-in's own units (the numbers the plug-in's `text` is made from). `step` is 1 when the plug-in marks the parameter stepped
- * (its values are whole numbers), else absent.
+ * (its values are whole numbers): setting a value on such a parameter snaps it to the nearest whole step from `min` (ties up) and reports the value applied. Absent for a continuous one.
  */
 export type DeviceParameterRecord = Readonly<{
   /** CLAP parameter ID as a decimal string, or a built-in rack parameter key. */
@@ -18,7 +18,7 @@ export type DeviceParameterRecord = Readonly<{
   default: number;
   /** Current parameter value in its own units, within the inclusive min..max range. */
   value: number;
-  /** 1 for integer-valued parameters; omitted for continuous values. */
+  /** 1 for integer-valued parameters, which snap a set value to the nearest whole step from `min`; omitted for continuous values. */
   step?: 1;
   /**
    * Set on a row read from a file another application wrote with `unit="normalized"`: `value` is then a fraction (0..1, `min` 0 and `max` 1) of the plug-in's real range, which is
@@ -132,16 +132,20 @@ export function rackSlotParameters(slot: RackEffect): readonly DeviceParameter[]
   });
 }
 
-/** Validates `value` against the range (and whole-number step) of `parameter`; throws a RangeError naming the allowed values. */
-export function assertParameterValue(parameter: Pick<DeviceParameterRecord, "id" | "min" | "max" | "step">, value: number): void {
+/**
+ * The value a parameter takes when set to `value`: a number from `min` to `max` (inclusive) or a RangeError naming the range. A `step: 1` parameter snaps to the nearest whole step counted
+ * from `min` (a tie goes up: 2.5 from 0 is 3), so `53.9` on a stepped parameter from 0 to 127 applies as 54. A value outside the range throws instead of clamping, so a wrong unit stays visible.
+ */
+export function snapParameterValue(parameter: Pick<DeviceParameterRecord, "id" | "min" | "max" | "step">, value: number): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < parameter.min || value > parameter.max)
     throw new RangeError(`Project device parameter "${parameter.id}" needs a number from ${parameter.min} to ${parameter.max}.`);
-  if (parameter.step === 1 && !Number.isInteger(value))
-    throw new RangeError(`Project device parameter "${parameter.id}" is stepped and needs a whole number from ${parameter.min} to ${parameter.max}.`);
+  if (parameter.step !== 1) return value;
+  const snapped = parameter.min + Math.round(value - parameter.min);
+  return snapped > parameter.max ? snapped - 1 : snapped;
 }
 
 /**
- * The slot with one parameter set to `value`, validated like `setTrackEffects` would. Throws for a parameter the slot's type does not have (the message lists the ones it has)
+ * The slot with one parameter set to `value`, validated like `setTrackEffects` would; a stepped parameter snaps like `snapParameterValue`. Throws for a parameter the slot's type does not have (the message lists the ones it has)
  * or a value outside its range.
  */
 export function withRackParameter(slot: RackEffect, parameterId: string, value: number): RackEffect {
@@ -150,7 +154,7 @@ export function withRackParameter(slot: RackEffect, parameterId: string, value: 
     throw new Error(
       `Project effect "${slot.id}" has no parameter "${parameterId}"; it has ${[...specs(slot).keys()].map((id) => `"${id}"`).join(", ")}.`,
     );
-  assertParameterValue({ id: parameterId, min: spec.min, max: spec.max, step: spec.step }, value);
+  value = snapParameterValue({ id: parameterId, min: spec.min, max: spec.max, step: spec.step }, value);
   if (parameterId === "enabled") return Object.freeze({ ...slot, enabled: value === 1 });
   if (parameterId === "wet") return Object.freeze({ ...slot, wet: value });
   if (slot.type === "filter")

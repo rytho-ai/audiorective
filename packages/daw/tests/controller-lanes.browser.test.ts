@@ -310,7 +310,11 @@ describe("lanes through the MCP tools", () => {
       { atBeat: 3, atSeconds: 1.5, value: 0, shape: "hold" },
     ]);
     const missing = await call(workspace, "read_automation", { trackId: track.id, expression: "pitchBend", channel: 9 });
-    expect(missing.content).toContain("has no controller lane pitchBend channel 9");
+    expect(missing.isError).toBeFalsy();
+    expect(decode(missing.content)).toMatchObject({ expression: "pitchBend", channel: 9, total: 0, count: 0, points: [] });
+    expect(missing.content).toContain("does not exist yet");
+    const noTrack = await call(workspace, "read_automation", { trackId: "nope", expression: "pitchBend", channel: 9 });
+    expect(noTrack.isError).toBe(true);
     const sentBack = await call(workspace, "apply_edits", {
       expectedVersion: project.cells.version.value,
       label: "Pedal",
