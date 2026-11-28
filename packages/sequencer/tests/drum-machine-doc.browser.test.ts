@@ -40,7 +40,7 @@ async function drumMachine() {
     {
       onHit: (hit) => {
         const voice = bank.trigger(hit.lane, { velocity: hit.velocity, when: hit.when, pitch: hit.pitch });
-        return () => voice?.stop(); // runs if the hit is retracted before it sounds
+        return () => voice?.stop(); // runs if the hit is retracted before its step ends
       },
     },
   );

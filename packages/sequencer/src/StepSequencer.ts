@@ -42,8 +42,9 @@ export type StepSequencerOptions = Readonly<{
   context?: BaseAudioContext;
   /**
    * Called ahead of time for each hit that will sound, before its `hit` event listeners. May return a cleanup that runs if the hit is
-   * retracted (an edit re-queues it, the transport stops or seeks, or `dispose()` runs), like a React effect cleanup. After a retraction
-   * `onHit` can run again for the same hit.
+   * retracted before its step ends (an edit re-queues it, the transport stops, pauses or seeks, or `dispose()` runs), like a React effect
+   * cleanup. After the step end nothing runs it, so a voice that outlives its step is the caller's to stop. After a retraction `onHit` can
+   * run again for the same hit.
    */
   onHit?: (hit: Hit) => void | (() => void);
   /**

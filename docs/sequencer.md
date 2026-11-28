@@ -68,7 +68,7 @@ const seq = new StepSequencer(lanes, {
 ```
 
 - **Hits are scheduled ahead and can be retracted.** `onHit(hit)`, the `hit` event (`seq.addEventListener("hit", e => e.hit)`, `seq.onhit = fn`) and a lane's own `onHit` run before the hit sounds, with `hit.when` in audio-context seconds. A pending hit is retracted when an edit re-queues it, when the transport stops, pauses or seeks, or on `dispose()`. After a retraction `onHit` can run again for the same hit, so keep it free of state a retraction cannot undo (do not count hits in it).
-- **Cleanup.** `onHit` may return a cleanup. It runs when that pending hit is retracted, before any re-run, like a React effect cleanup. `cancelScheduledValues(hit.when)` drops that value and every later one on the param. That is right when this sequencer is the only writer of the param; if another sequencer, an LFO or your own automation writes it too, give each writer its own node or param.
+- **Cleanup.** `onHit` may return a cleanup. It runs when that pending hit is retracted, before any re-run, like a React effect cleanup. A hit stays pending until its step ends (`hit.when + hit.duration`), so a stop, pause, seek or edit before then runs the cleanup even while the hit sounds. After the step end the sequencer lets go: a voice that rings longer than its step (a long sample, an open hat) keeps playing through `clock.stop()` or `pause()` unless the app stops it, for example with `bank.stopAll()` when the transport stops. A lane `sound` never outlives its step, since the lane fades it out there. `cancelScheduledValues(hit.when)` drops that value and every later one on the param. That is right when this sequencer is the only writer of the param; if another sequencer, an LFO or your own automation writes it too, give each writer its own node or param.
 - **`transform(hit, random)`** runs just before scheduling and may move, reshape or drop each hit. Move `hit.beat` for musical shifts (tempo-locked: `beat: hit.beat + 0.125` is always a 32nd late), `hit.when` for millisecond nudges (a fixed `when` push drifts when the tempo changes); for a fixed per-step push the simplest is `swing` or `steps[i].offset`, which need no code. `random(key?)` is stable for the same `seed`, lane, loop, index and `key`, so a re-queued hit gets the same number. If the transform reads state that can change (a humanize amount, a mode flag), call `clock.refresh()` (`workspace.transport.refresh()` for a Workspace) after changing it: a running sequencer re-queues pending hits only for its own edits. Details and validation in [advanced](./sequencer-advanced.md#custom-transform).
 - **Seeding.** `seed` (default 0) fixes `chance` draws and `random`. The `random` option replaces the `chance` draw with a sequential source that changes on re-queue; use it only to script exact draws in tests.
 - **Teardown.** `seq.dispose()` (also `using seq = ...`, or the `signal` option) detaches from every transport, retracts pending hits and runs their cleanups, releases lane outputs and removes listeners. The transport keeps running, so dispose the sequencer, not a clock others share. A disposed sequencer cannot be attached again.
@@ -104,7 +104,7 @@ const sequencer = new StepSequencer(
   {
     onHit: (hit) => {
       const voice = bank.trigger(hit.lane, { velocity: hit.velocity, when: hit.when, pitch: hit.pitch });
-      return () => voice?.stop(); // runs if the hit is retracted before it sounds
+      return () => voice?.stop(); // runs if the hit is retracted before its step ends
     },
   },
 );
@@ -113,7 +113,7 @@ clock.attach(sequencer); // every edit re-queues the look-ahead
 const grid = mountStepGrid(document.querySelector("#grid")!, { sequencer }); // click toggles; drag a step to edit the active field
 
 await context.resume();
-clock.start(); // clock.stop() ends playback and cancels queued hits
+clock.start(); // clock.stop() cancels queued hits; an open hat past its step keeps ringing until bank.stopAll()
 clock.bpm.value = 140; // takes effect on the next look-ahead window
 
 // Edits in the grid or code re-queue the look-ahead at once.
