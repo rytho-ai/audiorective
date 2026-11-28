@@ -60,7 +60,7 @@ const sendSpecs: { key: string; title: string; pick: (rack: FxRack) => ModuleSpe
     key: "delay",
     title: "Delay send",
     pick: (rack) => ({
-      fader: { label: "Send", param: rack.sends.delay.send.gain, min: 0, max: 1, step: 0.01 },
+      fader: { label: "Send", param: rack.sends.delay.send.params.gain, min: 0, max: 1, step: 0.01 },
       knob: {
         label: "Time",
         param: rack.sends.delay.effect.params.delayTime,
@@ -76,7 +76,7 @@ const sendSpecs: { key: string; title: string; pick: (rack: FxRack) => ModuleSpe
     key: "reverb",
     title: "Reverb send",
     pick: (rack) => ({
-      fader: { label: "Send", param: rack.sends.reverb.send.gain, min: 0, max: 1, step: 0.01 },
+      fader: { label: "Send", param: rack.sends.reverb.send.params.gain, min: 0, max: 1, step: 0.01 },
       latency: rack.sends.reverb.effect.latency,
     }),
   },

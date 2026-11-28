@@ -6,7 +6,7 @@ let engine: LandingEngine | undefined;
 afterEach(async () => {
   if (engine) {
     await engine.stop();
-    engine.core.destroy();
+    engine.core.dispose();
     engine = undefined;
   }
 });
@@ -30,8 +30,10 @@ describe("landing session", () => {
     expect(engine.machine.state.value).toBe("paused");
     await engine.play();
     expect(engine.machine.tracks.find((track) => track.id === "clap")!.pattern.value[4]).toBe(true);
-    expect(engine.filter.params.frequency.value).toBeCloseTo(2400);
-    expect(engine.delay.params.wet.value).toBeCloseTo(0.3);
+    // Smoothed audio values resume from the suspended position; their reactive
+    // snapshots catch up on ParamSync's next display poll.
+    await expect.poll(() => engine!.filter.params.frequency.value).toBeCloseTo(2400);
+    await expect.poll(() => engine!.delay.params.wet.value).toBeCloseTo(0.3);
     expect(engine.core.context.state).toBe("running");
   });
 

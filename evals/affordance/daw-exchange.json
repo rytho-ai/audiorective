@@ -1,0 +1,57 @@
+{
+  "area": "daw-exchange",
+  "description": "API-shape experiment for exchanging material with other DAWs: importing and exporting Standard MIDI Files with several tracks and tempo changes, and importing WAV stems that share a start point and exporting stems. Expectations describe behaviour, not names.",
+  "tasks": [
+    {
+      "id": "X1-midi-file",
+      "prompt": "A browser DAW has an open song as `project` and its running engine as `workspace`. The user drops `file`, a Standard MIDI File exported from another DAW: type 1, four tracks (Drums on channel 10, Bass, Keys, Strings), a tempo change from 96 to 120 BPM at bar 9, a 3/4 bar at bar 17, sustain pedal and mod-wheel moves on Keys. Write the code that imports it into the empty song so each MIDI track becomes a track with its name, channel and notes in the right bars, and the song takes the file's tempo and meter map (report which tempo map was used). Then the user edits a few notes, and an Export MIDI button saves the song back as a Standard MIDI File that another DAW opens with the same tracks, channels, notes, tempo changes, meter and the controller moves.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;\ndeclare const file: File;",
+      "expectations": [
+        "Imports every MIDI track as a song track with its name, channel and notes at the right musical positions, without hand-parsing the file's bytes.",
+        "Applies the file's tempo changes and meter changes to the song and reports which tempo map it used.",
+        "Keeps controller data such as sustain pedal and mod wheel through import.",
+        "The import is one Undo step.",
+        "Exports the edited song as a Standard MIDI File with tracks, channels, notes, tempo changes, meter and controllers, without hand-writing MIDI bytes.",
+        "Downloads the exported file."
+      ],
+      "checks": [
+        {
+          "expectation": 4,
+          "label": "No hand-written MIDI bytes",
+          "none": ["MThd", "MTrk", "0x4d54"]
+        }
+      ]
+    },
+    {
+      "id": "X2-stems",
+      "prompt": "A browser DAW has an open song as `project` (120 BPM) and its running engine as `workspace`. The user drops `files`: five WAV stems exported from another DAW (drums, bass, keys, vocal, fx). They all start at the same moment (the other DAW's bar 1), but some are 44.1 kHz and some 48 kHz, and the fx stem has 2.5 s of silence at the start that must be kept. Write the code that imports them so each becomes a track with one clip starting at the song's start, sample-aligned with each other (no drift between stems over a 4-minute song), named after the file. Then an Export stems button renders every track of the song as its own WAV file, all with the same start and the same length (the song's length plus any effect tail), plus the full mix, and downloads them; report the files' sample rate and length.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;\ndeclare const files: readonly File[];",
+      "expectations": [
+        "Imports each WAV as its own track with one clip at the song's start, named after the file, without hand-parsing WAV bytes.",
+        "Handles different sample rates so the stems stay sample-aligned over the whole song, and keeps leading silence.",
+        "The import is one Undo step.",
+        "Renders each track as its own WAV with a common start and the same length, plus the full mix, through the song's mix chain.",
+        "Encodes the WAV files with the toolkit rather than hand-writing RIFF headers, and downloads them.",
+        "Reports the sample rate and length of the exported files."
+      ],
+      "checks": [
+        {
+          "expectation": 4,
+          "label": "No hand-written WAV header",
+          "none": ["RIFF", "WAVE"]
+        }
+      ]
+    },
+    {
+      "id": "X3-stretched-audio",
+      "prompt": "A browser DAW already loads a Rubber Band engine for its own stretch button (it is in a variable `stretch`). The user opens a `.dawproject` file that Bitwig Studio wrote, where some audio of one tempo sits in a song of another tempo and Bitwig stretched it. Write the code that opens the file in the running app so those clips play at the right length, position and pitch using that engine, and tell the user what happens to the clips if the engine were missing. Then the user moves one of those clips by four beats and saves the file for Bitwig again; show that code.",
+      "hostDeclarations": "declare const context: AudioContext;\ndeclare const bytes: Uint8Array;\ndeclare const stretch: import(\"@audiorective/player\").WaveStretchProcessor;\ndeclare const clipId: string;",
+      "expectations": [
+        "Opens the file with the toolkit's file-open function and hands the engine to it as an option, instead of rendering each clip by hand.",
+        "Does not wrap the opening in an Undo step and does not ask the user to stretch the clips after opening.",
+        "Says that without the engine the clips keep their length and position but play with a changed pitch, and that the workspace warnings say so.",
+        "Moves the clip with the project's move method and saves with the toolkit's save function; does not rewrite the file's XML or write a rendered copy of the audio."
+      ]
+    }
+  ]
+}

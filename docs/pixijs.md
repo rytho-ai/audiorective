@@ -43,7 +43,7 @@ builds the node graph. See [architecture.md](./architecture.md).
 one-shot gesture listener and resumes the `AudioContext` on first interaction,
 re-arming if the context is later suspended.
 
-```ts
+```ts fragment: requires application-local modules
 import { Application } from "pixi.js";
 import { engine } from "./audio/engine"; // createEngine(...) — pure audio
 
@@ -73,7 +73,7 @@ only on actual change.
 
 ### Audio → visual, reactive (use `effect`)
 
-```ts
+```ts fragment: application sketch; app-specific classes or callbacks omitted
 import { effect } from "alien-signals";
 
 // glow scales with level — level is a Param, so this is signal-driven
@@ -89,7 +89,7 @@ const stop = effect(() => {
 `Analyser` is a core primitive — a pass-through tap exposing the live spectrum and
 waveform. Wire it into the engine graph, then poll it from the ticker.
 
-```ts
+```ts fragment: application sketch; app-specific classes or callbacks omitted
 // audio/engine.ts
 import { createEngine, Analyser } from "@audiorective/core";
 export const engine = createEngine((ctx) => {
@@ -101,7 +101,7 @@ export const engine = createEngine((ctx) => {
 });
 ```
 
-```ts
+```ts fragment: application sketch; app-specific classes or callbacks omitted
 // main.ts — poll each frame
 const spectrum = engine.analyser.createFrequencyBuffer(); // Uint8Array, reused
 app.ticker.add(() => {
@@ -119,7 +119,7 @@ app.ticker.add(() => {
 No adapter. A Pixi interaction handler writes `param.value` — direct mutation, the
 same `.value` contract as everywhere else.
 
-```ts
+```ts fragment: application sketch; app-specific classes or callbacks omitted
 puck.eventMode = "static";
 app.stage.on("pointermove", (e) => {
   if (!dragging) return;
@@ -144,11 +144,11 @@ and neither owner fights the other.
 
 Nothing audio-related is owned by Pixi, so teardown is symmetric and simple:
 
-```ts
+```ts fragment: application sketch; app-specific classes or callbacks omitted
 stopGlowEffect(); // stop any alien-signals effects you created
 detachAutoStart(); // disarm the gesture listener
 app.destroy(true); // tears down the ticker + stage (removes your ticker callbacks)
-engine.core.destroy(); // closes the AudioContext, destroys processors (incl. Analyser)
+engine.core.dispose(); // closes the AudioContext, disposes processors (incl. Analyser)
 ```
 
 `app.destroy()` removes `app.ticker` callbacks for you; you only need to stop the

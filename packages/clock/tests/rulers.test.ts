@@ -1,5 +1,6 @@
 import { describe, test, expect } from "vitest";
-import { gridPoints } from "../src/rulers/Ruler";
+import type { BeatTiming } from "@audiorective/core";
+import { gridPoints, cycleGridPoints } from "../src/rulers/Ruler";
 import type { TimelineLike } from "../src/rulers/Ruler";
 import { LinearBarRuler } from "../src/rulers/LinearBarRuler";
 import { CycleBarRuler } from "../src/rulers/CycleBarRuler";
@@ -70,9 +71,9 @@ describe("gridPoints — index and time", () => {
     expect(points.map((p) => p.index)).toEqual([1_000_000, 1_000_001, 1_000_002, 1_000_003]);
   });
 
-  test("time comes from timeline.beatToTime", () => {
+  test("when is absolute audio seconds from timeline.beatToTime", () => {
     const points = collect(gridPoints(0, 2, 1, 0, identityTimeline));
-    expect(points.map((p) => p.time)).toEqual([0, 0.5]);
+    expect(points.map((p) => p.when)).toEqual([0, 0.5]);
   });
 
   test("a non-zero origin offsets the grid", () => {
@@ -155,7 +156,7 @@ describe("CycleBarRuler", () => {
     const points = collect(reading.grid(16)); // 1 step per beat (16 steps/16-beat cycle)
     expect(points.map((p) => p.beat)).toEqual([15, 16]);
     for (let i = 1; i < points.length; i++) {
-      expect(points[i]!.time).toBeGreaterThan(points[i - 1]!.time);
+      expect(points[i]!.when).toBeGreaterThan(points[i - 1]!.when);
     }
   });
 
@@ -327,4 +328,38 @@ describe("CycleTimeRuler", () => {
     expect(ruler.at(0, makeTimeline(5))).toMatchObject({ cycle: 0, secondsInCycle: 0 });
     expect(ruler.at(0, makeTimeline(15))).toMatchObject({ cycle: 1, secondsInCycle: 0 });
   });
+});
+
+describe("gridPoints — scheduler timing", () => {
+  test("takes the BeatTiming a scheduler's schedule(window, timing) receives", () => {
+    const timing: BeatTiming = { beatToTime: (beat) => 10 + beat / 2, timeToBeat: (time) => (time - 10) * 2 };
+    expect(collect(gridPoints(0, 1, 0.25, 0, timing)).map((p) => p.when)).toEqual([10, 10.125, 10.25, 10.375]);
+    expect(collect(cycleGridPoints(0, 1, 0.25, 0, 4, timing)).map((p) => [p.when, p.step])).toEqual([
+      [10, 0],
+      [10.125, 1],
+      [10.25, 2],
+      [10.375, 3],
+    ]);
+  });
+});
+
+test("concrete rulers accept scheduler windows and preserve full-window readings across cycles", () => {
+  const cycle = new CycleBarRuler({ numerator: 4, denominator: 4, bars: 4, from: 12 });
+  const linear = new LinearBarRuler({ numerator: 4, denominator: 4 });
+  const timing: BeatTiming = { beatToTime: (beat) => beat / 2, timeToBeat: (time) => time * 2 };
+  const simple = { beat: { start: 36, end: 40 } };
+  expect([...cycle.read(simple, timing).grid(4)]).toEqual([{ beat: 36, when: 18, step: 2, cycle: 1 }]);
+  for (let n = 0; n < 400; n++) {
+    const full = makeWindow(n / 4 - 8, n / 4 - 8 + 0.6);
+    const scheduler = { beat: full.beat, time: { current: 0 }, own() {} };
+    const a = cycle.read(scheduler, timing),
+      b = cycle.read(full, identityTimeline);
+    expect([...a.grid(16)]).toEqual([...b.grid(16)]);
+    expect(a.spans.map((span) => [span.fromCycle, span.toCycle, span.toTime(span.fromCycle)])).toEqual(
+      b.spans.map((span) => [span.fromCycle, span.toCycle, span.toTime(span.fromCycle)]),
+    );
+    expect([...linear.read(scheduler, timing).grid(4)]).toEqual([...linear.read(full, identityTimeline).grid(4)]);
+    expect(new LinearTimeRuler().read(scheduler, identityTimeline)).toEqual({ seconds: 0 });
+    expect(new CycleTimeRuler({ seconds: 2 }).read(scheduler, identityTimeline)).toEqual({ cycle: 0, secondsInCycle: 0, phase: 0 });
+  }
 });

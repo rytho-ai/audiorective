@@ -7,7 +7,7 @@ description: >
   processor class. Use whenever code extends AudioProcessor or defines
   params/cells with the build callback, wires nodes with `defineGraph`,
   declares processing latency, adds `input`/`output`, wraps an
-  AudioWorkletNode, overrides `destroy`, or needs headless tests for a
+  AudioWorkletNode, overrides `dispose`, or needs headless tests for a
   processor. Not for using the packages' built-in processors from app code
   (spatial panning, players, React hooks) — that is the `audiorective` skill.
 license: MIT
@@ -74,15 +74,19 @@ class Tremolo extends AudioProcessor<{ rate: SchedulableParam; depth: Schedulabl
     return this._out;
   }
 
-  destroy() {
+  dispose() {
     this._lfo.stop(); // the base class doesn't own started sources
-    super.destroy();
+    super.dispose();
   }
 }
 ```
 
 An instrument is the same minus `input`. A class with no audio nodes at all
 (a pattern, a preset list) is a plain class holding `Cell`s, not a processor.
+
+State that may only change through a method (it needs validation, or has to start,
+stop or cancel something) is a `readonlyCell(...)` in `cells` over a private `Cell` —
+see `references/core.md` → ReadonlyCell.
 
 ## Checklist
 
@@ -97,7 +101,7 @@ An instrument is the same minus `input`. A class with no audio nodes at all
 - **Latency** — `latency: 0` for musical delay; a real processing delay
   declared in samples or derived from `ctx.sampleRate`; a worklet-backed
   processor declares its latency explicitly.
-- **Lifecycle** — an overridden `destroy()` calls `super.destroy()` and
+- **Lifecycle** — an overridden `dispose()` calls `super.dispose()` and
   stops/cleans up anything the base class doesn't own (started sources,
   worklet ports).
 - **Testing** — headless vitest browser-mode tests; an `assertLatency` pin
@@ -114,7 +118,7 @@ An instrument is the same minus `input`. A class with no audio nodes at all
 | Hand-rolled `.connect()`/`.disconnect()` for bypass   | No diffing, no latency compensation, leaks on teardown                        | 3. Graph                             |
 | A bare `AudioWorkletNode` as a `defineGraph` endpoint | Rejected at runtime — its latency is unknowable                               | 3. Graph, 6. Worklet-backed          |
 | Declaring a delay effect's `delayTime` as `latency`   | Musical delay isn't processing latency; PDC would over-compensate             | 4. Latency                           |
-| `destroy()` override that skips `super.destroy()`     | Effects, params, and ConstantSources leak                                     | 5. Lifecycle                         |
+| `dispose()` override that skips `super.dispose()`     | Effects, params, and ConstantSources leak                                     | 5. Lifecycle                         |
 | `latency: 441` for "10 ms" processing delay           | Wrong at any other sample rate; derive from `ctx.sampleRate`                  | 4. Latency                           |
 | No `assertLatency` test on a processor with `input`   | The declared latency is never checked against an impulse through the graph    | 7. Testing                           |
 

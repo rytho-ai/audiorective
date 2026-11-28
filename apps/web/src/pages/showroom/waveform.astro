@@ -1,0 +1,156 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+---
+
+<BaseLayout title="Waveform Selector" description="Select and audition an audio range with a framework-independent Audiorective widget.">
+  <main class="waveform-demo">
+    <header>
+      <p class="eyebrow">@audiorective/widgets</p>
+      <h1>Waveform selector</h1>
+      <p>Drag a range to loop it, resize the handles, or click to listen from a position. Load your own audio file or URL to explore another source.</p>
+      <a href="/docs/widgets">Widget API and customization →</a>
+    </header>
+    <div id="waveform-demo" aria-label="Interactive waveform selector"></div>
+    <p class="caption">Both selectors share one WavePlayer. Select or load audio in either view; playback and selection follow in both. Each keeps its own drawing and zoom. The page routes audio once.</p>
+    <section class="custom-drawing">
+      <h2>Another view of the same audio</h2>
+      <div id="waveform-shared" aria-label="Shared waveform selector"></div>
+    </section>
+    <section class="custom-drawing">
+      <h2>Time-stretch a copy</h2>
+      <p>Choose your compatible Rubber Band WASM engine. The engine is supplied by you; this site does not include it. This example starts with two seconds copied from the loaded audio, then lets you load another source.</p>
+      <label>Stretch engine (.wasm) <input id="stretch-wasm" type="file" accept=".wasm,application/wasm" /></label>
+      <label>Duration multiplier <input id="stretch-ratio" type="range" min="0.5" max="2" step="0.25" value="1.5" /></label>
+      <button id="stretch-apply" type="button" disabled>Apply stretch</button>
+      <output id="stretch-status" aria-live="polite">Choose an engine to enable time-stretch.</output>
+      <div id="waveform-stretch"></div>
+    </section>
+    <section class="custom-drawing">
+      <h2>Replace the drawing</h2>
+      <p>This view uses a custom SVG renderer with rounded bars. Try selection and zoom: the widget keeps the same interaction and coordinates. This example uses supplied peaks and creates no audio player.</p>
+      <div id="waveform-custom" aria-label="Custom waveform drawing"></div>
+    </section>
+  </main>
+</BaseLayout>
+
+<script>
+  import { effect } from "@audiorective/core";
+  import { WavePlayer } from "@audiorective/player";
+  import { TimeStretch } from "@audiorective/effects/time-stretch";
+  import { mountWaveformSelector, type WaveformSelectorHandle } from "@audiorective/widgets";
+  import { mountWaveform, createSelectionPlugin, type WaveformHandle } from "@audiorective/widgets/waveform";
+  import { roundedBars } from "../../demos/waveform/roundedBars";
+
+  const root = document.getElementById("waveform-demo")!;
+  let context: AudioContext | undefined;
+  let widget: WaveformSelectorHandle | undefined;
+  let shared: WaveformSelectorHandle | undefined;
+  let player: WavePlayer | undefined;
+  let custom: WaveformHandle | undefined;
+  let stretch: TimeStretch | undefined;
+  let stretchPlayer: WavePlayer | undefined;
+  let stretchView: WaveformSelectorHandle | undefined;
+  let unsubscribeStretch: (() => void) | undefined;
+  let stretchGeneration = 0;
+  const engineFile = document.getElementById("stretch-wasm") as HTMLInputElement;
+  const ratio = document.getElementById("stretch-ratio") as HTMLInputElement;
+  const apply = document.getElementById("stretch-apply") as HTMLButtonElement;
+  const status = document.getElementById("stretch-status")!;
+
+  function disposeStretch() {
+    unsubscribeStretch?.(); unsubscribeStretch = undefined;
+    stretchView?.dispose(); stretchView = undefined;
+    stretchPlayer?.dispose(); stretchPlayer = undefined;
+    stretch?.dispose(); stretch = undefined;
+    apply.disabled = true;
+  }
+  engineFile.addEventListener("change", () => {
+    const file = engineFile.files?.[0];
+    if (!file || !context) return;
+    const generation = ++stretchGeneration, ctx = context;
+    disposeStretch(); status.textContent = "Loading engine…";
+    void (async () => {
+      const wasmUrl = URL.createObjectURL(file);
+      const loaded = await TimeStretch.load({ wasmUrl }).finally(() => URL.revokeObjectURL(wasmUrl));
+      await widget?.ready;
+      if (generation !== stretchGeneration || context !== ctx) return void loaded.dispose();
+      const source = player?.sourceBuffer;
+      if (!source) throw new Error("Load audio before enabling stretch.");
+      stretch = loaded;
+      stretchPlayer = new WavePlayer(ctx, { stretch });
+      stretchPlayer.output.connect(ctx.destination);
+      stretchView = mountWaveformSelector(document.getElementById("waveform-stretch")!, {
+        player: stretchPlayer, renderer: roundedBars,
+        grid: { beats: [0, .5, 1, 1.5, 2], downbeats: [0, 2] },
+      });
+      const copied = ctx.createBuffer(source.numberOfChannels, Math.min(source.length, source.sampleRate * 2), source.sampleRate);
+      for (let c = 0; c < copied.numberOfChannels; c++) copied.getChannelData(c).set(source.getChannelData(c).subarray(0, copied.length));
+      const { cells } = stretchPlayer;
+      unsubscribeStretch = effect(() => {
+        const version = cells.version.value;
+        const busy = cells.loading.value || cells.processing.value;
+        apply.disabled = busy;
+        if (cells.error.value) status.textContent = cells.error.value;
+        else if (cells.processing.value) status.textContent = "Processing; the current version stays available…";
+        else if (version) status.textContent = `${stretchPlayer!.sourceBuffer!.duration.toFixed(2)}s original → ${version.buffer.duration.toFixed(2)}s at ${version.ratio}× duration`;
+      });
+      await stretchPlayer.load(copied);
+    })().catch(error => { if (generation === stretchGeneration) { disposeStretch(); status.textContent = String(error); } });
+    engineFile.value = "";
+  });
+  apply.addEventListener("click", () => {
+    const active = stretchPlayer;
+    if (!active) return;
+    void active.setStretch(Number(ratio.value)).catch(error => { if (stretchPlayer === active) status.textContent = String(error); });
+  });
+
+  function mount() {
+    if (widget) return;
+    context = new AudioContext();
+    player = new WavePlayer(context);
+    player.output.connect(context.destination);
+    widget = mountWaveformSelector(root, { player, source: "/stems/drums.mp3" });
+    shared = mountWaveformSelector(document.getElementById("waveform-shared")!, { player, renderer: roundedBars });
+    // The widget shows loading failures and keeps its source controls available.
+    void widget.ready.catch(() => {});
+    custom = mountWaveform(document.getElementById("waveform-custom")!, {
+      data: { peaks: Float32Array.from({ length: 240 }, (_, i) => 0.1 + 0.8 * Math.abs(Math.sin(i * 0.13) * Math.cos(i * 0.04))), duration: 6 },
+      renderer: roundedBars,
+    });
+    custom.attach(createSelectionPlugin());
+  }
+
+  function cleanup() {
+    ++stretchGeneration;
+    disposeStretch();
+    widget?.dispose();
+    widget = undefined;
+    shared?.dispose();
+    shared = undefined;
+    player?.dispose();
+    player = undefined;
+    custom?.dispose();
+    custom = undefined;
+    if (context && context.state !== "closed") void context.close();
+    context = undefined;
+  }
+
+  mount();
+  window.addEventListener("pagehide", cleanup);
+  window.addEventListener("pageshow", mount);
+  document.addEventListener("astro:before-swap", cleanup);
+</script>
+
+<style>
+  .waveform-demo { max-width: 72rem; margin: 0 auto; padding: 3rem 1.5rem 5rem; }
+  header { max-width: 45rem; margin-bottom: 2rem; }
+  .eyebrow { color: var(--accent-2); font-family: var(--mono); font-size: .85rem; }
+  h1 { font: 600 clamp(2.5rem, 7vw, 4rem)/1.1 var(--display); margin: .5rem 0 1rem; }
+  p { line-height: 1.6; color: var(--fg-dim); }
+  a { color: var(--accent-2); }
+  #waveform-demo { --waveform-accent: #79d7bd; }
+  .caption { font-size: .9rem; max-width: 50rem; margin-top: 1.5rem; }
+  .custom-drawing { margin-top: 3rem; }
+  .custom-drawing > label { display: block; max-width: 100%; margin: .75rem 0; }
+  #stretch-wasm { width: 100%; max-width: 100%; box-sizing: border-box; }
+</style>

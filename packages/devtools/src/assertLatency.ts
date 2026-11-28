@@ -84,7 +84,7 @@ export async function assertLatency(
   const nameCtx = new OfflineAudioContext(measureOpts.channels ?? 2, 1, sampleRates[0]);
   const namedProc = build(nameCtx);
   const name = namedProc.constructor.name;
-  namedProc.destroy();
+  namedProc.dispose();
 
   throw new Error(formatMismatch(name, declared, runs, tolerance));
 }

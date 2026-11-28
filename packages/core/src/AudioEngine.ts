@@ -1,10 +1,15 @@
-import { signal, effect } from "alien-signals";
+import { effect } from "alien-signals";
 import { AudioProcessor } from "./AudioProcessor";
 import { assertAudioContextAvailable, LatencyUnknownError } from "./errors";
 import { defineGraph as defineGraphFn, _graphRegistry, NodeNotInSolveError } from "./graph";
 import type { EdgeList, GraphHandle, GraphOptions } from "./graph";
-import { Param } from "./Param";
-import type { EngineState, SignalAccessor } from "./types";
+import { cell, readonlyCell, untracked, type ReadonlyCell } from "./Cell";
+import { watchConnections } from "./connections";
+
+export interface AudioEngineOptions {
+  /** Aborting the signal calls `dispose()`. */
+  signal?: AbortSignal;
+}
 
 const DEFAULT_AUTO_START_EVENTS = ["click", "keydown", "touchstart"] as const;
 
@@ -72,47 +77,101 @@ function resolvePathLatency(proc: AudioProcessor): number {
   return best;
 }
 
+/** Owns one `AudioContext`, its registered processors and the engine-level graphs; `createEngine` builds one. Dispose it to close an owned context and dispose every registered processor. */
 export class AudioEngine {
   private readonly _context: AudioContext;
   private _processors: AudioProcessor[] = [];
-  private _state: SignalAccessor<EngineState> = signal<EngineState>("idle");
+  private readonly _stateCell = cell<AudioContextState>("suspended");
+  /** Mirrors AudioContext.state: "suspended" until resume() runs, then "running"; "closed" after dispose(). */
+  readonly state: ReadonlyCell<AudioContextState> = readonlyCell(this._stateCell);
+  // Pending untilReady() callers; settled when the state reaches "running" or the engine is disposed.
+  private _waiters: Array<{ resolve: () => void; reject: (error: unknown) => void }> = [];
+  // A borrowed context is the caller's to close; only a context this engine created is closed on dispose.
+  private readonly _ownsContext: boolean;
+  private readonly _onStateChange: () => void;
   private _cachedPromise: Promise<void> | null = null;
-  // Set only by destroy() — separate from the "destroyed" state, which an external
-  // context closure can also reach, so cleanup still runs if destroy() is called
-  // after that (rather than being skipped because the mirror already reads "destroyed").
-  private _destroyed = false;
+  // Set only by dispose() — separate from the "closed" state, which an external
+  // context closure can also reach, so cleanup still runs if dispose() is called
+  // after that (rather than being skipped because the mirror already reads "closed").
+  private _disposed = false;
+  private readonly _abortSignal?: AbortSignal;
+  private readonly _onAbort = () => this.dispose();
+  private readonly _stopWatchingConnections: () => void;
   private _graphs: GraphHandle[] = [];
   // Each engine-owned graph's most recent destination arrival, keyed by an identity
   // token private to that graph — not the graph itself, so a graph whose own last
   // solve didn't touch the destination just keeps its prior entry (or none) instead
   // of clobbering it with `undefined`. `latency` is always the max across this map.
   private _graphLatency = new Map<object, number>();
-  readonly latency: Param<number> = new Param({ default: 0 });
+  private readonly _latencyCell = cell(0);
+  /** Longest path into the destination across engine-owned graphs, in samples. Written only by the engine. */
+  readonly latency: ReadonlyCell<number> = readonlyCell(this._latencyCell);
 
-  constructor(existingContext?: AudioContext) {
+  /** Without a context it creates one and closes it on dispose(). Aborting `options.signal` calls dispose(). */
+  constructor(existingContext?: AudioContext, options?: AudioEngineOptions) {
     if (existingContext === undefined) assertAudioContextAvailable();
+    this._ownsContext = existingContext === undefined;
     this._context = existingContext ?? new AudioContext();
-    this._context.onstatechange = () => {
-      if (this._destroyed) return;
-      // Safari reports "interrupted" (phone call, Siri); it is not in lib.dom's union.
-      const s = this._context.state as string;
-      if (s === "closed") {
-        this._state("destroyed");
-      } else if (s === "running") {
-        this._state("running");
-        this._cachedPromise = null;
-      } else if (this._state() !== "idle") {
-        this._state("suspended");
-      }
-    };
+    this._stateCell.value = this._contextState();
+    // A listener, not `onstatechange`: a borrowed context keeps whatever handler its owner installed.
+    this._onStateChange = () => this._syncState();
+    this._context.addEventListener("statechange", this._onStateChange);
+    // Edges made with `AudioProcessor.connect` form a latency graph per context; it feeds `latency` like an engine graph.
+    const connectionToken = {};
+    this._stopWatchingConnections = watchConnections(this._context, (h) => this._recordSolve(connectionToken, h));
+    this._abortSignal = options?.signal;
+    if (this._abortSignal?.aborted) this.dispose();
+    else this._abortSignal?.addEventListener("abort", this._onAbort, { once: true });
+  }
+
+  // Safari reports "interrupted" (phone call, Siri); it is not in lib.dom's union.
+  private _contextState(): AudioContextState {
+    const s = this._context.state as string;
+    return s === "running" || s === "closed" ? s : "suspended";
+  }
+
+  private _peek(): AudioContextState {
+    return untracked(() => this._stateCell.value);
+  }
+
+  private _syncState(): void {
+    if (this._disposed) return;
+    this._setState(this._contextState());
+  }
+
+  private _rejectWaiters(): void {
+    this._cachedPromise = null;
+    const waiters = this._waiters;
+    this._waiters = [];
+    const error = new Error("AudioEngine disposed before it became ready");
+    for (const w of waiters) w.reject(error);
+  }
+
+  private _setState(next: AudioContextState): void {
+    this._stateCell.value = next;
+    if (next === "closed") this._rejectWaiters();
+    if (next === "running") {
+      this._cachedPromise = null;
+      const waiters = this._waiters;
+      this._waiters = [];
+      for (const w of waiters) w.resolve();
+    }
+  }
+
+  // A graph contributes only while its last solve actually reaches the destination —
+  // one that no longer does drops its entry instead of keeping a stale arrival.
+  private _recordSolve(token: object, handle: GraphHandle): void {
+    try {
+      this._graphLatency.set(token, handle.arrivalOf(this._context.destination));
+    } catch (err) {
+      if (!(err instanceof NodeNotInSolveError)) throw err;
+      this._graphLatency.delete(token);
+    }
+    this._recomputeLatency();
   }
 
   get context(): AudioContext {
     return this._context;
-  }
-
-  get state(): SignalAccessor<EngineState> {
-    return this._state;
   }
 
   /**
@@ -127,22 +186,14 @@ export class AudioEngine {
     return ctx.currentTime - this.latency.value / ctx.sampleRate - outputLatency;
   }
 
+  /** Same as core's `defineGraph` with this engine's context; the engine disposes the graph with itself. */
   defineGraph(fn: () => EdgeList, opts?: Omit<GraphOptions, "context">): GraphHandle {
     const token = {};
     const inner = defineGraphFn(fn, {
       ...opts,
       context: this._context,
       onSolve: (h) => {
-        // A graph contributes only while its last solve actually reaches the
-        // destination — one that no longer does drops its entry instead of
-        // keeping a stale arrival.
-        try {
-          this._graphLatency.set(token, h.arrivalOf(this._context.destination));
-        } catch (err) {
-          if (!(err instanceof NodeNotInSolveError)) throw err;
-          this._graphLatency.delete(token);
-        }
-        this._recomputeLatency();
+        this._recordSolve(token, h);
         opts?.onSolve?.(h);
       },
     });
@@ -162,6 +213,7 @@ export class AudioEngine {
       reaches: (from, to) => inner.reaches(from, to),
     };
     this._graphs.push(handle);
+    if (this._disposed) handle.dispose();
     return handle;
   }
 
@@ -170,7 +222,7 @@ export class AudioEngine {
   private _recomputeLatency(): void {
     let max = 0;
     for (const v of this._graphLatency.values()) if (v > max) max = v;
-    this.latency.value = max;
+    this._latencyCell.value = max;
   }
 
   /** Samples from `proc`'s output to `ctx.destination`, following its graph ownership chain. */
@@ -178,52 +230,45 @@ export class AudioEngine {
     return resolvePathLatency(proc);
   }
 
+  /** Resolves once the context is `running` (at once if it is); rejects if the engine is disposed first. Pair with `resume()` or `autoStart` from a user gesture. */
   untilReady(): Promise<void> {
-    if (this._state() === "running") return Promise.resolve();
-    if (this._cachedPromise) return this._cachedPromise;
-    this._cachedPromise = new Promise<void>((resolve) => {
-      const stop = effect(() => {
-        if (this._state() === "running") {
-          resolve();
-          stop();
-        }
-      });
+    const state = this._peek();
+    if (state === "running") return Promise.resolve();
+    if (state === "closed") return Promise.reject(new Error("AudioEngine disposed before it became ready"));
+    this._cachedPromise ??= new Promise<void>((resolve, reject) => {
+      this._waiters.push({ resolve, reject });
     });
     return this._cachedPromise;
   }
 
-  async start(): Promise<void> {
-    if (this._state() === "destroyed") throw new Error("Cannot start a destroyed engine");
-    if (this._context.state !== "running") await this._context.resume();
-    this._state("running");
-    this._cachedPromise = null;
+  private _assertLive(): void {
+    if (this._disposed) throw new DOMException("AudioEngine is disposed.", "InvalidStateError");
   }
 
+  /** Suspends the context. Rejects with InvalidStateError after dispose(). */
   async suspend(): Promise<void> {
-    if (this._state() === "destroyed") {
-      console.warn("AudioEngine: suspend() called on a destroyed engine");
-      return;
-    }
-    if (this._state() === "idle") return;
+    this._assertLive();
     if (this._context.state === "running") await this._context.suspend();
-    this._state("suspended");
+    if (this._disposed || this._peek() === "closed") return;
+    this._setState("suspended");
   }
 
+  /** Resumes the context; call it from a user gesture. Resolves at once when already running; rejects with InvalidStateError after dispose(). */
   async resume(): Promise<void> {
-    if (this._state() === "destroyed") {
-      console.warn("AudioEngine: resume() called on a destroyed engine");
-      return;
-    }
+    this._assertLive();
     if (this._context.state !== "running") await this._context.resume();
-    this._state("running");
-    this._cachedPromise = null;
+    if (this._disposed || this._peek() === "closed") return;
+    this._setState("running");
   }
 
+  /** Disposes `processor` with the engine; returns it. A processor registered after disposal is disposed at once. */
   register<T extends AudioProcessor>(processor: T): T {
-    this._processors.push(processor);
+    if (this._disposed) processor.dispose();
+    else this._processors.push(processor);
     return processor;
   }
 
+  /** Calls `resume()` on the first of `options.events` (default `click`, `keydown`, `touchstart`) fired on `target` while the context is not running, and re-arms if it suspends again. Returns a function that removes it. */
   autoStart(target: EventTarget, options?: { events?: readonly string[] }): () => void {
     const events = options?.events ?? DEFAULT_AUTO_START_EVENTS;
     let gestureCleanup: (() => void) | null = null;
@@ -232,7 +277,7 @@ export class AudioEngine {
       if (gestureCleanup) return;
       const handler = () => {
         disarm();
-        void this.start();
+        void this.resume().catch(() => {});
       };
       for (const ev of events) target.addEventListener(ev, handler);
       gestureCleanup = () => {
@@ -246,8 +291,8 @@ export class AudioEngine {
     };
 
     const stop = effect(() => {
-      const s = this._state();
-      if (s === "destroyed") {
+      const s = this._stateCell.value;
+      if (s === "closed") {
         disarm();
         return;
       }
@@ -261,22 +306,28 @@ export class AudioEngine {
     };
   }
 
-  destroy(): void {
-    if (this._destroyed) return;
-    this._destroyed = true;
+  /** Disposes registered processors and graphs, and closes a context the engine created. Safe to call twice. */
+  dispose(): void {
+    if (this._disposed) return;
+    this._disposed = true;
+    this._abortSignal?.removeEventListener("abort", this._onAbort);
+    this._stopWatchingConnections();
     // Copy first: each `dispose()` splices itself out of `_graphs`, which
     // would skip entries if this loop iterated the live array directly.
     for (const graph of [...this._graphs]) graph.dispose();
     this._graphs = [];
     this._graphLatency.clear();
-    for (const p of this._processors) p.destroy();
+    for (const p of this._processors) p.dispose();
     this._processors = [];
-    this.latency.destroy();
-    // The context may already be closed (an external close, or the browser tearing
-    // it down) — closing it again would reject with InvalidStateError.
-    if (this._context.state !== "closed") this._context.close();
-    this._state("destroyed");
-    this._cachedPromise = null;
+    this._context.removeEventListener("statechange", this._onStateChange);
+    // Only a context this engine created is closed. It may already be closed (an external
+    // close, or the browser tearing it down), and closing it again would reject.
+    if (this._ownsContext && this._context.state !== "closed") void this._context.close();
+    this._setState("closed");
+  }
+
+  [Symbol.dispose](): void {
+    this.dispose();
   }
 }
 
@@ -290,11 +341,12 @@ export interface EngineSetupHelpers {
   defineGraph: AudioEngine["defineGraph"];
 }
 
+/** Builds an `AudioEngine`, runs `setup(context, helpers)` once, registers every `AudioProcessor` in the returned object and returns it with the engine as `core`. Throws when setup returns a `core` key. `options.signal` aborting disposes the engine. */
 export function createEngine<T extends Record<string, unknown>>(
   setup: (context: AudioContext, helpers: EngineSetupHelpers) => ValidSetupReturn<T>,
-  options?: { context?: AudioContext },
+  options?: { context?: AudioContext; signal?: AbortSignal },
 ): T & { core: AudioEngine } {
-  const engine = new AudioEngine(options?.context);
+  const engine = new AudioEngine(options?.context, { signal: options?.signal });
   const result = setup(engine.context, { defineGraph: (fn, o) => engine.defineGraph(fn, o) });
 
   if ("core" in result) {

@@ -139,10 +139,10 @@ export class Mixer extends AudioProcessor<{ headphone: Param<boolean>; masterVol
     p.linearRampToValueAtTime(target, now + BUS_RAMP_S);
   }
 
-  override destroy(): void {
+  override dispose(): void {
     this.stopMetering();
-    super.destroy();
-    for (const c of this.channels) c.destroy();
+    super.dispose();
+    for (const c of this.channels) c.dispose();
     this._roomBus.disconnect();
     this._auxBus.disconnect();
     this._phonesBus.disconnect();

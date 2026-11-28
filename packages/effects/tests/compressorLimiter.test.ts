@@ -29,7 +29,8 @@ describe("Limiter", () => {
     for (let c = 0; c < 2; c++) {
       const d = buf.getChannelData(c);
       let peak = 0;
-      for (let i = 1000; i < d.length; i++) peak = Math.max(peak, Math.abs(d[i]!));
+      // the wet arm fades in over ~35 ms after the worklet is ready
+      for (let i = 3000; i < d.length; i++) peak = Math.max(peak, Math.abs(d[i]!));
       expect(db(peak)).toBeLessThanOrEqual(-1 + 0.1);
     }
     expect(fx.latency.value).toBe(Math.round(0.005 * 44100));
@@ -40,11 +41,11 @@ describe("Limiter", () => {
 describe("Compressor", () => {
   it("exposes all six params and reports reduction", async () => {
     const { fx } = await renderNoise((ctx) => new Compressor(ctx, { threshold: -30, ratio: 8 }), 0.5);
-    expect(Object.keys(fx.params).sort()).toEqual(["attack", "knee", "makeup", "ratio", "release", "threshold", "wet"]);
+    expect(Object.keys(fx.params).sort()).toEqual(["attack", "bypass", "knee", "makeup", "ratio", "release", "threshold", "wet"]);
     expect(fx.cells.reduction.value).toBeLessThan(-10);
   });
   it("wet = 0 bypasses (dry aligned through the compensated graph)", async () => {
-    const { buf } = await renderNoise((ctx) => new Compressor(ctx, { threshold: -40, ratio: 20, lookahead: 0.002, wet: 0 }), 0.5);
+    const { buf } = await renderNoise((ctx) => new Compressor(ctx, { threshold: -40, ratio: 20, lookAhead: 0.002, wet: 0 }), 0.5);
     let peak = 0;
     const d = buf.getChannelData(0);
     for (let i = 1000; i < d.length; i++) peak = Math.max(peak, Math.abs(d[i]!));

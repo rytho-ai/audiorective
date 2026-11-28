@@ -26,7 +26,7 @@ describe("declared latency matches measured", () => {
 
   it("worklet and granular effects declare their buffering", async () => {
     await assertLatency((ctx) => new Limiter(ctx), { ...rates, tolerance: 1, ready: (p) => (p as Limiter).ready });
-    await assertLatency((ctx) => new Compressor(ctx, { lookahead: 0.003 }), { ...rates, tolerance: 1, ready: (p) => (p as Compressor).ready });
+    await assertLatency((ctx) => new Compressor(ctx, { lookAhead: 0.003 }), { ...rates, tolerance: 1, ready: (p) => (p as Compressor).ready });
     // At pitch 0 the granular engine holds one grain at half the window, so the impulse
     // lands exactly on the declared value.
     await assertLatency((ctx) => new PitchShift(ctx, { windowSize: 0.02 }), { ...rates, tolerance: 1 });

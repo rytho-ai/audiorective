@@ -1,0 +1,143 @@
+{
+  "area": "record-play",
+  "description": "API-shape experiment for recording, file playback, region looping, stretching and sample import. The same six tasks are given with no API (desire mode) or with one variant's type declarations only (guess mode). Expectations describe behaviour, not names.",
+  "tasks": [
+    {
+      "id": "R1-record-next-bar",
+      "prompt": "A browser song editor plays at 120 BPM in 4/4 with a transport that is already running. When the user clicks Record, capture 4 bars from their microphone, starting exactly on the next bar line and ending exactly 4 bars later. When the take is finished you need its audio data and when it started on the audio clock, so it can be placed on a track. Handle the user denying microphone access, and release the microphone when you are done.",
+      "expectations": [
+        "Asks for microphone access in response to the click (not at page load) and connects the microphone into the capture path.",
+        "The capture start is scheduled at the next bar boundary computed from the transport/tempo (not started immediately and not with setTimeout).",
+        "The capture end is scheduled 4 bars (16 beats = 8 seconds at 120 BPM) after the start, on the audio clock, not by a wall-clock timer.",
+        "Returns or exposes the recorded audio together with its start time or frame position.",
+        "A denied or failed microphone request is caught and reported to the user, and the microphone tracks are stopped afterwards."
+      ],
+      "checks": [
+        {
+          "expectation": 2,
+          "label": "4 bars from start (16 beats / 8 s / 4 * bar length) is used for the end",
+          "any": [
+            "\\b16\\b",
+            "\\b8\\b",
+            "[\"']4m[\"']",
+            "[\"']4 ?bars?[\"']",
+            "\\b(?:BARS|bars|TAKE_BARS|barCount|NUM_BARS)\\w*\\s*[=:]\\s*4\\b",
+            "\\b4\\s*\\*\\s*\\w*(?:[Bb]ar|[Bb]eat)\\w*",
+            "\\w*(?:[Bb]ar|BARS)\\w*\\s*\\*\\s*(?:4|beatsPerBar|barBeats)"
+          ]
+        },
+        {
+          "expectation": 4,
+          "label": "microphone tracks stopped",
+          "any": ["getTracks\\(\\)[^;]{0,60}stop\\(\\)", "\\.stop\\(\\)[^;]{0,40}track", "stopMic|releaseMic|close\\(\\)|dispose\\(\\)|dispose"]
+        }
+      ]
+    },
+    {
+      "id": "R2-monitor-click-place",
+      "prompt": "Build an overdub flow: the user hears a metronome click (clicks every beat at 100 BPM, accented on beat 1 of each 4-beat bar) and their own microphone through the speakers while they record 8 bars. Monitoring must not create a feedback loop with the recording and the click must not end up in the recorded take. When recording stops, place the take on a timeline track at the position where recording began, expressed in bars and beats, so that it plays back in sync with the other tracks.",
+      "expectations": [
+        "The microphone is routed to the speakers for monitoring and to the capture path, and the click is routed to the speakers only (not into the capture).",
+        "The click is scheduled sample-accurately from the audio clock or a transport with an accent on beat 1 of every bar, not with setInterval/setTimeout.",
+        "Recording covers 8 bars (32 beats = 19.2 seconds at 100 BPM) and ends with a scheduled stop or a stop call at the right time.",
+        "The take's start time is converted to a musical position (bars and beats) using the tempo, so that it lines up with the timeline, rather than using wall-clock time.",
+        "The take is added to a track/clip data structure and can be played back from that position."
+      ],
+      "checks": [
+        {
+          "expectation": 2,
+          "label": "8 bars at 100 BPM = 32 beats / 19.2 s / 8 * bar length",
+          "any": [
+            "\\b32\\b",
+            "19\\.2",
+            "\\b8\\s*\\*\\s*(?:4|\\w*(?:[Bb]ar|[Bb]eat))",
+            "\\b\\w*(?:BARS|[Bb]ars)\\w*\\s*[=:]\\s*8\\b",
+            "[\"']8m[\"']",
+            "[\"']8 ?bars?[\"']"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "R3-load-select-loop",
+      "prompt": "The user picks an audio file from a file input. Show its duration when loaded. Then add two number inputs, start and end in seconds; pressing Play should loop only that region (e.g. 2.0 to 4.5 seconds) seamlessly until Stop is pressed. Report load failures (corrupt file) to the user.",
+      "expectations": [
+        "Loads and decodes the chosen File and shows its duration once ready.",
+        "A load or decode failure is caught and displayed.",
+        "The region between the entered start and end seconds is looped (loop start/end on the source, or a selection with looping enabled), not by re-triggering with timers.",
+        "Play starts from a user click handler (audio context resumed or an API documented as doing so) and Stop ends the loop."
+      ],
+      "checks": [
+        {
+          "expectation": 2,
+          "label": "loop region from start/end values",
+          "any": ["loopStart", "loopEnd", "setSelection", "selection", "setLooping", "loop\\s*:\\s*\\{", "setLoop", "isLooping"]
+        }
+      ]
+    },
+    {
+      "id": "R4-podcast-player",
+      "prompt": "A podcast page streams a long episode from a URL (no full download or decode). Build a player with Play/Pause toggle, a seek slider, the current time and duration, and a progress bar that updates smoothly while playing. If the browser refuses to start playback (autoplay policy) the user must see a message asking them to press Play, instead of nothing happening silently.",
+      "expectations": [
+        "Streams the episode from the URL without decoding the entire file into an AudioBuffer.",
+        "Play/pause toggles correctly from the current state and the seek slider sets the playback position.",
+        "The progress bar and current time update from the player's time (events, observable state or per-frame reads), not from a separate timer that drifts.",
+        "A rejected play attempt (NotAllowedError / autoplay refusal) is caught or observed and a visible message is shown to the user."
+      ],
+      "checks": [
+        {
+          "expectation": 3,
+          "label": "play failure is handled",
+          "any": ["\\.catch\\s*\\(", "catch\\s*\\(", "NotAllowedError", "onError", "onerror", "[\"']error[\"']", "\\.error\\b", "autoplay"]
+        }
+      ]
+    },
+    {
+      "id": "R5-stretch-to-tempo",
+      "prompt": "The user has recorded a drum loop at 96 BPM (you have its AudioBuffer). The song runs at 120 BPM. Stretch the loop so it plays in time with the song at 120 BPM without changing its pitch, and play it looping, starting on the next bar of the song. Show a busy indicator while the stretching is being computed.",
+      "expectations": [
+        "Computes the correct ratio between 96 and 120 BPM (loop becomes 0.8 times as long) and applies it with a pitch-preserving time stretch (not playbackRate alone).",
+        "Shows a busy state while stretching runs and clears it when finished or failed.",
+        "Playback loops and starts at the next bar boundary of the song timeline.",
+        "A failed stretch is caught and does not leave the busy indicator on."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "ratio 96/120",
+          "any": [
+            "0\\.8\\b",
+            "96\\s*/\\s*120",
+            "120\\s*/\\s*96",
+            "1\\.25\\b",
+            "\\w*(?:LOOP|[Ll]oop|SOURCE|source|ORIG|orig)\\w*\\s*/\\s*\\w*(?:SONG|[Ss]ong|TARGET|target)\\w*",
+            "\\w*(?:SONG|[Ss]ong|TARGET|target)\\w*\\s*/\\s*\\w*(?:LOOP|[Ll]oop|SOURCE|source|ORIG|orig)\\w*"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "R6-sample-library",
+      "prompt": "Users drag several audio files (wav/mp3/ogg, possibly some corrupt or huge) onto a page. Import them into a sample library with a list showing each file's name, loading state, duration and any error. Clicking a row auditions the sample; clicking it again stops the audition. A separate Add to Pad action must hand the decoded sample to a drum pad. Removing a row from the list must not break a pad that already uses it.",
+      "expectations": [
+        "Imports all dropped files (decoding in order or concurrently) and shows per-file status: loading, ready, error, with name and duration.",
+        "A corrupt or oversized file shows an error on its row and does not stop other files from importing.",
+        "Clicking a row auditions it and clicking again stops it; auditioning does not go through the pad.",
+        "A decoded sample is obtained for the pad as an AudioBuffer (or equivalent) while the library keeps its own copy.",
+        "Removing a row does not invalidate a sample a pad already holds (the pad keeps its own reference)."
+      ]
+    },
+    {
+      "id": "R7",
+      "prompt": "A vanilla browser app already has an AudioRecorder connected to its input and attached to its playing Clock. Use the shown API to record a long take from the next bar boundary for 64 bars, writing every PCM chunk asynchronously to app-owned persistent storage without accumulating full-take PCM. Show callable examples for normal completion, a Stop button that keeps the partial take, caller AbortSignal cancellation that discards it, and a storage write rejection before anyone presses Stop. Show where the app gets the final frame/time span and when it can safely commit, discard and close its storage. Remove listeners that each example owns and leave the shared recorder, input and Clock usable afterward. Also include one short buffered take that returns its PCM, preserving that existing use. The storage abstraction may be declared in the example; it persists each chunk rather than accumulating the take in JavaScript memory. Use only the supplied toolkit API; do not run anything.",
+      "expectations": [
+        "Starts on the next musical bar and requests the stated musical duration using the supplied owner's existing transport conventions, without a second recorder, transport, timer-based musical scheduler or manual beat-boundary arithmetic.",
+        "Passes an asynchronous chunk writer through the supplied stream entry. Does not accumulate full-take PCM, invent a buffering option, or hand-write a serialization or audio capture engine the toolkit already owns.",
+        "Observes the initial streaming completion promise and its PCM-free frame/time span. Commits normal completion after accepted writes settle and handles early stop as partial success, with the documented mode-correct stop entry.",
+        "Cancellation discards the take, handles AbortError through completion, and closes caller-owned storage after the streaming operation settles. It does not dispose borrowed recorder, input or Clock to end one take.",
+        "A rejected write is observable and causes storage failure cleanup even without a stop request. Cleanup removes owned listeners, closes the storage on every path and does not race in-flight writes.",
+        "The short buffered recording retains the existing PCM result and owner lifecycle. Uses declared API members and actual result types, without a removed graph-preparation stream entry or an invented take handle."
+      ]
+    }
+  ]
+}

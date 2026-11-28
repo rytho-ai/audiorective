@@ -1,5 +1,5 @@
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { FilePlayer } from "../src";
+import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
+import { FilePlayer, effect } from "../src";
 
 /** Build a valid silent WAV data URI so a real <audio> element can load + play it. */
 function wavDataUri(seconds = 0.3, sampleRate = 8000): string {
@@ -62,13 +62,57 @@ describe("FilePlayer", () => {
     void ctx.close();
   });
 
+  test.each(["source", "stop"])("%s publishes one coherent playback transition", async (action) => {
+    const player = makePlayer(ctx, { src: wavDataUri(3) });
+    await once(player.audio, "loadedmetadata");
+    await player.play();
+    player.seek(1);
+    const oldSource = player.src;
+    const duration = player.cells.duration.value;
+    const replacement = wavDataUri(0.5);
+    const seen: unknown[][] = [];
+    const stop = effect(
+      () => void seen.push([player.src, player.cells.isPlaying.value, player.cells.currentTime.value, player.cells.duration.value]),
+    );
+    seen.length = 0;
+    try {
+      if (action === "source") player.src = replacement;
+      else player.stop();
+      expect(seen).toEqual([[action === "source" ? replacement : oldSource, false, 0, action === "source" ? NaN : duration]]);
+    } finally {
+      stop();
+      player.dispose();
+    }
+  });
+
+  test("disposing during playback publishes an inactive empty source immediately", async () => {
+    const player = makePlayer(ctx, { src: wavDataUri(3) });
+    await once(player.audio, "loadedmetadata");
+    await player.play();
+    player.seek(1);
+    const seen: unknown[][] = [];
+    const stop = effect(
+      () => void seen.push([player.src, player.cells.isPlaying.value, player.cells.currentTime.value, player.cells.duration.value]),
+    );
+    seen.length = 0;
+    try {
+      player.dispose();
+      expect(seen).toEqual([[null, false, 0, NaN]]);
+      expect(player.audio.paused).toBe(true);
+      expect(() => player.dispose()).not.toThrow();
+    } finally {
+      stop();
+      player.dispose();
+    }
+  });
+
   test("output is an AudioNode and volume param drives it", () => {
     const p = makePlayer(ctx, { volume: 0.5 });
     expect(p.output).toBeInstanceOf(AudioNode);
     expect((p.output as GainNode).gain.value).toBeCloseTo(0.5);
     p.params.volume.value = 0.25;
     expect((p.output as GainNode).gain.value).toBeCloseTo(0.25);
-    p.destroy();
+    p.dispose();
   });
 
   test("loadedmetadata populates the duration cell", async () => {
@@ -76,7 +120,7 @@ describe("FilePlayer", () => {
     await once(p.audio, "loadedmetadata");
     expect(p.cells.duration.value).toBeGreaterThan(0.2);
     expect(p.cells.duration.value).toBeLessThan(0.6);
-    p.destroy();
+    p.dispose();
   });
 
   test("play sets isPlaying; pause clears it", async () => {
@@ -87,7 +131,7 @@ describe("FilePlayer", () => {
     p.pause();
     await delay(30);
     expect(p.cells.isPlaying.value).toBe(false);
-    p.destroy();
+    p.dispose();
   });
 
   test("seek sets currentTime and clamps to duration", async () => {
@@ -97,7 +141,7 @@ describe("FilePlayer", () => {
     expect(p.cells.currentTime.value).toBeCloseTo(1, 1);
     p.seek(99);
     expect(p.cells.currentTime.value).toBeLessThanOrEqual(p.cells.duration.value + 0.01);
-    p.destroy();
+    p.dispose();
   });
 
   test("stop pauses and rewinds to 0", async () => {
@@ -107,7 +151,7 @@ describe("FilePlayer", () => {
     p.stop();
     expect(p.cells.isPlaying.value).toBe(false);
     expect(p.cells.currentTime.value).toBe(0);
-    p.destroy();
+    p.dispose();
   });
 
   test("loop sets audio.loop", () => {
@@ -115,7 +159,7 @@ describe("FilePlayer", () => {
     expect(p.audio.loop).toBe(true);
     p.loop = false;
     expect(p.audio.loop).toBe(false);
-    p.destroy();
+    p.dispose();
   });
 
   test("onEnded fires once when a non-looping clip finishes", async () => {
@@ -129,7 +173,7 @@ describe("FilePlayer", () => {
     await once(p.audio, "ended", 8000);
     expect(ended).toBe(1);
     expect(p.cells.isPlaying.value).toBe(false);
-    p.destroy();
+    p.dispose();
   });
 
   test("setting src resets currentTime and duration", async () => {
@@ -140,25 +184,104 @@ describe("FilePlayer", () => {
     p.src = wavDataUri(0.3);
     expect(p.cells.currentTime.value).toBe(0);
     expect(Number.isNaN(p.cells.duration.value)).toBe(true);
-    p.destroy();
+    p.dispose();
   });
 
-  test("destroy disconnects without throwing", () => {
+  test("dispose disconnects without throwing", () => {
     const p = makePlayer(ctx, { src: wavDataUri(1) });
-    expect(() => p.destroy()).not.toThrow();
+    expect(() => p.dispose()).not.toThrow();
   });
 
-  test("play() with no src resolves without throwing and stays stopped", async () => {
+  test("play() with no src rejects with NotSupportedError and stays stopped", async () => {
     const p = makePlayer(ctx);
-    await expect(p.play()).resolves.toBeUndefined();
+    await expect(p.play()).rejects.toMatchObject({ name: "NotSupportedError" });
     expect(p.cells.isPlaying.value).toBe(false);
-    p.destroy();
+    p.dispose();
   });
 
-  test("destroy() while actively playing does not throw", async () => {
+  test("play() rejects with the element's NotAllowedError instead of swallowing it", async () => {
+    const p = makePlayer(ctx, { src: wavDataUri(1) });
+    const blocked = new DOMException("blocked", "NotAllowedError");
+    const spy = vi.spyOn(p.audio, "play").mockRejectedValue(blocked);
+    await expect(p.play()).rejects.toBe(blocked);
+    expect(p.cells.isPlaying.value).toBe(false);
+    spy.mockRestore();
+    p.dispose();
+  });
+
+  test("play() rejects with AbortError when pause() interrupts it", async () => {
+    const p = makePlayer(ctx, { src: wavDataUri(1) });
+    const interrupted = new DOMException("interrupted", "AbortError");
+    vi.spyOn(p.audio, "play").mockRejectedValue(interrupted);
+    await expect(p.play()).rejects.toMatchObject({ name: "AbortError" });
+    p.dispose();
+  });
+
+  test("dispose() while actively playing does not throw", async () => {
     const p = makePlayer(ctx, { src: wavDataUri(2) });
     await once(p.audio, "loadedmetadata");
     await p.play();
-    expect(() => p.destroy()).not.toThrow();
+    expect(() => p.dispose()).not.toThrow();
+  });
+
+  test("src is tracked by effects", () => {
+    const p = makePlayer(ctx);
+    const seen: Array<string | null> = [];
+    const stop = effect(() => {
+      seen.push(p.src);
+    });
+    p.src = wavDataUri(0.1);
+    expect(seen.length).toBe(2);
+    expect(seen[0]).toBeNull();
+    expect(p.src).toBe(seen[1]);
+    stop();
+    p.dispose();
+  });
+
+  test("position reads the element's playhead live, between timeupdate events", async () => {
+    const p = makePlayer(ctx, { src: wavDataUri(2) });
+    await once(p.audio, "loadedmetadata");
+    expect(p.position).toBe(0);
+    await p.play();
+    const first = p.position;
+    await delay(80);
+    expect(p.position).toBeGreaterThan(first);
+    expect(p.position).toBe(p.audio.currentTime);
+    p.dispose();
+  });
+
+  test("cells.error holds the element's MediaError and clears when a new src is set", async () => {
+    const p = makePlayer(ctx);
+    expect(p.cells.error.value).toBeNull();
+    p.src = "data:audio/wav;base64,AAAA";
+    await once(p.audio, "error");
+    expect(p.cells.error.value).toBe(p.audio.error);
+    expect(p.cells.error.value).not.toBeNull();
+    p.src = wavDataUri(0.3);
+    expect(p.cells.error.value).toBeNull();
+    p.dispose();
+  });
+});
+
+describe("FilePlayer speed survives native source loading", () => {
+  test.each([1.5, 2])("constructor playbackRate %s remains effective after loading and replacement", async (rate) => {
+    const context = new AudioContext();
+    const player = makePlayer(context, { playbackRate: rate });
+    try {
+      let loaded = once(player.audio, "loadedmetadata");
+      player.src = wavDataUri(0.4);
+      await loaded;
+      expect(player.audio.playbackRate).toBe(rate);
+      expect(player.params.playbackRate.value).toBe(rate);
+      player.playbackRate = 1.25;
+      loaded = once(player.audio, "loadedmetadata");
+      player.src = wavDataUri(0.6);
+      await loaded;
+      expect(player.audio.playbackRate).toBe(1.25);
+      expect(player.params.playbackRate.value).toBe(1.25);
+    } finally {
+      player.dispose();
+      await context.close();
+    }
   });
 });

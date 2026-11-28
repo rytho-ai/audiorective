@@ -1,5 +1,5 @@
-import { AudioProcessor, type Cell, type SchedulableParam } from "@audiorective/core";
-import { registerWorklet } from "../registerWorklet";
+import { AudioProcessor, cell, readonlyCell, registerWorklet, type Cell, type ReadonlyCell, type SchedulableParam } from "@audiorective/core";
+import { SMOOTHING } from "../internal/smoothing";
 import { DYNAMICS_WORKLET, DYNAMICS_WORKLET_NAME } from "../worklets/dynamics.worklet";
 
 export interface DynamicsCoreOptions {
@@ -27,34 +27,40 @@ type P = {
  * carried over, so await `ready` before calling `setValueAtTime`/ramps on these params (plain `.value`
  * writes are carried over).
  */
-export class DynamicsCore extends AudioProcessor<P, { reduction: Cell<number>; isReady: Cell<boolean> }> {
+export class DynamicsCore extends AudioProcessor<P, { reduction: ReadonlyCell<number>; isReady: ReadonlyCell<boolean> }> {
   private readonly _input: GainNode;
   private readonly _output: GainNode;
   readonly ready: Promise<void>;
   private node: AudioWorkletNode | null = null;
-  private destroyed = false;
+  private disposed = false;
+  private readonly _reduction: Cell<number>;
+  private readonly _isReady: Cell<boolean>;
 
   constructor(ctx: BaseAudioContext, opts: DynamicsCoreOptions) {
     const input = new GainNode(ctx),
       output = new GainNode(ctx);
     const lookaheadSamples = Math.round(opts.lookahead * ctx.sampleRate);
-    super(ctx, ({ schedulableParam, cell }) => ({
+    const reduction = cell(0);
+    const isReady = cell(false);
+    super(ctx, ({ schedulableParam }) => ({
       params: {
         threshold: schedulableParam({ default: opts.threshold, min: -100, max: 0 }),
         ratio: schedulableParam({ default: Number.isFinite(opts.ratio) ? opts.ratio : 1000, min: 1, max: 1000 }),
         knee: schedulableParam({ default: opts.knee, min: 0, max: 40 }),
         attack: schedulableParam({ default: opts.attack, min: 0, max: 1 }),
         release: schedulableParam({ default: opts.release, min: 0.001, max: 5 }),
-        makeup: schedulableParam({ default: opts.makeup, min: 0, max: 40 }),
+        makeup: schedulableParam({ default: opts.makeup, min: 0, max: 40, smoothing: SMOOTHING }),
       },
-      cells: { reduction: cell(0), isReady: cell(false) },
+      cells: { reduction: readonlyCell(reduction), isReady: readonlyCell(isReady) },
       latency: lookaheadSamples,
     }));
+    this._reduction = reduction;
+    this._isReady = isReady;
     this._input = input;
     this._output = output;
 
     this.ready = registerWorklet(ctx, DYNAMICS_WORKLET_NAME, DYNAMICS_WORKLET).then(() => {
-      if (this.destroyed) return;
+      if (this.disposed) return;
       const node = new AudioWorkletNode(ctx, DYNAMICS_WORKLET_NAME, {
         numberOfInputs: 1,
         numberOfOutputs: 1,
@@ -67,13 +73,16 @@ export class DynamicsCore extends AudioProcessor<P, { reduction: Cell<number>; i
         this.params[key].rebind(nodeParams.get(key)!, { reassert: true });
       }
       node.port.onmessage = (e: MessageEvent<{ reduction: number }>) => {
-        this.cells.reduction.value = e.data.reduction;
+        this._reduction.value = e.data.reduction;
       };
       input.connect(node);
       node.connect(output);
       this.node = node;
-      this.cells.isReady.value = true;
+      this._isReady.value = true;
     });
+    // `ready` keeps rejecting for callers that await it (isReady stays false); this no-op
+    // handler only stops an un-awaited rejection from surfacing as an unhandled one.
+    this.ready.catch(() => {});
   }
 
   get input(): GainNode {
@@ -84,14 +93,14 @@ export class DynamicsCore extends AudioProcessor<P, { reduction: Cell<number>; i
     return this._output;
   }
 
-  override destroy(): void {
-    this.destroyed = true;
+  override dispose(): void {
+    this.disposed = true;
     if (this.node) {
       // The worklet closes its own port once it sees this message and returns `false` from
       // `process()`, which is what actually lets the node be garbage collected.
       this.node.port.postMessage({ dispose: true });
       this.node.disconnect();
     }
-    super.destroy();
+    super.dispose();
   }
 }

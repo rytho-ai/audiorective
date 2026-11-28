@@ -1,15 +1,22 @@
-import type { Cell, SchedulableParam } from "@audiorective/core";
+import type { ReadonlyCell, SchedulableParam } from "@audiorective/core";
 import { DynamicsCore } from "./dynamics/DynamicsCore";
 import { Effect, type EffectOptions } from "./Effect";
 
 export interface CompressorOptions extends EffectOptions {
+  /** dBFS above which gain reduction starts. Default -24. */
   threshold?: number;
+  /** Input:output slope above the threshold. Default 4. */
   ratio?: number;
+  /** Soft-knee width, dB. Default 6. */
   knee?: number;
+  /** Seconds to reach the reduction. Default 0.003. */
   attack?: number;
+  /** Seconds to let go of the reduction. Default 0.25. */
   release?: number;
+  /** Output gain after compression, dB. Default 0. */
   makeup?: number;
-  lookahead?: number;
+  /** Detector lookahead, seconds; the effect declares it as latency. Default 0. */
+  lookAhead?: number;
 }
 
 type P = {
@@ -18,11 +25,13 @@ type P = {
   knee: SchedulableParam;
   attack: SchedulableParam;
   release: SchedulableParam;
+  /** Output gain in dB; writes smooth over 10 ms automatically. */
   makeup: SchedulableParam;
 };
 
-export class Compressor extends Effect<P, { reduction: Cell<number>; isReady: Cell<boolean> }> {
-  readonly ready: Promise<void>;
+/** Feedforward compressor. The worklet loads asynchronously; only the `1 − wet` dry share passes until ready (`wet: 1` is silent). `cells.reduction` is the live gain reduction in dB (<= 0). */
+export class Compressor extends Effect<P, { reduction: ReadonlyCell<number> }> {
+  static override readonly type: string = "Compressor";
   private readonly core: DynamicsCore;
 
   constructor(ctx: BaseAudioContext, opts: CompressorOptions = {}) {
@@ -33,15 +42,20 @@ export class Compressor extends Effect<P, { reduction: Cell<number>; isReady: Ce
       attack: opts.attack ?? 0.003,
       release: opts.release ?? 0.25,
       makeup: opts.makeup ?? 0,
-      lookahead: opts.lookahead ?? 0,
+      lookahead: opts.lookAhead ?? 0,
     });
-    super(ctx, { input: core, output: core }, () => ({ params: { ...core.params }, cells: { ...core.cells } }), opts);
-    this.ready = core.ready;
+    super(
+      ctx,
+      { input: core, output: core, loading: true },
+      () => ({ params: { ...core.params }, cells: { reduction: core.cells.reduction } }),
+      opts,
+    );
+    this.track(core.ready);
     this.core = core;
   }
 
-  override destroy(): void {
-    this.core.destroy();
-    super.destroy();
+  override dispose(): void {
+    this.core.dispose();
+    super.dispose();
   }
 }

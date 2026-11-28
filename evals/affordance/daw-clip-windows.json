@@ -1,0 +1,46 @@
+{
+  "area": "daw-nondestructive-audio",
+  "description": "API-shape experiment for non-destructive audio clip windows: a clip shows a window of its recording, the rest stays in the song and can be revealed again, also after saving and reopening. Expectations describe behaviour, not names.",
+  "tasks": [
+    {
+      "id": "N1-extend-after-reopen",
+      "prompt": "A browser podcast editor has an open episode as `project` and its running engine as `workspace`. Track \"Host A\" has one audio clip made from a 60-second recording placed at time 0. Write the code for three steps. First, the user trims the clip so it plays only seconds 5 to 50 of the recording, and it stays where it was in time relative to the recording (so the clip now starts at 5 s on the timeline). Second, the episode is saved to a `.dawproject` Blob and opened again in a new engine on a new AudioContext. Third, in the reopened episode the user drags the clip's left edge back to 2 s on the timeline, so seconds 2 to 5 of the original recording play again, and drags the right edge out to the end of the recording. Show, for the clip, where it sits on the timeline and which part of its recording it plays (start offset and length in the recording), both after the trim and after reopening. Each edit is one Undo step. Extending past the start or end of the recording must fail with a clear error and change nothing.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;",
+      "expectations": [
+        "Trims the clip to seconds 5 to 50 of the recording, keeping the audio aligned in time.",
+        "Reads where in its recording the clip starts and how long the recording is, from the clip, without keeping a copy of the recording in app code.",
+        "After saving and reopening, the clip can be extended back to reveal audio that had been trimmed away.",
+        "The extended clip plays the original audio for the revealed part, aligned in time.",
+        "Each trim or extension is one undoable step.",
+        "Extending beyond the recording's start or end fails with a clear error and changes nothing."
+      ],
+      "checks": [
+        {
+          "expectation": 1,
+          "label": "No app-side copy of the recording or ZIP surgery",
+          "none": ["unzipSync", "zipSync", "from \"fflate\"", "localStorage", "indexedDB"]
+        }
+      ]
+    },
+    {
+      "id": "N2-split-shared-source",
+      "prompt": "A browser podcast editor has an open episode as `project` and its running engine as `workspace`. Track \"Interview\" has one 30-minute audio clip at time 0. The user splits it at 10:00 and 20:00, deletes the middle part, and moves the last part earlier so it starts at 10:00. Write that edit as one Undo step, then save the episode to a `.dawproject` Blob. The saved file must keep the whole recording only once (not one copy per piece), so the file stays about the size of the recording, and after reopening, the first piece's right edge can be dragged out to reveal minutes 10 to 12 of the original recording again. Report the two pieces' timeline positions and recording offsets after reopening, and the saved file size.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;",
+      "expectations": [
+        "Splits at 10:00 and 20:00, removes the middle piece and moves the last piece to 10:00, as one undoable step.",
+        "Saves through the engine so the recording is stored once and shared by both pieces.",
+        "After reopening, both pieces keep their timeline positions and their offsets in the original recording.",
+        "The first piece can be extended after reopening to reveal minutes 10 to 12 of the recording.",
+        "Reports positions and recording offsets read from the clips.",
+        "Does not store a separate copy of the recording in app code or edit the archive by hand."
+      ],
+      "checks": [
+        {
+          "expectation": 5,
+          "label": "No app-side copy of the recording or ZIP surgery",
+          "none": ["unzipSync", "zipSync", "from \"fflate\"", "localStorage", "indexedDB"]
+        }
+      ]
+    }
+  ]
+}

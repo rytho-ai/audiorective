@@ -1,0 +1,7 @@
+[
+  {
+    "package": "daw",
+    "from": ".",
+    "reason": "The daw root deliberately re-exports its project, dawproject and runtime sub-entries (AGENTS.md, Layering) so one import covers a typical app; the sub-entries stay for Node and pure-model code."
+  }
+]

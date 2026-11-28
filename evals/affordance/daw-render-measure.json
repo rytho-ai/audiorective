@@ -1,0 +1,51 @@
+{
+  "area": "daw-render-measure",
+  "description": "API-shape experiment for rendering any part of a song offline (a session scene repeated, a scene chain, a pattern), exporting WAV files, and reading live track levels. Expectations describe behaviour, not names.",
+  "tasks": [
+    {
+      "id": "M1-render-scenes",
+      "prompt": "A browser groovebox has an open song as `project` (4/4, 120 BPM) and its running engine as `workspace`. The song is built only in the session grid: scenes named A, B and C, each with clips on Drums and Bass, and nothing on the arrangement timeline. Write the code for two export buttons. \"Export loop\" renders scene B played four times in a row, offline through the same mix the user hears (volumes, mutes, effects), and downloads it as a 16-bit stereo WAV file. \"Export song\" renders the chain A, A, B, C (each scene once, back to back on bar lines) the same way and downloads it as a WAV file. Report each render's length in seconds and its peak level. Neither export may change the song or interrupt what is playing.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;",
+      "expectations": [
+        "Renders scene B four times offline through the song's mix without hand-building a second project or engine.",
+        "Renders the chain A, A, B, C offline, each scene starting on a bar line, without hand-building a second project or engine.",
+        "Encodes each render as a 16-bit stereo WAV without hand-writing a RIFF/WAV encoder.",
+        "Downloads each WAV file.",
+        "Reports each render's length in seconds and its peak level.",
+        "Leaves the song unchanged and playback uninterrupted."
+      ],
+      "checks": [
+        {
+          "expectation": 2,
+          "label": "No hand-written WAV header",
+          "none": ["RIFF", "WAVE", "setUint32\\([^)]*36"]
+        }
+      ]
+    },
+    {
+      "id": "M2-meters-wav",
+      "prompt": "A browser DAW has an open song as `project` and its running engine as `workspace`, with several audio and MIDI tracks. Write the code for its mixer meters: while the song plays, every track strip and the master strip show a live peak level in dBFS (updated about 30 times a second) and a peak-hold value that resets when clicked; meters fall to silence when playback stops; they keep working after tracks are added or the project is reopened. Also add an \"Export bars 1–8\" button that renders bars 1 to 8 of the arrangement offline through the mix and downloads a 24-bit WAV file.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;",
+      "expectations": [
+        "Reads each track's live level from the engine without wiring its own AnalyserNode to internal audio nodes.",
+        "Reads the master level the same way.",
+        "Updates the meters about 30 times a second and shows peak-hold that resets on click.",
+        "Meters keep working after tracks are added or the project is reopened, and fall to silence when stopped.",
+        "Renders bars 1–8 of the arrangement offline through the mix.",
+        "Downloads it as a 24-bit WAV without hand-writing a RIFF/WAV encoder."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "No hand-wired analyser",
+          "none": ["createAnalyser\\(", "new AnalyserNode\\("]
+        },
+        {
+          "expectation": 5,
+          "label": "No hand-written WAV header",
+          "none": ["RIFF", "WAVE"]
+        }
+      ]
+    }
+  ]
+}

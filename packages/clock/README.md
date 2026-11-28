@@ -24,10 +24,10 @@ const timeline = new Timeline({ audioContext: ctx, bpm: 120 }).addRuler("bar", n
 const clock = new Clock({
   timeline,
   onTick(window) {
-    for (const { time, index } of window.rulers.bar.grid(16)) {
-      // `time` is already an absolute AudioContext time, which is what
+    for (const { when, index } of window.rulers.bar.grid(16)) {
+      // `when` is already an absolute AudioContext time, which is what
       // core's Sampler takes as `when`
-      if (pattern[index % 16]) sampler.trigger({ when: time });
+      if (pattern.value[index % 16]) sampler.trigger({ when });
     }
   },
 });
@@ -52,7 +52,7 @@ timeline.bpm.setValueAtTime(140, timeline.beatToTime(64)); // tempo change sched
 ## Transport
 
 ```typescript
-clock.start(); // or clock.start({ atBeat: 16 })
+clock.start(); // or clock.start(undefined, 16) to begin at beat 16
 clock.pause(); // freezes position; committed look-ahead audio keeps sounding (an accepted tail)
 clock.resume(); // continues from the frozen position
 clock.stop(); // resets to beat 0
@@ -61,9 +61,9 @@ clock.seek(64); // jumps to beat 64
 
 `pause()` only pauses a playing clock and `resume()` only resumes a paused one; each is otherwise a no-op, so `start()` is the sole entry into playback.
 
-`clock.state` is a reactive `Param<"stopped" | "playing" | "paused">`.
+`clock.state` is a `ReadonlyCell<"stopped" | "playing" | "paused">` — the same store as `timeline.state`. Read it with `.value` (tracked) or `$()`; only `start`, `pause`, `resume` and `stop` change it, so it cannot be written from outside.
 
-Every jump (`seek`, `start({ atBeat })`, stop→start) bumps `window.generation` and begins a new continuity segment — windows are non-overlapping only _within_ a segment, so beats may legitimately reappear across a backward seek. Consumers holding derived state (step counters, generator positions) should reset when `generation` changes.
+Every jump (`seek`, `start(when, offsetBeats)`, stop→start) bumps `window.generation` and begins a new continuity segment — windows are non-overlapping only _within_ a segment, so beats may legitimately reappear across a backward seek. Consumers holding derived state (step counters, generator positions) should reset when `generation` changes.
 
 ## Rulers — reading the beat axis
 
@@ -83,11 +83,11 @@ Four built-ins, crossed along two axes — **unit** (bar vs. raw time) × **topo
 
 `CycleBarRuler` is how **looping** is expressed: the beat axis never jumps — it's read modulo the cycle region, so scheduling across a loop boundary needs no special case. Its window reading exposes `spans` (the window's cycle-relative sub-ranges, for note content that isn't grid-snapped) alongside `grid()`.
 
-Its grid points fold too. A linear ruler yields `{ beat, time, index }` counting forever; a cycle ruler yields `{ beat, time, step, cycle }` where `step` is cycle-relative and `division` means steps _per cycle_. Pass a pattern's length and `step` indexes it directly:
+Its grid points fold too. A linear ruler yields `{ beat, when, index }` counting forever; a cycle ruler yields `{ beat, when, step, cycle }` where `step` is cycle-relative and `division` means steps _per cycle_. Pass a pattern's length and `step` indexes it directly:
 
-```typescript
-for (const { time, step } of window.rulers.pattern.grid(steps.length)) {
-  if (steps[step]) sampler.trigger({ when: time });
+```typescript prelude=window:TickWindow
+for (const { when, step } of window.rulers.pattern.grid(steps.length)) {
+  if (steps[step]) sampler.trigger({ when });
 }
 ```
 
@@ -124,8 +124,4 @@ Remedy: raise `lookAhead`.
 
 ## Rendering offline
 
-`renderTimeline(options, setup)` is `renderOffline` for a clock-driven graph: `setup(ctx, tickSource)` builds the `Clock` on the tick source it is handed and starts the transport, and the render is suspended, ticked, and resumed every `tickInterval` (default 25 ms) so the clock keeps emitting windows against the context's real `currentTime`. Keep `tickInterval` below the clock's `lookAhead`, as live. See [`docs/clock.md`](https://github.com/audiorective/audiorective/blob/main/docs/clock.md#rendering-offline--rendertimeline).
-
-## Design
-
-See [`docs/superpowers/specs/2026-07-04-clock-design.md`](https://github.com/audiorective/audiorective/blob/eaad3df1bf52ec319414b73640d273ae445ecbb2/docs/superpowers/specs/2026-07-04-clock-design.md) (kept in git history) for the full design rationale.
+`renderTimeline(options, setup)` is `renderOffline` for a clock-driven graph: `setup(ctx, tickSource)` builds the `Clock` on the tick source it is handed and starts the transport, and the render is suspended, ticked, and resumed every `tickInterval` (default 25 ms) so the clock keeps emitting windows against the context's real `currentTime`. Keep `tickInterval` below the clock's `lookAhead`, as live. See [`docs/clock.md`](https://github.com/audiorective/audiorective/blob/main/docs/clock-advanced.md#rendering-offline--rendertimeline).

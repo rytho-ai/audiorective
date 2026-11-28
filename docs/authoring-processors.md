@@ -15,9 +15,11 @@ processor; add `input` only when the processor transforms incoming audio (an eff
 when it produces audio from scratch (an instrument). Anything the rest of the class also
 needs on `this` gets assigned **after** `super()` returns — `this` isn't usable until then.
 
+Declare both registries explicitly, for example `AudioProcessor<{}, {}>` for a processor with no reactive fields. Empty registries may be omitted from the build result: `super(context, () => ({ latency: 0 }))`. Registries with declared keys remain required and fully typed; `processor.params` and `processor.cells` are frozen objects even when empty.
+
 ### Wrong — nodes on `this` before `super()`, no `output`
 
-```typescript
+```typescript fragment: intentional invalid example
 class Wobble extends AudioProcessor<{ depth: Param<number> }> {
   constructor(ctx: AudioContext) {
     this._gain = new GainNode(ctx); // error: 'this' before super()
@@ -58,6 +60,11 @@ Three primitives cover a processor's reactive surface:
   a phantom `ConstantSourceNode`).
 - **`cell`** — structured/complex data (step patterns, presets) via Immer `.update()`. Lives in
   `processor.cells`, not `processor.params`.
+- **`readonlyCell(source)`** (imported from core, not a build helper) — a `cells` entry that outside
+  code can read and track but not write. Use it when a value may only change through a method
+  that validates it or has to start, stop or cancel something. Create the writable `cell` as a
+  local before `super()`, register `readonlyCell(local)`, and keep the local on a private field.
+  See `core.md` → ReadonlyCell.
 
 | Shape          | When to use                     | Result                                       |
 | -------------- | ------------------------------- | -------------------------------------------- |
@@ -107,7 +114,7 @@ it in an `AudioProcessor` that declares `latency` instead).
 
 ### Wrong — hand-rolled connect/disconnect for a conditional bypass
 
-```typescript
+```typescript fragment: intentional invalid example
 class Distortion extends AudioProcessor<{ bypass: Param<boolean> }> {
   constructor(ctx: AudioContext, shaper: WaveShaperNode, dry: GainNode) {
     super(ctx, ({ param }) => ({
@@ -191,13 +198,13 @@ longest path in samples from `input` to `output` through its own graph. Reserve 
 declaration for processors whose true latency isn't visible in the graph — most commonly one
 wrapping an `AudioWorkletNode`, whose lookahead `defineGraph` can't see.
 
-For the runtime-ownership subtlety with a `param()`-created `latency` (destroy-tracking, the
+For the runtime-ownership subtlety with a `param()`-created `latency` (dispose-tracking, the
 `AudioParam`-sink footgun), see [Latency (PDC) in `core.md`](./core.md#latency-pdc) — this doc
 only covers the authoring decision, not the mechanism.
 
 ### Wrong — sample-count literal for a time-based delay
 
-```typescript
+```typescript fragment: partial class body
 super(ctx, ({ param }) => ({
   params: {
     /* ... */
@@ -208,7 +215,7 @@ super(ctx, ({ param }) => ({
 
 ### Right — derive from ctx.sampleRate
 
-```typescript
+```typescript fragment: partial class body
 super(ctx, ({ param }) => ({
   params: {
     /* ... */
@@ -219,18 +226,18 @@ super(ctx, ({ param }) => ({
 
 ## 5. Lifecycle
 
-`AudioProcessor.destroy()` already disposes every graph created via `defineGraph`, stops every
-effect registered via `effect()`, calls `destroy()` on every param in `params` (unregistering
-bind effects and `ParamSync`), destroys a `latency` param it created itself, and disconnects
+`AudioProcessor.dispose()` already disposes every graph created via `defineGraph`, stops every
+effect registered via `effect()`, calls `dispose()` on every param in `params` (unregistering
+bind effects and `ParamSync`), disposes a `latency` param it created itself, and disconnects
 every internally-created `ConstantSourceNode` (the ones behind `schedulableParam` without a
-real `AudioParam`). Cells are **not** destroyed — they're plain reactive containers with no
+real `AudioParam`). Cells are **not** disposed — they're plain reactive containers with no
 audio-graph resources.
 
-A subclass overriding `destroy()` must call `super.destroy()` and add cleanup for anything the
+A subclass overriding `dispose()` must call `super.dispose()` and add cleanup for anything the
 base class doesn't know about: stopping a source node it started (`OscillatorNode.stop()`,
 `ConstantSourceNode.stop()`), and closing a worklet's `MessagePort`.
 
-### Wrong — override destroy() without cleaning up owned sources
+### Wrong — override dispose() without cleaning up owned sources
 
 ```typescript
 class Drone extends AudioProcessor<{ freq: SchedulableParam }> {
@@ -249,7 +256,7 @@ class Drone extends AudioProcessor<{ freq: SchedulableParam }> {
     return this._osc;
   }
 
-  // no destroy() override — the oscillator keeps running forever
+  // no dispose() override — the oscillator keeps running forever
 }
 ```
 
@@ -272,9 +279,9 @@ class Drone extends AudioProcessor<{ freq: SchedulableParam }> {
     return this._osc;
   }
 
-  override destroy() {
+  override dispose() {
     this._osc.stop();
-    super.destroy();
+    super.dispose();
   }
 }
 ```
@@ -282,11 +289,11 @@ class Drone extends AudioProcessor<{ freq: SchedulableParam }> {
 ## 6. Worklet-backed processors
 
 A worklet-backed processor loads its module through `registerWorklet(ctx, name, source)` from
-`@audiorective/effects` — it turns `source` into a Blob URL and calls `ctx.audioWorklet.addModule`,
+`@audiorective/core` (also re-exported by `@audiorective/effects`) — it turns `source` into a Blob URL and calls `ctx.audioWorklet.addModule`,
 deduped per context so a second call for the same name and context is a no-op, and it works offline
 against an `OfflineAudioContext`. The processor itself constructs synchronously and exposes a `ready`
 promise that resolves once the module has loaded and the `AudioWorkletNode` is built and wired in; a
-`destroyed` flag set in `destroy()` and checked in the `ready` continuation guards a destroy that
+`disposed` flag set in `dispose()` and checked in the `ready` continuation guards a dispose that
 happens before that promise resolves. The worklet's own `process()` must return `false` after it has
 been told to dispose, so the node can be garbage collected instead of running forever. `DynamicsCore`
 (`packages/effects/src/dynamics/DynamicsCore.ts`) is the reference implementation.
@@ -305,7 +312,7 @@ it's the default test for that shape of processor, not optional coverage. It sen
 single-sample impulse into `input`, renders offline at each configured sample rate, and checks
 where the impulse arrives at `output` against the declared `latency`:
 
-```ts
+```ts fragment: requires application-local modules
 import { assertLatency } from "@audiorective/devtools";
 import { MyEffect } from "../src/MyEffect";
 
@@ -331,7 +338,7 @@ around.
   a leaf that never joins another path.
 - **Latency** — `latency: 0` for musical delay; a real processing delay declared in samples or
   derived from `ctx.sampleRate`; a worklet-backed processor declares its latency explicitly.
-- **Lifecycle** — an overridden `destroy()` calls `super.destroy()` and stops/cleans up
+- **Lifecycle** — an overridden `dispose()` calls `super.dispose()` and stops/cleans up
   anything the base class doesn't own (started sources, worklet ports).
 - **Testing** — headless vitest browser-mode tests; an `assertLatency` pin test for every
   processor with `input`.

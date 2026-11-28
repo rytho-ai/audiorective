@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { registerWorklet, WorkletUnavailableError } from "../src";
+import { registerWorklet, WorkletUnavailableError } from "@audiorective/core";
 
 const SOURCE = `
 class Passthrough extends AudioWorkletProcessor {

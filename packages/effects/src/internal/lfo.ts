@@ -1,3 +1,5 @@
+import type { ValueRange } from "@audiorective/core";
+
 export type LfoShape = "sine" | "sawtooth" | "triangle";
 
 function coefficient(shape: LfoShape, n: number): number {
@@ -30,12 +32,10 @@ export function phasedWave(ctx: BaseAudioContext, shape: LfoShape, phaseDeg: num
   return ctx.createPeriodicWave(real, imag);
 }
 
-export interface LfoOptions {
+export interface LfoOptions extends ValueRange {
   shape: LfoShape;
   phaseDeg?: number;
   frequency: number;
-  min: number;
-  max: number;
 }
 
 /** osc(−1..1) → depth gain → target, plus a constant centre → target. `setRange` retunes min/max. */

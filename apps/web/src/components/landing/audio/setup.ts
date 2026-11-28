@@ -34,7 +34,7 @@ export function createLandingEngine(context?: AudioContext) {
     async play() {
       const current = ++request;
       // Resume during the click gesture, then reconcile any pending suspension.
-      const started = engine.core.start().then(
+      const started = engine.core.resume().then(
         () => ({ ok: true as const }),
         (error: unknown) => ({ ok: false as const, error }),
       );
@@ -42,7 +42,7 @@ export function createLandingEngine(context?: AudioContext) {
         const result = await started;
         if (!result.ok) throw result.error;
         if (current !== request) return;
-        await engine.core.start();
+        await engine.core.resume();
         if (current === request) machine.play();
       });
     },

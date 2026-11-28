@@ -31,7 +31,7 @@ describe("renderTimeline", () => {
       // a one-sample impulse so onsets are exact
       const impulse = ctx.createBuffer(1, 1, sampleRate);
       impulse.getChannelData(0)[0] = 1;
-      const sampler = new Sampler(ctx, { buffer: impulse, polyphony: 8 });
+      const sampler = new Sampler(ctx, { sound: impulse, polyphony: 8 });
       sampler.output.connect(ctx.destination);
 
       const timeline = new Timeline({ audioContext: ctx, bpm: 120 }).addRuler("bar", new LinearBarRuler({ numerator: 4, denominator: 4 }));
@@ -40,7 +40,7 @@ describe("renderTimeline", () => {
         tickSource,
         onTick: (window) => {
           windows.push(window);
-          for (const { time } of window.rulers.bar.grid(4)) sampler.trigger({ when: time });
+          for (const { when } of window.rulers.bar.grid(4)) sampler.trigger({ when });
         },
         onMiss: (gap) => misses.push(gap),
       });
@@ -147,4 +147,51 @@ describe("renderTimeline", () => {
   test("rejects a non-positive tickInterval", async () => {
     await expect(renderTimeline({ seconds: 0.1, tickInterval: 0 }, () => {})).rejects.toThrow(RangeError);
   });
+
+  test("actions run at their audio time with the render suspended, and a returned promise is awaited before the next tick", async () => {
+    const log: string[] = [];
+    let ctxRef!: OfflineAudioContext;
+    await renderTimeline(
+      {
+        seconds: 1,
+        channels: 1,
+        sampleRate: 48000,
+        actions: [
+          {
+            at: 0.512,
+            run: async () => {
+              log.push(`start@${ctxRef.currentTime.toFixed(3)}`);
+              await new Promise((done) => setTimeout(done, 30)); // a take delivered by a worklet message, long after the render thread moved on
+              log.push("settled");
+            },
+          },
+          { at: 0, run: () => void log.push("zero") },
+        ],
+      },
+      (ctx, tickSource) => {
+        ctxRef = ctx;
+        const clock = new Clock({ audioContext: ctx, tickSource, onTick: () => void log.push(`tick@${ctx.currentTime.toFixed(3)}`) });
+        clock.start();
+      },
+    );
+    expect(log[0]).toBe("zero");
+    const start = log.findIndex((entry) => entry.startsWith("start@"));
+    expect(log[start]).toBe("start@0.512"); // suspended on the render quantum at 0.512 s
+    expect(log[start + 1]).toBe("settled"); // no tick between the action and its promise settling
+    expect(log[start + 2]).toMatch(/^tick@0\.5/);
+  });
+
+  test("an action beyond the render is ignored; a rejection fails the render", async () => {
+    await renderTimeline({ seconds: 0.2, channels: 1, sampleRate: 48000, actions: [{ at: 5, run: () => assertNever() }] }, () => {});
+    await expect(
+      renderTimeline(
+        { seconds: 0.2, channels: 1, sampleRate: 48000, actions: [{ at: 0.1, run: () => Promise.reject(new Error("take failed")) }] },
+        () => {},
+      ),
+    ).rejects.toThrow("take failed");
+  });
 });
+
+function assertNever(): never {
+  throw new Error("must not run");
+}

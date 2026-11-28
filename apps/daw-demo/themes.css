@@ -1,0 +1,764 @@
+/* Studio skins borrow the four palette directions shown in the Tactus UI reference.
+   All application surfaces and clip colors derive from these local tokens. */
+html[data-skin="midnight"] {
+  color-scheme: dark;
+  --canvas: #09090b;
+  --panel: #111114;
+  --control: #1b1b20;
+  --toolbar: #111114;
+  --ruler: #151518;
+  --lane: #0f0f12;
+  --lane-alt: #0c0c0f;
+  --border: #24242a;
+  --border-strong: #35353d;
+  --ink: #f2f2f3;
+  --secondary: #a3a3ad;
+  --dim: #777781;
+  --accent: #ff6a3d;
+  --accent-ink: #1a0a04;
+  --accent-wash: #ff6a3d20;
+  --playhead: #fff;
+  --clip-ink: #17121f;
+  --clip-wave: #19141dbb;
+  --grid-bar: #ffffff25;
+  --grid-beat: #ffffff11;
+  --selected: #222126;
+  --mute: #ff6a3d;
+  --solo: #ff6a3d;
+  --palette-1: #2e6bff;
+  --palette-2: #17c07a;
+  --palette-3: #ffb224;
+  --palette-4: #ff5a36;
+  --palette-5: #e64fb0;
+  --palette-6: #8d5cff;
+  --palette-7: #1ab5d8;
+  --palette-8: #f0495a;
+  --radius: 8px;
+}
+html[data-skin="slate"] {
+  color-scheme: dark;
+  --canvas: #26353d;
+  --panel: #303f46;
+  --control: #46555b;
+  --toolbar: #515d61;
+  --ruler: #35454c;
+  --lane: #2a3c45;
+  --lane-alt: #2b3e47;
+  --border: #26343a;
+  --border-strong: #64777c;
+  --ink: #e1e9eb;
+  --secondary: #b3c1c4;
+  --dim: #8fa0a7;
+  --accent: #a6c35c;
+  --accent-ink: #233019;
+  --accent-wash: #a6c35c23;
+  --playhead: #b9d870;
+  --clip-ink: #e8eeee;
+  --clip-wave: #1e2e36aa;
+  --grid-bar: #10232e50;
+  --grid-beat: #142d3840;
+  --selected: #3d5259;
+  --mute: #d29d5d;
+  --solo: #adc55b;
+  --palette-1: #785c80;
+  --palette-2: #587c70;
+  --palette-3: #68817e;
+  --palette-4: #7c745f;
+  --palette-5: #596b82;
+  --palette-6: #74637f;
+  --palette-7: #697e60;
+  --palette-8: #7a7964;
+  --radius: 3px;
+}
+html[data-skin="canvas"] {
+  color-scheme: light;
+  --canvas: #f3f0e9;
+  --panel: #fbf9f5;
+  --control: #fff;
+  --toolbar: #fbf9f5;
+  --ruler: #f2eee7;
+  --lane: #fff;
+  --lane-alt: #faf8f4;
+  --border: #e7e2d8;
+  --border-strong: #b8b1a7;
+  --ink: #2b2925;
+  --secondary: #5e594f;
+  --dim: #777064;
+  --accent: #2b2925;
+  --accent-ink: #fff;
+  --accent-wash: #2b292512;
+  --playhead: #2b2925;
+  --clip-ink: #2b2925;
+  --clip-wave: #2b292588;
+  --grid-bar: #2b29252d;
+  --grid-beat: #2b292514;
+  --selected: #eeeae2;
+  --mute: #2b2925;
+  --solo: #2b2925;
+  --palette-1: #ffd56a;
+  --palette-2: #ff9d9d;
+  --palette-3: #98cfff;
+  --palette-4: #a7e5af;
+  --palette-5: #c8b5ff;
+  --palette-6: #ffbe89;
+  --palette-7: #8fdfd5;
+  --palette-8: #f4a5cf;
+  --radius: 9px;
+}
+html[data-skin="orchid"] {
+  color-scheme: dark;
+  --canvas: #17121f;
+  --panel: #211a2d;
+  --control: #2b2239;
+  --toolbar: #211a2d;
+  --ruler: #241c31;
+  --lane: #1c1626;
+  --lane-alt: #191421;
+  --border: #392d4b;
+  --border-strong: #58446d;
+  --ink: #efe9fb;
+  --secondary: #c1b5d6;
+  --dim: #a394bd;
+  --accent: #c084fc;
+  --accent-ink: #17121f;
+  --accent-wash: #c084fc25;
+  --playhead: #fff;
+  --clip-ink: #17121f;
+  --clip-wave: #211631a0;
+  --grid-bar: #efe9fb25;
+  --grid-beat: #efe9fb12;
+  --selected: #342542;
+  --mute: #fb7185;
+  --solo: #c084fc;
+  --palette-1: #fb7185;
+  --palette-2: #fdba74;
+  --palette-3: #fde047;
+  --palette-4: #86efac;
+  --palette-5: #67e8f9;
+  --palette-6: #93c5fd;
+  --palette-7: #c4b5fd;
+  --palette-8: #f0abfc;
+  --radius: 10px;
+}
+html[data-skin] {
+  color: var(--ink);
+  background: var(--canvas);
+  font-family: Inter, system-ui, sans-serif;
+}
+html[data-skin] button,
+html[data-skin] select {
+  color: inherit;
+}
+html[data-skin] :is(button, input, select):focus-visible {
+  outline-color: var(--accent);
+}
+html[data-skin] input[type="range"] {
+  accent-color: var(--secondary);
+}
+html[data-skin] .studio {
+  background: var(--canvas);
+}
+html[data-skin] .eyebrow,
+html[data-skin] .section-label {
+  color: var(--dim);
+}
+html[data-skin] .topbar {
+  background: var(--panel);
+  border-color: var(--border);
+}
+html[data-skin] .brand-mark {
+  color: var(--secondary);
+}
+html[data-skin] .brand-sub,
+html[data-skin] .project-name {
+  border-color: var(--border-strong);
+}
+html[data-skin] .brand-sub,
+html[data-skin] .heading-icon {
+  color: var(--dim);
+}
+html[data-skin] .top-actions button {
+  border-color: transparent;
+  color: var(--secondary);
+}
+html[data-skin] .top-actions {
+  margin-left: 0;
+}
+html[data-skin] .workspace-toggles {
+  display: flex;
+  gap: 3px;
+  margin-left: auto;
+}
+html[data-skin] .workspace-toggles button {
+  padding: 6px 9px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--secondary);
+}
+html[data-skin] .workspace-toggles button[aria-pressed="true"] {
+  color: var(--ink);
+  background: var(--selected);
+  box-shadow: inset 0 -2px var(--secondary);
+}
+html[data-skin] .studio[data-browser-open="false"] .browser,
+html[data-skin] .studio[data-lower-open="false"] .lower-panel {
+  display: none;
+}
+html[data-skin] button:hover {
+  background: var(--accent-wash);
+}
+html[data-skin] .top-actions .primary {
+  background: transparent;
+  border-color: var(--border-strong);
+  color: var(--ink);
+}
+html[data-skin] .skin-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  color: var(--secondary);
+}
+html[data-skin] .skin-picker select {
+  min-width: 74px;
+  padding: 5px 21px 5px 8px;
+  background: var(--control);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+}
+html[data-skin] .transport {
+  background: var(--toolbar);
+  border-color: var(--border);
+}
+html[data-skin] .transport-buttons button {
+  background: var(--control);
+  border-radius: var(--radius);
+}
+html[data-skin] .transport-buttons .play-button {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+html[data-skin] .transport-readout,
+html[data-skin] .transport-field,
+html[data-skin] .zoom-controls {
+  border-color: var(--border-strong);
+}
+html[data-skin] .transport-readout strong,
+html[data-skin] .transport-field strong {
+  color: var(--ink);
+}
+html[data-skin] .transport-record button,
+html[data-skin] .zoom-controls button,
+html[data-skin] .loop-button {
+  border-color: transparent;
+  border-radius: var(--radius);
+}
+html[data-skin] .record-dot {
+  color: var(--mute);
+}
+html[data-skin] .zoom-controls span {
+  color: var(--secondary);
+}
+html[data-skin] .loop-button.on {
+  color: var(--ink);
+  background: var(--selected);
+  border-color: var(--border-strong);
+}
+html[data-skin] .browser {
+  background: var(--panel);
+  border-color: var(--border);
+}
+html[data-skin] .panel-heading,
+html[data-skin] .browser-section {
+  border-color: var(--border);
+}
+html[data-skin] .browser-item small,
+html[data-skin] .browser-item b,
+html[data-skin] .browser-note {
+  color: var(--secondary);
+}
+html[data-skin] .record-latency input {
+  background: var(--control);
+  border-color: var(--border-strong);
+  border-radius: var(--radius);
+}
+html[data-skin] .item-icon {
+  color: var(--secondary);
+  background: var(--control);
+}
+html[data-skin] .main-area {
+  background: var(--canvas);
+}
+html[data-skin] .arrange-heading {
+  background: var(--panel);
+  border-color: var(--border);
+}
+html[data-skin] .arrange-heading #arrange-summary,
+html[data-skin] .arrange-tools {
+  color: var(--secondary);
+}
+html[data-skin] .arrange-tools button {
+  border-color: transparent;
+  border-radius: var(--radius);
+}
+html[data-skin] .arrange-tools :is(#new-midi-track, #new-midi-clip) {
+  border-color: var(--border);
+  color: var(--ink);
+}
+html[data-skin] .arrangement {
+  background: var(--canvas);
+}
+html[data-skin] .timeline-row {
+  border-color: var(--border);
+}
+html[data-skin] .timeline-row:not(.ruler-row):not(.loop-row):not(.marker-row) {
+  min-height: 55px;
+}
+html[data-skin] .lane {
+  height: 55px;
+}
+html[data-skin] .clip {
+  top: 4px;
+  height: 47px;
+}
+html[data-skin] .clip-visual {
+  height: 32px;
+}
+html[data-skin] .track-control:not(.ruler-label) {
+  padding: 5px 8px;
+  gap: 4px;
+}
+html[data-skin] .track-control {
+  width: 180px;
+}
+html[data-skin] .track-bottom {
+  gap: 3px;
+}
+html[data-skin] .track-bottom button {
+  width: 20px;
+  height: 20px;
+  font-size: 9px;
+}
+html[data-skin] .track-bottom .track-volume {
+  width: 48px;
+}
+html[data-skin] .track-bottom .volume-readout {
+  min-width: 22px;
+  font-size: 9px;
+}
+html[data-skin] .timeline-row.ruler-row {
+  background: var(--ruler);
+}
+html[data-skin] .track-control {
+  background: var(--panel);
+  border-color: var(--border);
+  box-shadow: inset 4px 0 var(--track-color, var(--accent));
+}
+html[data-skin] .track-control.selected {
+  background: var(--selected);
+}
+html[data-skin] .track-control.ruler-label {
+  background: var(--ruler);
+  color: var(--secondary);
+  box-shadow: none;
+}
+html[data-skin] .track-number,
+html[data-skin] .track-kind,
+html[data-skin] .volume-readout,
+html[data-skin] .track-bottom .track-menu {
+  color: var(--secondary);
+}
+html[data-skin] .track-bottom button {
+  background: var(--control);
+  border-color: var(--border-strong);
+  color: var(--secondary);
+  border-radius: var(--radius);
+}
+html[data-skin] .track-bottom button.on.mute,
+html[data-skin] .strip-actions button.on.mute {
+  background: var(--mute);
+  border-color: var(--mute);
+  color: var(--accent-ink);
+}
+html[data-skin] .track-bottom button.on.solo,
+html[data-skin] .strip-actions button.on.solo {
+  background: var(--solo);
+  border-color: var(--solo);
+  color: var(--accent-ink);
+}
+html[data-skin] .lane {
+  background-color: var(--lane);
+}
+html[data-skin] .timeline-row:nth-child(odd) .lane {
+  background-color: var(--lane-alt);
+}
+html[data-skin] .ruler {
+  background-color: var(--ruler);
+}
+html[data-skin] .lane.grid,
+html[data-skin] .ruler {
+  background-image: linear-gradient(to right, var(--grid-bar) 1px, transparent 1px), linear-gradient(to right, var(--grid-beat) 1px, transparent 1px);
+}
+html[data-skin] .ruler-mark {
+  color: var(--secondary);
+  transform: translateX(14px);
+}
+html[data-skin] .ruler .loop-region {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--playhead) 16%, transparent);
+  border-inline: 1px solid color-mix(in srgb, var(--playhead) 68%, transparent);
+  pointer-events: none;
+}
+html[data-skin] .timeline-row.marker-row {
+  height: 28px;
+  min-height: 28px;
+  position: sticky;
+  top: 54px;
+  z-index: 5;
+  background: var(--ruler);
+}
+html[data-skin] .marker-lane {
+  height: 28px;
+  background: var(--ruler);
+}
+html[data-skin] .marker-block {
+  position: absolute;
+  top: 0;
+  height: 28px;
+  padding: 5px 7px;
+  border-top: 1px solid var(--border-strong);
+  border-right: 1px solid var(--border-strong);
+  background: var(--ruler);
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  color: var(--ink);
+}
+html[data-skin] .playhead {
+  background: var(--playhead);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--playhead) 40%, transparent);
+}
+html[data-skin] .ruler .playhead:before {
+  border-top-color: var(--playhead);
+}
+html[data-skin] .clip {
+  background: var(--track-color);
+  border-color: color-mix(in srgb, var(--track-color) 80%, var(--ink));
+  color: var(--clip-ink);
+  border-radius: var(--radius);
+  box-shadow: none;
+}
+html[data-skin] .clip.selected {
+  outline: 0;
+  border: 2px solid var(--ink);
+  box-shadow: none;
+}
+html[data-skin] .clip-label {
+  background: transparent;
+}
+html[data-skin] .clip-empty {
+  color: var(--dim);
+}
+html[data-skin] .arrange-footer {
+  background: var(--panel);
+  border-color: var(--border);
+  color: var(--secondary);
+}
+html[data-skin] .lower-panel {
+  background: var(--panel);
+}
+html[data-skin] .lower-resize {
+  background: var(--border);
+  color: var(--secondary);
+}
+html[data-skin] .lower-tabs {
+  border-color: var(--border);
+}
+html[data-skin] .lower-tabs button {
+  color: var(--secondary);
+}
+html[data-skin] .lower-tabs button.active {
+  background: transparent;
+  color: var(--ink);
+  border-bottom-color: var(--secondary);
+}
+html[data-skin] .lower-tabs #selection-caption,
+html[data-skin] .editor-top span {
+  color: var(--secondary);
+}
+html[data-skin] .empty-state,
+html[data-skin] .empty-state strong {
+  color: var(--secondary);
+}
+html[data-skin] .editor-top button,
+html[data-skin] .device-actions button {
+  border-color: var(--border-strong);
+  border-radius: var(--radius);
+}
+html[data-skin] .roll,
+html[data-skin] .wave {
+  --waveform-background: var(--lane);
+  --waveform-foreground: var(--ink);
+  --waveform-control-background: var(--control);
+  --waveform-control-border: var(--border-strong);
+  --waveform-surface: var(--lane);
+  --waveform-border: var(--grid-beat);
+  --waveform-muted: var(--secondary);
+  --waveform-playhead: var(--playhead);
+  --waveform-accent: color-mix(in srgb, var(--editor-track-color) 78%, var(--ink));
+  --piano-roll-note-text: var(--accent-ink);
+}
+html[data-skin] .ar-widget {
+  border-radius: var(--radius);
+  padding: 10px;
+}
+html[data-skin] .ar-widget button,
+html[data-skin] .ar-widget input,
+html[data-skin] .ar-widget select,
+html[data-skin] .ar-viewport {
+  border-radius: var(--radius);
+}
+html[data-skin] .mixer-strip,
+html[data-skin] .device-card {
+  background: var(--control);
+  border-color: var(--border-strong);
+  border-radius: var(--radius);
+}
+html[data-skin] .mixer-strip.selected {
+  border-color: var(--accent);
+}
+html[data-skin] .mixer-strip label {
+  color: var(--secondary);
+}
+html[data-skin] .strip-actions button {
+  background: var(--panel);
+}
+html[data-skin] .mixer-strip.master {
+  background: var(--selected);
+}
+html[data-skin] .device-card iframe {
+  background: var(--control);
+}
+@media (max-width: 900px) {
+  html[data-skin] .skin-picker {
+    font-size: 0;
+    gap: 0;
+  }
+}
+@media (max-width: 900px) {
+  html[data-skin] .workspace-toggles button {
+    font-size: 0;
+    width: 27px;
+    padding: 5px;
+  }
+  html[data-skin] #toggle-browser::before {
+    content: "◫";
+    font-size: 12px;
+  }
+  html[data-skin] #toggle-lower::before {
+    content: "▤";
+    font-size: 12px;
+  }
+}
+@media (max-width: 650px) {
+  html[data-skin] .skin-picker select {
+    min-width: 60px;
+    padding-left: 4px;
+  }
+  html[data-skin] #editor-panel .editor-hint {
+    display: none;
+  }
+}
+
+/* One editor toolbar, then the note or waveform surface itself. */
+html[data-skin] #editor-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+html[data-skin] #editor-panel .editor-top {
+  height: 32px;
+  min-height: 32px;
+  margin: 0;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  gap: 9px;
+}
+html[data-skin] #editor-panel .editor-top strong {
+  font-size: 11px;
+}
+html[data-skin] #editor-panel .editor-hint {
+  font-size: 10px;
+  color: var(--dim);
+}
+html[data-skin] #editor-panel .editor-top .ar-toolbar {
+  margin: 0;
+  gap: 4px;
+  flex-wrap: nowrap;
+}
+html[data-skin] #editor-panel .wave-amplitude {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+html[data-skin] #editor-panel .wave-amplitude-value {
+  min-width: 24px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+html[data-skin] #editor-panel .editor-top button {
+  min-height: 25px;
+  padding: 3px 7px;
+  background: var(--control);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  font-size: 10px;
+}
+html[data-skin] #editor-panel .note-inspector {
+  min-height: 35px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--secondary);
+  font-size: 10px;
+  white-space: nowrap;
+  overflow-x: auto;
+}
+html[data-skin] #editor-panel .note-inspector strong {
+  min-width: 28px;
+  color: var(--ink);
+}
+html[data-skin] #editor-panel .note-inspector label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+html[data-skin] #editor-panel .note-inspector input {
+  width: 58px;
+  padding: 3px 4px;
+  background: var(--control);
+  color: var(--ink);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  font-size: 11px;
+}
+html[data-skin] #editor-panel .note-inspector button {
+  padding: 4px 7px;
+  background: var(--control);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  font-size: 10px;
+}
+html[data-skin] #editor-panel .ar-pr-note.selected {
+  outline: 2px solid var(--ink);
+  outline-offset: 1px;
+  opacity: 1 !important;
+}
+html[data-skin] #editor-panel .ar-pr-note {
+  display: flex !important;
+  align-items: center;
+  line-height: 1 !important;
+  font-size: 9px !important;
+  border: 0 !important;
+}
+html[data-skin="canvas"] #editor-panel .roll {
+  --piano-roll-note-text: var(--ink);
+}
+/* In a short window the rows are too thin for a label; each note keeps its aria-label. */
+@media (max-height: 760px) {
+  html[data-skin] #editor-panel .ar-pr-note {
+    font-size: 0 !important;
+  }
+}
+html[data-skin] #editor-panel :is(.roll, .wave) {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+html[data-skin] #editor-panel :is(.roll, .wave) .ar-widget {
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+}
+html[data-skin] #editor-panel .roll [data-piano-layout] {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+html[data-skin] #editor-panel .roll .ar-pr-layout {
+  flex: 1;
+  min-height: 0;
+}
+html[data-skin] #editor-panel .roll .ar-pr-keys {
+  height: 100% !important;
+  background: var(--ruler);
+  border-right: 1px solid var(--border-strong);
+}
+html[data-skin] #editor-panel .roll .ar-pr-key {
+  border-bottom-color: var(--grid-beat);
+  color: var(--secondary);
+}
+html[data-skin] #editor-panel .roll .ar-viewport {
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+}
+html[data-skin] #editor-panel .roll .ar-pr-surface {
+  height: calc(100% - var(--piano-roll-velocity-height, 56px) - 1px);
+  min-height: 64px;
+  cursor: crosshair;
+}
+html[data-skin] #editor-panel .roll .ar-pr-notes {
+  z-index: 2;
+}
+html[data-skin] #editor-panel .roll .ar-playhead {
+  z-index: 1;
+}
+html[data-skin] #editor-panel .roll .ar-pr-beat {
+  border-left-color: var(--grid-beat);
+}
+html[data-skin] #editor-panel .roll .ar-pr-beat.downbeat {
+  border-left-color: color-mix(in srgb, var(--ink) 26%, transparent);
+}
+html[data-skin] #editor-panel .wave .ar-viewport {
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+}
+html[data-skin] #editor-panel .wave .ar-track {
+  height: 100%;
+}
+html[data-skin] #editor-panel .wave .ar-wave {
+  height: calc(100% - 28px);
+  min-height: 64px;
+}
+html[data-skin] #editor-panel .wave .ar-ruler {
+  border-bottom-color: var(--border);
+}
+html[data-skin] #editor-panel .wave .ar-tick {
+  border-left-color: var(--grid-beat);
+}

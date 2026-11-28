@@ -1,0 +1,63 @@
+{
+  "area": "widgets-timeline-clips",
+  "description": "API-shape experiment for drawing an audio clip's waveform inside an app-rendered timeline clip element, trimming clips by dragging their edges, and opening a clip in a detailed editor. Expectations describe behaviour, not names.",
+  "tasks": [
+    {
+      "id": "W1-clip-trim",
+      "prompt": "A browser DAW renders its own timeline: one row per track and one absolutely positioned `<div>` per clip, 40 px tall, placed from the clip's start and length (100 px per second). The song is `project` and its engine is `workspace`. Write the code that, for every audio clip element, (1) draws a small waveform of only the part of the recording the clip plays, filling the clip box, matching the page's light or dark theme, and (2) lets the user drag the clip's left or right edge to trim it, snapping to the nearest beat, without destroying audio: dragging the edge back out brings the cut audio back. Each trim is one Undo step, the waveform follows the trimmed window, and the clip body can still be dragged to move it. Keep it working when clips are added, removed or reloaded.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;\ndeclare const timeline: HTMLElement;\ndeclare function clipElement(clipId: string): HTMLElement | undefined;",
+      "expectations": [
+        "Draws each audio clip's waveform with a toolkit view sized to the clip element, without hand-drawing peaks on a canvas.",
+        "The waveform shows only the clip's played window of the recording and follows trims.",
+        "Edge dragging uses a toolkit gesture rather than hand-written pointer handling.",
+        "Trims snap to beats and commit through the song model as one Undo step each, non-destructively.",
+        "Moving the clip body still works alongside trimming.",
+        "Views and gestures are created and disposed as clips are added, removed or reloaded."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "No hand-drawn peaks",
+          "none": ["getContext\\(\"2d\"\\)[\\s\\S]{0,800}(fillRect|lineTo)"]
+        },
+        {
+          "expectation": 2,
+          "label": "No hand-written edge pointer handling",
+          "none": ["setPointerCapture"]
+        }
+      ]
+    },
+    {
+      "id": "W2-clip-editor",
+      "prompt": "In the same browser DAW (`project`, `workspace`, an app-rendered timeline where `clipElement(clipId)` returns a clip's element), double-clicking an audio clip opens a detail editor below the timeline: it shows the whole recording the clip comes from as a zoomable waveform with the clip's current window selected, lets the user drag the selection to choose a different part and audition just that part, and has Apply and Cancel buttons. Apply sets the clip to play exactly the selected part of the recording, starting at the clip's current timeline position, as one Undo step; Cancel closes without changes. Closing the editor releases everything it created.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;\ndeclare const timeline: HTMLElement;\ndeclare const editorRoot: HTMLElement;\ndeclare function clipElement(clipId: string): HTMLElement | undefined;",
+      "expectations": [
+        "Shows the clip's whole source recording in a toolkit waveform view with selection and zoom, without hand-drawing.",
+        "The initial selection is the clip's current played window of the recording.",
+        "Auditions only the selected part through toolkit playback.",
+        "Apply sets the clip's played window to the selection at its current timeline position as one Undo step.",
+        "Cancel closes without changing the song.",
+        "Closing disposes the views and playback it created."
+      ]
+    },
+    {
+      "id": "W3-bar-ruler",
+      "prompt": "In the same browser DAW (`project`, `workspace`; the timeline scrolls horizontally inside `scroller` and is laid out at `scale.value` pixels per second), add a ruler above the tracks. It shows bar lines with bar numbers and, when zoomed in far enough, beat ticks, at the right places even after the song's tempo changes partway through or its time signature is 3/4. Labels must not overlap when the user zooms out. Clicking the ruler moves the playhead to that time (snapped to the nearest beat), and a vertical line marks the current playback position. It follows the page's light or dark theme and is removed cleanly when the view is closed.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;\ndeclare const scroller: HTMLElement;\ndeclare const rulerRow: HTMLElement;\ndeclare const scale: import(\"@audiorective/core\").Cell<number>;",
+      "expectations": [
+        "Draws the bar and beat ruler with a toolkit widget fed by the project's tempo map and time signature, not hand-computed pixel positions.",
+        "Bar and beat positions come from the tempo map, so they stay correct after a tempo change, and use the project's signature.",
+        "The ruler follows `scale` and the tempo or signature reactively, and draws only what is visible by passing the scrolling element.",
+        "A click seeks to the clicked time snapped to a beat, and the current position is shown as a line.",
+        "The widget handle is disposed when the view closes."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "No hand-drawn ruler",
+          "none": ["beatToSeconds\\([^)]*\\)[\\s\\S]{0,300}style\\.left"]
+        }
+      ]
+    }
+  ]
+}

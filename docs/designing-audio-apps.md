@@ -26,7 +26,7 @@ Turn the feature list into a feature→primitive table before coding — gaps an
 
 - `FilePlayer` — long-form / streamed parts (music, backing tracks, podcasts).
 - `BufferPlayer` — beat-locked loops & stems that need sample-accurate `start()` and a schedulable rate (in-memory deck).
-- `Sampler` / `Voice` — one-shots and short loops (SFX, hits, pads).
+- `Sampler` — one-shots and keyboards of one sound, a buffer or a synth factory (SFX, hits, pads).
 - An `AudioProcessor` synth — generated parts.
 
 Unify them behind a **source-agnostic channel strip** — a `Channel` that accepts anything exposing `{ output }` — so EQ / fader / meter / spatial / routing are identical regardless of source. `Channel` is not a core primitive; it's a small `AudioProcessor` you write on top of `defineGraph`:
@@ -67,6 +67,10 @@ In a spatial app, split every signal by its relationship to listener distance, a
 
 A reverb fed _post-panner_ tracks the dry and never opens up as you move — a subtle, common bug. Send effects that represent a space belong before distance attenuation; only the dry path attenuates.
 
+### 6. Compose by layer, import by subpath
+
+Take only the capability modules the app needs. A drum machine with its own buffers uses `clock`, `sequencer` and `pads` and never loads `daw`; a project-file tool in Node uses `daw/project` and `daw/dawproject` and never loads the runtime. Wire widgets to the module that owns the value, and keep the wiring between `widgets` and `daw` in the app. See [Architecture](./architecture.md#layers-and-dependency-direction).
+
 ## Common pitfalls
 
 - **Headless audio tests need a path to `ctx.destination`.** An `AudioParam` ramp won't advance `.value` unless its node subgraph reaches the destination (the browser won't render a dead branch). Connect to `ctx.destination` in the test, mirroring real usage.
@@ -80,6 +84,7 @@ A reverb fed _post-panner_ tracks the dry and never opens up as you move — a s
 - [ ] Every feature maps to a primitive; each source fits its role behind a source-agnostic channel.
 - [ ] One `AudioContext`; renderers integrated via `attach` / `bindPanner` / `PannerAnchor`; control-only views are audio-free.
 - [ ] Spatial sends (reverb) are pre-panner; only the dry path attenuates with distance.
+- [ ] Imports use the narrowest subpath (`sequencer`, `daw/project`); no layer-3 package imports another.
 
 ## Worked example: Livehouse PA Simulator
 

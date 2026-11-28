@@ -1,6 +1,18 @@
 import { AudioProcessor, Param } from "@audiorective/core";
-import SignalsmithStretch, { type StretchNode } from "signalsmith-stretch";
+import type { StretchNode } from "signalsmith-stretch";
 import type { StretchOptions } from "../PitchShift";
+
+export const STRETCH_MISSING_MESSAGE =
+  'PitchShift stretch engine needs the optional peer dependency "signalsmith-stretch": install it (npm i signalsmith-stretch).';
+
+/** Loads the optional peer lazily; a failed import becomes the actionable install error. */
+async function loadSignalsmith() {
+  try {
+    return (await import("signalsmith-stretch")).default;
+  } catch (cause) {
+    throw new Error(STRETCH_MISSING_MESSAGE, { cause });
+  }
+}
 
 /** Signalsmith Stretch in live-input mode. Silent until `ready`; latency is read from the node. */
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
@@ -11,7 +23,7 @@ export class StretchShifter extends AudioProcessor<{}, {}> {
   private node: StretchNode | null = null;
   private pitch: number;
   private readonly opts: StretchOptions;
-  private destroyed = false;
+  private disposed = false;
 
   constructor(ctx: BaseAudioContext, pitch: number, opts: StretchOptions = {}) {
     const input = new GainNode(ctx),
@@ -23,26 +35,28 @@ export class StretchShifter extends AudioProcessor<{}, {}> {
     this.pitch = pitch;
     this.opts = opts;
 
-    this.ready = SignalsmithStretch(ctx, { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2] }).then(async (node) => {
-      // Every remote method (configure/schedule/start/latency) is a message round-trip to the worklet thread,
-      // resolving once the worklet has applied it — awaiting each keeps rendering from starting before it has.
-      // `destroy()` can land between any two of those awaits, so each step re-checks the flag: before the node
-      // is adopted it is stopped here; after adoption `destroy()` has already stopped it, and the only thing
-      // left to avoid is `start()` reviving a node that was stopped underneath us.
-      if (this.destroyed) return void node.stop();
-      if (opts.blockMs !== undefined) await node.configure({ blockMs: opts.blockMs });
-      if (this.destroyed) return void node.stop();
-      input.connect(node);
-      node.connect(output);
-      this.node = node;
-      await this.apply();
-      if (this.destroyed) return;
-      await node.start();
-      if (this.destroyed) return void node.stop();
-      const seconds = await node.latency();
-      if (this.destroyed) return;
-      latency.value = Math.round(seconds * ctx.sampleRate);
-    });
+    this.ready = loadSignalsmith()
+      .then((SignalsmithStretch) => SignalsmithStretch(ctx, { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2] }))
+      .then(async (node) => {
+        // Every remote method (configure/schedule/start/latency) is a message round-trip to the worklet thread,
+        // resolving once the worklet has applied it — awaiting each keeps rendering from starting before it has.
+        // `dispose()` can land between any two of those awaits, so each step re-checks the flag: before the node
+        // is adopted it is stopped here; after adoption `dispose()` has already stopped it, and the only thing
+        // left to avoid is `start()` reviving a node that was stopped underneath us.
+        if (this.disposed) return void node.stop();
+        if (opts.blockMs !== undefined) await node.configure({ blockMs: opts.blockMs });
+        if (this.disposed) return void node.stop();
+        input.connect(node);
+        node.connect(output);
+        this.node = node;
+        await this.apply();
+        if (this.disposed) return;
+        await node.start();
+        if (this.disposed) return void node.stop();
+        const seconds = await node.latency();
+        if (this.disposed) return;
+        latency.value = Math.round(seconds * ctx.sampleRate);
+      });
   }
 
   override get input(): GainNode {
@@ -69,15 +83,17 @@ export class StretchShifter extends AudioProcessor<{}, {}> {
     this.apply();
   }
 
-  override destroy(): void {
-    this.destroyed = true;
+  override dispose(): void {
+    this.disposed = true;
     if (this.node) {
       // The Signalsmith node exposes no dispose API; stop() halts its WASM work.
       this.node.stop();
       this.node.disconnect();
       this.node = null;
     }
-    this.latency.destroy();
-    super.destroy();
+    this._input.disconnect();
+    this._output.disconnect();
+    this.latency.dispose();
+    super.dispose();
   }
 }

@@ -3,6 +3,8 @@ import { Clock } from "../src/Clock";
 import type { TickWindow, MissedGap } from "../src/Clock";
 import { Timeline } from "../src/Timeline";
 import { ManualTickSource } from "../src/TickSource";
+import { LinearBarRuler } from "../src/rulers/LinearBarRuler";
+import { CycleBarRuler } from "../src/rulers/CycleBarRuler";
 
 function makeContext(startAt = 0) {
   return { currentTime: startAt };
@@ -215,14 +217,153 @@ describe("Clock — tempo changes mid-run", () => {
   });
 });
 
-describe("Clock — destroy", () => {
-  test("destroy stops the tick source", () => {
+describe("Clock — dispose", () => {
+  test("dispose stops the tick source", () => {
     const stop = vi.fn();
     const tickSource = { start: vi.fn(), stop };
     const ctx = makeContext(0);
     const timeline = new Timeline({ audioContext: ctx, bpm: 120 });
     const clock = new Clock({ timeline, onTick: () => {}, tickSource });
-    clock.destroy();
+    clock.dispose();
     expect(stop).toHaveBeenCalledOnce();
   });
+});
+
+describe("Clock — transport state is a single read-only store", () => {
+  test("state has no write path and is the same store as timeline.state", () => {
+    const { clock, timeline } = makeHarness();
+    expect(clock.state).toBe(timeline.state);
+    // a ReadonlyCell has no setter: assigning throws in strict mode (modules are strict)
+    expect(() => {
+      (clock.state as unknown as { value: string }).value = "playing";
+    }).toThrow();
+    expect(clock.state.value).toBe("stopped");
+    expect(typeof Object.getOwnPropertyDescriptor(Object.getPrototypeOf(clock.state), "value")?.set).toBe("undefined");
+  });
+
+  test("an effect tracks start/pause/resume/stop, once per change", async () => {
+    const { effect } = await import("alien-signals");
+    const { clock } = makeHarness();
+    const seen: string[] = [];
+    const stop = effect(() => void seen.push(clock.state.value));
+    clock.start();
+    clock.pause();
+    clock.resume();
+    clock.stop();
+    stop();
+    expect(seen).toEqual(["stopped", "playing", "paused", "playing", "stopped"]);
+  });
+
+  test("calling transport methods inside an effect does not subscribe it", async () => {
+    const { effect } = await import("alien-signals");
+    const { clock } = makeHarness();
+    let runs = 0;
+    const stop = effect(() => {
+      runs++;
+      clock.refresh();
+      clock.pause();
+    });
+    clock.start();
+    stop();
+    expect(runs).toBe(1);
+  });
+});
+
+describe("Clock — over a tempo ramp", () => {
+  test("windows stay contiguous with no gaps or overlaps and cover the ramp's integral", () => {
+    const { ctx, timeline, tickSource, clock, windows, misses } = makeHarness(120, 0.1);
+    timeline.bpm.setValueAtTime(120, 0);
+    timeline.bpm.linearRampToValueAtTime(240, 4); // an accelerando that doubles the tempo
+    clock.start();
+    for (let i = 0; i <= 200; i++) {
+      ctx.currentTime = i * 0.025;
+      tickSource.tick();
+    }
+    expect(misses).toHaveLength(0);
+    for (let i = 1; i < windows.length; i++) {
+      expect(windows[i]!.beat.start).toBe(windows[i - 1]!.beat.end);
+    }
+    // last window ends at the look-ahead end of the final tick: the integral of the curve there
+    const last = windows[windows.length - 1]!;
+    expect(last.beat.end).toBeCloseTo(timeline.timeToBeat(5.1), 9);
+    expect(last.beat.end).toBeCloseTo(((120 + 240) / 2) * (4 / 60) + (240 * 1.1) / 60, 9);
+  });
+
+  test("a ruler step grid stays exactly on beat across the ramp: every 16th once, in order", () => {
+    const ctx = makeContext(0);
+    const timeline = new Timeline({ audioContext: ctx, bpm: 120 }).addRuler("bar", new LinearBarRuler({ numerator: 4, denominator: 4 }));
+    timeline.bpm.setValueAtTime(120, 0);
+    timeline.bpm.linearRampToValueAtTime(200, 6);
+    const tickSource = new ManualTickSource();
+    const grid: Array<{ beat: number; when: number; index: number }> = [];
+    const clock = new Clock({
+      timeline,
+      lookAhead: 0.1,
+      tickSource,
+      onTick: (window) => {
+        for (const point of window.rulers.bar.grid(16)) grid.push(point);
+      },
+    });
+    clock.start();
+    for (let i = 0; i <= 280; i++) {
+      ctx.currentTime = i * 0.025;
+      tickSource.tick();
+    }
+    expect(grid.length).toBeGreaterThan(40);
+    grid.forEach((point, i) => {
+      expect(point.index).toBe(i);
+      expect(point.beat).toBe(i * 0.25);
+      expect(timeline.timeToBeat(point.when)).toBeCloseTo(point.beat, 9);
+      if (i > 0) expect(point.when).toBeGreaterThan(grid[i - 1]!.when);
+    });
+    clock.dispose();
+  });
+});
+
+test("taking over a tempo ramp preserves the current beat and the ramp history", () => {
+  const { clock, ctx } = makeHarness();
+  try {
+    clock.start();
+    clock.bpm.setValueAtTime(120, 0);
+    clock.bpm.linearRampToValueAtTime(240, 2);
+    ctx.currentTime = 1;
+    expect(clock.beat).toBeCloseTo(2.5, 12);
+    clock.bpm.cancelAndHoldAtTime(ctx.currentTime);
+    clock.bpm.value = 90;
+    expect(clock.beat).toBeCloseTo(2.5, 12);
+    expect(clock.timeline.timeToBeat(0.5)).toBeCloseTo(1.125, 12);
+    expect(clock.timeline.position).toBe(1);
+    // More slider writes at the same audio instant keep the incoming ramp.
+    clock.bpm.cancelAndHoldAtTime(ctx.currentTime);
+    clock.bpm.value = 60;
+    expect(clock.beat).toBeCloseTo(2.5, 12);
+    clock.bpm.cancelAndHoldAtTime(ctx.currentTime);
+    clock.bpm.value = 90;
+    expect(clock.timeline.timeToBeat(0.5)).toBeCloseTo(1.125, 12);
+    ctx.currentTime = 2;
+    expect(clock.beat).toBeCloseTo(4, 12);
+    expect(clock.timeline.beatToTime(4)).toBeCloseTo(2, 12);
+    expect(clock.bpm.valueAtTime(3)).toBe(90);
+  } finally {
+    clock.dispose();
+  }
+});
+
+test("repeated look-ahead refreshes keep a negative count-in on its exact bar boundary", async () => {
+  const { clock, ctx } = makeHarness();
+  const bar = new LinearBarRuler({ numerator: 6, denominator: 8 });
+  const loop = new CycleBarRuler({ numerator: 6, denominator: 8, bars: 2 });
+  try {
+    clock.start(0.5, -1);
+    for (const time of [0, 0.248, 0.752, 1]) {
+      ctx.currentTime = time;
+      await clock.refresh();
+    }
+    expect(clock.beat).toBeCloseTo(0, 12);
+    expect(bar.at(clock.beat).bar).toBe(0);
+    expect(bar.at(clock.beat).beatInBar).toBe(0);
+    expect(loop.at(clock.beat).phase).toBe(0);
+  } finally {
+    clock.dispose();
+  }
 });

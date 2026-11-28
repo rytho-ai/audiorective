@@ -12,20 +12,20 @@ describe("PitchShift (granular)", () => {
     const f = await renderShift((ctx) => new PitchShift(ctx, { pitch: -12 }));
     expect(Math.abs(dominantHz(f, 44100, 100, 600) - 220)).toBeLessThanOrEqual(15);
   });
-  it("pitch 0 leaves 440 in place and isReady is immediate; latency is half the window", async () => {
+  it("pitch 0 leaves 440 in place and status is ready at once; latency is half the window", async () => {
     const ctx = new OfflineAudioContext(1, 128, 44100);
     const fx = new PitchShift(ctx, { windowSize: 0.05 });
-    expect(fx.cells.isReady.value).toBe(true);
+    expect(fx.cells.status.value).toBe("ready");
     expect(fx.latency.value).toBe(Math.round(0.025 * 44100));
     const f = await renderShift((c) => new PitchShift(c, { pitch: 0 }));
     expect(Math.abs(dominantHz(f, 44100) - 440)).toBeLessThanOrEqual(10);
   });
 
-  it("destroy() tears down the granular wet arm", () => {
+  it("dispose() tears down the granular wet arm", () => {
     const ctx = new OfflineAudioContext(1, 128, 44100);
-    const spy = vi.spyOn(GranularShifter.prototype, "destroy");
+    const spy = vi.spyOn(GranularShifter.prototype, "dispose");
     const fx = new PitchShift(ctx);
-    fx.destroy();
+    fx.dispose();
     expect(spy).toHaveBeenCalledOnce();
     spy.mockRestore();
   });

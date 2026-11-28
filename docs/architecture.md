@@ -50,42 +50,139 @@ Classes that only hold structured state should **not** extend `AudioProcessor`. 
 
 ### UI layer (React components, etc.)
 
-- Reading param values for display (`useValue(synth.volume)`)
+- Reading param values for display (`useValue(synth.params.volume)`)
 - Reading cell values for display (`useValue(sequencer.pattern)`)
-- Setting param values from user input (`synth.volume.value = 0.8`)
+- Setting param values from user input (`synth.params.volume.value = 0.8`)
 - Calling audio-layer methods (`synth.filterSweep()`, `sequencer.rampBpm(180, 4)`)
 - Layout, styling, conditional rendering
+
+## Layers and dependency direction
+
+Packages sit in four layers. An import points down, never up or sideways inside a layer.
+
+```
+Layer 4  Apps          apps/daw-demo, a drum machine, a project-file tool, your app
+Layer 3  Project and   widgets  ∥  daw (daw/runtime, daw/dawproject, daw/project)
+         interaction
+Layer 2  Capabilities  clock, midi, effects, host, player, recorder,
+                       samples, pads,
+                       sequencer, launcher
+Layer 1  Foundation    core
+Side     (core only)   react, threejs, playcanvas, devtools
+```
+
+`widgets` and `daw` are parallel and never import each other. The app is the one place that knows both, and the wiring is app code. Each box in the diagram is a responsibility; the capability boxes `player`, `recorder`, `samples`, `pads`, `sequencer` and `launcher` are separate packages.
+
+| Module              | May import                                                                                      | Must not import                                              |
+| ------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| App                 | any layer                                                                                       | n/a                                                          |
+| `widgets`           | core; the pure `midi` root (values and types); types of `player`; or local structural contracts | `daw`; capability runtime classes, other capability packages |
+| `daw/runtime`       | `daw/project`, core, the capability modules it needs                                            | `widgets`, `daw/dawproject`                                  |
+| `daw/dawproject`    | `daw/project`, core                                                                             | the runtime, anything needing an `AudioContext`              |
+| `daw/project`       | core (including `PCMData`), `midi` root, `effects/equalizer-bands`                              | the runtime, the codec, `AudioContext`, the DOM              |
+| A capability module | core                                                                                            | other capability modules, layer 3                            |
+| `core`              | nothing                                                                                         | everything                                                   |
+
+`pnpm check:layers` enforces these edges over the real import graph. A new edge between capability modules needs a written reason.
+
+### Three kinds of capability module
+
+"Independent" means two things: the module imports no sibling, and it works when taken out alone. They are separate questions.
+
+| Kind           | Test                                                                     | Modules                                                                                          |
+| -------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| **Standalone** | Imports only core; give it an `AudioContext` and it works                | `clock`, `midi`, `effects`, `host`, `player`, `recorder`, `samples`, `pads`                      |
+| **Borrowing**  | Imports only core, but cannot run until the caller supplies an interface | `sequencer` (attaches to a clock or transport), `launcher` (attaches to a clock)                 |
+| **Composed**   | Imports a sibling capability module                                      | none; an exception needs a written reason and an edge that disappears when the feature is unused |
+
+A borrowing module names what it needs as a structural type in [core](./core.md#shared-contracts), so `Timeline`, `Clock`, `PadBank` or the DAW runtime can each satisfy it without the module importing any of them. `SampleLibrary` previews through core `BufferPlayer` for the same reason: it stays standalone.
+
+### Features are not modules: the Mixer
+
+A feature the user sees usually spans three layers. To place a decision, ask whether it survives closing the view and whether it survives saving the file.
+
+| Part of the Mixer                                | Owner         | Code                                                                                                                          |
+| ------------------------------------------------ | ------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Faders, pan, optional mute/solo and level meters | `widgets`     | `mountMixer` takes `state`, `editTrack`, optional `editMaster` and borrowed dBFS/PCM meter sources                            |
+| Per-track volume, pan, mute, solo and routing    | `daw/project` | `ProjectTrack`                                                                                                                |
+| Which tracks and paths stay audible under solo   | `daw/runtime` | `soloRouting` over `ProjectTrack`                                                                                             |
+| Gain, pan and mute nodes, sends                  | `daw/runtime` | The runtime `Mixer` builds each strip from `effects` `Channel` and `SendBus`; `ProjectTrack` values are written to its params |
+
+The piano roll, arrangement, automation lanes, clip grid and step grid split the same way: gestures and drawing in `widgets`, saved content in `daw/project`, sound in a capability module or the runtime. A widget that takes a local structural contract (`step-grid`, `sample-browser`, `clip-grid`, `warp-markers`, `clip-envelope-editor`, `mountMixer`) works over a DAW project or over your own model.
+
+`effects` `Channel` and `SendBus` are the strip and send bus for any app, and the Workspace builds its strips from them. The strip is `Channel` with `channelCountMode: "max"`, so a mono track reaches the panner as mono and keeps the equal-power pan law. `soloRouting`'s per-edge decisions land on `channel.params.outputEnabled` (main output) and `send.enabled` (one send), and its strip decision folds into `channel.params.muted`. `Project` stays the only owner of gain, pan, mute and solo: `applyMixer` projects `ProjectTrack` values into the `Channel` params, the same way it once wrote plain nodes, and nothing reads them back. `trackMixerOutput` borrows `channel.tap`, the post-mute node ahead of the output gate.
+
+### Inside the runtime
+
+`daw/runtime` splits by responsibility, not by layer: `Workspace` keeps the public API, transport and Project-edit reconciliation, and delegates to internal collaborators that depend on `daw/project` and the capability modules but not on `Workspace`.
+
+| Module                                  | Owns                                                                                                                                                                             | Reads                                                     |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| `runtime.ts` (`Workspace`)              | The public API, the `cells`, the track-runtime map, the graph build, transport (`play`, `pause`, `stop`, `seek`), and Project-edit reconciliation (`flush`, `sync`, light edits) | Everything below, through narrow handles                  |
+| `mixer.ts` (`Mixer`)                    | The `Channel` and `SendBus` strips, send routing, and writing Project mixer values into them                                                                                     | The track map, the current Project, the master `GainNode` |
+| `clip-scheduler.ts` (`ClipScheduler`)   | Scheduled audio handles, media chunk loading, decoded-buffer caches, one tick window of MIDI and audio clips                                                                     | Track runtimes and timing passed per call                 |
+| `audition.ts` (`Audition`)              | The current clip or range audition cell and the clock or handle that plays it                                                                                                    | The current Project, the scheduler, the master output     |
+| `clip-stretch.ts` (`ClipStretch`)       | One cancellable stretch job per clip and the prepared edit it returns                                                                                                            | The current Project                                       |
+| `take-placement.ts`                     | Pure take-anchor validation and take-position maths                                                                                                                              | Nothing                                                   |
+| `track-reconcile.ts`                    | Pure diffs between a live track and its Project track (rack settings, gain-automation-only edits, device keys)                                                                   | Nothing                                                   |
+| `track-runtime.ts`, `project-lookup.ts` | The shared `TrackRuntime` type and a clip lookup by id                                                                                                                           | Nothing                                                   |
+
+### Two reference compositions
+
+| Application                         | Needs                                   | Optional                                                | Never loaded                                                             |
+| ----------------------------------- | --------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------ |
+| A drum machine with its own buffers | `core`, `clock`, `sequencer`, `pads`    | `widgets` (step grid), `samples` (load or browse sound) | `daw`, `player`, `host`, `effects`, `midi`, `recorder`, `launcher`       |
+| A `.dawproject` tool in Node        | `core`, `daw/project`, `daw/dawproject` | `effects/equalizer-bands`, `midi`                       | `daw/runtime`, `clock`, `host`, `widgets`, the other capability packages |
+
+Keep the dependency direction downward. Bind widgets to the module that already owns the value. Store project data once, and keep temporary runtime state where it is used.
 
 ## Examples
 
 ### Wrong — audio scheduling in React
 
 ```typescript
+import { useCallback } from "react";
+
 // Component knows about AudioContext timing and scheduling API
 const handleFilterSweep = useCallback(() => {
   const now = synth.context.currentTime;
-  const currentCutoff = synth.cutoff.value;
-  synth.cutoff.setValueAtTime(currentCutoff, now);
-  synth.cutoff.linearRampToValueAtTime(18000, now + 1);
-  synth.cutoff.linearRampToValueAtTime(currentCutoff, now + 2);
+  const currentCutoff = synth.params.cutoff.value;
+  synth.params.cutoff.setValueAtTime(currentCutoff, now);
+  synth.params.cutoff.linearRampToValueAtTime(18000, now + 1);
+  synth.params.cutoff.linearRampToValueAtTime(currentCutoff, now + 2);
 }, [synth]);
 ```
 
 ### Right — audio method, thin UI call
 
 ```typescript
+import { useCallback } from "react";
+
 // Audio layer — self-contained, testable, no UI dependency
-class StepSynth extends AudioProcessor {
+class StepSynth extends AudioProcessor<{ cutoff: SchedulableParam }> {
+  private readonly filter: BiquadFilterNode;
+
+  constructor(ctx: AudioContext) {
+    const filter = new BiquadFilterNode(ctx);
+    super(ctx, ({ param }) => ({ params: { cutoff: param({ default: 800, bind: filter.frequency }) } }));
+    this.filter = filter;
+  }
+
+  get output() {
+    return this.filter;
+  }
+
   filterSweep(peakFreq = 18000, duration = 2): void {
     const now = this.context.currentTime;
-    const currentCutoff = this.cutoff.value;
-    this.cutoff.setValueAtTime(currentCutoff, now);
-    this.cutoff.linearRampToValueAtTime(peakFreq, now + duration / 2);
-    this.cutoff.linearRampToValueAtTime(currentCutoff, now + duration);
+    const currentCutoff = this.params.cutoff.value;
+    this.params.cutoff.setValueAtTime(currentCutoff, now);
+    this.params.cutoff.linearRampToValueAtTime(peakFreq, now + duration / 2);
+    this.params.cutoff.linearRampToValueAtTime(currentCutoff, now + duration);
   }
 }
 
 // UI layer — just a trigger
+const synth = new StepSynth(ctx);
 const handleFilterSweep = useCallback(() => {
   synth.filterSweep();
 }, [synth]);
@@ -93,9 +190,9 @@ const handleFilterSweep = useCallback(() => {
 
 ### Simple `.value` assignments are fine in UI
 
-```typescript
+```tsx
 // This is OK — .value is the Param public API, not audio scheduling
-<input onChange={(e) => synth.volume.value = Number(e.target.value)} />
+<input onChange={(e) => (synth.params.volume.value = Number(e.target.value))} />
 ```
 
 Setting `.value` is a direct property assignment on the Param abstraction. It's the intended interface between UI and audio. No need to wrap these in setter methods.
@@ -165,7 +262,9 @@ The React component for the imperative view collapses to a DOM host that constru
 
 ### Wrong — React owns state, scene needs back-channels
 
-```typescript
+```typescript fragment: intentional invalid example
+import { useRef, useEffect } from "react";
+
 function SpatialPanner({ selectedId, onSelect }: Props) {
   const selectedIdRef = useRef(selectedId);
   const onSelectRef = useRef(onSelect);
@@ -181,7 +280,9 @@ function SpatialPanner({ selectedId, onSelect }: Props) {
 
 ### Right — engine owns state, React and the scene are peers
 
-```typescript
+```tsx fragment: application sketch; app-specific classes or callbacks omitted
+import { useEffect } from "react";
+
 // engine.ts — selection is engine state, not React state
 export const engine = createEngine((ctx) => {
   const tracks = buildTracks(ctx);

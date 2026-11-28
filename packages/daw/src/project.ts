@@ -1,0 +1,146 @@
+/** The Project model and its pure helpers. Loads without a DOM or AudioContext. */
+export { Project, MidiClip, audioClipSourceDuration, audioClipTimeMap } from "./model";
+export { defineExtension, defineOperation } from "./extensions";
+export type {
+  ExtensionDefinition,
+  ExtensionSummary,
+  JsonSchema,
+  JsonValue,
+  Mutable,
+  OperationInfo,
+  ProjectExtension,
+  ProjectOperation,
+  ProjectOperations,
+} from "./extensions";
+export type {
+  ProjectMidiData,
+  ProjectOptions,
+  ProjectContent,
+  ProjectTrack,
+  ProjectClip,
+  ProjectAudio,
+  ProjectMarker,
+  ProjectMidiEvent,
+  AudioClipBase,
+  AudioClipOptions,
+  AudioClip,
+  AudioClipSource,
+  AudioClipStretch,
+  AudioClipStretchInit,
+  AudioSourceSpan,
+  AudioClipGainAutomation,
+  PcmAudioSource,
+  MediaAudioSource,
+  PcmAudioClip,
+  MediaAudioClip,
+  TrackKind,
+  BusRole,
+  TrackRouting,
+  ProjectSend,
+  NewDevice,
+  ProjectDevice,
+  WebClapDevice,
+} from "./model";
+export type {
+  AddMidiClipEdit,
+  AddNotesEdit,
+  AddSceneEdit,
+  AddTrackEdit,
+  BeatRange,
+  ClearSlotEdit,
+  ClipGainPointEdit,
+  CopyRangeEdit,
+  CopyToArrangementEdit,
+  CopyToSlotEdit,
+  DuplicateClipEdit,
+  DuplicateSceneEdit,
+  EditClipSelector,
+  EditNotesEdit,
+  EditPosition,
+  EditSceneRef,
+  EditSlotRef,
+  EditTrackRef,
+  MakeClipUniqueEdit,
+  MarkerEdit,
+  MoveClipEdit,
+  MoveDeviceEdit,
+  MoveSceneEdit,
+  MoveSlotClipEdit,
+  NewNoteEdit,
+  ProjectClipQuery,
+  ProjectClipSummary,
+  ProjectEditOperation,
+  ProjectEditReceipt,
+  ProjectEditSongPart,
+  ProjectEditRejection,
+  ProjectEditRequest,
+  ProjectOverview,
+  ProjectSlotClipSummary,
+  ProjectVersion,
+  RemoveClipEdit,
+  RemoveDeviceEdit,
+  RemoveNotesEdit,
+  RemoveSceneEdit,
+  RemoveTrackEdit,
+  RenameSceneEdit,
+  ResizeClipEdit,
+  RippleDeleteEdit,
+  SecondsRange,
+  SetAudioClipEnvelopeEdit,
+  SetAudioClipGainAutomationEdit,
+  SetClipLoopEdit,
+  SetClipNameEdit,
+  SetClipSourceRangeEdit,
+  SetMarkersEdit,
+  SetMasterVolumeEdit,
+  SetMidiClipEdit,
+  SetTempoChangesEdit,
+  SetTimeSignatureChangesEdit,
+  SetTitleEdit,
+  SetTrackEffectsEdit,
+  SetTrackMacroValueEdit,
+  SetTrackMutedEdit,
+  SetTrackNameEdit,
+  SetTrackPanEdit,
+  SetTrackRackPresetEdit,
+  SetTrackRoutingEdit,
+  SetTrackSoloEdit,
+  SetTrackVolumeEdit,
+  SetVolumeAutomationEdit,
+  SetControllerLaneEdit,
+  SetDeviceParameterEdit,
+  ControllerPointEdit,
+  SplitClipEdit,
+  TimeRange,
+  VolumePointEdit,
+} from "./project-edits";
+export type { ClipTimeMap, ClipStretchAnchor } from "./clip-time-map";
+export { clipGainAt, normalizeClipEnvelope, unityClipEnvelope } from "./clip-envelope";
+export type { ClipEnvelope } from "./clip-envelope";
+export type {
+  RackEffect,
+  RackFilter,
+  RackDelay,
+  RackEq,
+  EffectSlot,
+  RackMacroMapping,
+  RackMacroParameter,
+  RackMacroSettings,
+  RackPreset,
+} from "./rack-preset";
+export { rackMacroRange } from "./rack-preset";
+export { rackDeviceId, splitRackDeviceId } from "./device-parameters";
+export type { DeviceParameter, DeviceParameterRecord } from "./device-parameters";
+export { TempoMap } from "./tempo-map";
+export type { TempoChange } from "./tempo-map";
+export { controllerMax, controllerSampleBeats, controllerExpressions } from "./controller-lane";
+export { controllerRestValue } from "@audiorective/midi";
+export type { ControllerLane, ControllerPoint, ControllerExpression } from "./controller-lane";
+export { MeterMap } from "./meter-map";
+export type { TimeSignatureChange } from "./meter-map";
+export { AudioMedia, AudioMediaWriter } from "./media";
+export type { AudioMediaStorage, AudioMediaChunk, AudioMediaSpan } from "./media";
+export { ProjectSession, sessionFor } from "./session";
+export type { SessionScene, SessionSlot } from "./session";
+export { importMidiFile, exportMidiFile } from "./midi-file";
+export type { MidiFileImport, MidiFileImportOptions, MidiFileExportOptions } from "./midi-file";

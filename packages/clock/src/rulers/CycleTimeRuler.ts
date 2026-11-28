@@ -5,19 +5,21 @@ import type { Ruler, TimelineLike } from "./Ruler";
 export interface CycleTimeRulerOptions {
   /** Cycle length, in seconds. */
   seconds: number;
-  /** Played-seconds offset where the cycle region starts. Default 0. */
+  /** Seconds-position offset where the cycle region starts. Default 0. */
   from?: number;
 }
 
 export interface CycleTimePoint {
+  /** Zero-based repetition of the seconds region; may be negative before its origin. */
   cycle: number;
+  /** Elapsed seconds within this cycle, from 0 up to its duration. */
   secondsInCycle: number;
   /** Position within the cycle, in [0, 1). */
   phase: number;
 }
 
 /**
- * A repeating N-second region of played time — for visuals that repeat on a
+ * A repeating N-second region of seconds position — for visuals that repeat on a
  * wall-clock period rather than a musical one. Reads `timeline.position`
  * directly, same rationale as LinearTimeRuler.
  */
@@ -32,7 +34,8 @@ export class CycleTimeRuler implements Ruler<CycleTimePoint, CycleTimePoint> {
     this._from = options.from ?? 0;
   }
 
-  at(_beat: number, timeline: TimelineLike): CycleTimePoint {
+  /** Cycle number, seconds into the cycle and phase (0 up to 1) of the timeline's seconds position; `beat` is ignored. */
+  at(beat: number, timeline: TimelineLike): CycleTimePoint {
     const rel = timeline.position - this._from;
     const cycle = Math.floor(rel / this._seconds);
     const secondsInCycle = rel - cycle * this._seconds;
@@ -40,7 +43,8 @@ export class CycleTimeRuler implements Ruler<CycleTimePoint, CycleTimePoint> {
     return { cycle, secondsInCycle, phase };
   }
 
-  read(_window: CoreTickWindow, timeline: TimelineLike): CycleTimePoint {
+  /** Same reading as `at`, taken at the timeline's current seconds position. */
+  read(window: Pick<CoreTickWindow, "beat">, timeline: TimelineLike): CycleTimePoint {
     return this.at(0, timeline);
   }
 }

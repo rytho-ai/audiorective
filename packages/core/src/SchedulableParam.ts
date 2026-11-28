@@ -1,11 +1,16 @@
-import type { ParamOptions } from "./types";
+import type { ParamOptions, SignalAccessor } from "./types";
 import { Param } from "./Param";
 import { ParamSync } from "./ParamSync";
+
+/** Seconds a smoothed write waits before it starts: `currentTime` lags the audio thread by a render buffer, and an event in the past would start part-way along its curve. */
+const SMOOTHING_LEAD = 0.01;
 
 export interface SchedulableParamOptions extends ParamOptions<number> {
   syncInterval?: number;
   audioParam: AudioParam;
   audioContext: BaseAudioContext;
+  /** Seconds a `.value` write takes to settle, like `setTargetAtTime`; 0 (default) jumps like a native AudioParam. */
+  smoothing?: number;
 }
 
 /**
@@ -17,23 +22,42 @@ export class SchedulableParam extends Param<number> {
   // (an AudioBufferSourceNode is one-shot, so each start() makes a fresh playbackRate).
   private _audioParam: AudioParam;
   private readonly _audioContext: BaseAudioContext;
+  // The plain signal, for ParamSync read-back: it must update the value without writing the AudioParam.
+  private readonly _signal: SignalAccessor<number>;
+  // The constructor's default write must jump, whatever `smoothing` is.
+  private _ready = false;
+  // Context time before which a smoothed write is still travelling to the audio thread; ParamSync readback must not overwrite it with the stale AudioParam.value.
+  private _settleAt = 0;
 
-  override get value(): number {
-    return super.value;
-  }
+  /** Fires on every change, including while a scheduled ramp moves the value. */
+  declare readonly subscribe: Param<number>["subscribe"];
+
+  /** Seconds a `.value` write takes to settle; 0 jumps. Scheduled ramps, the initial value and writes before the context clock first runs are never smoothed. */
+  smoothing = 0;
 
   /** Backing AudioParam, for graph param sinks. */
   get audioParam(): AudioParam {
     return this._audioParam;
   }
 
-  override set value(newValue: number) {
-    super.value = newValue;
-    this._audioParam.value = newValue;
-  }
-
   constructor(options: SchedulableParamOptions) {
     super(options);
+    // Every write path (`.value` and raw `$(x)`) pushes to the AudioParam, so the two cannot diverge.
+    const raw = this.$;
+    this._signal = raw;
+    const accessor = ((...args: [] | [number]) => {
+      if (args.length === 0) return raw();
+      raw(args[0]);
+      // Nothing has been heard before the clock first runs, so a write at time 0 jumps (an offline render starts at the value you set).
+      if (this.smoothing > 0 && this._ready && this._audioContext.currentTime > 0) {
+        this._audioParam.setTargetAtTime(args[0], this._audioContext.currentTime + SMOOTHING_LEAD, this.smoothing / 5);
+        this._settleAt = this._audioContext.currentTime + SMOOTHING_LEAD + this.smoothing;
+      } else {
+        this._audioParam.value = args[0];
+        this._settleAt = 0;
+      }
+    }) as SignalAccessor<number>;
+    (this as { $: SignalAccessor<number> }).$ = accessor;
     this._audioContext = options.audioContext;
     this._audioParam = options.audioParam;
 
@@ -41,6 +65,8 @@ export class SchedulableParam extends Param<number> {
 
     // actively sync default value to audioParam
     this.value = options.default;
+    this.smoothing = options.smoothing ?? 0;
+    this._ready = true;
   }
 
   /**
@@ -72,41 +98,54 @@ export class SchedulableParam extends Param<number> {
    * sync current value to the audioParam value underhood
    */
   syncFromAudio(): void {
-    super.value = this._audioParam.value;
+    if (this._audioContext.currentTime < this._settleAt) return;
+    this._signal(this._audioParam.value);
   }
 
+  /** Sets the value to `value` at AudioContext time `time` (seconds); returns this. */
   setValueAtTime(value: number, time: number): this {
+    this._settleAt = 0;
     this._audioParam.setValueAtTime(value, time);
     return this;
   }
 
+  /** Ramps linearly to `value`, arriving at AudioContext time `endTime` (seconds); returns this. */
   linearRampToValueAtTime(value: number, endTime: number): this {
+    this._settleAt = 0;
     this._audioParam.linearRampToValueAtTime(value, endTime);
     return this;
   }
 
+  /** Ramps exponentially to `value`, arriving at `endTime` (AudioContext seconds); `value` must be non-zero and share the current value's sign; returns this. */
   exponentialRampToValueAtTime(value: number, endTime: number): this {
+    this._settleAt = 0;
     this._audioParam.exponentialRampToValueAtTime(value, endTime);
     return this;
   }
 
+  /** From `startTime` (AudioContext seconds) the value approaches `target` exponentially with `timeConstant` seconds; returns this. */
   setTargetAtTime(target: number, startTime: number, timeConstant: number): this {
+    this._settleAt = 0;
     this._audioParam.setTargetAtTime(target, startTime, timeConstant);
     return this;
   }
 
+  /** Drops every scheduled change at or after `cancelTime` (AudioContext seconds); the value stays where it is now; returns this. */
   cancelScheduledValues(cancelTime: number): this {
+    this._settleAt = 0;
     this._audioParam.cancelScheduledValues(cancelTime);
     return this;
   }
 
+  /** Drops scheduled changes after `cancelTime` (AudioContext seconds) and holds the value the automation had reached then; returns this. */
   cancelAndHoldAtTime(cancelTime: number): this {
+    this._settleAt = 0;
     this._audioParam.cancelAndHoldAtTime(cancelTime);
     return this;
   }
 
-  override destroy(): void {
-    super.destroy();
+  override dispose(): void {
+    super.dispose();
     ParamSync.for(this._audioContext).unregister(this);
   }
 }

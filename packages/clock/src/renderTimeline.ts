@@ -16,6 +16,21 @@ export interface RenderTimelineOptions extends RenderOfflineOptions {
    * never closer than one quantum: a smaller interval ticks once per quantum.
    */
   tickInterval?: number;
+  /**
+   * Closures to run at audio times, like a user pressing record or launching a clip. Each runs while the render is suspended, on the render quantum at or before `at`
+   * (so one placed exactly on a boundary still meets it), before that quantum's tick. When it returns a promise the render stays suspended until it settles, so an
+   * action that returns `recorder.record(...)`'s take, or awaits a take delivered by an AudioWorklet, sees it complete before the next tick instead of arbitrarily late in audio time.
+   * A rejection fails the render. Actions run in `at` order.
+   */
+  actions?: ReadonlyArray<RenderAction>;
+}
+
+/** One closure `renderTimeline` runs at audio time `at` (seconds); a returned promise is awaited while the render is suspended. */
+export interface RenderAction {
+  /** Absolute offline audio-clock time in seconds at which to run the action. */
+  at: number;
+  /** Invoked once at the requested offline audio time; may return an asynchronous result. */
+  run: () => unknown;
 }
 
 /**
@@ -43,10 +58,14 @@ export async function renderTimeline(
   const buffer = await renderOffline(options, async (ctx) => {
     const ticks = new ManualTickSource();
     await setup(ctx, ticks);
+    const actions = [...(options.actions ?? [])].sort((a, b) => a.at - b.at);
+    // actions due before the first quantum run before the first tick, still before rendering starts
+    const stepFrame = (t: number): number => Math.floor((t * ctx.sampleRate + 1e-6) / RENDER_QUANTUM) * RENDER_QUANTUM;
+    while (actions.length && stepFrame(actions[0]!.at) <= 0) await actions.shift()!.run();
     // time 0, before rendering starts -- the first window
     ticks.tick();
-    // the first suspend is scheduled synchronously here, ahead of startRendering
-    drive = driveTicks(ctx, ticks, tickInterval);
+    // every suspend is scheduled synchronously here, ahead of startRendering
+    drive = driveTicks(ctx, ticks, tickInterval, actions, stepFrame);
     // rendering still has to finish before `drive` is awaited below; keep an
     // early failure from surfacing as an unhandled rejection in the meantime
     drive.catch(() => {});
@@ -55,36 +74,51 @@ export async function renderTimeline(
   return buffer;
 }
 
-async function driveTicks(ctx: OfflineAudioContext, ticks: ManualTickSource, interval: number): Promise<void> {
+async function driveTicks(
+  ctx: OfflineAudioContext,
+  ticks: ManualTickSource,
+  interval: number,
+  actions: RenderAction[],
+  stepFrame: (t: number) => number,
+): Promise<void> {
   // `suspend(t)` pauses on the render-quantum boundary at or after `t`
   // (ceil), rejects a second suspend on a frame that already has one, and a
   // suspend at or past the end of the render never settles. So every stop is
   // planned in quantized frames: the k-th tick's nominal time rounded up to a
   // quantum, never the same quantum twice (a sub-quantum interval degrades
-  // to one tick per quantum), and never at or beyond `ctx.length`.
+  // to one tick per quantum), and never at or beyond `ctx.length`. An action's
+  // stop is the quantum at or before its time, merged into the same set.
   const quantize = (t: number): number => Math.ceil((t * ctx.sampleRate) / RENDER_QUANTUM) * RENDER_QUANTUM;
+  const stops = new Set<number>();
+  let frame = 0;
+  for (let k = 1; ; k++) {
+    frame = Math.max(quantize(k * interval), frame + RENDER_QUANTUM);
+    if (frame >= ctx.length) break;
+    stops.add(frame);
+  }
+  for (const action of actions) {
+    const at = stepFrame(action.at);
+    if (at < ctx.length) stops.add(at);
+  }
+  const frames = [...stops].sort((a, b) => a - b);
   // ask for a time safely inside the quantum below the target, so rounding
   // error in frame/sampleRate can't push the actual stop one quantum later
-  const suspendAtFrame = (frame: number): Promise<void> => ctx.suspend((frame - RENDER_QUANTUM / 2) / ctx.sampleRate);
-
-  let frame = 0;
-  const nextFrame = (k: number): number | undefined => {
-    const next = Math.max(quantize(k * interval), frame + RENDER_QUANTUM);
-    return next < ctx.length ? next : undefined;
-  };
-
-  let next = nextFrame(1);
-  let pending = next === undefined ? undefined : suspendAtFrame(next);
-  for (let k = 1; pending !== undefined && next !== undefined; k++) {
-    await pending;
-    frame = next;
+  const waits = frames.map((f) => ctx.suspend((f - RENDER_QUANTUM / 2) / ctx.sampleRate));
+  for (const wait of waits) wait.catch(() => {});
+  for (let i = 0; i < frames.length; i++) {
+    await waits[i];
     try {
+      while (actions.length && stepFrame(actions[0]!.at) <= frames[i]!) await actions.shift()!.run();
       ticks.tick();
-      // schedule the next stop before letting the render run again
-      next = nextFrame(k + 1);
-      pending = next === undefined ? undefined : suspendAtFrame(next);
-    } finally {
+    } catch (error) {
+      // every stop is already scheduled: let the render run past the rest so it ends and the failure surfaces instead of hanging
       await ctx.resume();
+      for (let rest = i + 1; rest < frames.length; rest++) {
+        await waits[rest];
+        await ctx.resume();
+      }
+      throw error;
     }
+    await ctx.resume();
   }
 }

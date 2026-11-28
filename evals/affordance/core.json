@@ -1,0 +1,155 @@
+{
+  "area": "core",
+  "description": "API-shape experiment for the core foundation: writing a small audio processor with observable parameters, wiring audio objects together and to the speakers, starting audio from a user gesture, observing state from a framework-agnostic subscription and from React, tearing an app down, and playing a one-shot sound at an exact audio time. The same seven tasks are given with no API (desire mode) or with one variant's type declarations only (guess mode). Expectations describe behaviour, not names.",
+  "tasks": [
+    {
+      "id": "C1-synth-processor",
+      "prompt": "Write a small reusable monophonic synth as a class: a sawtooth oscillator into a gain stage. It has a numeric 'volume' (0 to 1, default 0.5) that controls the gain and a 'frequency' in Hz (default 440) that controls the oscillator; both can be read and set at any time, and both can also be changed at an exact audio time (for example a ramp of the volume to 0 over one second starting now). The synth also has a note-on method that starts it at a given audio time. Create one instance, send its sound to the speakers and play 440 Hz at volume 0.3 for two seconds starting half a second from now.",
+      "expectations": [
+        "Builds the oscillator and the gain stage and routes oscillator -> gain -> an output that the rest of the app can use.",
+        "Volume defaults to 0.5, is in the 0-1 range, and setting it changes the gain that is actually heard (the value is not just stored).",
+        "Frequency defaults to 440 and setting it changes the oscillator's pitch.",
+        "Volume (and frequency) can be scheduled at an exact audio time (ramp or set-at-time on the audio clock) and the volume ramp to 0 over one second is expressed that way, not with a JS timer loop.",
+        "The note starts at currentTime + 0.5 and stops two seconds later using the audio clock, not setTimeout.",
+        "The instance's sound reaches the speakers.",
+        "Sets volume 0.3 and frequency 440 for the played note."
+      ],
+      "checks": [
+        {
+          "expectation": 5,
+          "label": "the sound reaches the destination",
+          "any": ["\\bdestination\\b"]
+        },
+        {
+          "expectation": 4,
+          "label": "starts at now + 0.5 and runs two seconds on the audio clock",
+          "all": ["\\bcurrentTime\\b", "\\b0?\\.5\\b"],
+          "none": ["setTimeout\\s*\\([^)]*start"]
+        }
+      ]
+    },
+    {
+      "id": "C2-chain",
+      "prompt": "You have a looping sample player, a spatial panner, a spectrum analyser (all toolkit objects) and a native low-pass BiquadFilterNode. Wire them so audio flows player -> low-pass filter -> panner -> analyser -> speakers. Later, when the user turns on a 'dry' checkbox, take the filter and the panner out of the path so the player goes straight into the analyser, and put them back when it is unchecked. Do not create anything twice and leave no stray connection behind.",
+      "expectations": [
+        "Routes the player, the filter, the panner and the analyser in exactly that order, ending at the speakers.",
+        "Mixes the toolkit's own objects and a native node in the same chain without unwrapping by hand more than the API requires (no reaching into private fields).",
+        "Dry mode routes the player directly to the analyser, and the analyser still reaches the speakers.",
+        "Turning dry off restores the full chain.",
+        "Switching removes the old connections (disconnects) so audio does not travel both the dry and the processed path at once.",
+        "The wiring is done with the API's connection mechanism for the chain (no manual per-node gain-bridging or duplicated nodes)."
+      ]
+    },
+    {
+      "id": "C3-teardown",
+      "prompt": "A page creates its audio when the user opens a 'tuner' panel: one synth-like source, a reverb-like effect chain, a requestAnimationFrame loop that draws the spectrum, a window resize listener and a periodic timer that updates a label. When the user closes the panel, or the framework aborts an AbortController the panel was given, everything must stop: no sound, no listeners, no frame loop, no timer, and the audio resources and (if the panel created it) the audio context released. Write the open-panel function and make the close path safe to call twice.",
+      "expectations": [
+        "Has one teardown path that both a close button and an AbortSignal abort lead to (the signal is listened to, or an API that takes a signal is used).",
+        "Stops the audio source and releases the audio objects the panel created (disconnects or disposes them).",
+        "Cancels the animation-frame loop, removes the resize listener and clears the timer.",
+        "Closes or releases the audio context if and only if the panel created it.",
+        "Calling the close path twice does not throw and does not double-release.",
+        "Teardown does not rely on garbage collection or a page reload."
+      ]
+    },
+    {
+      "id": "C4-gesture-start",
+      "prompt": "Browsers keep audio muted until the user interacts. The page has a 'Start audio' button that should get a tone playing. The same button then shows 'Pause' while audio runs and 'Resume' while it is suspended, and the label must also follow the real state if the browser suspends audio by itself (for example the tab is backgrounded on mobile). The audio context may already be running when the page loads (a previous visit allowed autoplay). Do not start audio at load.",
+      "expectations": [
+        "Does not create audio output or start sound at page load (waits for the click).",
+        "Starts or resumes audio inside the click handler's call stack (or via an API documented to do so).",
+        "Handles an already-running context without error or double start.",
+        "The button label reflects the real running/suspended state, including changes the page did not cause, by reacting to state changes rather than only flipping a boolean on click.",
+        "Pausing suspends audio rather than disposing anything, and resuming continues.",
+        "Uses a single audio context for the whole page."
+      ],
+      "checks": [
+        {
+          "expectation": 1,
+          "label": "resumes or starts inside the click handler",
+          "any": ["addEventListener\\s*\\(\\s*[\"']click[\"']", "onclick\\s*=", "onClick"]
+        }
+      ]
+    },
+    {
+      "id": "C5-observe-state",
+      "prompt": "A synth object has a numeric volume that changes from several places: a slider, a keyboard shortcut and a scheduled one-second fade-out. Show it in a text label and keep a range input in sync with it. First write it for plain DOM code as a function that binds the label and the slider and returns something that stops the binding. Then write the same thing as a React function component for the same synth object. The label must show the current value immediately, update on every change from any source, and never be written when the value did not change.",
+      "expectations": [
+        "The plain-DOM version updates the label and the slider whenever the volume changes, from any source including the scheduled fade (not by polling on a timer unless the API gives no change notification).",
+        "The plain-DOM version shows the current value immediately, before any change.",
+        "The plain-DOM version returns a way to stop the binding and uses it so no listener is left behind.",
+        "The slider drives the synth's volume (user input writes the value) without an infinite update loop.",
+        "The React version re-renders when the volume changes, from any source, and keeps no second copy of the value in component state that can go stale.",
+        "The React version subscribes in a way that cleans up on unmount and is safe under concurrent rendering (an external-store hook or an equivalent the API provides)."
+      ],
+      "checks": [
+        {
+          "expectation": 4,
+          "label": "React version actually exists (a component using hooks)",
+          "any": ["useSyncExternalStore", "useValue", "useEffect", "useState"]
+        }
+      ]
+    },
+    {
+      "id": "C6-one-shot-at-time",
+      "prompt": "You have an already-decoded AudioBuffer of a snare and a variable `bus`, a toolkit audio processor that has an input and feeds the speakers (the sound must be routed into it, not to the speakers directly). Play the snare exactly once at exactly one quarter of a second from now on the audio clock, one octave higher than recorded and at 70% volume. Make it possible to cancel that hit before it sounds, and make sure no audio node stays connected after the hit has ended or was cancelled.",
+      "expectations": [
+        "Schedules the start at currentTime + 0.25 on the audio clock (not a JS timer).",
+        "Plays one octave up, a playback-rate factor of 2 (or 1200 cents of detune).",
+        "Plays at 0.7 gain.",
+        "The hit's sound goes into the mixer bus rather than directly to the speakers.",
+        "The hit can be cancelled before it sounds (the source is stopped or the sound is retracted).",
+        "After the hit ends or is cancelled, its nodes are disconnected or released (no stray connection)."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "start scheduled at currentTime + 0.25",
+          "all": ["\\bcurrentTime\\b", "\\b0?\\.25\\b"]
+        },
+        {
+          "expectation": 1,
+          "label": "octave up as rate 2 or 1200 cents",
+          "any": [
+            "(?:playbackRate|rate)[^;\\n]{0,40}\\b2\\b",
+            "\\b2\\s*\\*\\*\\s*\\(?\\s*12\\s*/\\s*12",
+            "\\b1200\\b",
+            "Math\\.pow\\s*\\(\\s*2\\s*,\\s*12\\s*/\\s*12",
+            "\\bpitch\\b[^;\\n]{0,20}\\b12\\b",
+            "\\b12\\b[^;\\n]{0,20}\\bsemitones?\\b",
+            "\\boctave\\b[^;\\n]{0,40}\\b1\\b",
+            "\\b2\\b[^;\\n]{0,6}\\*\\s*(?:buffer|snare)"
+          ]
+        },
+        {
+          "expectation": 2,
+          "label": "gain 0.7",
+          "all": ["\\b0?\\.7\\b"]
+        }
+      ]
+    },
+    {
+      "id": "C7-lifecycle-errors",
+      "prompt": "A 'Play' helper in the app calls into an audio engine that may not be started yet (the user has not clicked anything) or may already have been torn down (the panel was closed). When it fails, the UI must show 'Click anywhere to enable sound' for the first case and silently ignore the second, and report anything else to the console. Write the helper and the error handling. Decide how to tell the cases apart without matching on message text.",
+      "expectations": [
+        "Distinguishes the not-yet-started case from the torn-down case and from other failures.",
+        "The distinction does not rely on parsing or matching the error message text (it uses a state check before the call, an error class, or a standard error name).",
+        "Shows the enable-sound prompt only for the not-started case.",
+        "Silently ignores the torn-down case.",
+        "Logs every other failure to the console.",
+        "Handles asynchronous rejection (a rejected promise) as well as a synchronous throw if the API can produce either."
+      ],
+      "checks": [
+        {
+          "expectation": 1,
+          "label": "no error-message text matching",
+          "none": [
+            "\\.message\\s*(?:\\.|\\)|\\s)*\\s*(?:includes|match|startsWith|test)\\s*\\(",
+            "\\.test\\s*\\([^)]*\\.message",
+            "message\\s*===?\\s*[\"']"
+          ]
+        }
+      ]
+    }
+  ]
+}

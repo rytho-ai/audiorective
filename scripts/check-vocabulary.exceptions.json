@@ -1,0 +1,10 @@
+[
+  {
+    "pattern": "core/AnalyserOptions.*Decibels#db-case",
+    "reason": "Mirrors the native AnalyserNode properties minDecibels and maxDecibels; the option is passed straight through."
+  },
+  {
+    "pattern": "effects/StretchOptions.blockMs#ms-unit",
+    "reason": "Mirrors Signalsmith Stretch's configure({ blockMs }); the engine takes milliseconds and the option forwards it unchanged."
+  }
+]

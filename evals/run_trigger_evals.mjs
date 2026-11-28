@@ -10,12 +10,18 @@
 // alone. A query counts as triggered when Claude calls the Skill tool for it in
 // at least half of its runs. Requires the Claude Code CLI on PATH and a login.
 //
+// Codex: --backend codex --model <pinned> --reasoning-effort <pinned>.
+// Only staged SKILL.md bodies are exposed through MCP; this is distinct from
+// native Claude Skill-tool discovery. --ids uses one-based query indices.
 // Options: --skill-dir <dir>  (default skills/<name>)   --runs <n> (3)
 //          --concurrency <n> (8)   --timeout <seconds> (120)   --json <out-file>
 //          --limit <n>  (only the first n queries — for a smoke test)
+//          --user-settings  (load ~/.claude: user plugins, skills, CLAUDE.md, memory; off by default)
 
+import { callCodex, codexUsageJson, printCodexUsageReport } from "./codex-call.mjs";
+import { codexReadStats } from "./codex-reader.mjs";
 import { spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, copyFileSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, copyFileSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,157 +29,254 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..");
 
-const args = process.argv.slice(2);
-const skillName = args.find((a) => !a.startsWith("--"));
-if (!skillName) {
-  console.error("usage: node evals/run_trigger_evals.mjs <skill-name> [options]");
-  process.exit(2);
+export const CODEX_TRIGGER_DISCOVERY =
+  "Codex-specific staged MCP description/body-open semantics; not comparable to historical native Claude Skill-tool scores";
+export async function runCodexTrigger(query, { skillName, staged, model, reasoningEffort, timeoutMs, call = callCodex }) {
+  let result;
+  try {
+    result = await call({
+      prompt: query,
+      model,
+      reasoningEffort,
+      timeoutMs,
+      reader: {
+        command: process.execPath,
+        args: [join(here, "codex-reader.mjs"), "--root", staged, "--skill-only"],
+        allowedTools: ["open_skill", "read_file"],
+      },
+      systemPrompt:
+        "Answer the request. Use a staged skill only when its description applies: the eval_reader open_skill tool provides the exact available catalog descriptions. Open the full body of a matching skill before using it; otherwise answer without opening it. Only staged SKILL.md bodies are available. Native/global skills, references, shell, browser and all other tools are unavailable.",
+    });
+  } catch (error) {
+    return { error: `Codex: ${error.message}`, costUsd: null };
+  }
+  const readStats = codexReadStats(result.metadata, skillName);
+  const context = { usage: result.usage, metadata: result.metadata, readStats, costUsd: null };
+  if (readStats.errors.length) return { ...context, error: `reader accounting: ${readStats.errors.join("; ")}` };
+  if (result.error) return { ...context, error: result.error };
+  return { ...context, hit: readStats.openedSkills.includes(skillName) };
 }
-const opt = (name, fallback) => {
-  const i = args.indexOf(`--${name}`);
-  return i === -1 ? fallback : args[i + 1];
-};
-const usage = (msg) => {
-  console.error(`error: ${msg}`);
-  console.error(
-    "usage: node evals/run_trigger_evals.mjs <skill-name> [--skill-dir d] [--runs n] [--concurrency n] [--timeout s] [--json f] [--limit n]",
-  );
-  process.exit(2);
-};
-const positiveInt = (name, fallback) => {
-  const raw = opt(name, fallback);
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n < 1) usage(`--${name} must be a positive integer, got ${JSON.stringify(raw)}`);
-  return n;
-};
-const skillDir = resolve(opt("skill-dir", join(repoRoot, "skills", skillName)));
-const runs = positiveInt("runs", 3);
-const concurrency = positiveInt("concurrency", 8);
-const timeoutSeconds = Number(opt("timeout", 120));
-if (!(timeoutSeconds > 0) || !Number.isFinite(timeoutSeconds)) usage(`--timeout must be a positive number of seconds`);
-const timeoutMs = timeoutSeconds * 1000;
-const jsonOut = opt("json", null);
-const limit = args.includes("--limit") ? positiveInt("limit") : Infinity;
 
-const evalSet = JSON.parse(readFileSync(join(here, skillName, "trigger_eval.json"), "utf8")).slice(0, limit);
-if (evalSet.length === 0) usage(`no queries in evals/${skillName}/trigger_eval.json`);
-const skillMd = readFileSync(join(skillDir, "SKILL.md"), "utf8");
-const description = (skillMd.match(/^description:\s*>?\s*\n?([\s\S]*?)\n(?=[a-z-]+:|---)/m)?.[1] ?? "").replace(/\n\s+/g, " ").trim();
+export async function main(args = process.argv.slice(2), { codexCall = callCodex } = {}) {
+  const valueFlags = new Set(["skill-dir", "runs", "concurrency", "timeout", "json", "limit", "model", "backend", "reasoning-effort", "ids"]);
+  const skillName = args.find((a, i) => !a.startsWith("--") && !(args[i - 1]?.startsWith("--") && valueFlags.has(args[i - 1].slice(2))));
+  if (!skillName) {
+    console.error("usage: node evals/run_trigger_evals.mjs <skill-name> [options]");
+    process.exit(2);
+  }
+  const opt = (name, fallback) => {
+    const i = args.indexOf(`--${name}`);
+    return i === -1 ? fallback : args[i + 1];
+  };
+  const usage = (msg) => {
+    console.error(`error: ${msg}`);
+    console.error(
+      "usage: node evals/run_trigger_evals.mjs <skill-name> [--skill-dir d] [--runs n] [--concurrency n] [--timeout s] [--json f] [--limit n] [--backend claude|codex] [--model m] [--reasoning-effort e] [--ids 1,2] [--user-settings]",
+    );
+    process.exit(2);
+  };
+  const positiveInt = (name, fallback) => {
+    const raw = opt(name, fallback);
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 1) usage(`--${name} must be a positive integer, got ${JSON.stringify(raw)}`);
+    return n;
+  };
+  const skillDir = resolve(opt("skill-dir", join(repoRoot, "skills", skillName)));
+  const runs = positiveInt("runs", 3);
+  const concurrency = positiveInt("concurrency", 8);
+  const timeoutSeconds = Number(opt("timeout", 120));
+  if (!(timeoutSeconds > 0) || !Number.isFinite(timeoutSeconds)) usage(`--timeout must be a positive number of seconds`);
+  const timeoutMs = timeoutSeconds * 1000;
+  const jsonOut = opt("json", null);
+  const backend = opt("backend", "claude"),
+    model = opt("model", null),
+    reasoningEffort = opt("reasoning-effort", null);
+  if (!["claude", "codex"].includes(backend)) usage("--backend must be claude or codex");
+  if (backend === "codex" && (!model?.trim() || model.startsWith("--") || !reasoningEffort?.trim() || reasoningEffort.startsWith("--")))
+    usage("--backend codex requires explicit --model and --reasoning-effort");
+  if (backend === "codex" && args.includes("--user-settings")) usage("--user-settings is unavailable for isolated Codex evals");
+  const ids = opt("ids", null)?.split(",").map(Number);
+  if (ids?.some((n) => !Number.isInteger(n) || n < 1)) usage("--ids requires one-based positive query indices");
+  // By default only the throwaway project's settings load, so competing user plugins and skills cannot
+  // change whether the skill under test triggers. --user-settings opts back in.
+  // Historical output without a backend label came from the default Claude runner.
+  if (jsonOut && existsSync(jsonOut)) {
+    let previous;
+    try {
+      previous = JSON.parse(readFileSync(jsonOut, "utf8"));
+    } catch {}
+    if (previous?.results && (previous.backend ?? "claude") !== backend)
+      usage("refusing to overwrite another backend's results; choose a separate --json file");
+  }
+  const settingSources = args.includes("--user-settings") ? "user,project,local" : "project";
+  const limit = args.includes("--limit") ? positiveInt("limit") : Infinity;
 
-// Stage the skill in an empty project so nothing else in this repo influences the run.
-const project = mkdtempSync(join(tmpdir(), "trigger-eval-"));
-mkdirSync(join(project, ".claude", "skills", skillName), { recursive: true });
-copyFileSync(join(skillDir, "SKILL.md"), join(project, ".claude", "skills", skillName, "SKILL.md"));
+  const evalSet = JSON.parse(readFileSync(join(here, skillName, "trigger_eval.json"), "utf8"))
+    .map((item, i) => ({ ...item, queryIndex: i + 1 }))
+    .filter((item) => !ids || ids.includes(item.queryIndex))
+    .slice(0, limit);
+  if (evalSet.length === 0) usage(`no queries in evals/${skillName}/trigger_eval.json`);
+  const skillMd = readFileSync(join(skillDir, "SKILL.md"), "utf8");
+  const description = (skillMd.match(/^description:\s*>?\s*\n?([\s\S]*?)\n(?=[a-z-]+:|---)/m)?.[1] ?? "").replace(/\n\s+/g, " ").trim();
 
-const env = { ...process.env };
-delete env.CLAUDECODE; // allow nesting claude -p inside a Claude Code session
+  // Stage the skill in an empty project so nothing else in this repo influences the run.
+  const project = mkdtempSync(join(tmpdir(), "trigger-eval-"));
+  mkdirSync(join(project, ".claude", "skills", skillName), { recursive: true });
+  copyFileSync(join(skillDir, "SKILL.md"), join(project, ".claude", "skills", skillName, "SKILL.md"));
 
-// One `claude -p` run. Resolves to { hit: true } when Claude called the Skill tool
-// for this skill, { hit: false } when the run completed without doing so, and
-// { error } when the run did not complete — a timeout, a CLI failure such as a
-// missing login or a rate limit, or an exit with no result event. Errors are never
-// counted as non-triggers: a negative query must not pass because the CLI failed.
-function runOnce(query) {
-  return new Promise((done) => {
-    const child = spawn("claude", ["-p", query, "--output-format", "stream-json", "--verbose", "--max-turns", "1"], {
-      cwd: project,
-      env,
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    let out = "";
-    let triggered = false;
-    let result = null; // the final `result` event, if the run got that far
-    let timedOut = false;
-    let spawnError = null;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGKILL");
-    }, timeoutMs);
-    child.on("error", (err) => (spawnError = err));
-    child.stdout.on("data", (chunk) => {
-      out += chunk;
-      let nl;
-      while ((nl = out.indexOf("\n")) !== -1) {
-        const line = out.slice(0, nl);
-        out = out.slice(nl + 1);
-        let event;
-        try {
-          event = JSON.parse(line);
-        } catch {
-          continue;
+  const env = { ...process.env };
+  delete env.CLAUDECODE; // allow nesting claude -p inside a Claude Code session
+
+  // One `claude -p` run. Resolves to { hit: true } when Claude called the Skill tool
+  // for this skill, { hit: false } when the run completed without doing so, and
+  // { error } when the run did not complete — a timeout, a CLI failure such as a
+  // missing login or a rate limit, or an exit with no result event. Errors are never
+  // counted as non-triggers: a negative query must not pass because the CLI failed.
+  function runOnce(query) {
+    if (backend === "codex")
+      return runCodexTrigger(query, { skillName, staged: join(project, ".claude", "skills"), model, reasoningEffort, timeoutMs, call: codexCall });
+    return new Promise((done) => {
+      const child = spawn(
+        "claude",
+        ["-p", query, "--output-format", "stream-json", "--verbose", "--max-turns", "1", "--setting-sources", settingSources],
+        {
+          cwd: project,
+          env,
+          stdio: ["ignore", "pipe", "ignore"],
+        },
+      );
+      let out = "";
+      let triggered = false;
+      let result = null; // the final `result` event, if the run got that far
+      let timedOut = false;
+      let spawnError = null;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill("SIGKILL");
+      }, timeoutMs);
+      child.on("error", (err) => (spawnError = err));
+      child.stdout.on("data", (chunk) => {
+        out += chunk;
+        let nl;
+        while ((nl = out.indexOf("\n")) !== -1) {
+          const line = out.slice(0, nl);
+          out = out.slice(nl + 1);
+          let event;
+          try {
+            event = JSON.parse(line);
+          } catch {
+            continue;
+          }
+          if (event.type === "result") result = event;
+          const blocks = event?.message?.content;
+          if (event.type !== "assistant" || !Array.isArray(blocks)) continue;
+          for (const b of blocks) {
+            if (b.type !== "tool_use" || b.name !== "Skill") continue;
+            const target = String(b.input?.skill ?? b.input?.command ?? JSON.stringify(b.input ?? ""));
+            if (target.includes(skillName)) triggered = true;
+          }
+          if (triggered) child.kill("SIGTERM"); // the answer is known; don't wait for the turn
         }
-        if (event.type === "result") result = event;
-        const blocks = event?.message?.content;
-        if (event.type !== "assistant" || !Array.isArray(blocks)) continue;
-        for (const b of blocks) {
-          if (b.type !== "tool_use" || b.name !== "Skill") continue;
-          const target = String(b.input?.skill ?? b.input?.command ?? JSON.stringify(b.input ?? ""));
-          if (target.includes(skillName)) triggered = true;
+      });
+      child.on("close", (code, signal) => {
+        clearTimeout(timer);
+        if (triggered) return done({ hit: true });
+        if (spawnError) return done({ error: `could not start claude: ${spawnError.message}` });
+        if (timedOut) return done({ error: `timed out after ${timeoutSeconds}s` });
+        // Newer CLIs mark the one-turn cutoff as is_error with terminal_reason "max_turns"; it is the same non-trigger.
+        if (result && (result.subtype === "error_max_turns" || result.terminal_reason === "max_turns")) return done({ hit: false });
+        if (result?.is_error || result?.terminal_reason === "api_error" || result?.api_error)
+          return done({ error: `claude reported ${result.api_error ?? result.terminal_reason ?? "an error"}` });
+        // A completed run ends in a `result` event. `error_max_turns` is still a completed
+        // run: Claude spent its one turn on some other tool, which is a genuine non-trigger.
+        if (result && (result.subtype === "success" || result.subtype === "error_max_turns")) return done({ hit: false });
+        if (result) return done({ error: `claude reported ${result.subtype}${result.result ? `: ${String(result.result).slice(0, 120)}` : ""}` });
+        return done({ error: `claude exited without a result (code ${code}, signal ${signal})` });
+      });
+    });
+  }
+
+  async function pool(tasks, size) {
+    const results = new Array(tasks.length);
+    let next = 0;
+    await Promise.all(
+      Array.from({ length: Math.min(size, tasks.length) }, async () => {
+        while (next < tasks.length) {
+          const i = next++;
+          results[i] = await tasks[i]();
         }
-        if (triggered) child.kill("SIGTERM"); // the answer is known; don't wait for the turn
-      }
-    });
-    child.on("close", (code, signal) => {
-      clearTimeout(timer);
-      if (triggered) return done({ hit: true });
-      if (spawnError) return done({ error: `could not start claude: ${spawnError.message}` });
-      if (timedOut) return done({ error: `timed out after ${timeoutSeconds}s` });
-      // A completed run ends in a `result` event. `error_max_turns` is still a completed
-      // run: Claude spent its one turn on some other tool, which is a genuine non-trigger.
-      if (result && (result.subtype === "success" || result.subtype === "error_max_turns")) return done({ hit: false });
-      if (result) return done({ error: `claude reported ${result.subtype}${result.result ? `: ${String(result.result).slice(0, 120)}` : ""}` });
-      return done({ error: `claude exited without a result (code ${code}, signal ${signal})` });
-    });
+      }),
+    );
+    return results;
+  }
+
+  console.error(`backend: ${backend}${backend === "codex" ? ` (model ${model}, effort ${reasoningEffort}; ${CODEX_TRIGGER_DISCOVERY})` : ""}`);
+  console.error(`skill: ${skillName}  (${skillDir})`);
+  console.error(`description: ${description}\n`);
+  console.error(`${evalSet.length} queries × ${runs} runs, concurrency ${concurrency}…`);
+
+  const tasks = [];
+  for (const [qi, item] of evalSet.entries()) for (let r = 0; r < runs; r++) tasks.push(async () => ({ qi, ...(await runOnce(item.query)) }));
+  const flat = await pool(tasks, concurrency);
+
+  const results = evalSet.map((item, qi) => {
+    const mine = flat.filter((x) => x.qi === qi);
+    const errors = mine.filter((x) => x.error).map((x) => x.error);
+    const hits = mine.filter((x) => x.hit).length;
+    const rate = hits / runs;
+    const triggered = rate >= 0.5;
+    // A query with any failed run has no trustworthy rate, so it fails regardless of direction.
+    return {
+      ...item,
+      hits,
+      runs,
+      rate,
+      errors,
+      pass: errors.length === 0 && triggered === item.should_trigger,
+      ...(backend === "codex"
+        ? {
+            calls: mine.map(({ qi: _qi, ...call }) => call),
+            costUsd: null,
+            usage: codexUsageJson([{ label: "trigger", runs: mine.map((x) => x.usage).filter(Boolean) }]),
+          }
+        : {}),
+    };
   });
+  rmSync(project, { recursive: true, force: true });
+
+  const positives = results.filter((r) => r.should_trigger);
+  const negatives = results.filter((r) => !r.should_trigger);
+  const pct = (xs) => (xs.length ? Math.round((100 * xs.filter((r) => r.pass).length) / xs.length) : 0);
+
+  for (const r of results) {
+    const mark = r.errors.length ? "ERROR" : r.pass ? "PASS " : "FAIL ";
+    console.log(`${mark} ${r.hits}/${r.runs}  ${r.should_trigger ? "should   " : "shouldn't"}  ${r.query.slice(0, 90)}`);
+    for (const e of new Set(r.errors)) console.log(`        ${e}`);
+  }
+  const failedRuns = flat.filter((x) => x.error).length;
+  if (failedRuns) console.log(`\n${failedRuns} of ${flat.length} runs failed to complete; their queries count as failures.`);
+  console.log(`\nshould-trigger:    ${pct(positives)}% (${positives.filter((r) => r.pass).length}/${positives.length})`);
+  console.log(`shouldn't-trigger: ${pct(negatives)}% (${negatives.filter((r) => r.pass).length}/${negatives.length})`);
+  console.log(`overall:           ${pct(results)}% (${results.filter((r) => r.pass).length}/${results.length})`);
+
+  const usageRows = backend === "codex" ? [{ label: "trigger", runs: flat.map((x) => x.usage).filter(Boolean) }] : [];
+  if (backend === "codex") printCodexUsageReport(usageRows);
+  if (jsonOut)
+    writeFileSync(
+      jsonOut,
+      JSON.stringify(
+        {
+          skill: skillName,
+          skillDir,
+          description,
+          results,
+          backend,
+          ...(backend === "codex" ? { model, reasoningEffort, discovery: CODEX_TRIGGER_DISCOVERY, usage: codexUsageJson(usageRows) } : {}),
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+  return results.every((r) => r.pass) ? 0 : 1;
 }
-
-async function pool(tasks, size) {
-  const results = new Array(tasks.length);
-  let next = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(size, tasks.length) }, async () => {
-      while (next < tasks.length) {
-        const i = next++;
-        results[i] = await tasks[i]();
-      }
-    }),
-  );
-  return results;
-}
-
-console.error(`skill: ${skillName}  (${skillDir})`);
-console.error(`description: ${description}\n`);
-console.error(`${evalSet.length} queries × ${runs} runs, concurrency ${concurrency}…`);
-
-const tasks = [];
-for (const [qi, item] of evalSet.entries()) for (let r = 0; r < runs; r++) tasks.push(async () => ({ qi, ...(await runOnce(item.query)) }));
-const flat = await pool(tasks, concurrency);
-
-const results = evalSet.map((item, qi) => {
-  const mine = flat.filter((x) => x.qi === qi);
-  const errors = mine.filter((x) => x.error).map((x) => x.error);
-  const hits = mine.filter((x) => x.hit).length;
-  const rate = hits / runs;
-  const triggered = rate >= 0.5;
-  // A query with any failed run has no trustworthy rate, so it fails regardless of direction.
-  return { ...item, hits, runs, rate, errors, pass: errors.length === 0 && triggered === item.should_trigger };
-});
-rmSync(project, { recursive: true, force: true });
-
-const positives = results.filter((r) => r.should_trigger);
-const negatives = results.filter((r) => !r.should_trigger);
-const pct = (xs) => (xs.length ? Math.round((100 * xs.filter((r) => r.pass).length) / xs.length) : 0);
-
-for (const r of results) {
-  const mark = r.errors.length ? "ERROR" : r.pass ? "PASS " : "FAIL ";
-  console.log(`${mark} ${r.hits}/${r.runs}  ${r.should_trigger ? "should   " : "shouldn't"}  ${r.query.slice(0, 90)}`);
-  for (const e of new Set(r.errors)) console.log(`        ${e}`);
-}
-const failedRuns = flat.filter((x) => x.error).length;
-if (failedRuns) console.log(`\n${failedRuns} of ${flat.length} runs failed to complete; their queries count as failures.`);
-console.log(`\nshould-trigger:    ${pct(positives)}% (${positives.filter((r) => r.pass).length}/${positives.length})`);
-console.log(`shouldn't-trigger: ${pct(negatives)}% (${negatives.filter((r) => r.pass).length}/${negatives.length})`);
-console.log(`overall:           ${pct(results)}% (${results.filter((r) => r.pass).length}/${results.length})`);
-
-if (jsonOut) writeFileSync(jsonOut, JSON.stringify({ skill: skillName, skillDir, description, results }, null, 2) + "\n");
-process.exit(results.every((r) => r.pass) ? 0 : 1);
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = await main();

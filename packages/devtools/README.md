@@ -18,7 +18,7 @@ processor's declared `latency`. Use it as a pin test: write it once against the 
 current declaration, run it, and if it fails, paste the declaration the failure message
 suggests.
 
-```ts
+```ts fragment: requires application-local modules
 import { assertLatency } from "@audiorective/devtools";
 import { MyEffect } from "../src/MyEffect";
 
@@ -57,7 +57,7 @@ then rerun the test.
 
 ### Options
 
-```ts
+```ts fragment: signature listing, not runnable code
 interface MeasureOptions {
   sampleRates?: number[]; // default [44100, 48000]
   channels?: number; // default 2
@@ -79,7 +79,7 @@ it's awaited after `build` returns and before rendering starts.
 
 The lower-level primitive `assertLatency` is built on. Returns a report instead of throwing:
 
-```ts
+```ts fragment: application sketch; app-specific classes or callbacks omitted
 const report = await measureLatency((ctx) => new MyEffect(ctx));
 // { declared: 0, runs: [{ sampleRate: 44100, firstArrival: 441, peak: 452 }, ...] }
 ```
@@ -90,7 +90,7 @@ Both functions render real `OfflineAudioContext`s, so tests using them need a br
 environment, not jsdom. This package's own tests run under headless Chromium via
 `@vitest/browser-playwright`:
 
-```ts
+```ts fragment: requires consumer Vitest browser configuration dependencies
 // vitest.config.ts
 import { defineConfig } from "vitest/config";
 import { playwright } from "@vitest/browser-playwright";

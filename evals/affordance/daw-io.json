@@ -1,0 +1,133 @@
+{
+  "area": "daw-io",
+  "description": "API-shape experiment for getting songs and sound in and out of the DAW: opening and saving files of other DAWs with compressed or on-disk audio, stems and WAV conversion, and headless MIDI file reading and writing. Expectations describe behaviour, not names.",
+  "tasks": [
+    {
+      "id": "I1-open-save-honestly",
+      "prompt": "A browser DAW page already has `context`, an AudioContext, and a resolver for plug-in bundles `resolveBundle`. The user picks `file`, a `.dawproject` that another DAW wrote (about 400 MB, with MP3 and Ogg Vorbis audio clips and a plug-in on one track). Write: (1) `openSong()` opens it in a running engine without first reading the whole file into one array, waits until the compressed audio is decoded, and shows what was kept but not played from the engine's own live warnings and the engine's error text. (2) After opening, `drawPeaks(clipId)` needs the first 2 million frames of that clip's audio to draw its waveform; it must work for clips that came from compressed files. (3) `Save as...` writes the song as a `.dawproject` into `handle` (a file the user picked), streaming, without building the whole file in memory, for a song that holds hours of recordings on disk (and in the template view, where there is no engine and only `project`, the same Save as writes into `handle3`); before saving, list in plain sentences what another DAW will not get (plug-ins, effects, anything that falls back), and show a badge `Clips live on disk` when the song has any such clips. (4) `Export for other DAWs` writes a version where the plug-in's sound is baked into audio, with a 1.5 s tail, to `handle2`. (5) A small `Save` button (download) must work for any song, whether its audio is in memory or on disk, in one call. (6) `forgetUndo()` empties the Undo and Redo lists of the open song without changing the song, for after the app loads template content.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const context: AudioContext;\ndeclare const file: File;\ndeclare const handle: FileSystemFileHandle;\ndeclare const handle2: FileSystemFileHandle;\ndeclare const handle3: FileSystemFileHandle;\ndeclare const resolveBundle: NonNullable<import(\"@audiorective/daw\").WorkspaceOptions[\"resolveBundle\"]>;\ndeclare function download(name: string, bytes: Uint8Array): void;",
+      "expectations": [
+        "Opens the file straight from the Blob into the running engine with one open call, so compressed audio is decoded at the engine's rate before play, and does not read the whole file into memory first.",
+        "Shows the warnings and the error from the engine's live state, updating by themselves.",
+        "Reads the clip's frames from the opened song, where compressed audio is already decoded, and does not fail with a not-decoded error.",
+        "Saves by streaming to the picked file's writable stream rather than building the whole file in memory, through the engine when it exists and from the song alone when there is no engine.",
+        "Before saving, lists what another DAW will not get, built from the toolkit's report rather than hand-written text.",
+        "Writes an export for other DAWs with the plug-in sound rendered to audio and a 1.5 s tail.",
+        "The plain Save works for a song with file-backed audio, by saving through the running engine, not by a path that refuses file-backed audio.",
+        "Shows the badge from the song's own report of file-backed audio, not by scanning clips by hand.",
+        "Emptying the Undo and Redo history leaves the song as it is."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "One open call from the blob",
+          "all": ["openWorkspace\\("],
+          "none": ["openWorkspaceBlob", "arrayBuffer\\(\\)", "new Uint8Array\\(await"]
+        },
+        {
+          "expectation": 1,
+          "label": "Live warnings and error",
+          "all": ["cells\\.warnings", "cells\\.error"],
+          "none": ["workspace\\.warnings"]
+        },
+        {
+          "expectation": 3,
+          "label": "Streaming save, with and without an engine",
+          "all": ["createWritable", "saveWorkspaceTo", "saveDawProjectTo"]
+        },
+        {
+          "expectation": 4,
+          "label": "Portability report",
+          "all": ["portabilityReport"]
+        },
+        {
+          "expectation": 5,
+          "label": "Audio fallback with tail",
+          "all": ["exportAudioFallbackTo", "tailSeconds"]
+        },
+        {
+          "expectation": 6,
+          "label": "Workspace save for file-backed audio",
+          "all": ["saveWorkspace\\("],
+          "none": ["saveDawProject\\(", "keepsFileBackedEntries"]
+        },
+        {
+          "expectation": 7,
+          "label": "File-backed count",
+          "all": ["hasFileBackedAudio"]
+        },
+        {
+          "expectation": 8,
+          "label": "Clear history",
+          "all": ["clearHistory"]
+        }
+      ]
+    },
+    {
+      "id": "I2-stems-wav",
+      "prompt": "A browser DAW has an open song as `project` and its running engine as `workspace`. The engine renders at 48 kHz. Write: (1) `exportStems()`: every track as its own WAV plus the full mix, all the same length including a 1.5 s tail for effects, named after the tracks; before downloading, tell the user in plain sentences which stems come out silent and why (for example a muted track, or a MIDI track with no sound on it), using what the render reports. (2) `exportForCd()`: the full mix as a 44.1 kHz, 16-bit WAV, resampled with the best quality available (not by playing it through a second audio context), offered as one download. (3) `exportMaster24()`: the full mix as a 24-bit 48 kHz WAV, as bytes you hand to `download`. Write no WAV headers yourself.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;\ndeclare function download(name: string, bytes: Uint8Array): void;",
+      "expectations": [
+        "Renders stems with a 1.5 s tail so every file has the same length, plus the full mix, named after the tracks.",
+        "Lists silent stems with the reason from the render's own warnings before downloading.",
+        "The CD file is resampled to 44.1 kHz with the toolkit's resampler (not a second audio context), then encoded as 16-bit WAV.",
+        "The 24-bit 48 kHz file is encoded by the toolkit into bytes and downloaded; no WAV header is written by hand."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "Stems with tailSeconds",
+          "all": ["renderStems", "tailSeconds"],
+          "none": ["\\btail\\s*:"]
+        },
+        {
+          "expectation": 1,
+          "label": "Warnings used",
+          "all": ["\\.warnings"]
+        },
+        {
+          "expectation": 2,
+          "label": "Resample then encode",
+          "all": ["resamplePCM", "encodeWav"],
+          "none": ["new OfflineAudioContext", "RIFF"]
+        },
+        {
+          "expectation": 3,
+          "label": "24-bit bytes",
+          "all": ["encodeWavBytes", "bitDepth\\s*:\\s*24"],
+          "none": ["RIFF"]
+        }
+      ]
+    },
+    {
+      "id": "I3-midi-bytes",
+      "prompt": "A small browser utility (no song, no audio) receives `bytes`, a Standard MIDI File. Write: (1) `listTracks()` returns for each track chunk its index, name, the channels it plays on, its note count and how many controller or pitch-bend messages it holds, skipping tracks that have neither notes nor such messages (the conductor track). (2) `keysOnly()` builds a new MIDI file from the track named `Keys` alone: its notes moved up 2 semitones, its sustain-pedal and other controller messages kept as they were, at 90 BPM in 3/4, 480 ticks per quarter note, with a smaller file by omitting repeated status bytes, the song named `Keys only`; return the bytes. Do not write or parse MIDI bytes yourself.",
+      "hostDeclarations": "declare const bytes: Uint8Array;",
+      "expectations": [
+        "Reads each track chunk with the toolkit's parser and uses its per-track list (name, notes, non-note messages), not the merged note list and no byte parsing.",
+        "Counts notes, channels and controller or pitch-bend messages per track and omits the empty conductor track.",
+        "Writes the new file with the toolkit's MIDI writer using the Keys notes transposed by 2 semitones and the original non-note messages.",
+        "Sets 90 BPM at the start, 3/4, 480 ticks per quarter note, running status and the song name."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "Track chunks from the parser",
+          "all": ["parseMidi", "\\.tracks"],
+          "none": ["MThd", "getUint", "0x4d54"]
+        },
+        {
+          "expectation": 2,
+          "label": "Writer used",
+          "all": ["writeMidi", "events"],
+          "none": ["MThd", "0x4d54"]
+        },
+        {
+          "expectation": 3,
+          "label": "Writer options",
+          "all": ["tempos", "signatures", "ppq", "runningStatus", "title"]
+        }
+      ]
+    }
+  ]
+}

@@ -59,14 +59,14 @@ describe("DynamicsCore", () => {
       }
     expect(idx).toBe(Math.round(0.005 * sr));
   });
-  it("destroying before ready resolves leaves isReady false and does not build the worklet node", async () => {
+  it("disposing before ready resolves leaves isReady false and does not build the worklet node", async () => {
     const ctx = new OfflineAudioContext(2, 44100, 44100);
     const core = new DynamicsCore(ctx, { threshold: -24, ratio: 4, knee: 0, attack: 0.001, release: 0.05, makeup: 0, lookahead: 0 });
-    core.destroy();
+    core.dispose();
     await core.ready;
     expect(core.cells.isReady.value).toBe(false);
   });
-  it("destroy() mid-render stops the worklet from producing further output", async () => {
+  it("dispose() mid-render stops the worklet from producing further output", async () => {
     const sr = 44100;
     const ctx = new OfflineAudioContext(2, 4096, sr);
     const core = new DynamicsCore(ctx, { threshold: 0, ratio: 1, knee: 0, attack: 0, release: 0.1, makeup: 0, lookahead: 0 });
@@ -77,12 +77,48 @@ describe("DynamicsCore", () => {
     src.start();
     const suspendFrame = 1024;
     ctx.suspend(suspendFrame / sr).then(() => {
-      core.destroy();
+      core.dispose();
       ctx.resume();
     });
     const buf = await ctx.startRendering();
     const d = buf.getChannelData(0);
     expect(peakFrom(d.subarray(0, suspendFrame), 0)).toBeGreaterThan(0);
     for (let i = suspendFrame + 256; i < d.length; i++) expect(d[i]).toBe(0);
+  });
+});
+
+describe("DynamicsCore without AudioWorklet", () => {
+  it("ready rejects for awaiting callers without raising an unhandled rejection", async () => {
+    const ctx = new OfflineAudioContext(2, 128, 44100);
+    Object.defineProperty(ctx, "audioWorklet", { value: undefined });
+    const unhandled: unknown[] = [];
+    const onUnhandled = (e: PromiseRejectionEvent) => {
+      unhandled.push(e.reason);
+      e.preventDefault();
+    };
+    window.addEventListener("unhandledrejection", onUnhandled);
+    try {
+      const core = new DynamicsCore(ctx, { threshold: -24, ratio: 4, knee: 0, attack: 0.001, release: 0.05, makeup: 0, lookahead: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(unhandled).toEqual([]);
+      await expect(core.ready).rejects.toThrow(/no audioWorklet/);
+      expect(core.cells.isReady.value).toBe(false);
+    } finally {
+      window.removeEventListener("unhandledrejection", onUnhandled);
+    }
+  });
+});
+
+describe("owner-written cells are read-only views", () => {
+  const hasSetter = (c: object) => Boolean(Object.getOwnPropertyDescriptor(Object.getPrototypeOf(c), "value")?.set);
+  it("DynamicsCore reduction/isReady and every effect status/error have no setter", async () => {
+    const ctx = new OfflineAudioContext(2, 128, 44100);
+    const core = new DynamicsCore(ctx, { threshold: -24, ratio: 4, knee: 0, attack: 0.001, release: 0.05, makeup: 0, lookahead: 0 });
+    await core.ready;
+    expect(hasSetter(core.cells.reduction)).toBe(false);
+    expect(hasSetter(core.cells.isReady)).toBe(false);
+    const { Convolver, PitchShift } = await import("../src");
+    expect(hasSetter(new Convolver(ctx).cells.status)).toBe(false);
+    expect(hasSetter(new PitchShift(ctx).cells.error)).toBe(false);
   });
 });

@@ -88,12 +88,12 @@ export class GranularShifter extends AudioProcessor<{}, {}> {
     this.rate.offset.value = (factor * 1.2) / this.windowSize;
   }
 
-  override destroy(): void {
+  override dispose(): void {
     for (const l of [this.lfoA, this.lfoB, this.fade]) l.disconnect();
     this.rate.stop();
     this.rate.disconnect();
     this.one.stop();
     this.one.disconnect();
-    super.destroy();
+    super.dispose();
   }
 }

@@ -1,6 +1,7 @@
 import type { Param, SchedulableParam } from "@audiorective/core";
 import { Effect, type EffectOptions } from "./Effect";
 import { fanout } from "./internal/fanout";
+import { SMOOTHING } from "./internal/smoothing";
 import { Lfo } from "./internal/lfo";
 
 export interface PhaserOptions extends EffectOptions {
@@ -17,10 +18,12 @@ export interface PhaserOptions extends EffectOptions {
 }
 
 /**
+ * `params.frequency` and `params.Q` writes smooth over 10 ms automatically; scheduled ramps stay exact.
  * The wet arm sums the input with the phased signal at equal gain, which is what produces the
  * notches; `wet` blends between the dry input and that phased mix.
  */
 export class Phaser extends Effect<{ frequency: SchedulableParam; Q: SchedulableParam; octaves: Param<number>; baseFrequency: Param<number> }> {
+  static override readonly type: string = "Phaser";
   private readonly lfo: Lfo;
   private readonly qSource: ConstantSourceNode;
 
@@ -64,12 +67,16 @@ export class Phaser extends Effect<{ frequency: SchedulableParam; Q: Schedulable
       { input: entry, output: sum },
       ({ param }) => ({
         params: {
-          frequency: param({ default: opts.frequency ?? 0.5, bind: lfo.frequency, min: 0, max: 20 }),
-          Q: param({ default: opts.Q ?? 10, bind: q.offset, min: 0.1, max: 100 }),
+          frequency: param({ default: opts.frequency ?? 0.5, bind: lfo.frequency, min: 0, max: 20, smoothing: SMOOTHING }),
+          Q: param({ default: opts.Q ?? 10, bind: q.offset, min: 0.1, max: 100, smoothing: SMOOTHING }),
           octaves: param<number>({
             default: octaves,
             min: 0,
             max: 10,
+            validate: (v) => {
+              if (!Number.isFinite(v) || !Number.isFinite(currentBase * 2 ** v))
+                throw new RangeError(`Phaser needs octaves that give a finite sweep, got ${v}.`);
+            },
             bind: {
               set: (v) => {
                 currentOctaves = v;
@@ -81,6 +88,10 @@ export class Phaser extends Effect<{ frequency: SchedulableParam; Q: Schedulable
             default: base,
             min: 20,
             max: 10000,
+            validate: (v) => {
+              if (!Number.isFinite(v) || !Number.isFinite(v * 2 ** currentOctaves))
+                throw new RangeError(`Phaser needs a baseFrequency that gives a finite sweep, got ${v}.`);
+            },
             bind: {
               set: (v) => {
                 currentBase = v;
@@ -99,10 +110,10 @@ export class Phaser extends Effect<{ frequency: SchedulableParam; Q: Schedulable
     this.qSource = q;
   }
 
-  override destroy(): void {
+  override dispose(): void {
     this.lfo.disconnect();
     this.qSource.stop();
     this.qSource.disconnect();
-    super.destroy();
+    super.dispose();
   }
 }

@@ -40,7 +40,7 @@ async function renderSoloDryKick(): Promise<Float32Array> {
   machine.output.connect(ctx.destination);
   machine.tracks.find((t) => t.id === "kick")!.sampler.trigger({ when: HIT_TIME });
   const rendered = await ctx.startRendering();
-  machine.destroy();
+  machine.dispose();
   return rendered.getChannelData(0);
 }
 
@@ -137,7 +137,7 @@ describe("sequencer latency lab — the whole machine rendered offline", () => {
       // the page's setup, verbatim, plus the one injection offline rendering needs
       const engine = await buildEngine(ctx, { tickSource });
       engine.machine.bpm.value = bpm;
-      for (const track of engine.machine.tracks) track.mute.value = track.id !== "kick";
+      for (const track of engine.machine.tracks) track.muted.value = track.id !== "kick";
       // record the real trigger calls as the ticks fire mid-render, and let them through
       const kick = kickOf(engine);
       const trigger = kick.trigger.bind(kick);

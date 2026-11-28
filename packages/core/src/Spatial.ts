@@ -2,12 +2,19 @@ import { AudioProcessor } from "./AudioProcessor";
 import type { Param } from "./Param";
 
 export interface SpatialOptions {
+  /** Distance attenuation law; defaults to "inverse". */
   distanceModel?: DistanceModelType;
+  /** Reference distance in scene units, nonnegative; defaults to 1. */
   refDistance?: number;
+  /** Maximum attenuation distance in scene units, nonnegative; defaults to 10000. */
   maxDistance?: number;
+  /** Dimensionless distance attenuation strength, nonnegative; defaults to 1. */
   rolloffFactor?: number;
+  /** Full-volume cone angle in degrees, 0..360; defaults to 360. */
   coneInnerAngle?: number;
+  /** Outer cone angle in degrees, 0..360; defaults to 0. */
   coneOuterAngle?: number;
+  /** Linear level outside the outer cone, 0..1; defaults to 0. */
   coneOuterGain?: number;
 }
 
@@ -21,7 +28,9 @@ type SpatialParams = {
   coneOuterGain: Param<number>;
 };
 
+/** Positional audio: an HRTF `PannerNode` whose position, orientation and cone are `params`; `input` feeds the panner and `output` is the panner. */
 export class Spatial extends AudioProcessor<SpatialParams> {
+  /** The underlying HRTF `PannerNode`, for native properties the params do not cover. */
   readonly panner: PannerNode;
   private readonly _input: GainNode;
 
@@ -83,8 +92,8 @@ export class Spatial extends AudioProcessor<SpatialParams> {
     return this.panner;
   }
 
-  override destroy(): void {
-    super.destroy();
+  override dispose(): void {
+    super.dispose();
     this._input.disconnect();
     this.panner.disconnect();
   }

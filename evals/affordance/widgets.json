@@ -1,0 +1,143 @@
+{
+  "area": "widgets",
+  "status": "phase5-control-and-desire; candidates not yet adopted",
+  "source_checkpoint": "feat/affordance-widgets/b2df3e9",
+  "tasks": [
+    {
+      "id": "W1-shared-waveforms",
+      "prompt": "A sample editor already owns a loaded WavePlayer `player`. Build two waveform views over it: a full-file overview and a zoomed editable detail, plus plain playback controls. Selecting a region in either waveform must update the same selection and the other view; seeking while paused must update the playhead. Editing from another panel must appear without remounting. Unmount the detail tab while audio keeps playing, then mount it again with the same selection. Use vanilla TypeScript and the provided toolkit views; do not build playback or a selection store of your own. Also draw a separate audio-independent thumbnail from a caller-provided peak summary `peaks`, without creating a player or AudioContext for it.",
+      "expectations": [
+        "Both waveform views and playback controls borrow the same existing player and selection owner.",
+        "Selection edits from either view or an external owner appear in the other mounted views.",
+        "Playhead and paused seeks are observed through the supported player interface rather than copied into a second store.",
+        "Unmounting removes view resources and listeners without stopping or disposing the shared player.",
+        "Remounting retains the owner selection and playback position.",
+        "A standalone waveform consumes the provided peak summary through a public data source or adapter, with no new playback owner or AudioContext."
+      ],
+      "hostDeclarations": "declare const player: import(\"@audiorective/player\").WavePlayer;\ndeclare const peaks: import(\"@audiorective/core/peaks\").PeakSummary;"
+    },
+    {
+      "id": "W2-custom-player-renderer",
+      "prompt": "An existing WavePlayer `player` needs a compact SVG player rather than the default controls. Keep toolkit playback and interaction logic. Draw a play/pause button, seconds readout and scrub strip. During a drag the strip should follow the pointer while playback time continues elsewhere; pointer release seeks once, and Escape or pointer cancellation abandons the drag without seeking. Show a clear autoplay failure and an unknown-duration state. Closing this renderer must release view resources while preserving borrowed playback. Write vanilla TypeScript.",
+      "expectations": [
+        "Custom drawing and event forwarding reuse the toolkit player interaction owner rather than rebuilding scrub/play state.",
+        "Dragging holds the displayed position without seeking on every move; release commits one seek.",
+        "Cancellation restores the displayed live position without committing a seek.",
+        "Unknown duration and playback rejection are represented without fabricated timing or silent failure.",
+        "View disposal removes listeners and rendering resources without stopping the borrowed player."
+      ],
+      "hostDeclarations": "declare const player: import(\"@audiorective/player\").WavePlayer;"
+    },
+    {
+      "id": "W3-sequence-and-pad-views",
+      "prompt": "An app already owns a StepSequencer `seq` with kick and hat lanes, a PadBank `pads`, and their shared Clock. The kick lane has 16 steps, the hat 12, and both expose a cutoff per-step parameter. Build a step editor and pad panel using toolkit views. Before mounting, set the kick on the seventh visible step to velocity 0.7 and cutoff 1800 Hz. Let users edit velocity, repeat and cutoff, show playheads, and add a badge plugin for repeated steps. A live lane-length change must update the view. Removing a tab while playing must preserve both owners and clock.",
+      "expectations": [
+        "Toolkit views borrow the existing sequencer and pads rather than creating replacement playback owners.",
+        "The seventh visible step is represented with the index required by the declared API and receives velocity0.7 and cutoff1800.",
+        "Per-step edits affect actual owner data, including the custom cutoff, and playheads use owner-provided position.",
+        "A declared visual extension adds repeat badges with proper cleanup rather than patching internal DOM or state.",
+        "Live lane-length edits refresh the view and unmount preserves audio owners."
+      ],
+      "hostDeclarations": "declare const seq: import(\"@audiorective/sequencer\").StepSequencer;\ndeclare const pads: import(\"@audiorective/pads\").PadBank;",
+      "checks": [
+        {
+          "expectation": 1,
+          "label": "seventh step is index6 with velocity0.7/cutoff1800",
+          "all": ["(?:0?\\.7|7\\s*/\\s*10)\\b", "\\b1800\\b"],
+          "any": [
+            "\\bsteps\\s*\\[\\s*6\\s*\\]",
+            "\\(\\s*(?:[\"\\x27]kick[\"\\x27]\\s*,\\s*)?6\\s*[,)]",
+            "\\b7\\s*-\\s*1\\b",
+            "\\b(?:step|index|stepIndex)\\s*[:=]\\s*6\\b"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "W4-midi-and-session-views",
+      "prompt": "An app owns a MidiClip `melody`, a ClipLauncher `launcher`, and a Clock already playing them. Build a piano roll for the melody and a scene/clip grid over the launcher. Piano-roll note drags, resize, delete and range selection edit the original clip; another view may replace its notes. In the grid, distinguish queued versus playing clips, add a separate \"Launch scene 2\" button that launches the second scene, and let users cancel a queued launch. All musical coordinates are beats. Removing the views must leave the shared clip, launcher and clock alive. Write vanilla TypeScript.",
+      "expectations": [
+        "The piano roll uses a supported adapter over the provided clip instead of copying notes into a second live model.",
+        "Edit, resize and delete operations commit to the original clip and external note replacements redraw.",
+        "Clip queued and playing states come from the launcher owner and queue cancellation uses its declared operation.",
+        "The second visible scene is translated to the index required by the API.",
+        "View and adapter subscriptions are cleaned up without disposing shared playback owners."
+      ],
+      "hostDeclarations": "declare const melody: import(\"@audiorective/midi\").MidiClip;\ndeclare const launcher: import(\"@audiorective/launcher\").ClipLauncher;",
+      "checks": [
+        {
+          "expectation": 3,
+          "label": "second scene uses index1",
+          "any": [
+            "\\blaunchScene\\s*\\(\\s*1\\s*[,)]",
+            "\\bscenes\\s*\\[\\s*1\\s*\\]",
+            "\\b2\\s*-\\s*1\\b",
+            "\\b(?:scene|sceneIndex|index)\\s*[:=]\\s*1\\b"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "W5-mixer-parameters-and-meters",
+      "prompt": "A mixer app owns Channels `channels.drums`, `channels.bass`, `channels.vox`, each with its live post-fader peak level, and a Filter `filter`. Build toolkit faders, a logarithmic 20 Hz–20 kHz cutoff knob, pan controls and dBFS peak meters. All controls must reflect external parameter changes and automation. Add a removable custom-control row per strip, retain it when another strip is added, and style the widgets without affecting unrelated page CSS. Use the existing level information rather than adding another audio analyser just for the UI. Write vanilla TypeScript and show unmount cleanup.",
+      "expectations": [
+        "Controls mutate and observe actual channel/filter parameters instead of mirroring them in a separate store.",
+        "The cutoff has the stated logarithmic range and remains synchronized with scheduled parameter changes.",
+        "Peak meters display the existing post-fader level in dBFS without extra analysis nodes or fabricated PCM.",
+        "Custom strip controls retain their resources when unrelated strips are added and clean up when removed.",
+        "Widget styling stays scoped and view disposal preserves borrowed audio processors."
+      ],
+      "hostDeclarations": "declare const channels: Record<\"drums\" | \"bass\" | \"vox\", import(\"@audiorective/effects\").Channel>;\ndeclare const filter: import(\"@audiorective/effects\").Filter;"
+    },
+    {
+      "id": "W6-automation-and-eq-editors",
+      "prompt": "An audio app already owns an editable AutomationCurve `curve` in beats, an Equalizer `eq`, an analyser `analyser`, and a loaded WavePlayer `player` for its waveform. Build toolkit curve, spectrum and EQ editors, plus editable curve and keyboard-editable warp-marker overlays on that waveform. The same `curve` drives both curve views; `toSeconds(beat)` and `toBeats(seconds)` are existing owner projection functions. The app also gives `warpMarkers`, a readonly tracked cell of readonly `{ sourceFrame: number; outputFrame: number }` points, and `commitWarpMarkers(points)`, the existing owner command that applies the warp and updates that cell. The supplied `sourceFrameAt(outputSeconds)` already maps the current audible output position to a source-frame position; use it rather than inventing DSP or deriving a second mapping. Source sample rate and source-frame count come from player.sourceBuffer. Curve gestures preview locally and commit once on completion; Escape or pointer cancellation leaves the owner unchanged. An external curve or marker snapshot replacement cancels any stale active gesture and updates the mounted views while retaining their DOM and input focus; do not preserve or later commit the stale preview. External EQ presets update the mounted controls; EQ parameters remain live native controls. Spectrum and EQ response reuse the existing owners. Write a concrete `mount(root: HTMLElement): () => void` using these given bindings, with cleanup that releases only views/subscriptions and preserves all audio owners.",
+      "expectations": [
+        "Editors borrow the given curve, equalizer, analyser and waveform player, keeping authored state on those owners rather than inventing replacements.",
+        "Curve edits preview locally and commit once per completed gesture; canceled gestures leave owner points unchanged.",
+        "External curve or marker snapshot replacements cancel stale gestures and update the mounted views while retaining DOM and input focus; external EQ presets update the existing mounted controls without rebuilding audio owners.",
+        "Spectrum and EQ response reuse existing data providers, and cleanup releases only view resources and subscriptions.",
+        "Warp-marker editing uses a declared visual extension over the given marker cell, supplied source-frame mapping and owner commit command, including keyboard edits, without invented DSP mapping or another authored marker store.",
+        "The editable waveform curve overlay shares the original curve and supplied beat/second projections, committing once through the owner; the concrete mount function uses the given bindings."
+      ],
+      "hostDeclarations": "declare const curve: import(\"@audiorective/core/automation\").AutomationCurve;\ndeclare const eq: import(\"@audiorective/effects\").Equalizer;\ndeclare const analyser: import(\"@audiorective/core\").Analyser;\ndeclare const player: import(\"@audiorective/player\").WavePlayer;\ndeclare const warpMarkers: import(\"@audiorective/core\").ReadonlyCell<readonly import(\"@audiorective/player\").WaveStretchAnchor[]>;\ndeclare function commitWarpMarkers(points: readonly import(\"@audiorective/player\").WaveStretchAnchor[]): void;\ndeclare function sourceFrameAt(outputSeconds: number): number;\ndeclare function toSeconds(beat: number): number;\ndeclare function toBeats(seconds: number): number;"
+    },
+    {
+      "id": "W7-library-and-clip-inspector",
+      "prompt": "An app already owns a SampleLibrary `library` and a selected-clip owner `clip`. Build a toolkit sample browser with loading/error rows, preview/stop, choose and remove actions; choosing calls the existing `chooseSample(id)` command. Beside it, show toolkit gain/fade-in/fade-out controls over clip.envelope, committing through clip.commitEnvelope. The clip has a tracked duration getter; an external trim or preset change must update the mounted controls and fade limits. Removing the browser or inspector must release only its own view resources, leaving the borrowed library, ongoing preview and clip alive. Write vanilla TypeScript.",
+      "hostDeclarations": "declare const library: import(\"@audiorective/samples\").SampleLibrary;\ntype HostClipEnvelope = Readonly<{ gain: number; fadeIn: number; fadeOut: number }>;\ndeclare const clip: { readonly duration: number; readonly envelope: import(\"@audiorective/core\").ReadonlyCell<HostClipEnvelope>; commitEnvelope(value: HostClipEnvelope): void };\ndeclare function chooseSample(id: string): void;",
+      "expectations": [
+        "The sample browser reads the existing library state and delegates preview, stop, choose and remove to its owner or declared adapter, without duplicating the library records or starting another player.",
+        "Loading and failed sample rows expose their owner state and user-action failures are surfaced.",
+        "Clip envelope controls read the owned envelope and commit changes through the provided command, preserving the other envelope fields.",
+        "External trim/preset changes update the displayed values and valid fade limits through tracked owner reads, without an authored-state mirror.",
+        "Unmounting removes both views and subscriptions without disposing the library or clip or stopping borrowed preview."
+      ]
+    },
+    {
+      "id": "W8-arrangement-gestures",
+      "prompt": "Build a browser arrangement view over the existing `arrangement` binding, with no audio engine in the view. Its exact readonly tracked cells are `arrangement.clips` (readonly snapshots `{ id: string; trackId: string; time: number; duration: number }`, times in seconds), `arrangement.scale` (pixels per second), and `arrangement.range` (readonly `[start, end]` in seconds, or undefined). Its existing commands are `moveClip(id: string, trackId: string, time: number)`, `selectClip(id: string)`, `openClip(id: string)`, `selectRange(range: readonly [number, number])`, and `setScale(value: number)`. Draw simple clip elements and reuse toolkit helpers for clip movement, keyboard nudges, background time-range selection and pointer-anchored timeline zoom. Musical snapping uses the given `secondsToBeat(seconds)`, `beatToSeconds(beat)` and `snapSeconds(seconds)` functions. A drag previews locally then commits once; Escape or pointer cancellation commits nothing. External moves or scale changes update the mounted view. Write a concrete `mount(root: HTMLElement): () => void` that uses this supplied arrangement and these projection functions; do not leave only an uncalled function requiring a differently shaped owner interface. On unmount cancel active gestures and release view resources while preserving the owner.",
+      "hostDeclarations": "type HostArrangementClip = Readonly<{ id: string; trackId: string; time: number; duration: number }>;\ndeclare const arrangement: { readonly clips: import(\"@audiorective/core\").ReadonlyCell<readonly HostArrangementClip[]>; readonly scale: import(\"@audiorective/core\").ReadonlyCell<number>; readonly range: import(\"@audiorective/core\").ReadonlyCell<readonly [number, number] | undefined>; moveClip(id: string, trackId: string, time: number): void; selectClip(id: string): void; openClip(id: string): void; selectRange(range: readonly [number, number]): void; setScale(value: number): void };\ndeclare function secondsToBeat(seconds: number): number;\ndeclare function beatToSeconds(beat: number): number;\ndeclare function snapSeconds(seconds: number): number;",
+      "expectations": [
+        "The concrete mount function uses the supplied clips/scale/range cells and exact existing command signatures; clip movement and keyboard nudges reuse a declared gesture helper over caller-owned clip elements.",
+        "Drag previews do not write authored clip positions; release commits once, while Escape and pointer cancellation leave the owner unchanged.",
+        "Background selection uses the toolkit range gesture, commits an ordered nonempty interval, and cancels by removing only its local preview.",
+        "Timeline zoom uses the toolkit viewport helper with the supplied scale cell, preserves the pointer anchor, and external moves/scales update the mounted view and controls.",
+        "Unmount disposes gesture, zoom and reactive resources without replacing/disposing the supplied owner or constructing audio nodes or a scheduling engine."
+      ]
+    },
+    {
+      "id": "W9-midi-drum-grid",
+      "prompt": "A browser DAW stores a drum pattern as a MIDI clip: `drums` has the clip's notes (kick 36, snare 38, closed hat 42, quarter-note beats) and one bar of 16 steps. Show it as a 16-step drum grid with a row per drum, where clicking a cell adds or removes the note for that drum at that step, and changing a step's velocity changes that note's velocity. Notes edited elsewhere (a piano roll, Undo) must show up in the grid, and every grid edit is one Undo step through the app's `history.record(label, fn)`. Do not copy the notes into a separate sequencer. Mount it in `root` and clean up when the view closes.",
+      "hostDeclarations": "declare const drums: import(\"@audiorective/midi\").MidiClip;\ndeclare const root: HTMLElement;\ndeclare const history: { record(label: string, run: () => void): void };",
+      "expectations": [
+        "Uses the toolkit step grid over the clip's notes, not a hand-built grid of buttons or a second copy of the pattern in a separate sequencer object.",
+        "Each row maps to its drum pitch (36, 38, 42), and a step is a 16th note (0.25 beats) slot.",
+        "Toggling a cell adds or removes the note at that pitch and slot; a velocity edit changes only that note.",
+        "The view reads the clip's tracked notes, so external edits and Undo redraw it.",
+        "Every grid edit goes through `history.record` as one Undo step, and the view is disposed on close."
+      ]
+    }
+  ],
+  "description": "Agent affordance of the toolkit browser views: shared owner state, custom rendering and gestures, sequencer/pad editing, MIDI/session adapters, parameter/mixer/meter interoperability, and curve/EQ/spectrum/warp editors. Evaluate existing interfaces before selecting changes."
+}

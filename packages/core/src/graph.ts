@@ -1,4 +1,5 @@
 import { effect } from "alien-signals";
+import { untracked } from "./Cell";
 import { AudioProcessor } from "./AudioProcessor";
 import { SchedulableParam } from "./SchedulableParam";
 
@@ -13,8 +14,11 @@ export type GraphSource = AudioNode | AudioProcessor; // AudioWorkletNode exclud
 export type GraphSink = AudioNode | AudioProcessor | AudioParam | SchedulableParam;
 
 export interface EdgeOptions {
+  /** Zero-based source output port; defaults to 0. */
   output?: number;
+  /** Zero-based destination input port; defaults to 0. */
   input?: number;
+  /** Optional diagnostic text for this connection; does not affect routing. */
   label?: string;
 }
 
@@ -34,8 +38,11 @@ type ValidateEdge<E> = E extends readonly [infer From, infer To, ...infer Rest] 
 export type ValidateEdges<E extends EdgeList> = { [K in keyof E]: E[K] extends GraphEdge ? ValidateEdge<E[K]> : E[K] };
 
 export interface GraphOptions {
+  /** Audio context shared by every node in this graph. */
   context: BaseAudioContext;
+  /** Enable automatic join-point latency compensation; defaults to true. */
   compensate?: boolean;
+  /** Optional processor whose latency includes this graph's internal paths. */
   owner?: AudioProcessor;
   /**
    * Called with the handle after each solve completes. `AudioEngine` uses this to keep
@@ -46,10 +53,11 @@ export interface GraphOptions {
 }
 
 export interface GraphHandle {
+  /** Disconnects owned graph routes and compensation nodes; safe to call twice. */
   dispose(): void;
-  /** Arrival time, in samples, at `node`'s output edge in the last solve. */
+  /** Target arrival in samples at `node`'s output in the last solve; live compensation may still be crossfading. */
   arrivalOf(node: GraphSource): number;
-  /** A point-in-time view of the last solve — nodes, edges, and per-edge compensation. */
+  /** A point-in-time logical solve — nodes, edges and target compensation, excluding private handover routes. */
   snapshot(): GraphSnapshot;
   /**
    * The id `snapshot()` uses for `endpoint`, stable across solves as long as the
@@ -89,9 +97,34 @@ interface Wire {
 }
 
 export interface GraphSnapshot {
+  /** Monotonically increasing diagnostic solve counter. */
   solveId: number;
-  nodes: { id: number; kind: "native" | "processor"; label: string; latency: number; arrival: number }[];
-  edges: { from: number; to: number; label?: string; kind: "audio" | "param" | "virtual" | "back"; compensationSamples: number }[];
+  /** Snapshot of participating nodes; identifiers are local to the diagnostic graph. */
+  nodes: {
+    /** Numeric node identifier referenced by snapshot edges. */
+    id: number;
+    /** Node category: native Web Audio node or AudioProcessor. */
+    kind: "native" | "processor";
+    /** Human-readable diagnostic text; does not affect routing. */
+    label: string;
+    /** Declared processing delay in sample frames. */
+    latency: number;
+    /** Accumulated arrival delay in sample frames. */
+    arrival: number;
+  }[];
+  /** Snapshot of connections, including virtual and feedback edges. */
+  edges: {
+    /** Numeric identifier of the source node in this snapshot. */
+    from: number;
+    /** Numeric identifier of the destination node in this snapshot. */
+    to: number;
+    /** Optional diagnostic text inherited from the connection. */
+    label?: string;
+    /** Connection category; back edges are excluded from forward delay solving. */
+    kind: "audio" | "param" | "virtual" | "back";
+    /** Additional alignment delay in sample frames; 0 when none is needed. */
+    compensationSamples: number;
+  }[];
 }
 
 interface GraphRegistration {
@@ -163,6 +196,9 @@ function pushWire(map: Map<AudioNode, Wire[]>, key: AudioNode, wire: Wire): void
   if (arr) arr.push(wire);
   else map.set(key, [wire]);
 }
+
+/** Time constant for compensation-route handovers; settle exactly after ten constants. */
+const COMPENSATION_GATE = 0.003;
 
 interface SolveResult {
   arrival: Map<AudioNode, number>;
@@ -330,11 +366,23 @@ export function defineGraph(fn: () => EdgeList, options: GraphOptions): GraphHan
   let nextId = 1;
   const idOf = (o: object) => ids.get(o) ?? (ids.set(o, nextId), nextId++);
 
-  // Comp delays spliced into wires whose branch arrives early, keyed the same way as `current`.
-  // `maxDelayTime` isn't a readable DelayNode property (constructor-only in the DOM types),
-  // so its value is tracked alongside the node.
-  const compDelays = new Map<string, DelayNode>();
-  const compDelayMax = new Map<DelayNode, number>();
+  // Every audio wire has a stable gain route. Compensation changes add a fresh
+  // delay route, warm its history, then crossfade; an audible delay is never retimed.
+  interface RouteBranch {
+    gate: GainNode;
+    delay?: DelayNode;
+    seconds: number;
+    retire?: ReturnType<typeof setTimeout>;
+  }
+  interface CompRoute {
+    wire: Wire;
+    branches: Set<RouteBranch>;
+    target: RouteBranch;
+    fresh: boolean;
+  }
+  const compRoutes = new Map<string, CompRoute>();
+  const timers = new Set<ReturnType<typeof setTimeout>>();
+  let disposed = false;
   let arrival = new Map<AudioNode, number>();
   let nodeOwner = new Map<AudioNode, AudioProcessor>();
   // Input node → owning processor, kept alongside `nodeOwner` (output node → processor)
@@ -350,75 +398,114 @@ export function defineGraph(fn: () => EdgeList, options: GraphOptions): GraphHan
   // its entry removed instead of going stale.
   let registeredProcessors = new Set<AudioProcessor>();
 
-  // Tears down `from → delay → to` for a spliced wire and forgets the delay node.
-  function removeCompDelay(key: string, w: Wire, delay: DelayNode): void {
-    try {
-      w.fromNode.disconnect(delay, w.output);
-    } catch {
-      // already gone
-    }
-    try {
-      delay.disconnect();
-    } catch {
-      // already gone
-    }
-    compDelays.delete(key);
-    compDelayMax.delete(delay);
+  function cancelRetirement(branch: RouteBranch): void {
+    if (branch.retire === undefined) return;
+    clearTimeout(branch.retire);
+    timers.delete(branch.retire);
+    branch.retire = undefined;
   }
 
-  // Swaps a wire between a direct connection and `from → delay → to`, disconnecting
-  // whichever form is currently live before establishing the other.
-  function disconnectPhysical(key: string, w: Wire): void {
-    const delay = compDelays.get(key);
-    if (!delay) {
-      disconnectWire(w);
-      return;
+  function removeBranch(route: CompRoute, branch: RouteBranch): void {
+    cancelRetirement(branch);
+    try {
+      route.wire.fromNode.disconnect(branch.delay ?? branch.gate, route.wire.output);
+    } catch {
+      /* source already disposed */
     }
-    removeCompDelay(key, w, delay);
+    branch.delay?.disconnect();
+    branch.gate.disconnect();
+    route.branches.delete(branch);
+  }
+
+  function branchFor(route: CompRoute, seconds: number, gain: number): RouteBranch {
+    const gate = new GainNode(ctx, { gain });
+    gate.gain.setValueAtTime(gain, ctx.currentTime);
+    const delay = seconds > 0 ? new DelayNode(ctx, { delayTime: seconds, maxDelayTime: seconds }) : undefined;
+    const branch: RouteBranch = { gate, delay, seconds };
+    route.wire.fromNode.connect(delay ?? gate, route.wire.output);
+    if (delay) delay.connect(gate);
+    gate.connect(route.wire.to as AudioNode, 0, route.wire.input);
+    route.branches.add(branch);
+    return branch;
+  }
+
+  // Cleanup is not an audio event: native gain automation has already faded the
+  // route to zero. Check the context clock so a suspended context cannot retire
+  // an audible route early. This also avoids colliding OfflineAudioContext suspend
+  // points with a processor's own edit scheduler.
+  function retireAfter(route: CompRoute, branch: RouteBranch, when: number): void {
+    cancelRetirement(branch);
+    const check = () => {
+      if (branch.retire !== undefined) timers.delete(branch.retire);
+      branch.retire = undefined;
+      if (disposed || !route.branches.has(branch)) return;
+      if (ctx.state !== "closed" && ctx.currentTime < when) {
+        arm();
+      } else if (route.target !== branch) removeBranch(route, branch);
+    };
+    const arm = () => {
+      branch.retire = setTimeout(check, Math.min(50, Math.max(1, (when - ctx.currentTime) * 1000 + 5)));
+      timers.add(branch.retire);
+    };
+    arm();
+  }
+
+  function connectPhysical(key: string, wire: Wire): void {
+    if (wire.to instanceof AudioParam || options.compensate === false) return connectWire(wire);
+    const route: CompRoute = { wire, branches: new Set(), target: undefined!, fresh: true };
+    route.target = branchFor(route, 0, 1);
+    compRoutes.set(key, route);
+  }
+
+  function disconnectPhysical(key: string, wire: Wire): void {
+    const route = compRoutes.get(key);
+    if (!route) return disconnectWire(wire);
+    for (const branch of [...route.branches]) removeBranch(route, branch);
+    compRoutes.delete(key);
   }
 
   function spliceCompensation(wires: Map<string, Wire>, diffs: Map<Wire, number>): void {
-    const rate = ctx.sampleRate;
-    for (const [key, w] of wires) {
-      if (w.to instanceof AudioParam) continue;
-      const diff = diffs.get(w) ?? 0;
-      const existing = compDelays.get(key);
-      if (diff > 0) {
-        const neededTime = diff / rate;
-        const existingMax = existing ? (compDelayMax.get(existing) ?? 0) : 0;
-        if (!existing || neededTime > existingMax) {
-          if (existing) removeCompDelay(key, w, existing);
-          else disconnectWire(w);
-          const delay = new DelayNode(ctx, { delayTime: neededTime, maxDelayTime: neededTime });
-          w.fromNode.connect(delay, w.output);
-          delay.connect(w.to, 0, w.input);
-          compDelays.set(key, delay);
-          compDelayMax.set(delay, neededTime);
+    for (const [key, wire] of wires) {
+      const route = compRoutes.get(key);
+      if (!route) continue; // AudioParam edges keep their native connection.
+      const seconds = Math.max(0, diffs.get(wire) ?? 0) / ctx.sampleRate;
+      if (route.target.seconds !== seconds) {
+        if (route.fresh || ctx.currentTime === 0) {
+          // A new wire has no audible history to preserve. Initial compensation
+          // is exact, including a graph assembled before offline rendering starts.
+          for (const branch of [...route.branches]) removeBranch(route, branch);
+          route.target = branchFor(route, seconds, 1);
         } else {
-          existing.delayTime.value = neededTime;
+          const start = ctx.currentTime + seconds + (2 * 128) / ctx.sampleRate;
+          const end = start + 10 * COMPENSATION_GATE;
+          const next = branchFor(route, seconds, 0);
+          route.target = next;
+          for (const branch of route.branches) {
+            if (branch === next) continue;
+            branch.gate.gain.cancelAndHoldAtTime(start);
+            branch.gate.gain.setTargetAtTime(0, start, COMPENSATION_GATE);
+            branch.gate.gain.setValueAtTime(0, end);
+            // A rapid subsequent retime can extend a partially faded route.
+            // Replace its cleanup rather than cutting it at the old fade end.
+            retireAfter(route, branch, end);
+          }
+          next.gate.gain.setValueAtTime(0, start);
+          next.gate.gain.setTargetAtTime(1, start, COMPENSATION_GATE);
+          next.gate.gain.setValueAtTime(1, end);
         }
-      } else if (existing) {
-        removeCompDelay(key, w, existing);
-        connectWire(w);
       }
-    }
-    for (const [key, delay] of compDelays) {
-      if (!wires.has(key)) {
-        try {
-          delay.disconnect();
-        } catch {
-          // already gone
-        }
-        compDelays.delete(key);
-        compDelayMax.delete(delay);
-      }
+      route.fresh = false;
     }
   }
 
   const handle: GraphHandle = {
     dispose() {
+      if (disposed) return;
+      disposed = true;
       stop();
       for (const [key, w] of current) disconnectPhysical(key, w);
+      for (const timer of timers) clearTimeout(timer);
+      timers.clear();
       current = new Map();
       arrival = new Map();
       nodeOwner = new Map();
@@ -563,7 +650,7 @@ export function defineGraph(fn: () => EdgeList, options: GraphOptions): GraphHan
     registeredProcessors = memberProcessors;
 
     for (const [k, w] of current) if (!next.has(k)) disconnectPhysical(k, w);
-    for (const [k, w] of next) if (!current.has(k)) connectWire(w);
+    for (const [k, w] of next) if (!current.has(k)) connectPhysical(k, w);
     current = next;
     nodeOwner = owners;
 
@@ -619,7 +706,7 @@ export function defineGraph(fn: () => EdgeList, options: GraphOptions): GraphHan
     options.onSolve?.(handle);
   };
 
-  const stop = effect(() => apply(fn()));
+  const stop = untracked(() => effect(() => apply(fn())));
 
   return handle;
 }

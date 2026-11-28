@@ -135,7 +135,7 @@ export async function mountPixi(container: HTMLElement): Promise<() => void> {
   app.stage.addChild(hint);
 
   return () => {
-    // Do NOT destroy the core engine here: `engine` is a module-level singleton
+    // Do NOT dispose the core engine here: `engine` is a module-level singleton
     // shared across mounts, so tearing down its AudioContext would leave a
     // remount (React StrictMode, or re-entering the route) with a dead context
     // and stopped processors. Detaching listeners + the pixi app is enough.

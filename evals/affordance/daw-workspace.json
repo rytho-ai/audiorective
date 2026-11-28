@@ -1,0 +1,262 @@
+{
+  "area": "daw-workspace",
+  "description": "API-shape experiment for operating a running DAW Workspace: mixer through the Project, rack macros and engine taps, transport bar and clock extras, plug-in chain, and placing recorded takes. Expectations describe behaviour, not names.",
+  "tasks": [
+    {
+      "id": "W1-mixer-strips",
+      "prompt": "A browser DAW has an open song as `project` and its running engine as `workspace` (the song is playing). Write the mixer panel's handlers. Each track strip has a fader (linear 0 to 1.5, 1 is normal level), a mute button, a solo button and a pan knob (-1 to 1); the master strip has a fader. Moving any of them must change the playing sound right away. A reverb bus track `reverbBusId` exists: a `Send to reverb` button on the track `guitarId` must feed it at -12 dB while the guitar still goes to the master as before. A text box renames the song to the typed title. A `Reset mixer` button puts every track back to level 1, pan 0, not muted, not soloed and the master to 1, and one Undo must bring back everything it changed. Every strip and the master strip also show a live peak meter in dBFS (silence shows `-inf`), drawn by the toolkit's level-meter widget into the element `strip(trackId)` / `masterStrip`; the master readout turns red above -1 dBFS. Show the code that builds the strips for `project.tracks` and cleans up when the panel closes.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;\ndeclare const reverbBusId: string;\ndeclare const guitarId: string;\ndeclare function strip(trackId: string): HTMLElement;\ndeclare const masterStrip: HTMLElement;",
+      "expectations": [
+        "Level, mute, solo, pan and master changes go through the song's own mixer edits, so the playing sound follows without touching audio nodes or rebuilding the engine.",
+        "The guitar reaches the reverb bus through a send at about 0.251 gain (-12 dB) and keeps its normal output.",
+        "The song title is changed through a song edit that Undo can bring back.",
+        "Reset mixer changes every track and the master in one Undo step, so one Undo restores all of them.",
+        "Meters read the engine's live per-track and master peak values reactively (no hand-made analysers or timers per track), show -inf for silence, and the master readout turns red above -1 dBFS.",
+        "Subscriptions and widgets are cleaned up when the panel closes."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "Mixer edits through the song, not the engine",
+          "all": ["setTrackMuted", "setTrackSolo", "setTrackPan", "setTrackVolume", "setMasterVolume"],
+          "none": ["workspace\\.setTrack", "workspace\\.setMasterVolume", "\\.gain\\.(value|setValueAtTime|setTargetAtTime)"]
+        },
+        {
+          "expectation": 1,
+          "label": "Bus send with routing",
+          "all": ["setTrackRouting"]
+        },
+        {
+          "expectation": 2,
+          "label": "Title edit",
+          "all": ["setTitle"]
+        },
+        {
+          "expectation": 3,
+          "label": "Reset is one edit",
+          "any": ["\\.edit\\(", "applyEdits\\("]
+        },
+        {
+          "expectation": 4,
+          "label": "Live levels from the engine's cells",
+          "all": ["cells\\.levels", "mountLevelMeter"],
+          "none": ["createAnalyser", "new AnalyserNode", "getFloatTimeDomainData"]
+        }
+      ]
+    },
+    {
+      "id": "W2-rack-macros",
+      "prompt": "A browser DAW has an open song as `project` and its running engine as `workspace`; `keysId` is a track. Build that track's effects panel. (1) An `Apply preset` button sets the track's insert effects, in this order, to a high-pass filter at 120 Hz (Q 0.7), an equalizer with +3 dB at 3 kHz, and a delay of an eighth note at 120 BPM (0.125 s) with 25% feedback; and defines one macro, id `space`, label `Space`, currently 0, which moves the delay's feedback from 0.1 to 0.7 and its wet mix from 0 to 0.5. All of it is one Undo step. (2) A knob `knob` (0 to 1) moves the `space` macro while the song plays; the sound follows during the drag and the finished move is one Undo step; the knob also follows the macro's live value on screen while the automation in (3) moves it. (3) An automation lane lets the user draw a curve for the macro over the song's beats: 0 at beat 0, 1 at beat 16, back to 0 at beat 32; while the song plays from the start the macro must follow that curve sample-accurately on the audio clock. (4) `canvas` shows the high-pass filter's frequency response: 256 log-spaced frequencies from 20 Hz to 20 kHz, magnitude in dB, redrawn whenever the filter's frequency changes. (5) A `Spectrum` toggle shows a live analyser of the track's sound right after its effects, before its fader. (6) In the macro editor the sliders that set a mapped parameter's start and end must stop at the limits the rack accepts for that parameter (for example the delay's feedback), not at numbers you typed in.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;\ndeclare const keysId: string;\ndeclare const knob: HTMLInputElement;\ndeclare const canvas: HTMLCanvasElement;",
+      "expectations": [
+        "The three effects and the macro mapping are set from one preset on the song, as one Undo step, without building audio nodes by hand.",
+        "Values are right: high-pass 120 Hz Q 0.7, +3 dB at 3 kHz, delay 0.125 s with 0.25 feedback; the macro maps feedback 0.1 to 0.7 and wet 0 to 0.5.",
+        "The knob moves the macro so the playing sound follows during the drag; releasing it records one Undo step; the knob also follows the macro's live value while automation moves it.",
+        "The drawn macro curve plays through the toolkit's automation playback against the engine's macro target on the audio clock, not through a timer loop.",
+        "The filter response is read from the running rack for 256 log-spaced frequencies, magnitude drawn in dB, and the code copes with a track that has no running strip yet.",
+        "The spectrum analyser taps the track's sound after its effects and before its fader, through the engine rather than by re-routing nodes by hand.",
+        "The macro editor's parameter limits come from the rack's own accepted ranges."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "Preset in one call",
+          "all": ["setTrackRackPreset"]
+        },
+        {
+          "expectation": 2,
+          "label": "Macro value from the knob, live read",
+          "all": ["setTrackMacroValue", "trackMacroValue"]
+        },
+        {
+          "expectation": 3,
+          "label": "Engine macro automation target",
+          "all": ["trackMacroAutomation"],
+          "any": ["AutomationBinding", "\\.program\\("],
+          "none": ["setInterval"]
+        },
+        {
+          "expectation": 4,
+          "label": "Filter response from the engine",
+          "all": ["trackFilterResponse", "Float32Array"]
+        },
+        {
+          "expectation": 5,
+          "label": "Effect output tap",
+          "all": ["trackEffectOutput"]
+        },
+        {
+          "expectation": 6,
+          "label": "Ranges from the rack",
+          "all": ["rackMacroRange"]
+        }
+      ]
+    },
+    {
+      "id": "W3-transport-bar",
+      "prompt": "A browser DAW has an open 4/4 song as `project` (120 BPM, one tempo change to 90 BPM at bar 9) and its running engine as `workspace`. Write the transport bar. (1) A `bar|beat|tick` readout (960 ticks per beat) follows the playhead every animation frame and stays right across the tempo change. (2) A `Tempo` box changes the song's starting tempo, and a `3/4 from bar 17` button changes the meter from bar 17 on; playback follows without a restart and without any manual refresh or rebuild call. (3) `Loop bars 5-8`: sets the loop region and turns looping on; the `Loop` toggle button follows whether looping is on, including when something else turns it off. (4) A banner lists the engine's warnings and shows its error text, both updating by themselves. (5) A separate `practice lights` panel runs without the engine: four lights that blink on the beats of a one-bar count-in (the clock starts at beat -4), driven by a timer of its own every 50 ms rather than by the audio device; an `80 -> 120 BPM over 8 beats` button ramps that clock's tempo smoothly; and a ruler strip draws a vertical line at every sixteenth note between beats 0 and 8, placed in seconds on that clock's current tempo. (6) A `Slice repeat` button repeats seconds 2.0 to 3.5 of `sample` (an AudioBuffer) sample-accurately starting at audio time `startAt`, driven by the practice clock's scheduling windows; it must not move the clock's playhead. (7) An `Audition` button repeats beats 8 to 12 on the engine only while it is held (press starts, release stops) and shows `Playing` while the audition runs, even if something else stops it.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;\ndeclare const context: AudioContext;\ndeclare const sample: AudioBuffer;\ndeclare const startAt: number;\ndeclare const readout: HTMLElement;",
+      "expectations": [
+        "The readout converts the engine's beat position to bar, beat and tick through the song's meter and tempo (not a constant tempo), so it stays right after the tempo change.",
+        "The tempo box and the meter button edit the song through song edits (the meter change at beat 64 with the starting 4/4 kept); playback follows with no restart and no manual refresh, sync or rebuild.",
+        "Loop bars 5 to 8 sets the loop region to beats 16 to 32 and enables looping; the toggle follows the loop's live state.",
+        "The warnings list and the error text come from the engine's live state and update on their own.",
+        "The practice lights run from a clock whose ticks come from a 50 ms timer, start at beat -4 and blink on each beat.",
+        "The tempo ramp uses the clock's own tempo scheduling (a ramp from 80 to 120 over 8 beats), not a timer that writes numbers.",
+        "The sixteenth-note lines come from the toolkit's grid enumeration and are positioned using the clock's tempo, not a fixed seconds-per-beat.",
+        "The repeating slice plays each pass of seconds 2.0 to 3.5 from the scheduling windows, sample-accurate, starting at `startAt`, without moving the playhead.",
+        "The range audition starts on press and stops on release through the engine, and the button state follows the engine's live audition state."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "Meter map and transport timeline",
+          "any": ["meterMap", "barBeatsAt", "beatToBar"],
+          "none": ["workspace\\.clock", "workspace\\.timeline"]
+        },
+        {
+          "expectation": 1,
+          "label": "Tempo and meter edits, no refresh",
+          "all": ["setTempoChanges", "setTimeSignatureChanges"],
+          "none": ["workspace\\.refresh", "refreshArrangement", "\\.sync\\(\\)"]
+        },
+        {
+          "expectation": 2,
+          "label": "Loop region in beats 16 to 32",
+          "all": ["setRegion", "(\\b16\\b|barToBeat\\(\\s*5)", "(\\b32\\b|barToBeat\\(\\s*9)"]
+        },
+        {
+          "expectation": 3,
+          "label": "Warnings and error from cells",
+          "all": ["cells\\.warnings", "cells\\.error"],
+          "none": ["workspace\\.warnings"]
+        },
+        {
+          "expectation": 4,
+          "label": "Timer tick source, count-in at -4",
+          "all": ["IntervalTickSource", "-4"]
+        },
+        {
+          "expectation": 5,
+          "label": "Tempo ramp on the clock",
+          "any": ["linearRampToValueAtTime", "exponentialRampToValueAtTime"]
+        },
+        {
+          "expectation": 6,
+          "label": "Grid points",
+          "all": ["gridPoints"]
+        },
+        {
+          "expectation": 7,
+          "label": "Range loop slices",
+          "all": ["RangeLoop", "slices\\("]
+        },
+        {
+          "expectation": 8,
+          "label": "Range audition",
+          "all": ["auditionRange", "stopRangeAudition", "cells\\.auditioningRange"]
+        }
+      ]
+    },
+    {
+      "id": "W4-plugin-chain",
+      "prompt": "A browser DAW has an open song as `project` and its running engine as `workspace`, and the song is playing. The `Keys` MIDI track `keysId` already plays through a WebCLAP synth. Write the plug-in chain panel for that track. (1) `Add chorus` loads the effect plug-in served at `/plugins/chorus.clap` (CLAP id `com.example.chorus`, name `Chorus`, vendor `Example`, version `1.0`) onto the track while the song keeps playing, as one Undo step, and then moves it to the first place in the track's chain. (2) For the plug-in, `panel` shows one slider per parameter the plug-in reports (its name, minimum, maximum and step, whatever ids it uses; they differ per plug-in), and moving a slider changes the sound. (3) When the user closes the panel, the plug-in's current state is saved into the song so reopening the song restores it, and that save can be undone. (4) `Remove` takes the plug-in off the track as one Undo step. (5) `bounce()` makes an offline render; before calling it, wait until the plug-in has handled every message sent to it so the bounce includes the latest slider moves. Return the code and say whether the user needs to rebuild or sync the engine after adding or removing a plug-in.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;\ndeclare const keysId: string;\ndeclare const panel: HTMLElement;\ndeclare function bounce(): Promise<void>;",
+      "expectations": [
+        "Adds the plug-in to the track as an Undo step while playback keeps running, with no manual engine rebuild or stop and restart.",
+        "Moves the new plug-in to the first place of the track's chain through a song edit.",
+        "Builds the sliders from the plug-in's own reported parameter list (name, range, step), and writes slider values to the plug-in's live parameter for that id, with no hard-coded ids.",
+        "Reads the running plug-in's state when the panel closes and stores it on the song's device as an Undo-able edit.",
+        "Removes the plug-in through a song edit as one Undo step.",
+        "Waits for the plug-in host to finish its pending messages before the offline bounce.",
+        "Says that adding or removing a plug-in is a light edit that does not need a rebuild of the engine."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "Device add, no rebuild",
+          "any": ["addDevice", "addWebClapDevice"],
+          "none": ["\\.sync\\(\\)"]
+        },
+        {
+          "expectation": 1,
+          "label": "Move device",
+          "all": ["moveDevice"]
+        },
+        {
+          "expectation": 2,
+          "label": "Parameters from the host's own list",
+          "all": ["parameterInfo"],
+          "any": ["\\.param\\(", "\\.params\\["]
+        },
+        {
+          "expectation": 3,
+          "label": "Device state saved",
+          "all": ["saveState", "setDeviceState"]
+        },
+        {
+          "expectation": 4,
+          "label": "Remove device",
+          "all": ["removeDevice"]
+        },
+        {
+          "expectation": 5,
+          "label": "Await pending messages",
+          "all": ["messagesHandled"]
+        }
+      ]
+    },
+    {
+      "id": "W5-record-takes",
+      "prompt": "A browser DAW has an open 4/4 song as `project` (120 BPM) and its running engine as `workspace` on `context`. The user arms `Keys` (a MIDI track, `keysId`) and `Vocal` (an audio track, `vocalId`) and presses Record while the song is playing, then presses Stop. The microphone path adds 35 ms of input latency to the audio. `recorder` is a stereo audio recorder attached to the microphone, and `midiTake` is the MIDI take the keyboard recorder returned at Stop. Write the `onRecord()` and `onStop()` handlers. The audio is long (up to an hour), so it must be written to disk while recording, not kept in memory, and the finished file is used directly by the vocal clip. Both takes must land where the music was when the user played, on their tracks, and one Undo removes both. An `Audition take` button then plays the new vocal clip alone and the button reads `Stop` while it plays, even when playback ends by itself. If writing to disk fails, the half-written file must be thrown away and the song left unchanged.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;\ndeclare const context: AudioContext;\ndeclare const keysId: string;\ndeclare const vocalId: string;\ndeclare const recorder: import(\"@audiorective/recorder\").AudioRecorder;\ndeclare const midiTake: import(\"@audiorective/midi\").MidiTake;",
+      "expectations": [
+        "Captures the relationship between the audio clock and the song when Record is pressed (before the take starts), not at Stop.",
+        "Streams the audio in chunks to a disk-backed file, finishing it from the recorder's returned span; the whole take is never held in memory.",
+        "Places the vocal clip at the position derived from that capture minus 35 ms of input latency, using the file directly.",
+        "Places the MIDI take on Keys at the same moment, converted to beats through the song's tempo, with its notes and non-note messages.",
+        "Both placements are one Undo step.",
+        "Auditions the new clip alone through the engine and shows Stop from the engine's live audition state.",
+        "A failed write aborts the file and leaves the song unchanged."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "Anchor at record time",
+          "all": ["takeAnchor"]
+        },
+        {
+          "expectation": 1,
+          "label": "Stream to disk",
+          "all": ["createOpfsAudioMediaWriter", "onChunk", "writeChunk", "finish\\("]
+        },
+        {
+          "expectation": 2,
+          "label": "Take position with latency",
+          "all": ["takePosition", "addAudioMediaClip", "0\\.035"]
+        },
+        {
+          "expectation": 3,
+          "label": "MIDI take placed in beats",
+          "all": ["addMidiTake"],
+          "any": ["secondsToBeat", "tempoMap"]
+        },
+        {
+          "expectation": 4,
+          "label": "One Undo step",
+          "all": ["\\.edit\\("]
+        },
+        {
+          "expectation": 5,
+          "label": "Audition clip",
+          "all": ["auditionAudioClip", "cells\\.auditioningClip"]
+        },
+        {
+          "expectation": 6,
+          "label": "Abort on failure",
+          "any": ["abort\\("]
+        }
+      ]
+    }
+  ]
+}

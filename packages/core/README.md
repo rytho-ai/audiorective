@@ -8,6 +8,11 @@ Reactive primitives for Web Audio. The foundation package — everything else bu
 npm install @audiorective/core
 ```
 
+For editable curves, finite native schedules and transport beat loops, import
+`AutomationCurve`, `AutomationBinding`, `AutomationClip` and `audioParamTarget` from the optional
+`@audiorective/core/automation` entry. See [Automation](../../docs/automation.md)
+for live edits, cancellation, time mapping and target ownership.
+
 ## Param
 
 Reactive parameter with a `.value` getter/setter matching Web Audio conventions. Built on [alien-signals](https://github.com/nicepkg/alien-signals).
@@ -113,6 +118,7 @@ class Mixer extends AudioProcessor<{
   volume: SchedulableParam;
   muted: Param<boolean>;
 }> {
+  private readonly gain: GainNode;
   readonly effectiveVolume: () => number;
 
   constructor(ctx: AudioContext) {
@@ -124,41 +130,39 @@ class Mixer extends AudioProcessor<{
       },
     }));
 
+    this.gain = gain;
     this.effectiveVolume = this.computed(() => (this.params.muted.value ? 0 : this.params.volume.value));
 
     this.effect(() => {
       gain.gain.value = this.effectiveVolume();
     });
   }
-  // ...
+  get output() {
+    return this.gain;
+  }
 }
 ```
 
 ## Sampler
 
-Buffer-backed polyphonic player. `trigger()` spawns a voice; voices overlap up to the `polyphony` cap. Best for SFX, one-shots, percussion, and short loops.
+Polyphonic player of one `Sound`: a decoded `AudioBuffer` or a sound factory. `trigger()` and `noteOn()` spawn voices that overlap up to the `polyphony` cap (default 32). Best for SFX, one-shots, percussion and keyboards of one sound.
 
 ```typescript
 import { Sampler, AudioBufferCache } from "@audiorective/core";
 
 const cache = new AudioBufferCache(ctx);
-const player = new Sampler(ctx, { polyphony: 4 });
-player.output.connect(ctx.destination);
+const player = new Sampler(ctx, { sound: await cache.load("/sounds/kick.wav") });
+player.connect(ctx.destination);
 
-player.buffer = await cache.load("/sounds/kick.wav");
+const voice = player.trigger({ velocity: 0.8, when: ctx.currentTime + 0.1 });
+voice?.playing.subscribe((playing) => playing || console.log("done"));
 
-const voice = player.trigger({ volume: 0.8 });
-voice.onEnded(() => console.log("done"));
-
-// polyphony 1 + steal "oldest" → restart on retrigger (default pad behaviour)
-// polyphony 1 + steal "none"   → ignore while playing
-// polyphony N                  → bounded overlap
-
+player.noteOn("E4"); // transposed from rootNote (60); noteOff("E4") releases it
 player.stopAll();
-player.destroy();
+player.dispose();
 ```
 
-`trigger()` returns a `Voice` handle for per-voice control (`voice.stop()`, `voice.pause()`, `voice.resume()`, `voice.seek()`, `voice.volume =`, `voice.rate =`). It returns `null` when no buffer is set or `steal: "none"` drops the voice.
+`trigger()` and `noteOn()` return a `Voice` (`note`, `when`, `playing`, `stop(when?)`), or `null` when there is no sound, the note is outside `lowNote`..`highNote`, or `steal: "none"` drops the hit. A factory `(context, hit) => source | { output, sources, duration? }` builds an unconnected, unstarted voice; the player connects, starts, holds, releases and frees it.
 
 ## loadAudioBuffer / AudioBufferCache
 
@@ -218,10 +222,10 @@ player.cells.currentTime; // Cell<number>
 player.cells.duration; // Cell<number> — NaN until metadata loads
 
 player.onEnded(() => console.log("track ended"));
-player.destroy();
+player.dispose();
 ```
 
-`play()` silently swallows autoplay-gesture errors and `AbortError`s — it's safe to call unconditionally. Gate on `player.cells.isPlaying` to react to actual state.
+`play()` rejects with the element's own `DOMException` like `HTMLMediaElement.play()` (`NotAllowedError` for an autoplay block, `AbortError` when interrupted); catch it from a click handler and show a notice. Gate rendering on `player.cells.isPlaying`.
 
 ## AudioEngine & createEngine
 
@@ -231,19 +235,19 @@ Lifecycle management for the audio context and processor graph.
 import { createEngine } from "@audiorective/core";
 
 const engine = createEngine((ctx) => {
-  const synth = new Synth(ctx);
+  const synth = new Sampler(ctx, { sound: "C4" });
   synth.output.connect(ctx.destination);
   return { synth };
 });
 
 engine.synth; // fully typed
-await engine.start();
-engine.state.value; // "running"
-await engine.suspend();
-engine.destroy(); // terminal — processors cleaned up, context closed
+await engine.core.resume();
+engine.core.state.value; // "running"
+await engine.core.suspend();
+engine.core.dispose(); // terminal — processors cleaned up, context closed
 ```
 
-State transitions: `idle` -> `running` <-> `suspended` -> `destroyed`
+State transitions: `idle` -> `running` <-> `suspended` -> `disposed`
 
 The `AudioContext` is created eagerly at construction — the browser suspends it via autoplay policy. All processors are wired and accessible immediately. Only `start()` requires a user gesture.
 
@@ -255,7 +259,7 @@ Works with any UI framework or headless in Node.js:
 import { effect } from "alien-signals";
 
 effect(() => {
-  console.log("Volume:", synth.volume.value);
+  console.log("Volume:", synth.params.volume.value);
 });
 ```
 

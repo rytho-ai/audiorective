@@ -59,9 +59,9 @@ export class LookaheadLimiter extends AudioProcessor<{ ceiling: SchedulableParam
     return this._node;
   }
 
-  destroy(): void {
+  dispose(): void {
     this._node.port.close();
     this._node.disconnect();
-    super.destroy();
+    super.dispose();
   }
 }

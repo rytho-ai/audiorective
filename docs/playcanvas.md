@@ -56,9 +56,7 @@ import * as pc from "playcanvas";
 import { createEngine } from "@audiorective/core";
 import { attach } from "@audiorective/playcanvas";
 
-const engine = createEngine((ctx) => {
-  /* ... */
-});
+const engine = createEngine((ctx) => ({ sampler: new Sampler(ctx) }));
 
 const app = new pc.Application(canvas, {});
 const detach = attach(engine, app); // share AudioContext + arm autoStart
@@ -84,13 +82,13 @@ If the camera entity carries an `AudioListenerComponent` (PlayCanvas's standard 
 
 Drives an externally-owned `PannerNode` from a PlayCanvas entity's world transform, once per frame on the app's `update` event. The PlayCanvas counterpart to `@audiorective/threejs`'s `PannerAnchor`.
 
-```typescript
+```typescript fragment: signature listing, not runnable code
 function bindPanner(app: pc.AppBase, entity: pc.Entity, panner: PannerNode): () => void;
 ```
 
 Each frame it writes the entity's world position into `panner.positionX/Y/Z` and the entity's forward vector into `panner.orientationX/Y/Z`. It writes once eagerly at call time so the panner isn't silent-at-origin until the first frame. Returns a disposer that unhooks the per-frame sync.
 
-`bindPanner` does **not** own the panner's lifetime — it never disconnects or destroys it. The `Spatial` (or whoever created the panner) owns teardown; the disposer only stops the transform sync. Pass `engine.spatial.panner` in and let the engine own teardown.
+`bindPanner` does **not** own the panner's lifetime — it never disconnects or disposes it. The `Spatial` (or whoever created the panner) owns teardown; the disposer only stops the transform sync. Pass `engine.spatial.panner` in and let the engine own teardown.
 
 > Convention note: three.js's `getWorldDirection()` returns `+Z`, whereas PlayCanvas's `entity.forward` is `-Z`. Both mean "the way the object faces", so the panner orientation is consistent across renderers.
 
@@ -108,7 +106,7 @@ import { createEngine, Spatial } from "@audiorective/core";
 import { attach, bindPanner } from "@audiorective/playcanvas";
 
 const engine = createEngine((ctx) => {
-  const synth = new MySynth(ctx);
+  const synth = new Sampler(ctx, { sound: "C4" });
   const spatial = new Spatial(ctx, { distanceModel: "inverse" });
   synth.output.connect(spatial.input);
   spatial.output.connect(ctx.destination);
@@ -153,11 +151,11 @@ Because the `Spatial` lives in core and already connects to `ctx.destination`, t
 
 ## Lifecycle
 
-`AudioProcessor.destroy()` is the cleanup primitive. The bindings do not own the audio:
+`AudioProcessor.dispose()` is the cleanup primitive. The bindings do not own the audio:
 
 - `attach()`'s disposer only removes the gesture-autostart listeners. Calling it doesn't tear down the audio engine or close the AudioContext.
 - `bindPanner()`'s disposer only unhooks the per-frame `update` sync. It never disconnects the panner — `Spatial` owns that. (`app.destroy()` also tears down `update` listeners, but call the disposer explicitly if the app outlives the scene.)
-- Tie `engine.core.destroy()` / `processor.destroy()` to your own scene-cleanup path.
+- Tie `engine.core.dispose()` / `processor.dispose()` to your own scene-cleanup path.
 
 ---
 
@@ -172,3 +170,10 @@ source → effects → spatial.panner → destination
 For HRTF panning plus nonlinear effects, pre- vs. post-panner placement is audibly different: HRTF convolution shapes the spectrum per-ear and per-azimuth, so EQ applied after it interacts with a moving target as the listener turns, and stereo-linked dynamics pump based on head position. Wiring effects before `spatial.input` avoids all of that.
 
 The `Spatial Music Room (PlayCanvas)` showroom demo uses pre-panner EQ to make this audible — try it with the EQ pushed and the camera moving.
+
+## Common errors
+
+| Message                                                                                        | Cause                                                        | Fix                                                                                                                                        |
+| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `attach: app.soundManager is unavailable. …`                                                   | The PlayCanvas app was constructed without a `SoundManager`. | Construct the app with a sound manager before calling `attach`.                                                                            |
+| `attach: AudioContext mismatch between PlayCanvas SoundManager and the audiorective engine. …` | The engine and PlayCanvas use different `AudioContext`s.     | Call `attach(engine, app)` before any sound plays, or create the engine with `createEngine(setup, { context: app.soundManager.context })`. |

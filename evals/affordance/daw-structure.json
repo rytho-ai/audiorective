@@ -1,0 +1,237 @@
+{
+  "area": "daw-structure",
+  "description": "API-shape experiment for DAW song structure: stretching an audio clip to the song tempo, clip envelope helpers, Session grid reordering and copying, a multi-area repair request in the assistant edit format, and track-level MIDI controller lanes. Expectations describe behaviour, not names.",
+  "tasks": [
+    {
+      "id": "S1-stretch-to-tempo",
+      "prompt": "A browser DAW has an open 4/4 song as `project` (100 BPM) and its running engine as `workspace`. The audio track `Loop` has one audio clip `clipId`: a drum loop recorded at 90 BPM, exactly 4 bars long in the recording (10.667 s). Write the `Stretch to tempo` button: it makes the clip fill the same 4 bars at the song's 100 BPM (9.6 s on the timeline) without changing pitch, using the pitch-preserving stretcher in `stretch`. Rendering takes seconds and must not freeze the page, and the user can press Cancel (`controller`) to abandon it with the song untouched; the song only changes at the end, as one Undo step named `Stretch loop`, and only if the clip was not edited meanwhile (otherwise tell the user). The user can also pin the drum hit at 2.0 s of the recording to land exactly two beats after the clip's start. Afterwards show `ratio` (timeline seconds over recording seconds) in a label. A waveform overlay also needs two helpers: where a second of the recording sits on the clip's timeline, and the other way round.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;\ndeclare const clipId: string;\ndeclare const stretch: import(\"@audiorective/player\").WaveStretchProcessor;\ndeclare const controller: AbortController;",
+      "expectations": [
+        "Renders the stretched audio through the running engine with the given stretcher and an abort signal, without changing the song until the render has finished.",
+        "Uses a ratio of 0.9 (9.6 s of timeline over 10.667 s of recording).",
+        "Passes an anchor so the hit at 2.0 s of the recording lands two beats after the clip start (1.2 s on the timeline at 100 BPM).",
+        "Commits the finished render to the song as one Undo step only if the clip is unchanged since it was read, and reports the conflict otherwise.",
+        "Cancel leaves the song untouched and does not show an error.",
+        "Maps recording seconds to timeline seconds and back through the clip's own time map, including the anchor, not by a single multiplication."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "Prepare with signal",
+          "all": ["prepareAudioClipStretch"],
+          "any": ["signal"]
+        },
+        {
+          "expectation": 1,
+          "label": "Ratio 0.9",
+          "any": ["0\\.9\\b", "9\\.6\\s*/\\s*10\\.6", "beatToSeconds"]
+        },
+        {
+          "expectation": 2,
+          "label": "Anchors",
+          "all": ["anchors"]
+        },
+        {
+          "expectation": 3,
+          "label": "Apply stretch",
+          "any": ["applyAudioClipStretch", "\\.apply\\(\\)"]
+        },
+        {
+          "expectation": 5,
+          "label": "Time map",
+          "all": ["audioClipTimeMap"],
+          "any": ["sourceToOutput", "outputToSource"]
+        }
+      ]
+    },
+    {
+      "id": "S2-clip-envelope-preview",
+      "prompt": "A browser DAW has an open song as `project` and its running engine as `workspace`. Write a clip inspector for the audio clip `clipId` (4 s long on the timeline). (1) Three number boxes `gainBox`, `fadeInBox`, `fadeOutBox` (seconds) edit its level and fades; reject input the engine would refuse (for example fades that together are longer than the clip, or a negative value) with the same rule and show the engine's message; valid input is applied as one Undo step. (2) `canvas` draws the clip's level over its 4 s at 200 points, exactly what the engine plays, including a fade that is longer than half the clip when the sum still fits. (3) A `Preview` button plays `sample` (an AudioBuffer, 4 s long) through a gain node of the page's own, starting at audio time `when`, with the very same level curve as the clip, and continuing correctly if the preview begins 1.5 s into the clip. (4) `Reset` returns the clip to no gain change and no fades. (5) The clip is time-stretched; a label shows where the timeline second 1.0 of the clip falls in the original recording.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;\ndeclare const clipId: string;\ndeclare const context: AudioContext;\ndeclare const sample: AudioBuffer;\ndeclare const when: number;\ndeclare const canvas: HTMLCanvasElement;\ndeclare const gainBox: HTMLInputElement;\ndeclare const fadeInBox: HTMLInputElement;\ndeclare const fadeOutBox: HTMLInputElement;",
+      "expectations": [
+        "Validates the typed level and fades with the toolkit's own rule, catches its error, and shows its message; valid input becomes one Undo step on the clip.",
+        "The curve is drawn from the toolkit's level function for the clip's envelope at 200 points, not from a hand-written fade formula.",
+        "The preview schedules the same envelope on the page's gain node from the toolkit, including starting part-way through the clip.",
+        "Reset applies the neutral envelope (level 1, no fades) as an Undo step.",
+        "The recording second comes from the clip's time map."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "Normalize and apply",
+          "all": ["normalizeClipEnvelope", "setAudioClipEnvelope"]
+        },
+        {
+          "expectation": 1,
+          "label": "Level function",
+          "all": ["clipGainAt"]
+        },
+        {
+          "expectation": 2,
+          "label": "Schedule on a param",
+          "all": ["scheduleClipEnvelope"]
+        },
+        {
+          "expectation": 3,
+          "label": "Unity envelope",
+          "any": ["unityClipEnvelope", "gain\\s*:\\s*1"]
+        },
+        {
+          "expectation": 4,
+          "label": "Time map",
+          "all": ["audioClipTimeMap"]
+        }
+      ]
+    },
+    {
+      "id": "S3-session-grid-edits",
+      "prompt": "A browser groovebox has an open song as `project` with a Session grid: scenes Verse (`verseId`), Fill (`fillId`), Chorus (`chorusId`) and Outro (`outroId`), tracks Drums (`drumsId`) and Bass (`bassId`) (MIDI) and Loop (`loopId`, audio). `verseDrumsClipId` is the clip in Verse's Drums slot. Write the grid's handlers, each one Undo step: (1) dragging scene Chorus to second place; (2) Alt-dragging Verse's Drums clip onto Fill's Drums slot makes an independent copy (Verse keeps its clip, editing one does not change the other); (3) dragging the clip of Verse's Bass slot onto Outro's Bass slot moves it there and replaces whatever Outro's Bass held; (4) deleting scene Fill with all its clips. Also write `render()` that rebuilds a text table of the scenes in order with the name of the clip in each track's slot, and make it re-run by itself after any change to the grid, including Undo and Redo, without you calling it from the handlers. The page also has the running engine as `workspace`: a `Launch` button per scene starts that scene on the engine at the next bar, and a `Preview` button plays the audio clip `loopClipId` (the Loop track's clip) alone and reads `Stop` while it plays.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;\ndeclare const loopClipId: string;\ndeclare const verseId: string;\ndeclare const fillId: string;\ndeclare const chorusId: string;\ndeclare const outroId: string;\ndeclare const drumsId: string;\ndeclare const bassId: string;\ndeclare const loopId: string;\ndeclare const verseDrumsClipId: string;",
+      "expectations": [
+        "Reorders the scenes with the session's own move, keeping clips and ids, as one Undo step.",
+        "Makes an independent (not linked) copy of the clip into the target slot while the source keeps its clip.",
+        "Moves a slot clip to another slot of a track of the same kind, replacing the target clip and keeping the clip's id.",
+        "Removes the scene together with its clips as one Undo step.",
+        "The table is rebuilt reactively from the session's tracked reads (scenes and slot clips), including after Undo and Redo, without manual calls from the handlers.",
+        "Scene launch goes through the engine's live session launcher (read inside the effect that uses it) by scene index; the preview uses the engine's clip audition and the button follows its live state."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "Move scene",
+          "all": ["moveScene"]
+        },
+        {
+          "expectation": 1,
+          "label": "Independent copy to slot",
+          "all": ["copyToSlot"],
+          "none": ["linked\\s*:\\s*true"]
+        },
+        {
+          "expectation": 2,
+          "label": "Move slot clip",
+          "all": ["\\.moveClip\\("],
+          "none": ["clearSlot[\\s\\S]*setMidiClip"]
+        },
+        {
+          "expectation": 3,
+          "label": "Remove scene",
+          "all": ["removeScene"]
+        },
+        {
+          "expectation": 4,
+          "label": "Reactive table",
+          "all": ["sessionFor", "clipAt|midiClipAt|audioClipAt"],
+          "any": ["effect\\(", "subscribe\\("]
+        },
+        {
+          "expectation": 5,
+          "label": "Launch and audition",
+          "all": ["cells\\.session", "launchScene", "auditionAudioClip", "cells\\.auditioningClip"]
+        }
+      ]
+    },
+    {
+      "id": "S4-repair-request",
+      "prompt": "A browser DAW receives one repair request from an assistant script and must apply it all-or-nothing as ONE edit request to the open song `project`; the script read the song at `version`. The request: set the song title to `Demo 3`; the song changes to 3/4 from bar 17 (keep the starting signature); master level -3 dB; rename track `guitarId` to `Lead` and replace its inserts with a single low-pass filter at 8 kHz (Q 0.7, on, fully wet, slot id `lp`); delete the empty track `oldPadId`; put the rack preset `preset` on track `keysId` and set its macro `space` to 0.6; give track `drumsId` a level curve of three points: normal level at beat 0, -12 dB at beat 15 and normal level at beat 16, each step changing linearly; in the plug-in chain of `keysId` move device `chorusDeviceId` to the first place and delete device `oldDeviceId`; in the Session grid move scene `chorusSceneId` to second place, put an independent copy of the clip `padClipId` into the Bass slot of scene `outroSceneId` (track `bassId`), move the clip in Drums' slot of scene `verseSceneId` into Drums' slot of scene `fillSceneId`, and remove scene `unusedSceneId`. Write `repair()` that applies it and returns plain sentences saying what changed (how many tracks changed or were removed, which scenes, which song settings), or why the request was refused or out of date.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const version: import(\"@audiorective/daw\").ProjectVersion;\ndeclare const preset: import(\"@audiorective/daw\").RackPreset;\ndeclare const guitarId: string;\ndeclare const oldPadId: string;\ndeclare const keysId: string;\ndeclare const drumsId: string;\ndeclare const bassId: string;\ndeclare const chorusDeviceId: string;\ndeclare const oldDeviceId: string;\ndeclare const chorusSceneId: string;\ndeclare const outroSceneId: string;\ndeclare const verseSceneId: string;\ndeclare const fillSceneId: string;\ndeclare const unusedSceneId: string;\ndeclare const padClipId: string;",
+      "expectations": [
+        "Sends every change in one request guarded by the song version, so nothing is half-applied.",
+        "Song settings: title, the 3/4 change at beat 64 (bar 17 of 4/4) keeping the start signature, and master level 0.708 (-3 dB).",
+        "Track changes: rename, replace the guitar's inserts with one 8 kHz low-pass filter, delete the empty track, set the rack preset and the macro value 0.6.",
+        "The level curve has three points at beats 0, 15 and 16 with values 1, 0.251 and 1, with linear shapes.",
+        "Plug-in chain: moves the chorus to index 0 and removes the old device.",
+        "Session grid: moves the scene to index 1, copies the pad clip into Outro's Bass slot as an independent copy, moves the Drums slot clip from Verse to Fill, removes the unused scene.",
+        "The reply is built from the result: refused with the operation number, out of date with a hint to re-read, or applied with the lists of changed and removed tracks, scenes and song settings."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "All operations in one request",
+          "all": [
+            "setTitle",
+            "setTimeSignatureChanges",
+            "setMasterVolume",
+            "setTrackName",
+            "setTrackEffects",
+            "removeTrack",
+            "setTrackRackPreset",
+            "setTrackMacroValue",
+            "setVolumeAutomation",
+            "moveDevice",
+            "removeDevice",
+            "moveScene",
+            "copyToSlot",
+            "moveSlotClip",
+            "removeScene"
+          ],
+          "none": ["applyEdits\\([\\s\\S]*applyEdits\\("]
+        },
+        {
+          "expectation": 1,
+          "label": "Beat 64 and -3 dB",
+          "all": ["\\b64\\b|barToBeat"],
+          "any": ["Math\\.pow\\(\\s*10", "\\*\\*", "dbToGain", "0\\.70"]
+        },
+        {
+          "expectation": 3,
+          "label": "Curve points",
+          "all": ["\\b15\\b", "\\b16\\b"],
+          "any": ["Math\\.pow\\(\\s*10", "\\*\\*", "dbToGain", "0\\.25"]
+        },
+        {
+          "expectation": 6,
+          "label": "Receipt fields",
+          "all": ["expectedVersion", "changedTracks"],
+          "any": ["removedTracks", "changedScenes", "removedScenes", "\\.song\\b"]
+        }
+      ]
+    },
+    {
+      "id": "S5-controller-lanes",
+      "prompt": "A browser DAW has an open 4/4 song as `project` and its running engine as `workspace`. The `Keys` MIDI track `keysId` has two clips. The user draws, on the track itself and not inside one clip, a sustain-pedal lane (controller 64) that is down at beat 0, up at beat 2.5, down at beat 4 and up at beat 6.5 (values 127 and 0; beats counted from the song start), and a mod-wheel lane (controller 1) that rises from 0 to 127 over bars 3 and 4. Write the code that sets both lanes as one Undo step, reads them back to draw them, clears the sustain lane later as a second Undo step, and makes the same change as one request in the assistant's edit format (guarded by `version`). Then the user exports the song as a Standard MIDI File and expects the controller moves in the right track and channel. Say what happens to the lane when the user moves or deletes a clip on that track.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;\ndeclare const keysId: string;\ndeclare const version: import(\"@audiorective/daw\").ProjectVersion;",
+      "expectations": [
+        "Sets the sustain-pedal lane (controller 64: 127 at beat 0, 0 at beat 2.5, 127 at beat 4, 0 at beat 6.5) and the mod-wheel lane (controller 1 rising 0 to 127 over bars 3 and 4) on the track, not inside a clip, as one Undo step.",
+        "Reads the lanes back (controller number, channel, points in beats) for display.",
+        "Clearing the sustain lane is a second, separate Undo step and leaves the mod-wheel lane.",
+        "The same change as one request in the assistant edit format, guarded by the song version, with every point's position in beats or seconds.",
+        "The exported Standard MIDI File carries the lane's controller messages in the Keys track on the right channel, and its meaning does not change when clips move or are deleted."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "Two lanes in one step",
+          "all": ["setControllerLane", "\\.edit\\(", "\\b64\\b", "\\b127\\b"],
+          "any": ["\\b2\\.5\\b"]
+        },
+        {
+          "expectation": 0,
+          "label": "Mod wheel over bars 3 and 4",
+          "all": ["\\b8\\b", "\\b16\\b"],
+          "any": ["controller\\s*:\\s*1\\b"]
+        },
+        {
+          "expectation": 1,
+          "label": "Reads lanes from the track",
+          "all": ["controllerLanes"]
+        },
+        {
+          "expectation": 2,
+          "label": "Clears with an empty point list",
+          "all": ["points\\s*:\\s*\\[\\s*\\]"]
+        },
+        {
+          "expectation": 3,
+          "label": "Assistant request guarded by version",
+          "all": ["applyEdits", "expectedVersion", "\"?setControllerLane\"?", "atBeat"]
+        },
+        {
+          "expectation": 4,
+          "label": "Export",
+          "all": ["exportMidiFile"]
+        }
+      ]
+    }
+  ]
+}

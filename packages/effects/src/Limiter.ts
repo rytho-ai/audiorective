@@ -1,16 +1,19 @@
-import type { Cell, SchedulableParam } from "@audiorective/core";
+import type { ReadonlyCell, SchedulableParam } from "@audiorective/core";
 import { DynamicsCore } from "./dynamics/DynamicsCore";
 import { Effect, type EffectOptions } from "./Effect";
 
 export interface LimiterOptions extends EffectOptions {
+  /** Ceiling, dBFS. Default -1. */
   threshold?: number;
+  /** Seconds to let go of the reduction. Default 0.05. */
   release?: number;
-  lookahead?: number;
+  /** Peak-detection window, seconds; the effect declares it as latency. Default 0.005. */
+  lookAhead?: number;
 }
 
-/** Brickwall: infinite ratio, hard knee, windowed-peak detection over `lookahead`. */
-export class Limiter extends Effect<{ threshold: SchedulableParam; release: SchedulableParam }, { reduction: Cell<number>; isReady: Cell<boolean> }> {
-  readonly ready: Promise<void>;
+/** Brickwall: infinite ratio, hard knee, windowed-peak detection over `lookAhead`. The worklet loads asynchronously; only the `1 − wet` dry share passes until ready (`wet: 1` is silent). */
+export class Limiter extends Effect<{ threshold: SchedulableParam; release: SchedulableParam }, { reduction: ReadonlyCell<number> }> {
+  static override readonly type: string = "Limiter";
   private readonly core: DynamicsCore;
 
   constructor(ctx: BaseAudioContext, opts: LimiterOptions = {}) {
@@ -21,20 +24,20 @@ export class Limiter extends Effect<{ threshold: SchedulableParam; release: Sche
       attack: 0.001,
       release: opts.release ?? 0.05,
       makeup: 0,
-      lookahead: opts.lookahead ?? 0.005,
+      lookahead: opts.lookAhead ?? 0.005,
     });
     super(
       ctx,
-      { input: core, output: core },
-      () => ({ params: { threshold: core.params.threshold, release: core.params.release }, cells: { ...core.cells } }),
+      { input: core, output: core, loading: true },
+      () => ({ params: { threshold: core.params.threshold, release: core.params.release }, cells: { reduction: core.cells.reduction } }),
       opts,
     );
-    this.ready = core.ready;
+    this.track(core.ready);
     this.core = core;
   }
 
-  override destroy(): void {
-    this.core.destroy();
-    super.destroy();
+  override dispose(): void {
+    this.core.dispose();
+    super.dispose();
   }
 }

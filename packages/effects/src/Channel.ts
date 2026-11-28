@@ -1,42 +1,152 @@
-import { AudioProcessor, type Param, type SchedulableParam, SchedulableParam as SchedulableParamClass } from "@audiorective/core";
+import { AudioProcessor, cell, readonlyCell, type Param, type ReadonlyCell, type SchedulableParam } from "@audiorective/core";
+import { fadeTo, SMOOTHING } from "./internal/smoothing";
 import type { SendBus } from "./SendBus";
 
 export interface ChannelOptions {
+  /** Initial linear level, nonnegative with 1 as unity; defaults to 1. */
   gain?: number;
+  /** Initial stereo position, -1 left to 1 right; defaults to 0. */
   pan?: number;
-  mute?: boolean;
+  /** Silence the channel and its sends without changing gain. Default false. */
+  muted?: boolean;
   /** Output channel count; mono input is upmixed. Default 2. */
   channelCount?: number;
+  /**
+   * How the input resolves its channel count. `"explicit"` (default) forces `channelCount` channels, so a mono source is
+   * upmixed before the panner. `"max"` follows the connected sources, so a mono source reaches the panner as mono and
+   * gets the panner's mono equal-power law (about -3 dB per side at centre).
+   */
+  channelCountMode?: "explicit" | "max";
 }
 
-export interface Send {
-  readonly gain: SchedulableParam;
-  dispose(): void;
+/** One send from a Channel into a SendBus receive point; created by `Channel.send`. `params.gain` writes smooth over 10 ms automatically. */
+export class Send extends AudioProcessor<
+  {
+    /** Linear send level; writes smooth over 10 ms automatically, scheduled ramps stay exact. */
+    gain: SchedulableParam;
+    enabled: Param<boolean>;
+  },
+  {}
+> {
+  private readonly node: GainNode;
+  private readonly gate: GainNode;
+
+  constructor(
+    context: BaseAudioContext,
+    gain: number,
+    private readonly release: (send: Send) => void,
+  ) {
+    const node = new GainNode(context, { gain });
+    const gate = new GainNode(context);
+    super(context, ({ param }) => ({
+      params: {
+        // Send level, linear. Writes ramp over 10 ms.
+        gain: param({ default: gain, bind: node.gain, min: 0, smoothing: SMOOTHING }),
+        // Gate for this send alone: `false` silences it without touching `gain`. Default `true`.
+        enabled: param<boolean>({
+          default: true,
+          bind: {
+            set: (on) => {
+              gate.gain.value = on ? 1 : 0;
+            },
+          },
+        }),
+      },
+      cells: {},
+    }));
+    node.connect(gate);
+    this.node = node;
+    this.gate = gate;
+  }
+
+  override get input(): GainNode {
+    return this.node;
+  }
+
+  get output(): GainNode {
+    return this.gate;
+  }
+
+  override dispose(): void {
+    this.release(this);
+    super.dispose();
+    this.node.disconnect();
+    this.gate.disconnect();
+  }
 }
 
-/** Channel strip: gain → pan → mute, with post-mute sends into a SendBus. */
-export class Channel extends AudioProcessor<{ gain: SchedulableParam; pan: SchedulableParam; mute: Param<boolean> }, {}> {
+/** The channel's post-mute point as a processor, so sends join the latency graph (its input is the channel input, its output the `tap`). */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+class ChannelTap extends AudioProcessor<{}, {}> {
+  constructor(
+    context: BaseAudioContext,
+    private readonly source: GainNode,
+    private readonly tapNode: GainNode,
+  ) {
+    super(context, () => ({ params: {}, cells: {}, latency: 0 }));
+  }
+
+  override get input(): GainNode {
+    return this.source;
+  }
+
+  get output(): GainNode {
+    return this.tapNode;
+  }
+}
+
+/**
+ * Channel strip: gain → pan → mute → output gate, with post-mute sends into a SendBus.
+ * Sends tap the post-mute node (`tap`), so `outputEnabled` gates only the main `output`.
+ * `params.gain` and `params.pan` writes smooth over 10 ms automatically; scheduled ramps stay exact.
+ * `cells.level` is the post-fader peak in dBFS (-Infinity when silent), refreshed every animation frame.
+ */
+export class Channel extends AudioProcessor<
+  {
+    /** Linear gain, default 1; writes smooth over 10 ms automatically. */
+    gain: SchedulableParam;
+    /** Stereo pan -1..1, default 0; writes smooth over 10 ms automatically. */
+    pan: SchedulableParam;
+    /** Silence the channel and its sends without changing gain. */
+    muted: Param<boolean>;
+    /** `false` silences the main `output` (6 ms fade) while sends keep receiving the post-mute signal. Default `true`. */
+    outputEnabled: Param<boolean>;
+  },
+  { level: ReadonlyCell<number> }
+> {
   private readonly _input: GainNode;
   private readonly _output: GainNode;
-  private readonly sends = new Set<{ node: GainNode; param: SchedulableParam }>();
+  private readonly _tap: GainNode;
+  private readonly tapProcessor: ChannelTap;
+  private readonly sends = new Set<Send>();
+  private readonly stopMeter: () => void;
 
   constructor(ctx: BaseAudioContext, opts: ChannelOptions = {}) {
-    const input = new GainNode(ctx, { channelCount: opts.channelCount ?? 2, channelCountMode: "explicit" });
+    const input = new GainNode(ctx, { channelCount: opts.channelCount ?? 2, channelCountMode: opts.channelCountMode ?? "explicit" });
     const gain = new GainNode(ctx, { gain: opts.gain ?? 1 });
     const pan = new StereoPannerNode(ctx, { pan: opts.pan ?? 0 });
-    const mute = new GainNode(ctx, { gain: opts.mute ? 0 : 1 });
+    const mute = new GainNode(ctx, { gain: opts.muted ? 0 : 1 });
     const output = new GainNode(ctx);
+    const level = cell(-Infinity);
 
     super(ctx, ({ param }) => ({
-      cells: {},
+      cells: { level: readonlyCell(level) },
       params: {
-        gain: param({ default: opts.gain ?? 1, bind: gain.gain, min: 0 }),
-        pan: param({ default: opts.pan ?? 0, bind: pan.pan, min: -1, max: 1 }),
-        mute: param<boolean>({
-          default: opts.mute ?? false,
+        gain: param({ default: opts.gain ?? 1, bind: gain.gain, min: 0, smoothing: SMOOTHING }),
+        pan: param({ default: opts.pan ?? 0, bind: pan.pan, min: -1, max: 1, smoothing: SMOOTHING }),
+        muted: param<boolean>({
+          default: opts.muted ?? false,
           bind: {
             set: (m) => {
-              mute.gain.value = m ? 0 : 1;
+              fadeTo(ctx, mute.gain, m ? 0 : 1, 0.006);
+            },
+          },
+        }),
+        outputEnabled: param<boolean>({
+          default: true,
+          bind: {
+            set: (enabled) => {
+              fadeTo(ctx, output.gain, enabled ? 1 : 0, 0.006);
             },
           },
         }),
@@ -45,51 +155,74 @@ export class Channel extends AudioProcessor<{ gain: SchedulableParam; pan: Sched
 
     this._input = input;
     this._output = output;
+    this._tap = mute;
+    this.tapProcessor = new ChannelTap(ctx, input, mute);
     this.defineGraph(() => [
       [input, gain],
       [gain, pan],
       [pan, mute],
       [mute, output],
     ]);
+    this.stopMeter = startMeter(ctx, mute, level);
   }
 
   override get input(): GainNode {
     return this._input;
   }
 
+  /** Main output, behind the `outputEnabled` gate. */
   get output(): GainNode {
     return this._output;
   }
 
-  send(bus: SendBus, name: string, gain = 1): Send {
-    const node = new GainNode(this.context, { gain });
-    this.output.connect(node);
-    node.connect(bus.receive(name));
-    const param = new SchedulableParamClass({ default: gain, audioContext: this.context, audioParam: node.gain, min: 0 });
-    const entry = { node, param };
-    this.sends.add(entry);
-    return {
-      gain: param,
-      dispose: () => {
-        if (!this.sends.delete(entry)) return;
-        param.destroy();
-        this.output.disconnect(node);
-        node.disconnect();
-      },
-    };
+  /** Post-pan, post-mute node ahead of the output gate: where sends tap and a post-fader meter reads. */
+  get tap(): GainNode {
+    return this._tap;
   }
 
-  override destroy(): void {
-    for (const { node, param } of this.sends) {
-      param.destroy();
-      try {
-        this.output.disconnect(node);
-      } catch {
-        // node may already be disconnected
-      }
-      node.disconnect();
-    }
-    this.sends.clear();
-    super.destroy();
+  /** Sends the post-mute signal into the bus at `gain` (linear). Use processor `connect()` for the upstream and return routes too: the send joins that context-wide latency graph, not a separate `defineGraph` solve. */
+  send(bus: SendBus, name: string, gain = 1): Send {
+    const send = new Send(this.context, gain, (gone) => this.sends.delete(gone));
+    this.tapProcessor.connect(send);
+    send.connect(bus.receive(name));
+    this.sends.add(send);
+    return send;
   }
+
+  override dispose(): void {
+    this.stopMeter();
+    for (const send of [...this.sends]) send.dispose();
+    this.tapProcessor.dispose();
+    super.dispose();
+  }
+}
+
+/** Peak of both channels over the analyser window, refreshed every animation frame. Returns the stop function. */
+function startMeter(ctx: BaseAudioContext, source: AudioNode, level: { value: number }): () => void {
+  if (typeof requestAnimationFrame !== "function") return () => {};
+  const splitter = new ChannelSplitterNode(ctx, { numberOfOutputs: 2 });
+  const analysers = [0, 1].map(() => new AnalyserNode(ctx, { fftSize: 2048, smoothingTimeConstant: 0 }));
+  source.connect(splitter);
+  analysers.forEach((analyser, i) => splitter.connect(analyser, i));
+  const data = new Float32Array(analysers[0]!.fftSize);
+  let frame = 0;
+  let stopped = false;
+  const tick = () => {
+    let peak = 0;
+    for (const analyser of analysers) {
+      analyser.getFloatTimeDomainData(data);
+      for (let i = 0; i < data.length; i++) peak = Math.max(peak, Math.abs(data[i]!));
+    }
+    level.value = peak > 0 ? 20 * Math.log10(peak) : -Infinity;
+    if (!stopped) frame = requestAnimationFrame(tick);
+  };
+  frame = requestAnimationFrame(tick);
+  return () => {
+    if (stopped) return;
+    stopped = true;
+    cancelAnimationFrame(frame);
+    source.disconnect(splitter);
+    splitter.disconnect();
+    for (const analyser of analysers) analyser.disconnect();
+  };
 }

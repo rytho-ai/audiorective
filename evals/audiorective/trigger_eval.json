@@ -1,6 +1,38 @@
 [
   {
+    "query": "Our browser sequencer needs a WebCLAP synth, editable notes, and a DAWproject save that restores the synth patch after reopening. We already use audiorective for audio.",
+    "should_trigger": true
+  },
+  {
+    "query": "I'm porting a JUCE plug-in to WebCLAP in C++ and need help with the CLAP extension ABI; we don't use Audiorective.",
+    "should_trigger": false
+  },
+  {
+    "query": "Build a browser MIDI file inspector with a piano roll, beat snap and two views sharing selected notes/time. We already own the AudioContext and synth.",
+    "should_trigger": true
+  },
+  {
+    "query": "Explain the MIDI note number formula and the frequency of A4. No app, library integration, audio playback or visualization code.",
+    "should_trigger": false
+  },
+  {
+    "query": "I need a browser waveform editor in vanilla TypeScript: load a local audio file, drag a time range, and loop audition that selection. I already have an AudioContext and an effects chain.",
+    "should_trigger": true
+  },
+  {
+    "query": "Build a static SVG illustration of a sine wave for our logo. No audio playback, editing, or Web Audio code.",
+    "should_trigger": false
+  },
+  {
     "query": "build me a 16-step drum machine in react with a bpm slider, swing, and per-step velocity. the kit is 4 wav files in public/kit/",
+    "should_trigger": true
+  },
+  {
+    "query": "Build a browser voice track: record the microphone while a metronome plays, then line the take up with the song's audio clock. The UI is vanilla TypeScript.",
+    "should_trigger": true
+  },
+  {
+    "query": "Record a MIDI keyboard performance against our browser metronome, preserve the sustain events, and show the captured notes in a piano roll. We have an AudioContext and synth already.",
     "should_trigger": true
   },
   {
@@ -11,12 +43,18 @@
     "query": "our project already uses @audiorective/core — can you add a filter sweep that ramps cutoff from 200hz to 12k over 2 bars when the user hits the 'drop' button",
     "should_trigger": true
   },
-  { "query": "spectrum visualizer in pixi.js that reacts to a streamed mp3, bars should glow on the kick", "should_trigger": true },
+  {
+    "query": "spectrum visualizer in pixi.js that reacts to a streamed mp3, bars should glow on the kick",
+    "should_trigger": true
+  },
   {
     "query": "we have a three.js scene with 6 drones flying around, each should emit its own looping stem with proper 3D panning relative to the camera",
     "should_trigger": true
   },
-  { "query": "getting 'EngineEnvironmentError: createEngine() is client-only' when I run next build, worked fine in dev", "should_trigger": true },
+  {
+    "query": "getting 'EngineEnvironmentError: createEngine() is client-only' when I run next build, worked fine in dev",
+    "should_trigger": true
+  },
   {
     "query": "replace tone.js in our looper — we only use Tone.Transport, Tone.Player and a PingPongDelay and the bundle is huge",
     "should_trigger": true
@@ -33,17 +71,92 @@
     "query": "how do I export 4 bars of my sequencer's output as a WAV file offline, with the compressor and limiter applied?",
     "should_trigger": true
   },
-  { "query": "generate an mp3 voiceover from this script using a natural female voice", "should_trigger": false },
-  { "query": "transcribe ~/Downloads/standup.m4a and give me action items with timestamps", "should_trigger": false },
-  { "query": "write a python script that batch-normalizes loudness of 200 wav files to -14 LUFS with ffmpeg", "should_trigger": false },
-  { "query": "add a <video> player with custom play/pause controls and a scrubber to our marketing page", "should_trigger": false },
+  {
+    "query": "generate an mp3 voiceover from this script using a natural female voice",
+    "should_trigger": false
+  },
+  {
+    "query": "transcribe ~/Downloads/standup.m4a and give me action items with timestamps",
+    "should_trigger": false
+  },
+  {
+    "query": "write a python script that batch-normalizes loudness of 200 wav files to -14 LUFS with ffmpeg",
+    "should_trigger": false
+  },
+  {
+    "query": "add a <video> player with custom play/pause controls and a scrubber to our marketing page",
+    "should_trigger": false
+  },
   {
     "query": "my react app re-renders too much — the zustand store updates on every mouse move. how do I fix the state management?",
     "should_trigger": false
   },
-  { "query": "build a spotify-style playlist UI with react; fetch tracks from our REST api and show album art", "should_trigger": false },
-  { "query": "implement a VST3 plugin in C++ with JUCE — a simple tremolo with rate and depth", "should_trigger": false },
-  { "query": "the three.js scene drops to 20fps when I add 500 instanced meshes, help me profile it", "should_trigger": false },
-  { "query": "set up whisper.cpp locally to caption my lecture recordings", "should_trigger": false },
-  { "query": "our Next.js page throws 'window is not defined' when importing mapbox-gl on the server", "should_trigger": false }
+  {
+    "query": "build a spotify-style playlist UI with react; fetch tracks from our REST api and show album art",
+    "should_trigger": false
+  },
+  {
+    "query": "implement a VST3 plugin in C++ with JUCE — a simple tremolo with rate and depth",
+    "should_trigger": false
+  },
+  {
+    "query": "the three.js scene drops to 20fps when I add 500 instanced meshes, help me profile it",
+    "should_trigger": false
+  },
+  {
+    "query": "set up whisper.cpp locally to caption my lecture recordings",
+    "should_trigger": false
+  },
+  {
+    "query": "our Next.js page throws 'window is not defined' when importing mapbox-gl on the server",
+    "should_trigger": false
+  },
+  {
+    "query": "We have a browser audio recorder and MIDI keyboard take. Put both on tracks, save the song as DAWproject, then reopen and keep the pedal/release timing intact.",
+    "should_trigger": true
+  },
+  {
+    "query": "Explain the published DAWproject XML schema at a high level. We aren't building an app or using Audiorective.",
+    "should_trigger": false
+  },
+  {
+    "query": "We have a Node script in CI that opens exported .dawproject files, renames tracks and moves clips, then writes them back out. No browser or audio device involved. Is there a library for the project model?",
+    "should_trigger": true
+  },
+  {
+    "query": "I want a session view like Ableton's, a clip grid where I click a scene to launch clips on the next bar, in a plain web page with no DAW project. We use audiorective.",
+    "should_trigger": true
+  },
+  {
+    "query": "write a metronome with tap tempo and an accented first beat in plain TypeScript. don't run anything.",
+    "should_trigger": true
+  },
+  {
+    "query": "I need a looper in vue: record 4 bars from the mic and loop them in time with a click track. the repo is empty so far",
+    "should_trigger": true
+  },
+  {
+    "query": "make a web audio step sequencer, 8 tracks, with a 25ms setInterval lookahead scheduler and swing",
+    "should_trigger": true
+  },
+  {
+    "query": "react synth with a filter cutoff knob and an ADSR, oscillator based, no samples",
+    "should_trigger": true
+  },
+  {
+    "query": "add a click sound effect to my react button using an <audio> element and an mp3 in public/",
+    "should_trigger": false
+  },
+  {
+    "query": "write a python script that generates a 16-step drum pattern and saves it as a MIDI file with mido",
+    "should_trigger": false
+  },
+  {
+    "query": "our Howler.js sound sprite plays the wrong segment on Safari, can you fix the offsets",
+    "should_trigger": false
+  },
+  {
+    "query": "explain what 'sample rate' and 'bit depth' mean for a podcast intro; no code, no web app",
+    "should_trigger": false
+  }
 ]

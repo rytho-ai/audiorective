@@ -1,0 +1,49 @@
+{
+  "name": "@audiorective/pads",
+  "version": "3.0.0-beta.0",
+  "description": "Headless choke-group pad bank",
+  "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/audiorective/audiorective/tree/main/packages/pads#readme",
+  "bugs": {
+    "url": "https://github.com/audiorective/audiorective/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/audiorective/audiorective.git",
+    "directory": "packages/pads"
+  },
+  "author": "Chriest Yu <jcppman@gmail.com>",
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "test": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@audiorective/core": "workspace:^"
+  },
+  "devDependencies": {
+    "@types/node": "^24.9.1",
+    "@vitest/browser": "^4.0.18",
+    "@vitest/browser-playwright": "^4.0.18",
+    "playwright": "^1.58.2",
+    "tsdown": "^0.15.9",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  },
+  "sideEffects": false
+}

@@ -1,9 +1,12 @@
+import type { BeatTiming } from "@audiorective/core";
 import type { CoreTickWindow } from "../types";
 import { assertFiniteOffset, assertPositiveLength, beatsPerBar, cycleGridPoints } from "./Ruler";
-import type { CycleGridPoint, Ruler, TimelineLike } from "./Ruler";
+import type { CycleGridPoint, Ruler } from "./Ruler";
 
 export interface CycleBarRulerOptions {
+  /** Positive meter numerator, counted in denominator note values per bar. */
   numerator: number;
+  /** Positive meter denominator; 4 denotes a quarter note. */
   denominator: number;
   /** Cycle length, in bars. */
   bars: number;
@@ -12,15 +15,20 @@ export interface CycleBarRulerOptions {
 }
 
 export interface CycleBarPoint {
+  /** Zero-based repetition: cycle 0 is the first pass. */
   cycle: number;
+  /** Zero-based bar offset within the cycle. */
   barInCycle: number;
+  /** Quarter-note axis beats since this bar began, regardless of the meter denominator. */
   beatInBar: number;
   /** Position within the cycle, in [0, 1). */
   phase: number;
 }
 
 export interface CycleSpan {
+  /** Inclusive cycle-relative boundary in quarter-note beats. */
   fromCycle: number;
+  /** Exclusive cycle-relative boundary in quarter-note beats. */
   toCycle: number;
   /** Converts a cycle-relative position back to absolute audio-clock time for this pass. */
   toTime(cyclePosition: number): number;
@@ -64,6 +72,7 @@ export class CycleBarRuler implements Ruler<CycleBarWindow, CycleBarPoint> {
     this._from = options.from ?? 0;
   }
 
+  /** Cycle, bar, beat-in-bar and phase (0 up to 1) at absolute `beat`; reads the beat modulo the region length. */
   at(beat: number): CycleBarPoint {
     const rel = beat - this._from;
     const cycle = Math.floor(rel / this._regionLength);
@@ -74,7 +83,8 @@ export class CycleBarRuler implements Ruler<CycleBarWindow, CycleBarPoint> {
     return { cycle, barInCycle, beatInBar, phase };
   }
 
-  read(window: CoreTickWindow, timeline: TimelineLike): CycleBarWindow {
+  /** The window's start reading plus `grid(division)` points and the cycle-relative `spans` of its beat range. */
+  read(window: Pick<CoreTickWindow, "beat">, timeline: BeatTiming): CycleBarWindow {
     const point = this.at(window.beat.start);
     return {
       ...point,
@@ -83,7 +93,7 @@ export class CycleBarRuler implements Ruler<CycleBarWindow, CycleBarPoint> {
     };
   }
 
-  private _spans(startBeat: number, endBeat: number, timeline: TimelineLike): CycleSpan[] {
+  private _spans(startBeat: number, endBeat: number, timeline: BeatTiming): CycleSpan[] {
     const spans: CycleSpan[] = [];
     let cursor = startBeat;
     while (cursor < endBeat) {

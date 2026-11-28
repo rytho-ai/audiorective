@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { useValue } from "@audiorective/react";
-import type { EngineState } from "@audiorective/core";
 import { EngineProvider, engine } from "../audio/engine";
 import { StepGrid } from "./StepGrid";
 import { TransportBar } from "./TransportBar";
@@ -9,7 +8,7 @@ import { LatencyControls } from "./LatencyControls";
 import "./styles.css";
 
 function Hint() {
-  const state = useValue<EngineState>(engine.core.state);
+  const state = useValue<AudioContextState>(engine.core.state);
   if (state === "running") return null;
   return <p className="app__hint">Press Play to enable audio</p>;
 }

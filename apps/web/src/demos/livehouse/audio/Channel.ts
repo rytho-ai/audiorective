@@ -6,7 +6,7 @@ import { azimuthToPan, type Vec3 } from "./spatialMath";
 /** Anything that produces audio: FilePlayer, Sampler/BufferPlayer-backed source, synth, etc. */
 export interface SourceLike {
   readonly output: AudioNode | undefined;
-  destroy?: () => void;
+  dispose?: () => void;
 }
 
 export interface ChannelOptions {
@@ -73,7 +73,7 @@ export class Channel extends AudioProcessor<
     this.analyser.connect(this.spatial.input);
     this.analyser.connect(this._stereo);
 
-    // position cell → headphone stereo pan (cleaned up by super.destroy()).
+    // position cell → headphone stereo pan (cleaned up by super.dispose()).
     this.effect(() => {
       this._stereo.pan.value = azimuthToPan(this.cells.position.value);
     });
@@ -115,11 +115,11 @@ export class Channel extends AudioProcessor<
     g.linearRampToValueAtTime(audible ? 1 : 0, now + MUTE_RAMP_S);
   }
 
-  override destroy(): void {
-    super.destroy();
-    this._source.destroy?.();
-    this.eq.destroy();
-    this.spatial.destroy();
+  override dispose(): void {
+    super.dispose();
+    this._source.dispose?.();
+    this.eq.dispose();
+    this.spatial.dispose();
     this._fader.disconnect();
     this._mute.disconnect();
     this.analyser.disconnect();

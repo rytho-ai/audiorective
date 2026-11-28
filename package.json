@@ -1,13 +1,22 @@
 {
   "name": "audiorective",
-  "version": "2.3.2",
+  "version": "3.0.0-beta.0",
   "description": "The wholestack audio primitives",
   "private": true,
   "packageManager": "pnpm@9.15.3",
   "scripts": {
     "dev": "pnpm -r --parallel run dev",
     "build": "pnpm -r run build",
-    "test": "pnpm -r run test -- --run",
+    "check:layers": "node scripts/check-layers.mjs && node --test scripts/check-layers.test.mjs",
+    "check:errors": "node scripts/check-errors.mjs && node --test scripts/check-errors.test.mjs",
+    "check:exports": "node --test scripts/check-core-exports.test.mjs",
+    "check:declarations": "node scripts/check-declarations.mjs && node --test scripts/check-declarations.test.mjs",
+    "check:jsdoc": "node scripts/check-jsdoc.mjs && node --test scripts/check-jsdoc.test.mjs",
+    "check:single-entry": "node scripts/check-single-entry.mjs && node --test scripts/check-single-entry.test.mjs",
+    "check:vocabulary": "node scripts/check-vocabulary.mjs && node --test scripts/check-vocabulary.test.mjs",
+    "check:doc-examples": "node scripts/check-doc-examples.mjs && node --test scripts/check-doc-examples.test.mjs",
+    "check:doc-links": "node scripts/check-doc-links.mjs && node --test scripts/check-doc-links.test.mjs",
+    "test": "pnpm check:layers && pnpm check:errors && pnpm check:exports && pnpm check:declarations && pnpm check:jsdoc && pnpm check:single-entry && pnpm check:vocabulary && pnpm check:doc-examples && pnpm check:doc-links && pnpm -r run test -- --run",
     "lint": "oxlint --type-aware",
     "lint-fix": "oxlint --type-aware --fix",
     "format": "prettier . --check",
@@ -22,6 +31,7 @@
     "lefthook": "^2.0.2",
     "oxlint": "^1.25.0",
     "oxlint-tsgolint": "^0.4.0",
-    "prettier": "3.6.2"
+    "prettier": "3.6.2",
+    "typescript": "^5.9.3"
   }
 }

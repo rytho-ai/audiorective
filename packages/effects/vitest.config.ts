@@ -1,5 +1,6 @@
 import { defineConfig } from "vitest/config";
-import { playwright } from "@vitest/browser-playwright";
+import { playwright, defineBrowserCommand } from "@vitest/browser-playwright";
+import { readFile } from "node:fs/promises";
 
 export default defineConfig({
   // The Emscripten bundle builds its worklet module from its own script location; pre-bundling breaks that.
@@ -14,8 +15,15 @@ export default defineConfig({
       provider: playwright({
         launchOptions: {
           args: ["--autoplay-policy=no-user-gesture-required"],
+          executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
         },
       }),
+      commands: {
+        timeStretchWasmBytes: defineBrowserCommand(async () => {
+          const path = process.env.AUDIORECTIVE_RUBBERBAND_WASM;
+          return path ? Array.from(await readFile(path)) : null;
+        }),
+      },
       instances: [{ browser: "chromium" }],
     },
   },

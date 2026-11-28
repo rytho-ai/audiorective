@@ -10,6 +10,24 @@ export interface Demo {
 
 export const demos: Demo[] = [
   {
+    slug: "piano-roll",
+    title: "MIDI Piano Roll",
+    blurb: "Inspect and edit MIDI notes in two shared views. Select a range, snap to beats and audition it.",
+    thumb: "/showroom/piano-roll.svg",
+    route: "/showroom/piano-roll",
+    source: "https://github.com/audiorective/audiorective/tree/main/apps/web/src/demos/midi",
+    packages: ["@audiorective/midi", "@audiorective/widgets"],
+  },
+  {
+    slug: "waveform",
+    title: "Waveform Selector",
+    blurb: "Select, resize, and loop an audio range. A framework-independent widget with optional interaction plugins.",
+    thumb: "/showroom/waveform.svg",
+    route: "/showroom/waveform",
+    source: "https://github.com/audiorective/audiorective/blob/main/apps/web/src/pages/showroom/waveform.astro",
+    packages: ["@audiorective/widgets"],
+  },
+  {
     slug: "livehouse",
     title: "Livehouse PA Simulator",
     blurb: "Move sound sources in a 3D venue. Mix the same engine through PlayCanvas, React, and Three.js interfaces.",

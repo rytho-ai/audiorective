@@ -1,7 +1,7 @@
 {
   "name": "@audiorective/effects",
-  "version": "2.3.2",
-  "description": "DSP effects for audiorective — filter, distortion, phaser, frequency shifter, ping-pong delay, convolver, compressor, limiter, pitch shift, channel strip and send bus",
+  "version": "3.0.0-beta.0",
+  "description": "DSP effects for audiorective — filter, distortion, phaser, frequency shifter, ping-pong delay, convolver, compressor, limiter, ducker, pitch shift, effect chain, channel strip and send bus",
   "type": "module",
   "license": "MIT",
   "homepage": "https://github.com/audiorective/audiorective/tree/main/packages/effects#readme",
@@ -13,7 +13,7 @@
     "url": "git+https://github.com/audiorective/audiorective.git",
     "directory": "packages/effects"
   },
-  "author": "Chriest Yu <jcppman@gmai.com>",
+  "author": "Chriest Yu <jcppman@gmail.com>",
   "files": [
     "dist"
   ],
@@ -22,6 +22,8 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": "./dist/index.js",
+    "./time-stretch": "./dist/time-stretch.js",
+    "./equalizer-bands": "./dist/equalizer-bands.js",
     "./package.json": "./package.json"
   },
   "scripts": {
@@ -31,8 +33,15 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@audiorective/core": "workspace:^",
+    "@audiorective/core": "workspace:^"
+  },
+  "peerDependencies": {
     "signalsmith-stretch": "^1.3.2"
+  },
+  "peerDependenciesMeta": {
+    "signalsmith-stretch": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@audiorective/devtools": "workspace:^",
@@ -40,6 +49,7 @@
     "@vitest/browser": "^4.0.18",
     "@vitest/browser-playwright": "^4.0.18",
     "playwright": "^1.58.2",
+    "signalsmith-stretch": "^1.3.2",
     "tsdown": "^0.15.9",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"

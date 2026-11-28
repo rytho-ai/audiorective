@@ -2,262 +2,164 @@
 title: Clock
 ---
 
-Timing and scheduling engine — transport, tempo, look-ahead tick windows, rulers. The temporal pillar of audiorective: `core` answers "what sounds and how," `clock` answers "when." It is not an `AudioProcessor` — it owns no audio nodes and produces no signal.
+`@audiorective/clock` owns one musical transport and its look-ahead scheduling. Attach patterns, recorders, players and automation to it; UI handlers edit those owners and read their state. The clock reads absolute `AudioContext` seconds, while its musical axis uses quarter-note beats.
 
-## The mental model
-
-Web Audio's render quantum asks "fill the next 128 samples." The clock asks "commit the next ~100 ms of musical events." Same inversion of control: consumers never ask "what is now?" — they answer "what falls in this window?" JS timers jitter 10–50 ms (GC, layout, background throttling); Web Audio scheduling is sample-accurate. Schedule ahead against `AudioContext` time and a late JS tick can't move audio that's already committed.
-
-## One time unit: absolute AudioContext time
-
-Everything schedulable takes absolute `AudioContext` time — no parallel time base, no per-API ambiguity. The clock's headline feature is _conversion_: convert a musical position to a time, then schedule.
+For a Play button or a launcher command that should preserve the current transport, call `clock.play()`: it starts when stopped, resumes when paused, and does nothing when already playing. The caller resumes its AudioContext from the user gesture:
 
 ```typescript
-timeline.bpm.setValueAtTime(140, timeline.beatToTime(64));
-sampler.trigger({ when: timeline.beatToTime(nextBarBeat) }); // same unit everywhere
+await context.resume();
+clock.play();
 ```
 
-## Quick start — a metronome
+Use `clock.start(when?, offsetBeats?)` for an explicit fresh start or position jump.
+
+## Start a pattern from a click
+
+This Vanilla browser example plays a built-in tone; it needs no sample download.
 
 ```typescript
-import { Clock, Timeline, LinearBarRuler } from "@audiorective/clock";
+import { Clock } from "@audiorective/clock";
+import { StepSequencer } from "@audiorective/sequencer";
 
-const timeline = new Timeline({ audioContext: ctx, bpm: 120 }).addRuler("bar", new LinearBarRuler({ numerator: 4, denominator: 4 }));
+const context = new AudioContext();
+const seq = new StepSequencer({ click: { pattern: "X...x...x...x...", sound: "C5" } }, { context });
+const clock = new Clock({ context, bpm: 120 });
+const detach = clock.attach(seq);
 
-const clock = new Clock({
-  timeline,
-  onTick(window) {
-    for (const { time, index } of window.rulers.bar.grid(16)) {
-      // `time` is absolute AudioContext time -- exactly what Sampler's `when` wants
-      if (pattern[index % 16]) sampler.trigger({ when: time });
-    }
-  },
+const button = document.createElement("button");
+button.textContent = "Play";
+button.addEventListener("click", async () => {
+  await context.resume();
+  clock.start();
 });
+document.body.append(button);
 
-clock.start();
-```
-
-### Handing a grid point to a core player
-
-The names differ across the package boundary, and that is the single easiest thing to get wrong here: the clock gives you **`time`**, core's players take **`when`**. Both are absolute `AudioContext` seconds, so the value passes straight through — only the key changes.
-
-```typescript
-for (const { time } of window.rulers.bar.grid(16)) {
-  sampler.trigger({ when: time }); // Sampler / Voice
-  bufferPlayer.start(time); // BufferPlayer takes it positionally
+// Call when removing this app: it owns these resources.
+function dispose() {
+  button.remove();
+  detach();
+  seq.dispose();
+  clock.dispose();
+  void context.close();
 }
 ```
 
-Writing `trigger({ time })` is the natural first draft and it does not compile — TypeScript rejects it (`'time' does not exist in type 'VoiceOptions'`). That error is the fix instruction: rename the key, don't reshape the call.
+An existing shared clock is enough: `clock.attach(seq)` returns an idempotent detach function. Close one panel by detaching and disposing its owner; shared context and clock stay with their host. See [Sequencer](./sequencer.md) for lane sounds, step edits and hooks; [Automation](./automation.md) for a repeating curve attached to the same clock.
 
-## The window convention
+## Transport and tempo
 
-**Derive each event from data the window hands you exactly once, and you will never double-schedule.** Grid iteration (`ruler.grid(division)`) does this automatically — it's the primary idiom and covers the large majority of sequencer/arpeggiator/metronome code.
+| Action                                       | Call / reading                                                         |
+| -------------------------------------------- | ---------------------------------------------------------------------- |
+| Start / resume while preserving playback     | `clock.play()`                                                         |
+| Start at an audio instant and musical offset | `clock.start(when?, offsetBeats?)`; defaults now, beat 0               |
+| Half-second future start                     | `clock.start(context.currentTime + 0.5)`                               |
+| Count in from beat −3                        | `clock.start(context.currentTime, -3)`                                 |
+| Pause / continue                             | `clock.pause()` / `clock.resume()`                                     |
+| Stop and reset to beat 0                     | `clock.stop()`                                                         |
+| Seek on the quarter-note axis                | `clock.seek(beat)`                                                     |
+| Current beat / state                         | `clock.beat` (live getter), `clock.state.value` (readonly cell)        |
+| Read / set BPM                               | `clock.bpm.value`                                                      |
+| Linear BPM ramp                              | `clock.bpm.linearRampToValueAtTime(targetBpm, endAudioTime)`           |
+| Slider takes over a ramp                     | `clock.bpm.cancelAndHoldAtTime(context.currentTime)` then set `.value` |
 
-The convention is not enforced by the clock — there's no validation API, no guard wrapper. Scheduling outside the current window is permitted, and is sometimes exactly right: a grace-note or humanize offset computed from an in-window grid point (`gridPointTime + 8ms`) may land past the window edge, and that's still safe, because ownership follows the grid point, which was handed out exactly once. What breaks the contract is deriving an event from something _other_ than data the current window gave you — recomputing a position from scratch, or reusing a beat range across ticks.
-
-If you're an LLM writing an `onTick` callback: always iterate `grid()`/`spans()` rather than hand-computing beat positions, and you get the non-overlap guarantee for free.
-
-## Timeline — the beat↔time mapping
-
-`Timeline` owns the transport anchor and the tempo curve — the only two pieces of stored position state in the package. Beat position is always _derived_, never accumulated, so there's no drift over a long session.
-
-```typescript
-timeline.beatToTime(64); // absolute AudioContext time for beat 64
-timeline.timeToBeat(ctx.currentTime); // current beat position
-```
-
-`timeline.bpm` is a standalone, event-list-backed tempo curve (`TempoParam`) — not an `AudioParam`. It mirrors the Web Audio scheduling method names (`setValueAtTime`, `cancelScheduledValues`, `cancelAndHoldAtTime`) plus a `valueAtTime(t)` query the AudioParam-backed `SchedulableParam` in `@audiorective/core` can never support (Web Audio gives no way to ask an `AudioParam` "what will your value be at time T?"). V1 supports steps only; ramp methods throw (`linearRampToValueAtTime`/`exponentialRampToValueAtTime` are V2).
-
-**What "beat" means:** the axis unit is defined by the tempo curve and nothing else — `bpm` is axis-units per minute, so the unit is literally the B in BPM. It carries no time signature, no bars, no downbeat; it's musically meaningless on its own (like MIDI's quarter-note-normalized ppq ticks) until a ruler interprets it. This is Ableton Link's convention: a float beat plus a bpm, "beat = quarter note" by shared convention.
-
-## Transport
+`clock.state.value` is `"stopped" | "playing" | "paused"`; it is a transport state, not the AudioContext's `"running"` state. Calling `start()` again resets the transport, so a Play or launch handler that preserves playback uses:
 
 ```typescript
-clock.start(); // or clock.start({ atBeat: 16 })
-clock.pause(); // freezes position; committed look-ahead audio keeps sounding (an accepted tail, ~lookAhead seconds)
-clock.resume(); // continues from the frozen position, no re-scheduling
-clock.stop(); // resets to beat 0
-clock.seek(64); // jumps to beat 64
+await context.resume(); // from a user gesture
+clock.play(); // Already playing: leave its position and queued work alone.
 ```
 
-`pause()` and `resume()` are each a no-op unless the transport is in the state
-they act on — only a playing clock pauses, only a paused clock resumes. So
-`start()` is the sole entry into playback, and a stray `pause()`/`resume()`
-pair on a stopped clock leaves it stopped rather than starting it mid-segment.
+The context belongs to its creator. `new Clock({ context, bpm })` creates its own timeline; pass `{ timeline }` to share an existing one. Both expose `clock.timeline` for beat/time conversion. A future start holds the start position until `when`; pauses hold musical position and seconds position. Tempo changes preserve the current beat. For live tempo curves, custom tick input, count-in and start boundaries, see [advanced](./clock-advanced.md#transport).
 
-`clock.state` is a reactive `Param<"stopped" | "playing" | "paused">`.
+## Pattern edits and completion
 
-Every jump (`seek`, `start({ atBeat })`, stop→start) bumps `window.generation` and begins a new continuity segment — windows are non-overlapping only _within_ a segment, so beats may legitimately reappear across a backward seek. Consumers holding derived state (step counters, generator positions) should reset when `generation` changes.
-
-Pausing does not cancel already-committed audio: up to `lookAhead` seconds of scheduled events keep sounding after `pause()`. This is an accepted tail, consistent with how DAWs behave — the clock neither owns nor cancels scheduled events; consumers who genuinely need a hard stop cancel the voices they own.
-
-## Rulers — reading the beat axis
-
-The clock's only native coordinate is the beat axis — a monotonic float driven by the tempo curve. Every other reading (bars, cycles, seconds, polyrhythm, swing) is a **ruler**: a stateless interpreter registered on the Timeline. Rulers hold no position state — every reading is a pure function of the beat position passed in, so pause/seek/loop cost a ruler nothing.
+A sequencer attached with `clock.attach` automatically rebuilds queued events after committed edits. A custom scheduler edits its own cell and calls `clock.refresh()`. It synchronously retracts owned hits at or after the first captured audio boundary, preserves earlier hits and position, then refills in a coalesced microtask. Editing inside a scheduling callback never re-enters scheduling synchronously. Multiple refresh calls in a task share the refill. Before a start or seek has dispatched its first window, refresh retains that requested beat even if audio time has advanced; after dispatch it refills from the captured current boundary.
 
 ```typescript
-timeline.addRuler("bar", new LinearBarRuler({ numerator: 4, denominator: 4 }));
-timeline.rulers.bar.current.value; // reactive point reading, refreshed every tick -- for UI/visuals
+pattern.value = nextPattern; // the existing custom scheduler's cell
+await clock.refresh();
+const audio = await offlineContext.startRendering();
 ```
 
-`current` is the visual-sync surface: a step sequencer lights its current step, a DAW draws its playhead, from the `current` of the ruler that represents the timeline the app is showing.
+The returned Promise completes after the refill, including further refreshes requested synchronously by its callbacks. Start, pause, stop, seek or dispose cancels pending refill and completes its waiters. Stopped, paused or disposed clocks return an already-completed Promise. An attached scheduler's handle also exposes `refresh()`; after detach it completes without touching the host. Realtime edit handlers may ignore completion when nothing depends on it.
 
-Four built-ins, crossed along two axes — **unit** (bar vs. raw time) × **topology** (linear, counts forever / cycle, wraps):
+A scheduler whose `schedule`, `reset` or `transport` hook throws does not stop the clock: only that call is skipped, the other schedulers and the transport keep running, the console logs it and `clock.error` (a `ReadonlyCell<Error | null>`, null until a hook throws) holds the latest one, so the app can show that a window was not scheduled (`clock.error.subscribe(showWarning)`).
 
-|          | Linear                                       | Cycle                                                    |
-| -------- | -------------------------------------------- | -------------------------------------------------------- |
-| **Bar**  | `LinearBarRuler({ numerator, denominator })` | `CycleBarRuler({ numerator, denominator, bars, from? })` |
-| **Time** | `LinearTimeRuler()`                          | `CycleTimeRuler({ seconds, from? })`                     |
+Use `batch` when observers should see one coherent multi-field edit. It is unnecessary solely to coalesce refills. For custom events, pair sound/cue cleanup with `withCancel` and register them with the window's `own`; [advanced ownership](./clock-advanced.md#own-cancellable-events-when-transport-edits-must-cut-queued-sound) explains future cancellation and per-registration `cancelFrom`.
 
-**Looping is a `CycleBarRuler` reading, not transport state.** The beat axis never jumps — a loop region `[from, from + bars*beatsPerBar)` is read modulo its length, so scheduling across the loop boundary needs no special case: `grid()` emits points from both sides of the wrap at their correct axis positions, converting to strictly increasing absolute times. The window reading also exposes `spans` — the window's cycle-relative sub-ranges, each with its own conversion back to absolute time — for note content that isn't grid-snapped (the same cycle position converts to a different absolute time on each pass).
+## Positions and rulers
 
-### Linear grids count; cycle grids fold
+A `Timeline` projects one transport into musical bars, cycles and seconds position. Rulers hold no second position store. Read `timeline.rulers.name.current.value` for tracked UI. A ruler’s `at` projects a chosen beat; time rulers also take the timeline.
 
-The two kinds of ruler yield different grid points, and the difference is the whole reason to pick one over the other:
+| Reading             | Units / base                                                                                                   |
+| ------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `clock.beat`        | Quarter-note beats, negative during count-in                                                                   |
+| `timeline.position` | Seconds position: start/seek seeds from the chosen beat and current BPM, then advances by real playing seconds |
+| `LinearBarRuler`    | `bar` starts at 0; `beatInBar` is quarter-note axis beats                                                      |
+| `CycleBarRuler`     | Zero-based cycle/bar offsets and phase `[0,1)`                                                                 |
+| `LinearTimeRuler`   | Pause-aware seconds position                                                                                   |
+| `CycleTimeRuler`    | Phase through a chosen played-seconds period                                                                   |
+| Linear grid point   | `{ beat, when, index }`; `index` starts at 0                                                                   |
+| Cycle grid point    | `{ beat, when, step, cycle }`; `step` starts at 0 within each cycle                                            |
 
-| Ruler            | Grid point                               | `division` means    |
-| ---------------- | ---------------------------------------- | ------------------- |
-| `LinearBarRuler` | `{ beat, time, index }` — counts forever | steps per **bar**   |
-| `CycleBarRuler`  | `{ beat, time, step, cycle }`            | steps per **cycle** |
+`when` is an absolute audio timestamp: pass it directly to `trigger({ when })` or `start(when)`. A grid's range is half-open: includes the start, excludes the end. A linear grid's division is steps per bar; a cycle grid's is steps per entire cycle. In 6/8 one bar is three quarter-note beats, so twelve eighth steps span two bars, and musician-facing bar 5 is axis beat 12. Add 1 to zero-based bar readings for display.
 
-Pass a pattern's length as `division` on a cycle ruler and `step` indexes that pattern directly — the cycle region holds exactly one pass, so no `% length` is needed at the call site:
+Read [advanced rulers](./clock-advanced.md#rulers--reading-the-beat-axis) for constructing several projections on the same timeline and typing custom scheduling windows. Use a cycle ruler for repeating coordinates while the transport's beat axis keeps advancing.
 
-```typescript
-for (const { time, step } of window.rulers.pattern.grid(steps.length)) {
-  if (steps[step]) sampler.trigger({ when: time });
-}
-```
+## Offline rendering and custom scheduling
 
-`cycle` is per grid point, not per window: a window can straddle the wrap, so points within one callback may belong to different passes. The global count is still recoverable as `cycle * division + step`.
+- Clock-driven graph or scripted edits during a print: [renderTimeline](./clock-advanced.md#rendering-offline--rendertimeline) supplies the render's tick input. Wait for edited look-ahead with `await clock.refresh()` before starting an offline render yourself.
+- Several attached components or one removable panel: [scheduler lifecycle](./clock-advanced.md#attach-several-schedulers).
+- Custom pattern rules, cancellation and paired cues: [window ownership](./clock-advanced.md#own-cancellable-events-when-transport-edits-must-cut-queued-sound).
+- Source-second loops: [RangeLoop](./clock-advanced.md#repeat-a-source-second-range).
+- Controlled time and native audio tests: [deterministic tests](./clock-advanced.md#testing-scheduling-deterministically).
 
-The fold uses floored division rather than `%`. JavaScript's remainder keeps the sign of the dividend, so a hand-written `index % 16` returns `-1` for the step before the origin and reads off the front of a pattern array — reachable, since `seek()` accepts negative beats and `from` may be positive.
+## Common errors
 
-**Swing and per-note micro-timing are deliberately not a ruler concern.** They're a transformation of event placement, which is note-content territory — future work for a track/clip primitive that consumes the clock, not something the clock itself models.
+Invalid constructor option combinations throw `TypeError`; numeric scheduling and meter limits throw `RangeError`. Attaching to a disposed Clock or attaching the same scheduler twice throws `DOMException` with `name === "InvalidStateError"`.
 
-Write a custom ruler for anything else (e.g. polyrhythm — one scheduling loop, a different musical grid) by implementing `Ruler<TWindow, TPoint>`:
+| Message                                                                                                                                                                | Cause                                                                                                                                                 | Fix                                                                                                                          |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `Clock owned event time must be finite, non-negative seconds.`                                                                                                         | `window.own(event, when)` received an invalid audio time; the event is cancelled before the error is thrown.                                          | Pass the same absolute `AudioContext` time used to schedule that event.                                                      |
+| `RangeLoop needs increasing finite source seconds and a non-negative audio start.` / `RangeLoop window needs finite audio seconds.`                                    | The time range or window contains an invalid bound.                                                                                                   | Use finite seconds and place the source end after its start.                                                                 |
+| `TempoParam ramp end time must be finite, got …`                                                                                                                       | `linearRampToValueAtTime` or `exponentialRampToValueAtTime` received NaN or an infinite end time.                                                     | Pass the absolute `AudioContext` time at which the ramp reaches its value.                                                   |
+| `Clock takes either timeline or context, not both.` / `Clock needs a timeline or a context.` / `Clock bpm only applies with context; set it on the timeline you pass.` | The options named both a Timeline and a context, neither, or a `bpm` next to a `timeline`.                                                            | Pass `{ context, bpm? }` for a Clock-made Timeline, or `{ timeline }` and set the tempo on that Timeline.                    |
+| `Clock is disposed.` / `Clock already has this scheduler attached.`                                                                                                    | `attach` was called on a disposed clock, or with a scheduler that is already attached.                                                                | Create a new Clock, or detach the scheduler first.                                                                           |
+| `Clock scheduler failed.`                                                                                                                                              | `clock.error` holds it when a scheduler hook threw a value that is not an `Error`; the thrown value is its `cause`. Nothing was thrown to the caller. | Throw `Error` objects from scheduler hooks, and fix the hook named by the console log.                                       |
+| `Clock meter must be [numerator, denominator] positive integers, got [n, d].`                                                                                          | `ClockOptions.meter` held a non-integer or a value below 1.                                                                                           | Pass whole numbers, for example `[4, 4]` or `[6, 8]`.                                                                        |
+| `Clock start time must be finite seconds, got …` / `Clock start offset must be finite beats, got …`                                                                    | `start(when, offsetBeats)` or `start({ atBeat })` received NaN or an infinite number.                                                                 | Pass a finite audio time and a finite beat.                                                                                  |
+| `TempoParam start time must be finite, got …` / `TempoParam time constant must be finite and >= 0, got …`                                                              | `setTargetAtTime` or `setValueCurveAtTime` received a non-finite start, or a negative or non-finite time constant.                                    | Pass an absolute `AudioContext` time and a time constant of 0 or more.                                                       |
+| `TempoParam value curve needs at least 2 values.` / `TempoParam value curve duration must be finite and > 0, got …`                                                    | `setValueCurveAtTime` got fewer than two values, or a zero, negative or non-finite duration.                                                          | Pass two or more bpm values and a duration above 0 seconds.                                                                  |
+| `RangeLoop period is below audio time precision.`                                                                                                                      | Consecutive repeat boundaries collapse at the current audio time.                                                                                     | Use a longer source range.                                                                                                   |
+| `bpm must be a finite number > 0, got …`                                                                                                                               | A tempo point or the `bpm` value is zero, negative or not finite.                                                                                     | Pass a finite bpm above 0.                                                                                                   |
+| `renderTimeline: tickInterval must be positive, got …`                                                                                                                 | `options.tickInterval` is zero, negative or NaN.                                                                                                      | Omit it for the default, or pass seconds above 0 (and below the clock look-ahead).                                           |
+| `<option> must be a finite number > 0, got …`                                                                                                                          | A ruler option (`seconds`, `bars`, `numerator`, `denominator`) is zero, negative or not finite.                                                       | Pass a finite length above 0; the ruler rejects it at construction because a zero-length cycle would hang the tick callback. |
+| `<option> must be a finite number, got …`                                                                                                                              | A ruler `from` offset is NaN or infinite.                                                                                                             | Pass a finite offset, or omit `from`.                                                                                        |
 
-```typescript
-interface Ruler<TWindow, TPoint> {
-  read(window: CoreTickWindow, timeline: TimelineLike): TWindow; // window-scoped; grid()/spans close over its bounds
-  at(beat: number, timeline: TimelineLike): TPoint; // point reading, feeds `current`
-}
-```
+## Reference links
 
-## Miss detection
-
-If the clock fires late and audio time has moved past the previous window's end, those beats are gone — Web Audio cannot schedule into the past. The clock reports the gap via `onMiss` and continues; it does not try to recover. Gone is gone.
-
-```typescript
-new Clock({
-  timeline,
-  onTick /* ... */,
-  onMiss(gap) {
-    console.warn(`missed ${gap.gapDuration}s`, gap);
-  },
-});
-```
-
-Remedy: raise `lookAhead`.
-
-A freshly-started or freshly-seeked segment's very first tick is exempt from this check — there's no prior emitted window in the new segment to have fallen behind, so comparing against one would be a false positive on every single transport start.
-
-## Live pattern editing
-
-Toggling a step whose window has already been committed takes effect on the _next_ pass, not immediately — an inherent ~`lookAhead` latency. This is an accepted property of look-ahead scheduling, not a bug to work around.
-
-## Tick sources
-
-`Clock` defaults to `WorkerTickSource` (a Web-Worker timer, so ticks continue in background tabs). `IntervalTickSource` (setInterval fallback) and `ManualTickSource` (deterministic, hand-driven ticks — how this package's own tests work without a real `AudioContext`) are also exported.
-
-## Rendering offline — `renderTimeline`
-
-`renderOffline` (from `@audiorective/core`) builds an `OfflineAudioContext`, runs your setup, and renders. That is enough when everything is scheduled up front at absolute times, but not for a `Clock`: an offline context's `currentTime` never moves before rendering starts and then races through the whole render in milliseconds, so a timer-driven tick source emits one `lookAhead` window and starves.
-
-`renderTimeline` is `renderOffline` for a clock-driven graph. It hands `setup` a tick source to build the `Clock` on, fires the first tick at time 0 once `setup` returns, then suspends the render every `tickInterval` (default 25 ms, the clock's own default), ticks, and resumes. The clock reads the context's real `currentTime` throughout, so nothing else changes — same `Timeline`, same rulers, same `onTick`.
-
-```typescript
-import { Sampler, loadAudioBuffer } from "@audiorective/core";
-import { Clock, Timeline, CycleBarRuler, renderTimeline } from "@audiorective/clock";
-
-const wav = await renderTimeline({ seconds: 8, channels: 2, sampleRate: 44100 }, async (ctx, tickSource) => {
-  const kick = new Sampler(ctx, { buffer: await loadAudioBuffer(ctx, "/kick.wav") });
-  kick.output.connect(ctx.destination);
-
-  const timeline = new Timeline({ audioContext: ctx, bpm: 120 }).addRuler("pattern", new CycleBarRuler({ numerator: 4, denominator: 4, bars: 1 }));
-  const clock = new Clock({
-    timeline,
-    tickSource, // the one injection -- everything else is the live code
-    onTick(window) {
-      for (const { time, step } of window.rulers.pattern.grid(16)) if (pattern[step]) kick.trigger({ when: time });
-    },
-  });
-  clock.start(); // inside setup: the first window is emitted as soon as setup returns
-});
-```
-
-Two rules carry over from live playback. Keep `tickInterval` below the clock's `lookAhead`, or the clock reports misses offline exactly as it would live. And one tick source drives one clock — the one-clock rule below. One rule is offline-only: a render can pause only on a 128-frame render-quantum boundary, so ticks are never closer than one quantum (about 2.9 ms at 44.1 kHz), and a smaller `tickInterval` ticks once per quantum.
-
-A type that owns its `Clock` needs to accept `tickSource` to be renderable this way — `apps/web/src/demos/sequencer`'s `DrumMachine` does, and its tests render the whole machine through its limiter graph with `renderTimeline`. Unlike a fake `currentTime`, that is a real seam and not a test-only option: it is how the same class runs live and exports offline.
-
-## Testing scheduling deterministically
-
-The repo's rule is that audio logic runs in a unit test with no DOM. For time, that needs **two** injections, and they are separate parameters on purpose:
-
-- `tickSource: new ManualTickSource()` — ticks fire only when the test calls `tick()`.
-- `audioContext: { currentTime }` — a plain object the test advances by hand. `Timeline` only ever reads `currentTime`, so it accepts any object with that property.
-
-```typescript
-const fakeClock = { currentTime: 0 };
-const tickSource = new ManualTickSource();
-const timeline = new Timeline({ audioContext: fakeClock, bpm: 120 }).addRuler("bar", new LinearBarRuler({ numerator: 4, denominator: 4 }));
-const clock = new Clock({ timeline, tickSource, onTick: (w) => collect(w) });
-
-clock.start();
-for (let t = 0; t <= 1.85; t += 0.05) {
-  fakeClock.currentTime = t; // "now" moves only here
-  tickSource.tick(); // windows are emitted only here
-}
-```
-
-Every assertion is then exact — no tolerances, no polling, no flake.
-
-### When you can't inject — testing a type that owns its Clock
-
-The two parameters above are the right approach when the code under test _takes_ a `Timeline` or a `Clock`. A class that builds its own — as `apps/web/src/demos/sequencer`'s `DrumMachine` does — shouldn't grow constructor options that exist only for tests (`tickSource` earns its place there because offline rendering needs it; a fake `currentTime` would not). Mock the seams instead:
-
-```typescript
-// "now": an own property shadowing the prototype getter on a real context
-let now = 0;
-Object.defineProperty(ctx, "currentTime", { get: () => now, configurable: true });
-
-// ticks: capture the callback, so no Worker ever spawns
-let tick: (() => void) | undefined;
-vi.spyOn(WorkerTickSource.prototype, "start").mockImplementation((onTick) => {
-  tick = onTick;
-});
-vi.spyOn(WorkerTickSource.prototype, "stop").mockImplementation(() => {});
-
-// what was scheduled: read the real call, not a parallel notification
-const kick = vi.spyOn(machine.tracks[0].sampler, "trigger");
-```
-
-**Shadow the instance; don't wrap it in a `Proxy`.** Web Audio constructors brand-check their context argument, so a proxied context fails with `Failed to construct 'GainNode': parameter 1 is not of type 'BaseAudioContext'`. Defining an own `currentTime` on the real context has no such problem — the nodes keep working, only the reading changes.
-
-Two consequences worth planning for. The prototype spies are global state, so `vi.restoreAllMocks()` in `afterEach` is not optional. And with no callback reporting step indices, you recover them from the scheduled `when` (`Math.round(when / stepDuration) % patternLength`) — which assumes beat 0 sits at time 0, so any test that crosses a `stop()`/`play()` restart must assert on the times themselves, since a restart re-anchors beat 0 to "now".
-
-Two things to remember when writing assertions:
-
-- A window at `now` already covers `now + lookAhead`, so a loop ending at `t` has committed events up to `t + 0.1` with the defaults. Pick loop bounds accordingly, or you will "lose" a step you expected or gain one you didn't.
-- Pair the deterministic tests with one real-`WorkerTickSource` smoke test, and poll for the data instead of sleeping a fixed duration.
-
-## Non-goals
-
-- **Multiple clocks.** One scheduling loop, one source of temporal truth — rich windows + rulers cover metronome/secondary-loop/polyrhythm use cases.
-- **Syncing `FilePlayer`.** It runs on the media clock and cannot sample-lock to ctx-clocked sources; the clock governs ctx-clocked sources (`BufferPlayer`, `Sampler`, synths).
-- **Note content and micro-timing** (swing, humanize, per-note offsets, scales) — future track/clip primitive territory.
-- **String time notation.** Plain floats only.
-
-## Design
-
-See [`docs/superpowers/specs/2026-07-04-clock-design.md`](https://github.com/audiorective/audiorective/blob/eaad3df1bf52ec319414b73640d273ae445ecbb2/docs/superpowers/specs/2026-07-04-clock-design.md) for the full design rationale, including the stress-test findings against step-sequencer/drum-machine/DAW/rhythm-game usage.
+<span id="the-mental-model"></span>[the mental model](#_top).
+<span id="one-time-unit-absolute-audiocontext-time"></span>[one time unit absolute audiocontext time](#positions-and-rulers).
+<span id="quick-start--one-object"></span>[quick start — one object](#start-a-pattern-from-a-click).
+<span id="quick-start--a-metronome"></span>[quick start — a metronome](./clock-advanced.md#quick-start--a-metronome).
+<span id="clockoptions"></span>[clockoptions](./clock-advanced.md#clockoptions).
+<span id="handing-a-grid-point-to-a-core-player"></span>[handing a grid point to a core player](./clock-advanced.md#handing-a-grid-point-to-a-core-player).
+<span id="typing-the-window"></span>[typing the window](./clock-advanced.md#typing-the-window).
+<span id="the-window-convention"></span>[the window convention](./clock-advanced.md#the-window-convention).
+<span id="repeat-a-source-second-range"></span>[repeat a source second range](./clock-advanced.md#repeat-a-source-second-range).
+<span id="timeline--the-beattime-mapping"></span>[timeline — the beattime mapping](./clock-advanced.md#timeline--the-beattime-mapping).
+<span id="transport"></span>[transport](./clock-advanced.md#transport).
+<span id="attach-several-schedulers"></span>[attach several schedulers](./clock-advanced.md#attach-several-schedulers).
+<span id="start-at-an-audio-time"></span>[start at an audio time](./clock-advanced.md#start-at-an-audio-time).
+<span id="start-with-a-count-in"></span>[start with a count in](./clock-advanced.md#start-with-a-count-in).
+<span id="own-cancellable-events-when-transport-edits-must-cut-queued-sound"></span>[own cancellable events when transport edits must cut queued sound](./clock-advanced.md#own-cancellable-events-when-transport-edits-must-cut-queued-sound).
+<span id="rulers--reading-the-beat-axis"></span>[rulers — reading the beat axis](./clock-advanced.md#rulers--reading-the-beat-axis).
+<span id="linear-grids-count-cycle-grids-fold"></span>[linear grids count cycle grids fold](./clock-advanced.md#linear-grids-count-cycle-grids-fold).
+<span id="miss-detection"></span>[miss detection](./clock-advanced.md#miss-detection).
+<span id="live-pattern-editing"></span>[live pattern editing](./clock-advanced.md#live-pattern-editing).
+<span id="tick-sources"></span>[tick sources](./clock-advanced.md#tick-sources).
+<span id="rendering-offline--rendertimeline"></span>[rendering offline — rendertimeline](./clock-advanced.md#rendering-offline--rendertimeline).
+<span id="scripted-user-actions-during-an-offline-render"></span>[scripted user actions during an offline render](./clock-advanced.md#scripted-user-actions-during-an-offline-render).
+<span id="testing-scheduling-deterministically"></span>[testing scheduling deterministically](./clock-advanced.md#testing-scheduling-deterministically).
+<span id="when-you-cant-inject--testing-a-type-that-owns-its-clock"></span>[when you cant inject — testing a type that owns its clock](./clock-advanced.md#when-you-cant-inject--testing-a-type-that-owns-its-clock).
+<span id="non-goals"></span>[non goals](./clock-advanced.md#non-goals).

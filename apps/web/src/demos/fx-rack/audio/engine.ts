@@ -14,7 +14,7 @@ export const engine = createEngine((ctx) => {
   };
   const rack = cell(build("granular", null));
   // Held outside the rack: a swap in flight builds its replacement from this, and a load that
-  // lands mid-swap would otherwise be written to the rack about to be destroyed.
+  // lands mid-swap would otherwise be written to the rack about to be disposed.
   let loop: AudioBuffer | null = null;
   const loopLoaded = loadAudioBuffer(ctx, "/stems/drums.mp3")
     .then((buf) => {
@@ -37,19 +37,19 @@ export const engine = createEngine((ctx) => {
       next = build(pitchEngine, loop);
       await next.ready;
     } catch (err) {
-      next?.destroy();
+      next?.dispose();
       if (wasPlaying) old.play();
       throw err;
     }
     if (loop && !next.deck.buffer) next.deck.buffer = loop;
     applySettings(next, { ...settings, engine: pitchEngine });
-    old.destroy();
+    old.dispose();
     rack.value = next;
     if (wasPlaying) next.play();
   };
 
   // Queued so two calls in flight don't both read the same `rack.value` and
-  // race to destroy it; each waits for the previous switch to finish first.
+  // race to dispose it; each waits for the previous switch to finish first.
   // The chain itself never rejects — a failed switch would otherwise wedge
   // every later call — but the promise returned to the caller still does.
   let pending: Promise<void> = Promise.resolve();

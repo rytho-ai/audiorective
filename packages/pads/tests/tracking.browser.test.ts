@@ -1,0 +1,135 @@
+import { afterEach, describe, expect, test } from "vitest";
+import { effect } from "@audiorective/core";
+import { PadBank } from "../src/PadBank";
+import * as padBankSourceModule from "../src/PadBank.ts?raw";
+import { coverageGaps, watch } from "../../../scripts/tracking-coverage.mjs";
+
+const touched = {
+  padBank: new Set<string>(),
+};
+
+const disposers: Array<() => void | Promise<unknown>> = [];
+afterEach(async () => {
+  for (const dispose of disposers.splice(0).reverse()) await dispose();
+});
+
+const tone = (context: BaseAudioContext, frames = 16000) => {
+  const buffer = context.createBuffer(1, frames, 16000);
+  buffer.getChannelData(0).fill(0.25);
+  return buffer;
+};
+
+/**
+ * Reads the value inside an effect, changes it through the owner's public method, and checks that the effect
+ * re-ran and saw a new value. Public readers must never be plain fields.
+ */
+async function expectTracked(read: () => unknown, mutate: () => void | Promise<unknown>) {
+  const seen: unknown[] = [];
+  const stop = effect(() => void seen.push(read()));
+  const first = seen[0];
+  try {
+    await mutate();
+  } finally {
+    stop();
+  }
+  expect(seen.length).toBeGreaterThan(1);
+  expect(Object.is(seen[seen.length - 1], first)).toBe(false);
+}
+
+describe("PadBank readers are tracked", () => {
+  test("cells.activeVoices follows trigger and stopAll", async () => {
+    const context = new AudioContext();
+    const bank = watch(new PadBank(context, [{ id: "kick", sound: tone(context) }]), touched.padBank);
+    disposers.push(
+      () => context.close(),
+      () => bank.dispose(),
+    );
+    await expectTracked(
+      () => bank.cells.activeVoices.value,
+      () => void bank.trigger("kick"),
+    );
+    await expectTracked(
+      () => bank.cells.activeVoices.value,
+      () => bank.stopAll(),
+    );
+  });
+  test("cells.playing follows trigger and stopAll; params.release follows assignment", async () => {
+    const context = new AudioContext();
+    const bank = watch(new PadBank(context, [{ id: "kick", sound: tone(context) }]), touched.padBank);
+    disposers.push(
+      () => context.close(),
+      () => bank.dispose(),
+    );
+    await expectTracked(
+      () => bank.cells.playing.value,
+      () => void bank.trigger("kick"),
+    );
+    await expectTracked(
+      () => bank.cells.playing.value,
+      () => bank.stopAll(),
+    );
+    await expectTracked(
+      () => bank.params.release.value,
+      () => {
+        bank.params.release.value = 0.2;
+      },
+    );
+  });
+  test("a voice's playing cell follows stop", async () => {
+    const context = new AudioContext();
+    const bank = watch(new PadBank(context, [{ id: "kick", sound: tone(context) }]), touched.padBank);
+    disposers.push(
+      () => context.close(),
+      () => bank.dispose(),
+    );
+    const voice = bank.trigger("kick")!;
+    await expectTracked(
+      () => voice.playing.value,
+      () => voice.stop(),
+    );
+  });
+  test("cells.pads follows assign", async () => {
+    const context = new AudioContext();
+    const bank = watch(new PadBank(context, [{ id: "kick", sound: tone(context) }]), touched.padBank);
+    disposers.push(
+      () => context.close(),
+      () => bank.dispose(),
+    );
+    await expectTracked(
+      () => bank.cells.pads.value,
+      () => bank.assign("kick", tone(context, 8000)),
+    );
+  });
+});
+
+describe("command methods called inside an effect do not subscribe it", () => {
+  test("PadBank commands", async () => {
+    const context = new AudioContext();
+    const bank = watch(new PadBank(context, [{ id: "kick", sound: tone(context) }]), touched.padBank);
+    disposers.push(
+      () => context.close(),
+      () => bank.dispose(),
+    );
+    const destination = context.createGain();
+    let runs = 0;
+    const stop = effect(() => {
+      runs++;
+      bank.trigger("kick", { when: context.currentTime + 5 });
+      bank.routePad("kick", destination);
+      bank.assign("kick", tone(context, 8000));
+      bank.stopAll();
+    });
+    bank.assign("kick", tone(context, 4000));
+    bank.routePad("kick", null);
+    stop();
+    expect(runs).toBe(1);
+  });
+});
+
+describe("every public member of a tracked block is covered", () => {
+  test.each([
+    ["PadBank", PadBank, padBankSourceModule.default, touched.padBank, { output: "constant gain node the caller wires; not state" }],
+  ] as const)("%s", (_name, ctor, source, seen, excluded) => {
+    expect(coverageGaps(ctor, source, seen, excluded)).toEqual([]);
+  });
+});

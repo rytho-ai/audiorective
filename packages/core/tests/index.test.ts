@@ -83,10 +83,10 @@ describe("Param", () => {
     expect(external).toBe("hello");
     p.value = "world";
     expect(external).toBe("world");
-    p.destroy();
+    p.dispose();
   });
 
-  test("bind.set effect stops on destroy", () => {
+  test("bind.set effect stops on dispose", () => {
     let callCount = 0;
     const p = new Param({
       default: 0,
@@ -99,14 +99,14 @@ describe("Param", () => {
     expect(callCount).toBe(1);
     p.value = 1;
     expect(callCount).toBe(2);
-    p.destroy();
+    p.dispose();
     p.value = 2;
     expect(callCount).toBe(2);
   });
 
-  test("destroy is safe no-op without bind", () => {
+  test("dispose is safe no-op without bind", () => {
     const p = new Param({ default: 42 });
-    p.destroy();
+    p.dispose();
     p.value = 100;
     expect(p.value).toBe(100);
   });
@@ -131,7 +131,7 @@ describe("SchedulableParam", () => {
     p.value = 0.8;
 
     expect(gain.gain.value).toBeCloseTo(0.8, 5);
-    p.destroy();
+    p.dispose();
   });
 
   test("methods are chainable", () => {
@@ -139,7 +139,7 @@ describe("SchedulableParam", () => {
     const p = new SchedulableParam({ default: 0, audioContext: ctx, audioParam: gain.gain });
     const result = p.setValueAtTime(1, startTime).linearRampToValueAtTime(2, startTime + 1);
     expect(result).toBe(p);
-    p.destroy();
+    p.dispose();
   });
 
   test("setValueAtTime defers value until scheduled time", async () => {
@@ -151,7 +151,7 @@ describe("SchedulableParam", () => {
 
     await waitUntil(startTime + 0.06);
     expect(p.read()).toBe(50);
-    p.destroy();
+    p.dispose();
   });
 
   test("cancelScheduledValues removes future events", async () => {
@@ -164,7 +164,7 @@ describe("SchedulableParam", () => {
     await wait(0.01);
 
     expect(p.value).toBe(1);
-    p.destroy();
+    p.dispose();
   });
 
   test("linearRampToValueAtTime reaches target", async () => {
@@ -174,7 +174,7 @@ describe("SchedulableParam", () => {
 
     await wait(startTime + 0.06);
     expect(p.value).toBeCloseTo(100, 0);
-    p.destroy();
+    p.dispose();
   });
 
   test("exponentialRampToValueAtTime reaches target", async () => {
@@ -185,7 +185,7 @@ describe("SchedulableParam", () => {
 
     await wait(startTime + 0.06);
     expect(p.value).toBeCloseTo(100, 0);
-    p.destroy();
+    p.dispose();
   });
 
   test("cancelAndHoldAtTime freezes value at cancel point", async () => {
@@ -197,7 +197,7 @@ describe("SchedulableParam", () => {
     const frozen = p.read();
     await wait(0.01);
     expect(p.value).toBeCloseTo(frozen, 0);
-    p.destroy();
+    p.dispose();
   });
 
   test("setTargetAtTime approaches target asymptotically", async () => {
@@ -209,7 +209,7 @@ describe("SchedulableParam", () => {
     // after ~5 time constants the value should be very close to target
     await waitUntil(startTime + 0.06);
     expect(p.read()).toBeCloseTo(1, 1);
-    p.destroy();
+    p.dispose();
   });
 
   test("read() returns live AudioParam value during automation", async () => {
@@ -223,7 +223,7 @@ describe("SchedulableParam", () => {
     const midValue = p.read();
     expect(midValue).toBeGreaterThan(0);
     expect(midValue).toBeLessThan(1);
-    p.destroy();
+    p.dispose();
   });
 
   test("syncFromAudio() writes AudioParam value to signal without triggering AudioParam setter", () => {
@@ -235,15 +235,15 @@ describe("SchedulableParam", () => {
     // sync pulls AudioParam value into the signal
     p.syncFromAudio();
     expect(p.value).toBeCloseTo(0.6, 5);
-    p.destroy();
+    p.dispose();
   });
 
-  test("destroy() unregisters from ParamSync", () => {
+  test("dispose() unregisters from ParamSync", () => {
     const sync = ParamSync.for(ctx);
     const sizeBefore = sync.size;
     const p = new SchedulableParam({ default: 0, audioContext: ctx, audioParam: gain.gain });
     expect(sync.size).toBe(sizeBefore + 1);
-    p.destroy();
+    p.dispose();
     expect(sync.size).toBe(sizeBefore);
   });
 });
@@ -261,7 +261,7 @@ describe("ParamSync", () => {
     expect(sync.size).toBe(1);
     expect(sync.running).toBe(true);
 
-    p.destroy();
+    p.dispose();
 
     expect(sync.size).toBe(0);
     expect(sync.running).toBe(false);
@@ -289,8 +289,8 @@ describe("ParamSync", () => {
     expect(p.value).toBeCloseTo(0.3, 5);
     expect(p2.value).toBeCloseTo(0.4, 5);
 
-    p.destroy();
-    p2.destroy();
+    p.dispose();
+    p2.dispose();
     gain2.disconnect();
   });
 
@@ -310,8 +310,8 @@ describe("ParamSync", () => {
     expect(fast.value).toBeCloseTo(0.5, 5);
     expect(slow.value).toBe(0);
 
-    fast.destroy();
-    slow.destroy();
+    fast.dispose();
+    slow.dispose();
     gain2.disconnect();
   });
 
@@ -326,12 +326,12 @@ describe("ParamSync", () => {
     expect(sync.size).toBe(3);
     expect(sync.running).toBe(true);
 
-    p1.destroy();
+    p1.dispose();
     expect(sync.size).toBe(2);
     expect(sync.running).toBe(true);
 
-    p2.destroy();
-    p3.destroy();
+    p2.dispose();
+    p3.dispose();
     expect(sync.size).toBe(0);
     expect(sync.running).toBe(false);
   });
@@ -367,7 +367,7 @@ describe("AudioProcessor", () => {
     expect(Object.isFrozen(p.params)).toBe(true);
   });
 
-  test("effect cleanup on destroy", () => {
+  test("effect cleanup on dispose", () => {
     const p = new TestProcessor();
     let runCount = 0;
     p["effect"](() => {
@@ -377,7 +377,7 @@ describe("AudioProcessor", () => {
     expect(runCount).toBe(1);
     p.params.vol.value = 0.9;
     expect(runCount).toBe(2);
-    p.destroy();
+    p.dispose();
     p.params.vol.value = 0.1;
     expect(runCount).toBe(2);
   });
@@ -404,7 +404,7 @@ describe("AudioProcessor", () => {
     expect(p.params.vol).toBeInstanceOf(SchedulableParam);
     p.params.vol.value = 0.7;
     expect(gain.gain.value).toBeCloseTo(0.7, 5);
-    p.destroy();
+    p.dispose();
   });
 
   test("bind to AudioParam supports scheduling", async () => {
@@ -429,7 +429,7 @@ describe("AudioProcessor", () => {
     p.params.vol.setValueAtTime(0.3, startTime + 0.01);
     await waitUntil(startTime + 0.02);
     expect(p.params.vol.read()).toBeCloseTo(0.3, 5);
-    p.destroy();
+    p.dispose();
   });
 
   test("bind object creates Param with reactive sync", () => {
@@ -461,7 +461,7 @@ describe("AudioProcessor", () => {
     expect(external).toBe("sine");
     p.params.waveform.value = "sawtooth";
     expect(external).toBe("sawtooth");
-    p.destroy();
+    p.dispose();
     p.params.waveform.value = "square";
     expect(external).toBe("sawtooth");
   });
@@ -485,7 +485,7 @@ describe("AudioProcessor", () => {
     expect(p.params.intensity).toBeInstanceOf(SchedulableParam);
     p.params.intensity.value = 880;
     expect(p.params.intensity.value).toBe(880);
-    p.destroy();
+    p.dispose();
   });
 
   test("schedulableParam() scheduling evaluates on ConstantSourceNode", async () => {
@@ -511,7 +511,7 @@ describe("AudioProcessor", () => {
 
     await waitUntil(startTime + 0.06);
     expect(p.params.intensity.read()).toBeCloseTo(880, 0);
-    p.destroy();
+    p.dispose();
   });
 
   test("computed() derives from params reactively", () => {
@@ -534,10 +534,10 @@ describe("AudioProcessor", () => {
     expect(p.beatDuration()).toBe(500);
     p.params.bpm.value = 240;
     expect(p.beatDuration()).toBe(250);
-    p.destroy();
+    p.dispose();
   });
 
-  test("destroy() cleans up effects, SchedulableParams, and ConstantSources", () => {
+  test("dispose() cleans up effects, SchedulableParams, and ConstantSources", () => {
     class FullProcessor extends AudioProcessor<{
       vol: SchedulableParam;
       name: Param<string>;
@@ -569,14 +569,14 @@ describe("AudioProcessor", () => {
     });
     expect(effectRuns).toBe(1);
 
-    p.destroy();
+    p.dispose();
 
     expect(sync.size).toBe(sizeBefore);
     p.params.vol.value = 999;
     expect(effectRuns).toBe(1);
   });
 
-  test("destroy() cleans up bind effects on all params", () => {
+  test("dispose() cleans up bind effects on all params", () => {
     let external = "";
     class BindCleanupProcessor extends AudioProcessor<{ waveform: Param<string> }> {
       constructor() {
@@ -603,7 +603,7 @@ describe("AudioProcessor", () => {
     expect(external).toBe("sine");
     p.params.waveform.value = "sawtooth";
     expect(external).toBe("sawtooth");
-    p.destroy();
+    p.dispose();
     p.params.waveform.value = "triangle";
     expect(external).toBe("sawtooth");
   });
@@ -611,7 +611,7 @@ describe("AudioProcessor", () => {
   test("input defaults to undefined", () => {
     const p = new TestProcessor();
     expect(p.input).toBeUndefined();
-    p.destroy();
+    p.dispose();
   });
 
   test("subclass can override input to expose an entry node", () => {
@@ -640,7 +640,7 @@ describe("AudioProcessor", () => {
     expect(p.input).toBeInstanceOf(GainNode);
     expect(p.output).toBeInstanceOf(GainNode);
     expect(p.input).not.toBe(p.output);
-    p.destroy();
+    p.dispose();
   });
 
   test("cells registry exposes typed cells", () => {
@@ -658,17 +658,17 @@ describe("AudioProcessor", () => {
     const p = new CellProcessor();
     expect(p.cells.steps.value).toEqual([1, 2, 3]);
     expect(Object.isFrozen(p.cells)).toBe(true);
-    p.destroy();
+    p.dispose();
   });
 });
 
 describe("playback primitive exports", () => {
-  test("exposes the three players, Voice, loadAudioBuffer, AudioBufferCache", async () => {
+  test("exposes the three players, playSound, loadAudioBuffer, AudioBufferCache", async () => {
     const mod = await import("../src");
     expect(typeof mod.Sampler).toBe("function");
     expect(typeof mod.BufferPlayer).toBe("function");
     expect(typeof mod.FilePlayer).toBe("function");
-    expect(typeof mod.Voice).toBe("function");
+    expect(typeof mod.playSound).toBe("function");
     expect(typeof mod.loadAudioBuffer).toBe("function");
     expect(typeof mod.AudioBufferCache).toBe("function");
   });

@@ -1,0 +1,185 @@
+{
+  "area": "daw-edit-ops",
+  "description": "API-shape experiment for the JSON edit request of the DAW project: splitting and deleting a clip, mixer levels in dB with a bus made in the same request, tempo then marker order, a new track with a clip and notes and the ids read back from the receipt, Session grid scenes and slots, and reading the receipt for the applied, conflict and rejected outcomes. Expectations describe behaviour, not names.",
+  "tasks": [
+    {
+      "id": "E1-split-delete",
+      "prompt": "A browser DAW has an open 4/4 song as `project`. `padClipId` is the id of a long MIDI clip on the Pad track that starts at bar 1 and runs 16 bars; `version` is the song version the page last read. The user puts the playhead at the start of bar 9 and chooses \"Cut here and delete the rest\". Write the code for that menu item as a JSON edit request that a script could send too: the clip is split at the start of bar 9 and the right half is deleted, as one undoable step, and the request is refused if the song changed since `version` was read. Report what the edit returned.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const padClipId: string;\ndeclare const version: import(\"@audiorective/daw\").ProjectVersion;",
+      "expectations": [
+        "Splits the clip at the start of bar 9 (beat 32 in a 4/4 song), so the left piece keeps the original clip.",
+        "Deletes the right half, the piece the split created, and not the left half or the whole clip.",
+        "The split and the delete are in one request, so they form one Undo step (no second request that reads an id back).",
+        "The request carries the version the page read, so a song that changed since then makes it refuse instead of applying.",
+        "Reports the result of the edit (applied, refused or conflicting) to the user."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "Splits at beat 32",
+          "all": ["splitClip"],
+          "any": ["\\b32\\b", "8\\s*\\*\\s*4", "\\(\\s*9\\s*-\\s*1\\s*\\)\\s*\\*\\s*4", "barToBeat\\(\\s*9\\s*\\)"]
+        },
+        {
+          "expectation": 2,
+          "label": "One request",
+          "all": ["applyEdits"],
+          "none": ["applyEdits\\([\\s\\S]*applyEdits\\("]
+        },
+        {
+          "expectation": 3,
+          "label": "expectedVersion sent",
+          "all": ["expectedVersion"]
+        }
+      ]
+    },
+    {
+      "id": "E2-mixer-bus",
+      "prompt": "A browser DAW has an open song as `project`, with the ids of three of its tracks: `vocalId`, `guitarId` and `drumsId`; `version` is the song version the page last read. The user asks for all of this at once: put the vocal at -6 dB (0 dB is the normal level), pan the guitar 30% to the left, mute the drums, and create a new effect bus called \"Reverb\" that the guitar sends to at -12 dB (the guitar keeps playing dry as well). Write the code that does it as one JSON edit request, so one Undo takes everything back. The bus does not exist yet: it has to be made by the same request that routes the guitar to it.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const vocalId: string;\ndeclare const guitarId: string;\ndeclare const drumsId: string;\ndeclare const version: import(\"@audiorective/daw\").ProjectVersion;",
+      "expectations": [
+        "Sets the vocal level to -6 dB, which is a linear gain of about 0.5 (10^(-6/20) = 0.501), not the number -6 and not an unrelated value.",
+        "Pans the guitar 30% to the left (a pan of -0.3 on a -1 to 1 scale).",
+        "Mutes the drums track.",
+        "Creates the new bus called \"Reverb\" and sends the guitar to it at -12 dB (linear gain about 0.251) while keeping the guitar's main output as it was, referring to the bus that the same request creates.",
+        "Everything is one request and one Undo step, with no second request that reads the new bus's id back.",
+        "Sends the version the page read so a changed song makes the request refuse."
+      ],
+      "checks": [
+        {
+          "expectation": 3,
+          "label": "Bus made and routed in the same request",
+          "all": ["addTrack", "kind\\s*:\\s*[\"']bus[\"']", "fromCopy", "sends"],
+          "none": ["applyEdits\\([\\s\\S]*applyEdits\\("]
+        },
+        {
+          "expectation": 4,
+          "label": "One request",
+          "all": ["applyEdits"],
+          "none": ["applyEdits\\([\\s\\S]*applyEdits\\("]
+        }
+      ]
+    },
+    {
+      "id": "E3-tempo-marker",
+      "prompt": "A browser DAW has an open 4/4 song as `project`: 100 BPM, with one tempo change to 120 BPM at bar 9 that must stay, and two markers, \"Intro\" at the start and \"Chorus\" at bar 9, that must stay too. `version` is the song version the page last read. The user wants the song to slow to 90 BPM at bar 17 and a marker called \"Slow part\" exactly there. Write the code that does both in one JSON edit request, so it is one Undo step. The marker has to land on bar 17 of the new tempo map.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const version: import(\"@audiorective/daw\").ProjectVersion;",
+      "expectations": [
+        "Keeps the existing 120 BPM change at bar 9 (beat 32) and adds 90 BPM at bar 17 (beat 64), keeping the song's start tempo of 100.",
+        "Adds a marker called \"Slow part\" at bar 17 (beat 64) and keeps the \"Intro\" and \"Chorus\" markers where they were.",
+        "The tempo change comes before the marker in the request, so a marker given in beats is converted with the new tempo map.",
+        "Both changes are in one request and one Undo step, sending the version the page read."
+      ],
+      "checks": [
+        {
+          "expectation": 2,
+          "label": "Tempo before markers",
+          "all": ["setTempoChanges[\\s\\S]*setMarkers"]
+        },
+        {
+          "expectation": 3,
+          "label": "One request with expectedVersion",
+          "all": ["applyEdits", "expectedVersion"],
+          "none": ["applyEdits\\([\\s\\S]*applyEdits\\("]
+        },
+        {
+          "expectation": 0,
+          "label": "Beat 64 used",
+          "any": ["\\b64\\b", "16\\s*\\*\\s*4", "\\(\\s*17\\s*-\\s*1\\s*\\)\\s*\\*\\s*4", "barToBeat\\(\\s*17\\s*\\)"]
+        }
+      ]
+    },
+    {
+      "id": "E4-new-track-report",
+      "prompt": "A browser DAW has an open 4/4 song as `project`; `version` is the song version the page last read. The user asks for a new MIDI track called \"Strings\" with a 4-bar clip on it starting at bar 5, holding a C major chord (C4, E4 and G4, each for the whole 4 bars). Write the code that makes the track, the clip and the notes in one JSON edit request (one Undo step) and then returns the ids of the new track, the new clip and the three new notes, read from what the edit returned, so the page can select them.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const version: import(\"@audiorective/daw\").ProjectVersion;",
+      "expectations": [
+        "Creates a MIDI track named \"Strings\" and a 4-bar (16-beat) clip on it starting at bar 5 (beat 16), referring to the track that the same request creates.",
+        "Gives the clip the three notes C4, E4 and G4 (60, 64, 67), each starting at the clip's start and lasting the whole 4 bars (16 beats).",
+        "Track, clip and notes are made in one request and one Undo step; no second request or lookup is needed to find the track or clip.",
+        "Returns the new track id, the new clip id and the three note ids taken from the result of the edit, and does not return anything when the edit was not applied.",
+        "Sends the version the page read."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "Track, clip and chained reference",
+          "all": ["addTrack", "addMidiClip", "fromCopy"]
+        },
+        {
+          "expectation": 2,
+          "label": "One request",
+          "all": ["applyEdits"],
+          "none": ["applyEdits\\([\\s\\S]*applyEdits\\("]
+        },
+        {
+          "expectation": 3,
+          "label": "Ids from the receipt",
+          "all": ["createdTracks", "createdNotes"]
+        }
+      ]
+    },
+    {
+      "id": "E5-session-grid",
+      "prompt": "A browser DAW has an open song as `project` with a Session grid. `drumsId` is a MIDI track, and `verseSceneId` is the id of the existing scene \"Verse\", whose Drums slot holds a one-bar drum clip; `version` is the song version the page last read. Write the code, as one JSON edit request (one Undo step), that: adds a new scene called \"Breakdown\" after Verse, puts a new one-bar MIDI clip in the Breakdown scene's Drums slot with a kick (note 36) on beats 1 and 3, and places a copy of Verse's Drums slot clip on the timeline at bar 5 so that the copy shares its notes with the original: editing the notes of one changes the other.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const drumsId: string;\ndeclare const verseSceneId: string;\ndeclare const version: import(\"@audiorective/daw\").ProjectVersion;",
+      "expectations": [
+        "Adds a scene named \"Breakdown\" directly after the Verse scene.",
+        "Puts a new one-bar (4-beat) MIDI clip with a kick (36) on beats 1 and 3 (starts 0 and 2) in the Breakdown scene's Drums slot, referring to the scene that the same request creates.",
+        "Places a copy of the Verse Drums slot clip on the timeline at bar 5 (beat 16), on the Drums track, linked to the original so the notes are shared.",
+        "Does not move the Verse slot clip out of the grid: the Verse slot still holds its clip afterwards.",
+        "Everything is one request and one Undo step."
+      ],
+      "checks": [
+        {
+          "expectation": 1,
+          "label": "Scene and slot clip chained",
+          "all": ["addScene", "fromCopy"],
+          "any": ["setMidiClip", "copyToSlot"]
+        },
+        {
+          "expectation": 2,
+          "label": "Linked copy to the timeline",
+          "all": ["linked\\s*:\\s*true"],
+          "any": ["copyToArrangement"]
+        },
+        {
+          "expectation": 3,
+          "label": "No move out of the grid",
+          "none": ["moveSlotClip"]
+        },
+        {
+          "expectation": 4,
+          "label": "One request",
+          "all": ["applyEdits"],
+          "none": ["applyEdits\\([\\s\\S]*applyEdits\\("]
+        }
+      ]
+    },
+    {
+      "id": "E6-read-receipt",
+      "prompt": "A browser DAW receives edit requests from an assistant script as a typed object `request` (it carries the song version the script read, a label and a list of operations). Write a function `run(request)` that applies the request to the open song `project` and returns one plain sentence for the person: when the request was applied, say what it did, taken from what the result lists (how many clips, tracks and scenes it created, changed or removed, and which song settings changed: tempo, markers and so on); when the song had changed since the version in the request, say that nothing was changed and the script must read the song again and resend; when one of the operations was refused, say that nothing was changed, which operation it was (counting from 1 as a person would) and why. The function must not throw for these three outcomes.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\n",
+      "expectations": [
+        "Applies the request to the song and handles three outcomes: applied, changed since the version, and refused.",
+        "For the applied outcome, the sentence is built from the result's lists of created, changed and removed items (clips, tracks, scenes, song settings), not a fixed message.",
+        "For the changed-since-the-version outcome, says nothing was changed and the script must re-read and resend.",
+        "For the refused outcome, says nothing was changed and names the operation by its position counting from 1 (the reported index plus one) together with the reason given.",
+        "Does not throw or need try/catch for these outcomes."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "Three statuses handled",
+          "all": ["conflict", "rejected"]
+        },
+        {
+          "expectation": 3,
+          "label": "1-based operation number",
+          "all": ["opIndex"],
+          "any": ["opIndex\\s*\\+\\s*1", "opIndex!?\\s*\\?\\?\\s*-?\\d+\\)?\\s*\\+\\s*1", "\\+\\s*1[\\s\\S]{0,40}opIndex"]
+        }
+      ]
+    }
+  ]
+}

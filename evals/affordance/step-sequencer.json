@@ -1,0 +1,81 @@
+{
+  "area": "step-sequencer",
+  "description": "API-shape experiment for a drum step sequencer. The same six tasks are given with no API (desire mode) or with one variant's type declarations only (guess mode). Expectations are variant-agnostic: they describe behaviour, not names.",
+  "tasks": [
+    {
+      "id": "T1-basic-loop",
+      "prompt": "Build a four-lane drum loop (kick, snare, closed hat, open hat) as a 16-step pattern at 120 BPM that loops forever: kick on steps 1, 5, 9, 13; snare on 5 and 13; closed hat on every odd step; open hat on step 15. Use synthesized or loaded sounds, whichever the API makes easiest. Start playback from a button click (browser autoplay rules apply).",
+      "expectations": [
+        "Creates or resumes the audio context inside the click handler (or calls an API documented as doing so).",
+        "Defines a 16-step pattern with four lanes whose on-steps match the request (1-based steps 1,5,9,13 / 5,13 / odd / 15, translated correctly if the API is 0-based).",
+        "Sets the tempo to 120 BPM.",
+        "Playback loops indefinitely (set explicitly, or by the API's documented default).",
+        "Each lane is connected to a sound source and the result reaches the speakers."
+      ]
+    },
+    {
+      "id": "T2-velocity-swing",
+      "prompt": "Take a 16-step closed-hat lane and give it accented dynamics: full velocity on steps 1, 5, 9, 13 and 40% velocity on all other steps. Then add 30% swing to the hat lane only, so every second sixteenth is pushed late.",
+      "expectations": [
+        "Sets per-step velocity: 1.0 (or the API's maximum) on the four accented steps and 0.4 of maximum on the others.",
+        "Applies swing to the hat lane only, not globally.",
+        "The swing amount corresponds to 30% (0.3 or an equivalent unit).",
+        "Does not implement swing by hand-shifting timestamps if the API offers swing."
+      ]
+    },
+    {
+      "id": "T3-start-at-time",
+      "prompt": "Two things must start in sync: a separately scheduled audio clip that starts at audioContext.currentTime + 0.5, and the step sequencer. Make beat 1 of the sequencer land exactly at that same audio time.",
+      "expectations": [
+        "Computes one target audio time (currentTime + 0.5) and uses it for both the clip and the sequencer.",
+        "Starts the sequencer so that its first step sounds exactly at the target time (not 'now' plus a delay measured in JS timers).",
+        "Uses audio-clock time, not setTimeout/Date/performance.now, for the alignment."
+      ]
+    },
+    {
+      "id": "T4-per-step-cutoff",
+      "prompt": "Each step of a bass-drum lane should also carry a filter cutoff in Hz (range 200–8000, default 1200). When a step plays, a low-pass filter on that lane must be set to that step's cutoff exactly when the hit sounds. Set step 1 to 400 Hz and step 9 to 6000 Hz.",
+      "expectations": [
+        "Declares a per-step numeric value for cutoff with the given range and default (or the API's equivalent declaration).",
+        "Sets step 1 to 400 and step 9 to 6000 (index translated correctly).",
+        "Has a low-pass filter for that lane between its sound and the output.",
+        "Applies the cutoff at the hit's scheduled audio time (e.g. setValueAtTime(value, when)), not immediately when the callback runs."
+      ],
+      "checks": [
+        {
+          "expectation": 1,
+          "label": "step 1 -> 400 and step 9 -> 6000 at the variant's index",
+          "all": ["{call:1}[^;]{0,200}?\\b400(?:\\.0+)?\\b", "{call:9}[^;]{0,200}?\\b(?:6000(?:\\.0+)?|6e3)\\b"]
+        }
+      ]
+    },
+    {
+      "id": "T5-humanize-ms",
+      "prompt": "Add humanization to all lanes: each hit is moved by a random amount of up to ±8 milliseconds, and its velocity varies by up to ±10%. The randomness must be reproducible from a seed, and editing the pattern must not re-randomize hits that are already scheduled.",
+      "expectations": [
+        "Adds a timing offset bounded by ±8 ms (0.008 s) per hit.",
+        "Adds a velocity variation bounded by ±10% and keeps velocity in the valid range.",
+        "Randomness is derived from a seed (a seeded generator or a per-hit stable hash), not Math.random.",
+        "The per-hit randomness is stable for the same hit (e.g. keyed by lane/step/loop), so re-scheduling does not change it.",
+        "Uses the API's extension point for modifying hits if one exists, rather than reimplementing scheduling."
+      ]
+    },
+    {
+      "id": "T6-live-edit-stop",
+      "prompt": "While the sequencer is playing, turn snare step 7 on with velocity 0.8 so it is heard the next time step 7 comes round, without stopping playback. Later, stop playback and release every audio resource the sequencer created, with no sound continuing afterwards.",
+      "expectations": [
+        "Edits the single cell (lane snare, step 7, velocity 0.8; index translated correctly) through the API while playing.",
+        "Does not stop/restart playback to make the edit take effect (or relies on an API that re-queues automatically (explicitly or by its documented default), or calls the API's documented refresh).",
+        "Stops playback so that no further hits sound.",
+        "Releases/disposes the resources the sequencer created (nodes, timers, subscriptions) via the API's teardown."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "snare step 7 -> velocity 0.8 at the variant's index",
+          "all": ["{call:7}[^;]{0,200}?(?:\\b0?\\.8\\b|[\"']x[\"'])"]
+        }
+      ]
+    }
+  ]
+}

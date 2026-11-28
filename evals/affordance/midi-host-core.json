@@ -1,0 +1,209 @@
+{
+  "area": "midi-host-core",
+  "description": "API-shape experiment for lower-level parts: MIDI clip internals, the core boot and sound helpers, event transforms, newer effects with offline preview, and live scene editing of the clip launcher. Expectations describe behaviour, not names.",
+  "tasks": [
+    {
+      "id": "M1-midi-clip-internals",
+      "prompt": "A browser app uses `clip`, a MIDI clip from the toolkit, and a monophonic synth you write yourself as an object that plays notes into the toolkit's MIDI clip. (1) The synth keeps one voice. When a note-off arrives it must release only the voice that began that note, so a note of the same pitch that another clip started a moment later keeps sounding. (2) A `Lock` button: while locked, any attempt to change the clip's notes throws a clear error and changes nothing; `Unlock` puts back whatever protection the app had set before locking. (3) `humanize()` changes the clip's notes between beats 4 and 8 in one edit: each of those notes gets +0.1 velocity (at most 1) and a ghost note of the same pitch half a beat later at velocity 0.3. (4) Two labels show note lengths in beats for the values `2m` in 3/4 and `8n`, computed with the toolkit. (5) `forwardToHardware()` lists, for `source` (the take's recorded messages), the ordered raw MIDI messages with their beats from the start, as the clip's notes now stand, so the app can send them to an external device.",
+      "hostDeclarations": "declare const clip: import(\"@audiorective/midi\").MidiClip;\ndeclare const source: import(\"@audiorective/midi\").MidiPlaybackSource;",
+      "expectations": [
+        "The synth releases only the voice that began the note being released (it uses when that note started), not a later voice of the same pitch.",
+        "Lock vetoes writes so that edits throw and leave the notes unchanged; Unlock restores the guard that was there before.",
+        "humanize changes the velocities and adds the ghost notes in a single edit of the clip, with velocity capped at 1 and ghosts half a beat later at 0.3.",
+        "Note-value lengths come from the toolkit's helper: `2m` in 3/4 is 6 beats and `8n` is 0.5 beat.",
+        "The message list comes from the toolkit's projection of notes and recorded messages into ordered raw MIDI, not hand-assembled bytes."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "Release answers the note-on",
+          "all": ["noteOff\\s*\\(", "since"]
+        },
+        {
+          "expectation": 1,
+          "label": "Write guard",
+          "all": ["setWriteGuard"]
+        },
+        {
+          "expectation": 2,
+          "label": "One edit",
+          "all": ["\\.edit\\("]
+        },
+        {
+          "expectation": 3,
+          "label": "Note value helper from midi",
+          "all": ["import\\s*\\{[^}]*\\bnoteBeats\\b[^}]*\\}\\s*from\\s*[\"']@audiorective/midi[\"']"]
+        },
+        {
+          "expectation": 4,
+          "label": "Compile playback events",
+          "all": ["compileMidiPlaybackEvents"]
+        }
+      ]
+    },
+    {
+      "id": "C1-pad-page-boot",
+      "prompt": "A browser sample-pad page, plain TypeScript. (1) `boot()` creates the audio engine on the first click. The page may also be pre-rendered on a server or in a test DOM with no audio support: then it must show `Audio runs in the browser only` and nothing else breaks; any other error must still surface. (2) A `Shaper` distortion is a worklet whose code is the string `shaperSource`; load it on `context`; if the browser has no worklet support show `This browser cannot run the Shaper` and carry on without it. (3) `showLatency(engine, fx)` displays how many milliseconds `fx` (a processor of the page) adds before the speakers; if `fx` was never placed in a graph yet, show `Connect it first` instead of crashing. (4) `loadKit(urls)` loads all 16 sample URLs once each, even if several pads use the same file, shares the decoded buffers between pads, and `resetKit()` forgets them. (5) A pad's sound field holds a note name such as `C#3`; `checkSound(text)` accepts it or shows the toolkit's complaint, and shows its MIDI note number. (6) `hit(sound, when)` plays a pad's sound (a note name, a buffer or a voice function) once into `out` at velocity 0.8, three semitones up. (7) The `Reverse` pad plays the loaded sample `kick` backwards without changing the original buffer.",
+      "hostDeclarations": "declare const context: AudioContext;\ndeclare const engine: import(\"@audiorective/core\").AudioEngine;\ndeclare const fx: import(\"@audiorective/core\").AudioProcessor;\ndeclare const shaperSource: string;\ndeclare const out: AudioNode;\ndeclare const kick: AudioBuffer;",
+      "expectations": [
+        "The missing-audio environment error is told apart from other errors and shown as the given text; other errors are rethrown.",
+        "The worklet is registered from its source on the context, and the browser-without-worklets error is told apart and shown as the given text.",
+        "The latency is read from the engine for the processor in milliseconds, and the not-yet-in-a-graph error is told apart and shown as the given text.",
+        "Each URL is fetched and decoded once, shared across pads, and a reset forgets them, using a cache and not a hand-made map of promises.",
+        "The sound field is checked with the toolkit's own validation, and the note name is converted to its MIDI number with the toolkit.",
+        "The hit is played through the toolkit's one-voice player at velocity 0.8 and +3 semitones into `out` at the given time.",
+        "The reverse pad plays a reversed copy made by the toolkit and leaves the original unchanged."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "Environment error",
+          "all": ["EngineEnvironmentError"]
+        },
+        {
+          "expectation": 1,
+          "label": "Worklet",
+          "all": ["registerWorklet", "WorkletUnavailableError"]
+        },
+        {
+          "expectation": 2,
+          "label": "Latency",
+          "all": ["getPathLatency", "LatencyUnknownError"]
+        },
+        {
+          "expectation": 3,
+          "label": "Buffer cache",
+          "all": ["AudioBufferCache"]
+        },
+        {
+          "expectation": 4,
+          "label": "Validate and number",
+          "all": ["assertSound", "noteNumber"]
+        },
+        {
+          "expectation": 5,
+          "label": "Play one voice",
+          "all": ["playSound"]
+        },
+        {
+          "expectation": 6,
+          "label": "Reverse copy",
+          "all": ["reverseBuffer"]
+        }
+      ]
+    },
+    {
+      "id": "C2-humanize-pipeline",
+      "prompt": "A browser app has its own scheduler. For every look-ahead window it holds `events`, hits shaped `{ beat, durationBeats, velocity, lane, step, pass }` (`pass` counts the loop passes), the clock's `timing` (beat to audio time and back) and `now` (audio seconds). Write `plan(events, timing, now, seed)` that returns the hits as audio-time events using these rules in order: (a) swing: every hit on the off-beat eighth (beat fraction 0.5) is delayed by 12% of a beat; (b) humanize, in seconds: each hit moves by up to +-10 ms and its velocity by up to +-0.1, and a given hit gets the identical values every time it is planned again (next window, after a seek) but different ones in different loop passes, with no `Math.random`; (c) hits whose velocity reaches 0 are dropped and no hit starts before `now`. A `ratchet` tool that the user attaches to one hit returns an edited copy of it with its beat moved 0.25 later and its length halved; `settle(hit, edited, timing)` must give back the hit's final audio time, beat, and both lengths consistently with the moved beat. Finally, `padHue(kitSeed, padId)` returns a number in [0, 1) used as the pad's colour: the same for the same pad and seed, unrelated between pads, and not stateful.",
+      "hostDeclarations": "type Hit = { beat: number; durationBeats: number; velocity: number; lane: string; step: number; pass: number };\ndeclare const timing: import(\"@audiorective/core\").BeatTiming;\ndeclare const events: readonly Hit[];\ndeclare const now: number;",
+      "expectations": [
+        "Runs the swing and humanize steps in order through the toolkit's transform pipeline instead of converting beats and seconds by hand.",
+        "The humanize step works in seconds with randomness fixed by the seed and a key made of the hit's lane, step and pass, so the same hit always gets the same values.",
+        "Swing works in beats and moves only hits at beat fraction 0.5 by 0.12 beat.",
+        "The pipeline's own rules drop zero-velocity hits and clamp starts to `now`; the code does not re-implement them.",
+        "The ratchet's edit is resolved with the toolkit's rule, where a moved beat wins and the audio time and lengths follow consistently.",
+        "The pad colour is a pure hash of the seed and pad id, not a random generator."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "Transform pipeline",
+          "all": ["applyEventTransforms"]
+        },
+        {
+          "expectation": 1,
+          "label": "Keyed seconds-unit randomness",
+          "all": ["keyOf", "unit\\s*:\\s*[\"']second[\"']"],
+          "any": ["randomFor", "hash01"],
+          "none": ["Math\\.random"]
+        },
+        {
+          "expectation": 4,
+          "label": "Resolve the edit",
+          "all": ["resolveHitEdit"]
+        },
+        {
+          "expectation": 5,
+          "label": "Pure hash",
+          "all": ["hash01"],
+          "none": ["Math\\.random"]
+        }
+      ]
+    },
+    {
+      "id": "E1-effects-preview",
+      "prompt": "A browser effects page with `context` and `sound`, a 3-second drum loop as an AudioBuffer. (1) Put three effects in the page's editable chain, in this order, each one bypassable: a phaser with a slow sweep, a frequency shifter at +5 Hz, and a pitch shifter at -3 semitones that uses the better-quality time-stretch engine. Say what is heard from the pitch shifter before that engine has finished loading. (2) The phaser's rate knob ramps its rate from 0.2 Hz to 4 Hz over 8 seconds on the audio clock; the knob must follow that ramp on screen, refreshing twice as fast as the toolkit's normal rate for reading audio parameters back into the UI. (3) `renderPreview()` renders 3 seconds of `sound` through the same three effects offline, stereo at 48 kHz, and returns the resulting AudioBuffer (build the effects on the offline context).",
+      "hostDeclarations": "declare const context: AudioContext;\ndeclare const sound: AudioBuffer;",
+      "expectations": [
+        "The chain holds a phaser, a frequency shifter and a pitch shifter in that order, each with a bypass, and the pitch shifter uses the stretch engine at -3 semitones.",
+        "States that until the stretch engine has loaded only the dry share of the signal passes (a fully wet shifter is silent).",
+        "The rate ramp is scheduled on the phaser's rate from 0.2 to 4 Hz over 8 s on the audio clock, and the knob reads it back at 50 ms (half the toolkit's default 100 ms).",
+        "The preview renders offline for 3 s, stereo, 48 kHz, with the effects built on the offline context, and returns the buffer."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "Three effects in a chain",
+          "all": ["Phaser", "FrequencyShifter", "PitchShift", "EffectChain", "engine\\s*:\\s*[\"']stretch[\"']"]
+        },
+        {
+          "expectation": 2,
+          "label": "Ramp and sync interval",
+          "all": ["register\\(", "\\b50\\b"],
+          "any": ["linearRampToValueAtTime", "exponentialRampToValueAtTime"]
+        },
+        {
+          "expectation": 3,
+          "label": "Offline render",
+          "all": ["renderOffline"]
+        }
+      ]
+    },
+    {
+      "id": "L1-launcher-scenes",
+      "prompt": "A headless groovebox on `context` and a transport `clock`. The tracks are Drums, Bass and Keys. The scenes in order are Intro, Verse, Fill, Chorus, and `buffers` holds each track's loop per scene (`null` means empty slot; Keys is empty in Fill). Build the clip launcher and hook it to the clock: launching a scene must also stop every track that has an empty slot in that scene (so Keys falls silent in Fill) instead of leaving what plays alone, and scene launches wait for the next bar. While the groovebox is playing the Verse scene (Chorus is not playing), the user: inserts a new empty scene `Bridge` after Verse; removes Chorus; drags Fill to the end; renames the third scene to `Breakdown`. Nothing that plays may stop or restart because of these edits, and the `scenes` list on the screen (`list`) must follow the scene names and order by itself. A label next to each scene shows its length in beats from the strings `2m`, `4n` and `1m` for scenes of 4/4 (eight, one and four beats).",
+      "hostDeclarations": "declare const context: AudioContext;\ndeclare const clock: import(\"@audiorective/clock\").Clock;\ndeclare const buffers: Record<\"drums\" | \"bass\" | \"keys\", readonly (AudioBuffer | null)[]>;\ndeclare const list: HTMLElement;",
+      "expectations": [
+        "The launcher is created with the four scenes and a rule that launching a scene stops tracks whose slot is empty there, and is attached to the clock with a one-bar launch quantize.",
+        "Inserts the scene after Verse while playing without stopping anything that plays or waits.",
+        "Removes the Chorus scene and its clips; the later scenes move up and keep playing.",
+        "Moves Fill to the end through the launcher so playing clips keep their state.",
+        "Renames the third scene through the scene's own rename and the screen list follows names and order reactively.",
+        "Scene length labels are computed with the toolkit's note-value helper for a 4/4 bar (2m = 8, 4n = 1, 1m = 4)."
+      ],
+      "checks": [
+        {
+          "expectation": 0,
+          "label": "Empty slots stop",
+          "all": ["emptySlots\\s*:\\s*[\"']stop[\"']"]
+        },
+        {
+          "expectation": 1,
+          "label": "Insert scene",
+          "all": ["insertScene"]
+        },
+        {
+          "expectation": 2,
+          "label": "Remove scene",
+          "all": ["removeScene"]
+        },
+        {
+          "expectation": 3,
+          "label": "Move scene",
+          "all": ["moveScene"]
+        },
+        {
+          "expectation": 4,
+          "label": "Rename",
+          "all": ["\\.rename\\("],
+          "any": ["effect\\(", "subscribe\\("]
+        },
+        {
+          "expectation": 5,
+          "label": "Note value helper from launcher",
+          "all": ["import\\s*\\{[^}]*\\bnoteBeats\\b[^}]*\\}\\s*from\\s*[\"']@audiorective/launcher[\"']"]
+        }
+      ]
+    }
+  ]
+}

@@ -2,14 +2,28 @@ export { Timeline } from "./Timeline";
 export { TempoParam } from "./TempoParam";
 export type { TempoParamOptions } from "./TempoParam";
 export { Clock } from "./Clock";
-export type { ClockOptions, TickWindow, MissedGap } from "./Clock";
-export type { CoreTickWindow, TransportState, TimeSource } from "./types";
+export type {
+  ClockOptions,
+  Scheduler,
+  SchedulerHandle,
+  SchedulerWindow,
+  ResetReason,
+  TransportChange,
+  TransportChangeType,
+  TickWindow,
+  MissedGap,
+  BeatTiming,
+  CancellableEvent,
+} from "./Clock";
+export type { CoreTickWindow, TransportState, TimeSignature, TimeSource } from "./types";
 
 export { WorkerTickSource, IntervalTickSource, ManualTickSource } from "./TickSource";
 export type { TickSource } from "./TickSource";
+export { RangeLoop } from "./RangeLoop";
+export type { LoopRange, LoopSlice } from "./RangeLoop";
 
 export { renderTimeline } from "./renderTimeline";
-export type { RenderTimelineOptions } from "./renderTimeline";
+export type { RenderTimelineOptions, RenderAction } from "./renderTimeline";
 
 export type { Ruler, TimelineLike, GridPoint, CycleGridPoint } from "./rulers/Ruler";
 export { gridPoints, cycleGridPoints, beatsPerBar } from "./rulers/Ruler";

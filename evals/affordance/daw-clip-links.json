@@ -1,0 +1,44 @@
+{
+  "area": "daw-clip-links",
+  "description": "API-shape experiment for clips that share their content (pattern placements, linked copies), as DAWproject expresses with Clip reference. Expectations describe behaviour, not names.",
+  "tasks": [
+    {
+      "id": "K1-pattern-links",
+      "prompt": "A browser pattern-style DAW has an open song as `project` (4/4, 120 BPM) and its running engine as `workspace`. The song has a Drums MIDI track with a sound already set up. Write the code that makes a one-bar drum pattern (kick on every beat, hat on every off-beat) as a clip at bar 1, then places it again at bars 3 and 5 so all three placements share one pattern: editing the notes of any placement changes all three, and that edit is one Undo step. Then make the placement at bar 5 a separate pattern of its own and add an extra hat note that only it plays. List, for every clip on the Drums track, which other clips share its notes. Save the song to a `.dawproject` Blob and open it again: the sharing comes back, editing the pattern at bar 1 still changes bar 3 and not bar 5, and another DAW opening the file sees the placements as linked rather than as unrelated copies.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;",
+      "expectations": [
+        "Places the pattern at bars 3 and 5 as clips that share the bar-1 clip's notes through the song model, not as independent copies kept in sync by page code.",
+        "One note edit changes every placement that shares the pattern, as a single Undo step.",
+        "Makes the bar-5 placement independent so a later edit to it changes only that placement.",
+        "Lists which clips share notes by reading the song model.",
+        "Save and reopen keep which placements share a pattern, stored in the standard file rather than in app-specific data.",
+        "After reopening, an edit to the bar-1 pattern still changes bar 3 and not bar 5."
+      ]
+    },
+    {
+      "id": "K2-linked-chorus",
+      "prompt": "A browser DAW has an open song as `project` (4/4) and its running engine as `workspace`. The first chorus, bars 9 to 16, has MIDI clips on the Bass and Keys tracks. The producer wants the second chorus at bar 25 to be linked copies of those clips, so fixing a wrong bass note in either chorus fixes both. Write the code that creates the linked second chorus, then changes the pitch of the first bass note of the second chorus from 40 to 41 (one Undo step) and checks that the first chorus bass now starts with 41 too. Then the Keys part of the second chorus should become its own clip again, transposed up an octave, while the first chorus keys stay as they were. Finally render bars 9 to 17 and bars 25 to 33 offline through the mix and report whether the bass parts match.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;",
+      "expectations": [
+        "Creates the second-chorus Bass and Keys clips at bar 25 as clips that share the first chorus clips' notes through the song model, not as copies kept in sync by page code.",
+        "Changing a bass note in the second chorus changes the first chorus bass too, as one Undo step.",
+        "Verifies the first chorus bass by reading the song model.",
+        "Makes the second-chorus Keys clip independent and transposes only it; the first chorus keys are unchanged.",
+        "Renders both bar ranges offline through the mix.",
+        "Reports whether the two bass parts match."
+      ]
+    },
+    {
+      "id": "K3-pattern-in-scene",
+      "prompt": "A browser pattern-style DAW has an open song as `project` (4/4, 120 BPM) and its running engine as `workspace`. The song has a Drums MIDI track with a sound already set up. Each pattern is stored in its own Session scene so the producer can audition it in Pattern mode and bounce a scene chain, and the same pattern is also placed on the timeline. Write the code that stores a one-bar pattern (kick on every beat) in a new scene named \"Pattern 1\", then places it on the Drums track at bars 1 and 3 so the placements and the scene share one pattern: changing a note once (one Undo step) changes the scene and both placements, with no copying of notes by page code. Then render the scene offline through the mix and check that the changed note is heard. Then save the song to a `.dawproject` Blob and open it again: the scene and both placements still share the pattern, and editing the pattern at bar 3 changes the scene's clip.",
+      "hostDeclarations": "declare const project: import(\"@audiorective/daw\").Project;\ndeclare const workspace: import(\"@audiorective/daw\").Workspace;",
+      "expectations": [
+        "Stores the pattern in a new Session scene slot of the Drums track and places it on the timeline at bars 1 and 3 as clips that share the slot clip's notes through the song model, not as independent copies kept in sync by page code.",
+        "One note edit changes the scene's clip and both timeline placements, as a single Undo step.",
+        "Renders the scene offline through the mix and the rendered audio reflects the changed note.",
+        "Save and reopen keep the scene clip and both placements sharing one pattern, stored in the standard file rather than in app-specific data.",
+        "After reopening, an edit to the bar-3 placement changes the scene's clip."
+      ]
+    }
+  ]
+}

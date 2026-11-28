@@ -76,7 +76,7 @@ describe("DrumMachine — pattern state", () => {
     const snare = machine.tracks.find((t) => t.id === "snare")!;
     expect(kick.pattern.value.map((on, i) => (on ? i : -1)).filter((i) => i >= 0)).toEqual([0, 4, 8, 12]);
     expect(snare.pattern.value.map((on, i) => (on ? i : -1)).filter((i) => i >= 0)).toEqual([4, 12]);
-    machine.destroy();
+    machine.dispose();
   });
 
   test("toggleStep flips exactly one step, immutably", () => {
@@ -92,7 +92,7 @@ describe("DrumMachine — pattern state", () => {
 
     machine.toggleStep("clap", 3);
     expect(clap.pattern.value[3]).toBe(false);
-    machine.destroy();
+    machine.dispose();
   });
 });
 
@@ -130,7 +130,7 @@ describe("DrumMachine — scheduling", () => {
     for (let i = 1; i < kickTimes.length; i++) {
       expect(kickTimes[i]!).toBeGreaterThan(kickTimes[i - 1]!);
     }
-    h.machine.destroy();
+    h.machine.dispose();
   });
 
   test("the cycle wraps — pass two replays the same steps, with no modulo at the call site", () => {
@@ -143,13 +143,13 @@ describe("DrumMachine — scheduling", () => {
     }
     // two bars of four-on-the-floor
     expect(h.stepsFor("kick")).toEqual([0, 4, 8, 12, 0, 4, 8, 12]);
-    h.machine.destroy();
+    h.machine.dispose();
   });
 
   test("a muted track schedules nothing; unmuting resumes on the next window", () => {
     const h = makeHarness(ctx, 120);
     const kick = h.machine.tracks.find((t) => t.id === "kick")!;
-    kick.mute.value = true;
+    kick.muted.value = true;
     h.machine.play();
 
     for (let t = 0; t <= 1; t += 0.05) {
@@ -159,7 +159,7 @@ describe("DrumMachine — scheduling", () => {
     expect(h.stepsFor("kick")).toEqual([]);
     expect(h.stepsFor("hat").length).toBeGreaterThan(0); // others unaffected
 
-    kick.mute.value = false;
+    kick.muted.value = false;
     for (let t = 1.05; t <= 1.85; t += 0.05) {
       h.advanceTo(t);
       h.tick();
@@ -167,7 +167,7 @@ describe("DrumMachine — scheduling", () => {
     // step 8 (t=1.0s) was already inside a committed window while muted, so
     // the next kick to schedule is step 12 (t=1.5s) -- the rest of the bar
     expect(h.stepsFor("kick")).toEqual([12]);
-    h.machine.destroy();
+    h.machine.dispose();
   });
 
   test("stop() then play() restarts the pattern from step 0", () => {
@@ -192,7 +192,7 @@ describe("DrumMachine — scheduling", () => {
     // indices are derived from absolute time, which only holds while beat 0
     // sits at time 0 -- hence asserting the anchor rather than the index.)
     expect(h.whensFor("kick")[0]).toBeCloseTo(restartAt, 5);
-    h.machine.destroy();
+    h.machine.dispose();
   });
 
   test("a step toggled off after its window was committed still fires once (lookAhead latency)", () => {
@@ -221,7 +221,7 @@ describe("DrumMachine — scheduling", () => {
     }
     const kicks = h.stepsFor("kick");
     expect(kicks.filter((s) => s === 4)).toHaveLength(1); // the committed one only
-    h.machine.destroy();
+    h.machine.dispose();
   });
 
   test("a live tempo change alters subsequent step spacing", () => {
@@ -240,7 +240,7 @@ describe("DrumMachine — scheduling", () => {
     }
     // more steps land in the same wall-clock span once the tempo doubles
     expect(h.triggerCount()).toBeGreaterThan(beforeCount);
-    h.machine.destroy();
+    h.machine.dispose();
   });
 });
 
@@ -267,7 +267,7 @@ describe("DrumMachine — patternAt", () => {
     // 0.1 s of latency sits between the render clock and the listener
     expect(stepFromPattern(h.machine.patternAt(1)!, 16)).toBe(8);
     expect(stepFromPattern(h.machine.patternAt(0.9)!, 16)).toBe(7);
-    h.machine.destroy();
+    h.machine.dispose();
   });
 
   test("is null before the segment's beat 0 — nothing scheduled has reached the ear yet", () => {
@@ -276,7 +276,7 @@ describe("DrumMachine — patternAt", () => {
     h.machine.play(); // beat 0 anchored at t = 0.5
     expect(h.machine.patternAt(0.4)).toBeNull();
     expect(h.machine.patternAt(0.5)).not.toBeNull();
-    h.machine.destroy();
+    h.machine.dispose();
   });
 });
 

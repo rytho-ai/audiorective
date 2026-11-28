@@ -4,7 +4,7 @@
     "should_trigger": true
   },
   {
-    "query": "review packages/audio/src/Chorus.ts — it extends AudioProcessor and I'm not sure the latency declaration or destroy() are right",
+    "query": "review packages/audio/src/Chorus.ts — it extends AudioProcessor and I'm not sure the latency declaration or dispose() are right",
     "should_trigger": true
   },
   {

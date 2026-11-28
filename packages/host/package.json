@@ -1,0 +1,32 @@
+{
+  "name": "@audiorective/host",
+  "version": "3.0.0-beta.0",
+  "description": "Browser WebCLAP plug-in host",
+  "type": "module",
+  "license": "MIT",
+  "files": [
+    "dist",
+    "LICENSES"
+  ],
+  "exports": {
+    "./webclap": {
+      "types": "./dist/webclap.d.ts",
+      "import": "./dist/webclap.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsdown && cp src/webclap-worklet.js dist/webclap-worklet.js",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@audiorective/core": "workspace:^"
+  },
+  "devDependencies": {
+    "@types/node": "^24.9.1",
+    "tsdown": "^0.15.9",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  }
+}

@@ -1,8 +1,10 @@
-import { AudioBufferCache, type Cell } from "@audiorective/core";
+import { AudioBufferCache, batch, cell, readonlyCell, type Cell, type ReadonlyCell } from "@audiorective/core";
 import { Effect, type EffectOptions } from "./Effect";
 
 export interface ConvolverOptions extends EffectOptions {
+  /** Optional impulse response; takes precedence over url when both are supplied. */
   buffer?: AudioBuffer;
+  /** Optional impulse-response URL loaded asynchronously when no buffer is supplied. */
   url?: string;
   /** ConvolverNode.normalize. Default true. */
   normalize?: boolean;
@@ -19,32 +21,52 @@ function cacheFor(ctx: BaseAudioContext): AudioBufferCache {
   return c;
 }
 
-export class Convolver extends Effect<{}, { isReady: Cell<boolean> }> {
+/** Convolution reverb. Until an impulse response is in place (`cells.status` is `"loading"`, or `"error"` when `url` failed to load) only the `1 − wet` dry share passes; `wet: 1` stays silent. Bypass passes full dry. */
+export class Convolver extends Effect<{}, { buffer: ReadonlyCell<AudioBuffer | null> }> {
+  static override readonly type: string = "Convolver";
   private readonly node: ConvolverNode;
   private loadToken = 0;
-  /** Resolves once the initial `url` (if any) has loaded. */
-  readonly ready: Promise<void>;
+  private disposed = false;
+  private readonly _buffer: Cell<AudioBuffer | null>;
 
   constructor(ctx: BaseAudioContext, opts: ConvolverOptions = {}) {
     const node = new ConvolverNode(ctx, { disableNormalization: opts.normalize === false });
-    super(ctx, { input: node, output: node }, ({ cell }) => ({ params: {}, cells: { isReady: cell(false) }, latency: 0 }), opts);
+    const buffer = cell<AudioBuffer | null>(null);
+    super(ctx, { input: node, output: node, loading: true }, () => ({ params: {}, cells: { buffer: readonlyCell(buffer) }, latency: 0 }), opts);
     this.node = node;
+    this._buffer = buffer;
     if (opts.buffer) this.buffer = opts.buffer;
-    this.ready = opts.url ? this.load(opts.url) : Promise.resolve();
+    else if (opts.url) void this.load(opts.url).catch(() => {});
   }
 
+  /** The impulse response in use, or null before one loads; assigning replaces it and marks the effect ready. */
   get buffer(): AudioBuffer | null {
-    return this.node.buffer;
+    return this._buffer.value;
   }
   set buffer(b: AudioBuffer | null) {
-    this.node.buffer = b;
-    this.cells.isReady.value = b !== null;
+    batch(() => {
+      this.node.buffer = b;
+      this._buffer.value = b;
+      this.loadToken++;
+      this.setReady(b !== null);
+    });
   }
 
-  async load(url: string): Promise<void> {
+  /** Loads the impulse response at `url` (cached per context); rejects with the fetch or decode error, which `cells.error` also holds. */
+  load(url: string): Promise<void> {
     const token = ++this.loadToken;
-    const buffer = await cacheFor(this.context).load(url);
-    if (token !== this.loadToken) return;
-    this.buffer = buffer;
+    const work = cacheFor(this.context)
+      .load(url)
+      .then((buffer) => {
+        if (this.disposed || token !== this.loadToken) return;
+        this.buffer = buffer;
+      });
+    this.track(work);
+    return this.ready;
+  }
+
+  override dispose(): void {
+    this.disposed = true;
+    super.dispose();
   }
 }

@@ -6,17 +6,31 @@ Which `@audiorective/*` packages to install, what they pull in, and how to keep 
 
 ## Packages
 
-| Package                    | Install when you need…                                                                          | Peer dependency         |
-| -------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------- |
-| `@audiorective/core`       | Anything at all — `AudioProcessor`, `Param`, `Cell`, `createEngine`, `defineGraph`, the players | —                       |
-| `@audiorective/clock`      | Transport, tempo, look-ahead scheduling, rulers (sequencers, drum machines, loopers)            | —                       |
-| `@audiorective/effects`    | DSP effects, channel strips, send buses, offline rendering of an effects chain                  | —                       |
-| `@audiorective/react`      | React hooks and an engine context                                                               | `react` `^18 \|\| ^19`  |
-| `@audiorective/threejs`    | Spatial audio that follows three.js objects                                                     | `three` `>=0.150.0`     |
-| `@audiorective/playcanvas` | A shared `AudioContext` and spatial sound bound to PlayCanvas entity transforms                 | `playcanvas` `>=2.18.1` |
-| `@audiorective/devtools`   | Measuring and asserting a processor's latency in tests (dev dependency)                         | —                       |
+| Package                    | Install when you need…                                                                                       | Peer dependency                  |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------ | -------------------------------- |
+| `@audiorective/core`       | Reactive audio state — `AudioProcessor`, `Param`, `Cell`, `createEngine`, `defineGraph`, the players         | —                                |
+| `@audiorective/clock`      | Transport, tempo, look-ahead scheduling, rulers (sequencers, drum machines, loopers)                         | —                                |
+| `@audiorective/effects`    | DSP effects, channel strips, send buses, offline rendering of an effects chain                               | `signalsmith-stretch` (optional) |
+| `@audiorective/widgets`    | Waveform/MIDI piano-roll display, range selection and audio audition without a UI framework                  | —                                |
+| `@audiorective/player`     | Headless `WavePlayer`: range playback, selection, loading and offline stretch                                | —                                |
+| `@audiorective/recorder`   | Headless `AudioRecorder` and `MicrophoneInput`: AudioWorklet PCM take capture                                | —                                |
+| `@audiorective/samples`    | Headless `SampleLibrary`: imported sample storage and previews                                               | —                                |
+| `@audiorective/pads`       | Headless `PadBank`: sample hits with choke groups                                                            | —                                |
+| `@audiorective/sequencer`  | Headless `StepSequencer`: lanes of steps from one-line patterns                                              | —                                |
+| `@audiorective/launcher`   | Headless `ClipLauncher`: tracks of clips on quantized boundaries                                             | —                                |
+| `@audiorective/midi`       | MIDI file parsing, shared note data, playback event projection and browser MIDI take recording               | —                                |
+| `@audiorective/daw`        | Audio/MIDI project (`daw/project`), DAWproject codec (`daw/dawproject`) and browser playback (`daw/runtime`) | —                                |
+| `@audiorective/host`       | WebCLAP plug-in hosting through the `./webclap` entry                                                        | —                                |
+| `@audiorective/react`      | React hooks and an engine context                                                                            | `react` `^18 \|\| ^19`           |
+| `@audiorective/threejs`    | Spatial audio that follows three.js objects                                                                  | `three` `>=0.150.0`              |
+| `@audiorective/playcanvas` | A shared `AudioContext` and spatial sound bound to PlayCanvas entity transforms                              | `playcanvas` `>=2.18.1`          |
+| `@audiorective/devtools`   | Measuring and asserting a processor's latency in tests (dev dependency)                                      | —                                |
 
 Every package depends on `@audiorective/core`; installing any of them installs core. `core` brings `alien-signals` (the reactive primitive) and `immer` (for `Cell.update`) along with it — you do not install those yourself unless you call `signal`/`computed`/`effect` from `alien-signals` directly in your own code.
+
+## Optional peer dependencies
+
+`@audiorective/effects` lists `signalsmith-stretch` as an optional peer. Install it (`npm i signalsmith-stretch`) only when you construct `PitchShift` with `engine: "stretch"`; it is loaded lazily at that point. Without it, every other effect and the granular pitch engine work, and the stretch engine rejects `ready` with an install hint.
 
 ## Install
 
@@ -38,6 +52,18 @@ Spatial audio in a three.js scene, no React:
 ```sh
 npm install @audiorective/core @audiorective/threejs
 ```
+
+Browser waveform display and selection:
+
+```sh
+npm install @audiorective/widgets
+```
+
+Use `@audiorective/widgets` for the complete selector or `@audiorective/widgets/waveform` for audio-independent rendering and plugins. See [Widgets](./widgets.md). For MIDI parsing/shared note state use `@audiorective/midi`; for browser recording use `@audiorective/midi/web`; for audio-independent piano-roll rendering use `@audiorective/widgets/piano-roll`. See [MIDI and Piano Roll](./midi.md). Check the [changelog](../CHANGELOG.md) against the installed package: APIs listed under Unreleased require a repository build or packed artifact until a release includes them.
+
+The headless capabilities are one package each (`@audiorective/player`, `recorder`, `samples`, `pads`, `sequencer`, `launcher`); each depends only on core, so installing one never loads another. `BeatTiming` and `CancellableEvent` are core contracts ([Core](./core.md#shared-contracts)); `Timeline`, `Clock` and `PadBank` satisfy them structurally, so a drum machine needs only `clock`, `sequencer`, `pads` and `core`. See [Architecture](./architecture.md).
+
+For a small persistent audio/MIDI arrangement, install `@audiorective/daw` and see [DAW project, runtime and DAWproject](./daw.md). `@audiorective/daw/project` and `@audiorective/daw/dawproject` work in Node.js without an AudioContext; the browser `Workspace` in `@audiorective/daw/runtime` borrows one from the app and uses `@audiorective/host` for WebCLAP devices. See [WebCLAP host](./host.md) for serving its worklet and bundle assets.
 
 Latency tests for your own processors:
 
@@ -66,6 +92,7 @@ Compare that against `CHANGELOG.md` when an API described in the docs is missing
 ## Environment requirements
 
 - **A browser with the Web Audio API.** `createEngine` constructs a real `AudioContext` eagerly. There is no server-side mode; in Next.js, Remix, or Astro, mount the audio subtree behind a client-only boundary. See [Server-rendered Frameworks](./client-boundary.md).
+- **TypeScript 5.4 or later.** The published type declarations use `NoInfer`.
 - **TypeScript projects need the DOM lib** (`"lib": ["DOM", …]` in `tsconfig.json`) so `AudioContext`, `GainNode`, and `AudioParam` types resolve. Most front-end templates already have it.
 - **Node.js and jsdom** have no `AudioContext`. Headless tests run in a real browser (the packages themselves use vitest browser mode), or pass a context you construct or mock: `createEngine(setup, { context })`.
 - **AudioWorklet-backed effects** (`Compressor`, `Limiter`, `PitchShift` with the `stretch` engine) load their worklet module from a Blob URL at first construction, so they need no bundler configuration or copied assets. They throw `WorkletUnavailableError` on a context without `audioWorklet`.

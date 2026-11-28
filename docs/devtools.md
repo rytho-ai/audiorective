@@ -27,3 +27,10 @@ The default sample rates are 44.1 kHz and 48 kHz. Options include `sampleRates`,
 `assertLatency(build, options)` checks measured arrival against the declared latency and throws on a mismatch. Use a processor configuration that produces an audible response to an impulse; a fully dry effect does not measure its wet processing path.
 
 See the [latency guide in Core](/docs/core) for declarations and automatic graph compensation. Measurements require Web Audio support, such as Vitest browser mode; a Node-only test environment has no `OfflineAudioContext`.
+
+## Common errors
+
+| Message                                                                                 | Cause                                                                                                       | Fix                                                                                  |
+| --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `measureLatency: processor must expose input and output`                                | The processor has no `input` or no `output` node, so no impulse can be sent through it.                     | Measure an effect-shaped processor; sources and sinks have no round trip to measure. |
+| `measureLatency: no output detected — is the processor audible in its default state? …` | The impulse never produced output, usually because the processor is silent by default (wet 0, gate closed). | Set the processor audible (wet, gate) inside the build factory before measuring.     |

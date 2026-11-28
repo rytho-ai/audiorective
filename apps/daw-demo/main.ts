@@ -1,0 +1,994 @@
+import {
+  Project,
+  Workspace,
+  createOpfsAudioMediaWriter,
+  exportAudioFallbackTo,
+  portabilityReport,
+  openWorkspace,
+  saveWorkspace,
+  saveWorkspaceTo,
+  sessionFor,
+  type AudioMedia,
+  type AudioMediaWriter,
+  type MidiClip,
+  type ProjectTrack,
+  type TakeAnchor,
+} from "@audiorective/daw";
+import { mountStudioSession } from "./session-view";
+import { mountRhythmView } from "./rhythm-view";
+import { StudioView } from "./studio-view";
+import { MidiRecorder } from "@audiorective/midi/web";
+import type { MidiTake } from "@audiorective/midi";
+import { effect } from "@audiorective/core";
+import type { Quantize } from "@audiorective/launcher";
+import { WebClapHost } from "@audiorective/host/webclap";
+import { AudioRecorder, type RecordedAudioSpan } from "@audiorective/recorder";
+import { SampleLibrary } from "@audiorective/samples";
+import { mountSampleBrowser } from "@audiorective/widgets";
+import { checkpointTake, listTakeCheckpoints, removeTakeCheckpoint } from "./take-recovery";
+import type { TimelineRange } from "@audiorective/widgets/arrangement";
+
+const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+const context = new AudioContext({ latencyHint: "interactive" });
+const samples = new SampleLibrary(context);
+samples.output.connect(context.destination);
+const synthBundle = "/plugin/oxo-synth2.wclap";
+const trustedBundles = new Set([new URL(synthBundle, location.href).href]);
+const options = {
+  destination: context.destination,
+  workletUrl: new URL("../../packages/host/dist/webclap-worklet.js", import.meta.url).href,
+  resolveBundle(device: { bundleUrl: string }) {
+    const url = URL.parse(device.bundleUrl, location.href)?.href;
+    return url && trustedBundles.has(url) ? url : undefined;
+  },
+};
+const addDefaultSynth = (project: Project, trackId: string) =>
+  project.addDevice(trackId, {
+    kind: "webclap",
+    pluginId: "com.oxo.music.oxosynth2",
+    name: "Oxo Synth2",
+    vendor: "chab (Oxo Music)",
+    version: "1.1.1",
+    bundleUrl: synthBundle,
+  });
+let workspace: Workspace;
+let studio: StudioView;
+let sessionView: ReturnType<typeof mountStudioSession> | undefined;
+let rhythmView: ReturnType<typeof mountRhythmView> | undefined;
+let detachRangeAuditionView: (() => void) | undefined;
+let fallbackAbort: AbortController | undefined;
+let audioTransition = false;
+let checkpointName: string | undefined;
+const ownedMedia = new Set<AudioMedia>();
+let looping = false;
+let loopClipId: string | undefined;
+let loopBeats: TimelineRange | undefined;
+let midiRecording:
+  | {
+      recorder: MidiRecorder;
+      input: MIDIInput;
+      monitor: (event: MIDIMessageEvent) => void;
+      trackId: string;
+      anchor: TakeAnchor;
+      latency: number;
+    }
+  | undefined;
+type AudioRecording = {
+  recorder: AudioRecorder;
+  completion: Promise<RecordedAudioSpan>;
+  writer: AudioMediaWriter;
+  source: MediaStreamAudioSourceNode;
+  stream: MediaStream;
+  trackId: string;
+  anchor: TakeAnchor;
+  latency: number;
+};
+let audioRecording: AudioRecording | undefined;
+
+function releaseAudioInput(take: Pick<AudioRecording, "source" | "recorder" | "stream">): void {
+  take.source.disconnect();
+  take.recorder.dispose();
+  take.stream.getTracks().forEach((track) => track.stop());
+  $("record-audio").textContent = "錄麥克風";
+}
+
+function log(message: string): void {
+  $("log").textContent = `${new Date().toLocaleTimeString()}  ${message}\n${$("log").textContent?.slice(0, 2500) ?? ""}`;
+}
+function status(message: string): void {
+  $("status").textContent = message;
+  log(message);
+}
+let stopWorkspaceError: (() => void) | undefined;
+/** Surface a failed automatic application of Project edits. */
+function watchWorkspace(next: Workspace): void {
+  stopWorkspaceError?.();
+  stopWorkspaceError = effect(() => {
+    const message = next.cells.error.value;
+    if (message) status(`套用編輯失敗：${message}`);
+  });
+}
+function handleError(error: unknown): void {
+  status(error instanceof Error ? error.message : String(error));
+}
+function inputLatency(): number {
+  const milliseconds = Number($<HTMLInputElement>("record-latency").value);
+  if (!Number.isFinite(milliseconds) || milliseconds < 0 || milliseconds > 500) throw new RangeError("錄音輸入補償需介於 0–500 ms。");
+  return milliseconds / 1000;
+}
+
+function rhythm(): Float32Array {
+  const sampleRate = 48_000;
+  const pcm = new Float32Array(sampleRate * 4);
+  let seed = 123456789;
+  for (let step = 0; step < 16; step++) {
+    const start = Math.round(step * 0.25 * sampleRate);
+    const kick = step % 4 === 0;
+    const snare = step % 8 === 4;
+    for (let i = 0; i < 0.12 * sampleRate; i++) {
+      const t = i / sampleRate;
+      seed = (1664525 * seed + 1013904223) >>> 0;
+      const noise = (seed / 2 ** 32) * 2 - 1;
+      pcm[start + i] += kick
+        ? Math.sin(2 * Math.PI * (82 - 45 * t) * t) * Math.exp(-30 * t) * 0.5
+        : snare
+          ? noise * Math.exp(-35 * t) * 0.12
+          : noise * Math.exp(-75 * t) * 0.035;
+    }
+  }
+  return pcm;
+}
+
+function hats(): Float32Array {
+  const sampleRate = 48_000,
+    pcm = new Float32Array(sampleRate * 4);
+  let seed = 51941;
+  for (let step = 0; step < 32; step++) {
+    const start = Math.round(step * 0.125 * sampleRate);
+    for (let i = 0; i < 0.055 * sampleRate; i++) {
+      seed = (1664525 * seed + 1013904223) >>> 0;
+      const noise = ((seed / 2 ** 32) * 2 - 1) * Math.exp((-95 * i) / sampleRate) * (step % 2 ? 0.026 : 0.045);
+      pcm[start + i] += noise;
+    }
+  }
+  return pcm;
+}
+
+function percussion(): Float32Array {
+  const sampleRate = 48_000,
+    pcm = new Float32Array(sampleRate * 4);
+  for (const startTime of [0.5, 1.5, 2.75, 3.25]) {
+    const start = Math.round(startTime * sampleRate);
+    for (let i = 0; i < 0.18 * sampleRate; i++) {
+      const t = i / sampleRate;
+      pcm[start + i] += Math.sin(2 * Math.PI * (210 - 90 * t) * t) * Math.exp(-30 * t) * 0.17;
+    }
+  }
+  return pcm;
+}
+
+function pad(root: number): Float32Array {
+  const sampleRate = 48_000,
+    pcm = new Float32Array(sampleRate * 4);
+  for (let i = 0; i < pcm.length; i++) {
+    const t = i / sampleRate;
+    const envelope = Math.min(1, t / 0.28, (4 - t) / 0.35);
+    const tones = [root, root + 4, root + 7].reduce((sum, pitch) => {
+      const frequency = 440 * 2 ** ((pitch - 69) / 12);
+      return sum + Math.sin(2 * Math.PI * frequency * t) + 0.15 * Math.sin(2 * Math.PI * frequency * 2.01 * t);
+    }, 0);
+    pcm[i] = tones * envelope * 0.016;
+  }
+  return pcm;
+}
+
+function transition(): Float32Array {
+  const sampleRate = 48_000,
+    pcm = new Float32Array(sampleRate * 0.8);
+  let seed = 9913;
+  for (let i = 0; i < pcm.length; i++) {
+    seed = (1664525 * seed + 1013904223) >>> 0;
+    const t = i / pcm.length,
+      noise = (seed / 2 ** 32) * 2 - 1;
+    pcm[i] = noise * t * t * 0.055 + Math.sin((2 * Math.PI * (110 + 380 * t) * i) / sampleRate) * t * 0.05;
+  }
+  return pcm;
+}
+
+function demoProject(): Project {
+  const project = new Project({ title: "Audiorective Session", bpm: 120, signature: [4, 4] });
+  project.setMarkers([
+    { time: 0, name: "Intro" },
+    { time: 4, name: "Verse" },
+    { time: 8, name: "Chorus" },
+    { time: 12, name: "Outro" },
+  ]);
+  const sections = [0, 4, 8, 12];
+  const instrument = (trackId: string) => addDefaultSynth(project, trackId);
+  // The arrangement plays the clips in time; the Session holds the same audio in one scene per song section.
+  const grid = sessionFor(project);
+  const scenes = sections.map((time) => grid.addScene({ name: project.markers.find((marker) => marker.time === time)?.name }));
+  const audioClips = (trackId: string, samples: Float32Array, times: readonly number[], sceneIndexes: readonly number[] = []) => {
+    times.forEach((time) => project.addAudioClip(trackId, { sampleRate: 48_000, channels: [samples] }, time));
+    sceneIndexes.forEach((index) => grid.setAudioClip({ trackId, sceneId: scenes[index].id }, { sampleRate: 48_000, channels: [samples] }));
+  };
+
+  // MIDI is placed in beats; the demo song is written in seconds at 120 BPM.
+  const beatsPerSecond = project.bpm / 60;
+  const keys = project.addTrack("Keys", "midi", { volume: 0.48 });
+  sections.forEach((time, section) => {
+    const pitches = [60, 64, 67, 72, 67].map((pitch) => pitch + [0, 2, 5, 0][section]);
+    project.addMidiClip(
+      keys.id,
+      {
+        duration: 4 * beatsPerSecond,
+        notes: pitches.map((pitch, index) => ({
+          id: `keys${section}_${index}`,
+          start: [0.25, 0.75, 1.25, 1.75, 2.5][index] * beatsPerSecond,
+          duration: ([0.6, 1.1, 1.6, 2.1, 3.4][index] - [0.25, 0.75, 1.25, 1.75, 2.5][index]) * beatsPerSecond,
+          pitch,
+          velocity: [110, 105, 105, 115, 100][index] / 127,
+          channel: 0,
+        })),
+      },
+      time * beatsPerSecond,
+    );
+  });
+  instrument(keys.id);
+
+  const drums = project.addTrack("Drums", "audio", { volume: 0.52 });
+  audioClips(drums.id, rhythm(), sections, [0, 1, 2, 3]);
+  const hatTrack = project.addTrack("Hats", "audio", { volume: 0.43 });
+  audioClips(hatTrack.id, hats(), [4, 8, 12], [1, 2, 3]);
+  const percTrack = project.addTrack("Percussion", "audio", { volume: 0.38 });
+  audioClips(percTrack.id, percussion(), [4, 8, 12], [1, 2, 3]);
+
+  const bass = project.addTrack("Bass", "midi", { volume: 0.35 });
+  [4, 8, 12].forEach((time, section) => {
+    const root = [36, 41, 43][section];
+    project.addMidiClip(
+      bass.id,
+      {
+        duration: 4 * beatsPerSecond,
+        notes: [0, 1, 2, 3].map((index) => ({
+          id: `bass${section}_${index}`,
+          start: index * beatsPerSecond,
+          duration: 0.8 * beatsPerSecond,
+          pitch: root + (index === 2 ? 7 : 0),
+          velocity: 90 / 127,
+          channel: 0,
+        })),
+      },
+      time * beatsPerSecond,
+    );
+  });
+  instrument(bass.id);
+
+  const padTrack = project.addTrack("Atmosphere", "audio", { volume: 0.26 });
+  sections.forEach((time, index) => audioClips(padTrack.id, pad([48, 50, 53, 55][index]), [time], [index]));
+
+  const lead = project.addTrack("Lead", "midi", { volume: 0.32 });
+  [8, 12].forEach((time, section) =>
+    project.addMidiClip(
+      lead.id,
+      {
+        duration: 4 * beatsPerSecond,
+        notes: [72, 76, 79, 84, 79].map((pitch, index) => ({
+          id: `lead${section}_${index}`,
+          start: index * 0.65 * beatsPerSecond,
+          duration: 0.47 * beatsPerSecond,
+          pitch: pitch - section * 2,
+          velocity: 98 / 127,
+          channel: 0,
+        })),
+      },
+      time * beatsPerSecond,
+    ),
+  );
+  instrument(lead.id);
+
+  const fx = project.addTrack("Transitions", "audio", { volume: 0.45 });
+  audioClips(fx.id, transition(), [3.2, 7.2, 11.2], [1, 2, 3]);
+  return project;
+}
+
+function addNote(clip: MidiClip, placement?: { start: number; pitch: number }): string {
+  const notes = clip.midi.notes.value;
+  const position = workspace.project.tempoMap.secondsToBeat(workspace.position);
+  const proposedStart = placement?.start ?? Math.max(0, Math.floor(Math.max(clip.time, position)) - clip.time);
+  const start = Math.max(0, Math.min(Math.max(0, clip.duration - 0.01), proposedStart));
+  const duration = Math.min(clip.duration - start, 1);
+  const pitch = placement?.pitch ?? notes[Math.floor(notes.length / 2)]?.pitch ?? 60;
+  const id = `note${crypto.randomUUID().replace(/-/g, "")}`;
+  clip.midi.edit((draft) => {
+    draft.push({ id, start, duration, pitch, velocity: 100 / 127, channel: 0 });
+  });
+  status(`已新增 ${pitch} 音符 · ${start.toFixed(2)} 拍`);
+  return id;
+}
+
+async function addSynth(track: ProjectTrack): Promise<void> {
+  addDefaultSynth(workspace.project, track.id);
+  await workspace.sync();
+  renderTracks();
+  status("已加入 Oxo Synth2");
+}
+
+async function placeSample(id: string): Promise<void> {
+  if (!workspace) return;
+  const track = workspace.project.tracks.find((item) => item.id === studio.selectedTrackId && item.kind === "audio");
+  if (!track) {
+    status("請先選取音訊軌。");
+    return;
+  }
+  const row = samples.state.value.rows.find((item) => item.id === id);
+  const lease = samples.acquire(id);
+  try {
+    const { buffer } = lease;
+    const channels = Array.from({ length: buffer.numberOfChannels }, (_, index) => buffer.getChannelData(index));
+    studio.recordClipEdit("匯入音訊", () =>
+      workspace.project.addAudioClip(track.id, { sampleRate: buffer.sampleRate, channels }, workspace.position),
+    );
+  } finally {
+    lease.release();
+  }
+  await workspace.flush();
+  renderTracks();
+  status(`已加入音訊 ${row?.name ?? ""}`);
+}
+
+const sampleBrowser = mountSampleBrowser($("sample-browser"), {
+  library: samples,
+  choose: placeSample,
+  onError: handleError,
+  labels: { preview: "試聽", stop: "停止試聽", use: "放入音軌", remove: "移除", loading: "正在讀取…" },
+});
+
+function renderTracks(): void {
+  studio.render();
+}
+
+function bindSession(): void {
+  sessionView?.dispose();
+  detachRangeAuditionView?.();
+  const current = workspace;
+  detachRangeAuditionView = effect(() => renderRangeAuditionButton(current.cells.auditioningRange.value !== null));
+  const quantize = (): Quantize => {
+    const choice = $<HTMLSelectElement>("launch-quantum").value;
+    return choice === "now" ? "none" : choice === "bar" ? "1m" : "4n";
+  };
+  sessionView = mountStudioSession($("clip-grid"), workspace, {
+    quantize,
+    loop: () => $<HTMLSelectElement>("launch-mode").value !== "one-shot",
+    report: handleError,
+  });
+  rhythmView?.dispose();
+  const closedHat = hats().slice(0, 2_640);
+  const openHat = Float32Array.from({ length: 12_000 }, (_, index) => (closedHat[Math.floor(index / 5)] ?? 0) * Math.exp(-index / 5_000));
+  const buffers = [rhythm().slice(0, 5_760), openHat, closedHat].map((pcm) => {
+    const buffer = context.createBuffer(1, pcm.length, 48_000);
+    buffer.copyToChannel(pcm, 0);
+    return buffer;
+  });
+  rhythmView = mountRhythmView($("rhythm-grid"), workspace, samples, buffers, handleError);
+}
+
+async function save(): Promise<void> {
+  const hasMedia = workspace.project.hasFileBackedAudio;
+  const picker = (
+    window as Window & {
+      showSaveFilePicker?: (options: { suggestedName: string }) => Promise<{ createWritable(): Promise<FileSystemWritableFileStream> }>;
+    }
+  ).showSaveFilePicker;
+  if (hasMedia && picker) {
+    const file = await picker({ suggestedName: "audiorective-daw.dawproject" });
+    await saveWorkspaceTo(workspace, await file.createWritable());
+    status(`已串流儲存 ${workspace.project.tracks.length} 軌 · 插件音色需收件者安裝相同 CLAP；可另匯出音訊`);
+    return;
+  }
+  let archive: Blob;
+  if (hasMedia) {
+    const parts: Uint8Array[] = [];
+    await saveWorkspaceTo(
+      workspace,
+      new WritableStream({
+        write: (chunk) => {
+          parts.push(chunk);
+        },
+      }),
+    );
+    archive = new Blob(parts as BlobPart[], { type: "application/zip" });
+  } else {
+    const bytes = await saveWorkspace(workspace);
+    archive = new Blob([new Uint8Array(bytes).buffer], { type: "application/zip" });
+  }
+  const url = URL.createObjectURL(archive);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "audiorective-daw.dawproject";
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  status(`已儲存 ${workspace.project.tracks.length} 軌 · ${archive.size} bytes · 插件音色需收件者安裝相同 CLAP；可另匯出音訊`);
+}
+
+async function exportAudioFallback(): Promise<void> {
+  if (fallbackAbort) {
+    fallbackAbort.abort();
+    return;
+  }
+  const picker = (
+    window as Window & {
+      showSaveFilePicker?: (options: { suggestedName: string }) => Promise<{ createWritable(): Promise<FileSystemWritableFileStream> }>;
+    }
+  ).showSaveFilePicker;
+  // Acquire the file handle while the click still counts as a user gesture.
+  const file = picker ? await picker({ suggestedName: "audiorective-audio.zip" }) : undefined;
+  const controller = new AbortController();
+  fallbackAbort = controller;
+  const button = $<HTMLButtonElement>("export-audio");
+  $<HTMLButtonElement>("open").disabled = true;
+  $<HTMLButtonElement>("new").disabled = true;
+  button.textContent = "取消匯出";
+  try {
+    const parts: Uint8Array[] = [];
+    const destination = file
+      ? await file.createWritable()
+      : new WritableStream<Uint8Array>({
+          write: (chunk) => {
+            parts.push(chunk);
+          },
+        });
+    await exportAudioFallbackTo(workspace, destination, {
+      signal: controller.signal,
+      onProgress: (fraction) => status(`正在匯出音訊 ${Math.round(fraction * 100)}%`),
+    });
+    if (!file) {
+      const url = URL.createObjectURL(new Blob(parts as BlobPart[], { type: "application/zip" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "audiorective-audio.zip";
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    }
+    status(
+      workspace.project.tracks.length > 15
+        ? "已匯出混音 WAV；超過 15 軌的工程暫不含各軌 WAV"
+        : `已匯出混音與 ${workspace.project.tracks.length} 軌 WAV`,
+    );
+  } finally {
+    fallbackAbort = undefined;
+    $<HTMLButtonElement>("open").disabled = false;
+    $<HTMLButtonElement>("new").disabled = false;
+    button.textContent = "匯出音訊";
+  }
+}
+
+function canReplaceProject(): boolean {
+  if (fallbackAbort || midiRecording || audioRecording || audioTransition) {
+    status("請先結束錄製或音訊匯出，再切換工程。");
+    return false;
+  }
+  return true;
+}
+
+async function replaceProject(next: Workspace): Promise<void> {
+  const previous = workspace;
+  studio.resetProject();
+  workspace = next;
+  watchWorkspace(next);
+  bindSession();
+  checkpointName = undefined;
+  looping = false;
+  loopClipId = undefined;
+  loopBeats = undefined;
+  syncLoopUi();
+  previous.dispose();
+  previous.project.dispose();
+  await Promise.all([...ownedMedia].map((media) => media.dispose()));
+  ownedMedia.clear();
+  renderTracks();
+}
+
+async function open(file: File, recovered = false): Promise<void> {
+  if (!canReplaceProject()) return;
+  const next = await openWorkspace(context, file, options);
+  if (!canReplaceProject()) {
+    next.dispose();
+    next.project.dispose();
+    return;
+  }
+  await replaceProject(next);
+  status(
+    `${recovered ? "已復原" : "已開啟"} ${workspace.project.title} · ${workspace.project.tracks.length} 軌${workspace.cells.warnings.value.length ? ` · ${workspace.cells.warnings.value.join(" ")}` : ""}`,
+  );
+}
+
+async function refreshCheckpoints(): Promise<File[]> {
+  const files = await listTakeCheckpoints();
+  const picker = $<HTMLSelectElement>("recovery-files");
+  const selection = picker.value;
+  picker.replaceChildren(
+    ...files.map((file) => new Option(`${file.name.split("--")[0]} · ${new Date(file.lastModified).toLocaleString()}`, file.name)),
+  );
+  if (files.some((file) => file.name === selection)) picker.value = selection;
+  $("recover-take").hidden = files.length === 0;
+  $<HTMLButtonElement>("restore-take").disabled = files.length === 0;
+  $<HTMLButtonElement>("remove-checkpoint").disabled = files.length === 0;
+  return files;
+}
+
+async function newProject(): Promise<void> {
+  if (!canReplaceProject() || !confirm("建立空白工程？尚未儲存的變更會遺失。")) return;
+  const next = await Workspace.create(context, new Project({ title: "Untitled", bpm: 120, signature: [4, 4] }), options);
+  if (!canReplaceProject()) {
+    next.dispose();
+    next.project.dispose();
+    return;
+  }
+  await replaceProject(next);
+  document.querySelector<HTMLElement>(".studio")!.dataset.browserOpen = "true";
+  $("toggle-browser").setAttribute("aria-pressed", "true");
+  status("空白工程已就緒");
+}
+
+async function recordMidi(): Promise<void> {
+  if (midiRecording) {
+    const { recorder, input, monitor, trackId, anchor, latency } = midiRecording;
+    midiRecording = undefined;
+    input.removeEventListener("midimessage", monitor);
+    let take: MidiTake;
+    try {
+      take = await recorder.stop();
+    } finally {
+      recorder.dispose();
+      for (const device of workspace.project.tracks.find((item) => item.id === trackId)?.devices ?? []) workspace.host(device.id)?.allNotesOff();
+      $("record-midi").textContent = "錄 MIDI";
+    }
+    studio.recordClipEdit("錄製 MIDI", () =>
+      workspace.project.addMidiTake(trackId, take, workspace.project.tempoMap.secondsToBeat(workspace.takePosition(anchor, take, latency))),
+    );
+    await workspace.flush();
+    renderTracks();
+    status(`MIDI take：${take.notes.length} 個音符`);
+    return;
+  }
+  const latency = inputLatency();
+  if (!navigator.requestMIDIAccess) throw new Error("此瀏覽器不支援 Web MIDI。");
+  const access = await navigator.requestMIDIAccess();
+  let input: MIDIInput | undefined;
+  access.inputs.forEach((candidate) => {
+    input ??= candidate;
+  });
+  if (!input) throw new Error("沒有可用的 MIDI 輸入裝置。");
+  await context.resume();
+  const track =
+    workspace.project.tracks.find((item) => item.id === studio.selectedTrackId && item.kind === "midi") ??
+    workspace.project.tracks.find((item) => item.kind === "midi") ??
+    workspace.project.addTrack("Recorded MIDI", "midi");
+  const recorder = new MidiRecorder(context, input);
+  const deviceId = track.devices[0]?.id;
+  const monitor = (event: MIDIMessageEvent) => {
+    if (event.data && deviceId) workspace.host(deviceId)?.scheduleMidi(event.data, context.currentTime);
+  };
+  recorder.record().catch(() => undefined);
+  const anchor = workspace.takeAnchor(recorder.cells.startedAt.value ?? context.currentTime);
+  input.addEventListener("midimessage", monitor);
+  midiRecording = { recorder, input, monitor, trackId: track.id, anchor, latency };
+  $("record-midi").textContent = "停止 MIDI 錄製";
+  status(`正在從 ${input.name ?? "MIDI input"} 錄製${deviceId ? "並監聽音源" : "（軌道尚無音源）"}…`);
+}
+
+async function recordAudio(): Promise<void> {
+  if (audioRecording) {
+    const { recorder, writer, source, stream, trackId, anchor, latency } = audioRecording;
+    audioRecording = undefined;
+    try {
+      let take: RecordedAudioSpan;
+      try {
+        take = await recorder.stop({ result: "span" });
+      } finally {
+        releaseAudioInput({ source, recorder, stream });
+      }
+      const media = await writer.finish(take);
+      try {
+        studio.recordClipEdit("錄製音訊", () => workspace.project.addAudioMediaClip(trackId, media, workspace.takePosition(anchor, take, latency)));
+      } catch (error) {
+        await media.dispose();
+        throw error;
+      }
+      ownedMedia.add(media);
+      await workspace.flush();
+      renderTracks();
+      const lostFrames = take.dropouts?.reduce((sum, gap) => sum + gap.endFrame - gap.startFrame, 0) ?? 0;
+      const summary = `音訊 take：${(take.endTime - take.startTime).toFixed(2)} 秒${lostFrames ? ` · 錄音中斷 ${(lostFrames / take.sampleRate).toFixed(3)} 秒，請檢查後重錄` : ""}`;
+      status("正在建立錄音復原點…");
+      try {
+        const title = workspace.project.title
+          .replace(/[^\p{L}\p{N} _-]/gu, "_")
+          .replace(/-+/g, "-")
+          .slice(0, 48);
+        checkpointName ??= `${title || "Untitled"}--${crypto.randomUUID()}.dawproject`;
+        await checkpointTake(workspace, checkpointName);
+        await refreshCheckpoints();
+        status(`${summary} · 已建立復原點`);
+      } catch (error) {
+        status(`${summary} · 無法建立復原點，請儲存工程：${error instanceof Error ? error.message : String(error)}`);
+      }
+    } finally {
+      await writer.abort().catch(() => undefined);
+    }
+    return;
+  }
+  const latency = inputLatency();
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  let source: MediaStreamAudioSourceNode | undefined;
+  let recorder: AudioRecorder | undefined;
+  let writer: AudioMediaWriter | undefined;
+  let completion: Promise<RecordedAudioSpan> | undefined;
+  try {
+    await workspace.flush();
+    await context.resume();
+    source = context.createMediaStreamSource(stream);
+    recorder = new AudioRecorder(context, { channels: 1 });
+    writer = await createOpfsAudioMediaWriter(context.sampleRate, 1);
+    source.connect(recorder.input);
+    const track =
+      workspace.project.tracks.find((item) => item.id === studio.selectedTrackId && item.kind === "audio") ??
+      workspace.project.tracks.find((item) => item.kind === "audio") ??
+      workspace.project.addTrack("Recorded audio", "audio");
+    await recorder.ready;
+    const anchor = workspace.takeAnchor();
+    const activeWriter = writer;
+    completion = recorder.record({ onChunk: (chunk) => activeWriter.writeChunk(chunk) });
+    const active: AudioRecording = { recorder, completion, writer, source, stream, trackId: track.id, anchor, latency };
+    audioRecording = active;
+    // A storage failure is observable without waiting for the musician to press Stop.
+    void completion
+      .catch(async (error: unknown) => {
+        if (audioRecording !== active) return;
+        audioRecording = undefined;
+        releaseAudioInput(active);
+        try {
+          await active.writer.abort();
+        } finally {
+          handleError(error);
+        }
+      })
+      .catch(handleError);
+    $("record-audio").textContent = "停止音訊錄製";
+    status("正在錄製麥克風…");
+  } catch (error) {
+    recorder?.cancel();
+    await completion?.catch(() => undefined);
+    await writer?.abort().catch(() => undefined);
+    source?.disconnect();
+    recorder?.dispose();
+    stream.getTracks().forEach((track) => track.stop());
+    throw error;
+  }
+}
+
+$("play").addEventListener("click", () =>
+  playFromLoop()
+    .then(() => status("播放中"))
+    .catch(handleError),
+);
+$("pause").addEventListener("click", () => {
+  workspace.pause();
+  status("已暫停");
+});
+$("stop").addEventListener("click", () => {
+  workspace.stopRangeAudition();
+  workspace.stop();
+  status("已停止");
+});
+
+function loopRange(): TimelineRange | undefined {
+  if (loopBeats) {
+    const map = workspace.project.tempoMap;
+    return [map.beatToSeconds(loopBeats[0]), map.beatToSeconds(loopBeats[1])];
+  }
+  if (!loopClipId) return [0, workspace.duration];
+  const clip = workspace.project.tracks.flatMap((track) => track.clips).find((item) => item.id === loopClipId);
+  return clip && [workspace.project.clipTimeSeconds(clip), workspace.project.clipTimeSeconds(clip, clip.duration)];
+}
+
+const activeLoopRange = () => (looping ? loopRange() : undefined);
+
+function renderRangeAuditionButton(active: boolean): void {
+  const control = $<HTMLButtonElement>("audition-range");
+  control.disabled = !active && !loopBeats && !loopClipId;
+  control.setAttribute("aria-pressed", String(active));
+}
+
+/** The engine repeats the range on the audio clock; this view only decides which range. */
+function syncWorkspaceLoop(): void {
+  const range = activeLoopRange();
+  if (!range || range[1] - range[0] < 0.02) {
+    workspace.loop.setEnabled(false);
+    return;
+  }
+  const map = workspace.project.tempoMap;
+  workspace.loop.setRegion({ startBeat: map.secondsToBeat(range[0]), endBeat: map.secondsToBeat(range[1]) });
+  workspace.loop.setEnabled(true);
+}
+
+function syncLoopUi(): void {
+  syncWorkspaceLoop();
+  $("loop").classList.toggle("on", looping);
+  $("loop").setAttribute("aria-pressed", String(looping));
+  studio.refreshLoopBand();
+  renderRangeAuditionButton(workspace.cells.auditioningRange.value !== null);
+}
+
+function seekIntoLoop(): void {
+  const range = activeLoopRange();
+  if (range && range[1] > range[0] && (workspace.position < range[0] || workspace.position >= range[1])) workspace.seek(range[0]);
+}
+
+function playFromLoop(): Promise<void> {
+  workspace.stopRangeAudition();
+  seekIntoLoop();
+  return workspace.play();
+}
+
+function selectLoopRange(range: TimelineRange): void {
+  workspace.stopRangeAudition();
+  const map = workspace.project.tempoMap;
+  loopBeats = [map.secondsToBeat(range[0]), map.secondsToBeat(range[1])];
+  loopClipId = undefined;
+  looping = true;
+  seekIntoLoop();
+  syncLoopUi();
+  status($("loop").title);
+}
+
+function clearLoopRange(): void {
+  workspace.stopRangeAudition();
+  loopBeats = undefined;
+  looping = false;
+  syncLoopUi();
+  status("已清除自訂循環區間");
+}
+
+$("loop").addEventListener("click", () => {
+  workspace.stopRangeAudition();
+  looping = !looping;
+  loopClipId = looping && !loopBeats ? studio.selectedClipId : undefined;
+  if (loopBeats) seekIntoLoop();
+  syncLoopUi();
+  status(looping ? $("loop").title : "已關閉循環");
+});
+$("audition-range").addEventListener("click", async () => {
+  try {
+    if (workspace.cells.auditioningRange.value) {
+      workspace.stopRangeAudition();
+      return;
+    }
+    const range = loopRange();
+    if (!range || (!loopBeats && !loopClipId)) return;
+    if (workspace.player.isPlaying.value) workspace.pause();
+    await workspace.auditionRange({ start: range[0], end: range[1] });
+  } catch (error) {
+    handleError(error);
+  }
+});
+$("save").addEventListener("click", () => save().catch(handleError));
+$("export-audio").addEventListener("click", () =>
+  exportAudioFallback().catch((error) => {
+    if (error instanceof DOMException && error.name === "AbortError") status("已取消音訊匯出");
+    else handleError(error);
+  }),
+);
+$("portability").addEventListener("click", () => {
+  const report = portabilityReport(workspace.project, workspace.cells.warnings.value);
+  $("portability-details").textContent =
+    `標準資料：${report.standardContent.join("、")}。${report.pluginDependencies.length ? `插件依賴：${report.pluginDependencies.join("；")}。` : ""}${report.limitations.join(" ")}`;
+  $<HTMLDialogElement>("portability-dialog").showModal();
+});
+$("open").addEventListener("click", () => $<HTMLInputElement>("open-file").click());
+$("new").addEventListener("click", () => newProject().catch(handleError));
+$<HTMLInputElement>("open-file").addEventListener("change", (event) => {
+  const input = event.currentTarget as HTMLInputElement;
+  if (input.files?.[0]) open(input.files[0]).catch(handleError);
+  input.value = "";
+});
+async function addMidiTrack(): Promise<void> {
+  const track = workspace.project.addTrack(`MIDI ${workspace.project.tracks.length + 1}`, "midi");
+  addDefaultSynth(workspace.project, track.id);
+  await workspace.sync();
+  studio.selectTrack(track.id);
+  status("已新增 MIDI 軌 · Oxo Synth2 已就緒");
+}
+$("add-midi").addEventListener("click", () => addMidiTrack().catch(handleError));
+$("new-midi-track").addEventListener("click", () => addMidiTrack().catch(handleError));
+$("add-audio").addEventListener("click", async () => {
+  workspace.project.addTrack(`Audio ${workspace.project.tracks.length + 1}`, "audio");
+  await workspace.sync();
+  studio.selectTrack(workspace.project.tracks.at(-1)!.id);
+  status("已新增音訊軌");
+});
+$("record-midi").addEventListener("click", () => recordMidi().catch(handleError));
+$("record-audio").addEventListener("click", () => {
+  if (audioTransition || !workspace) return;
+  audioTransition = true;
+  void recordAudio()
+    .catch(handleError)
+    .finally(() => {
+      audioTransition = false;
+    });
+});
+$("recover-take").addEventListener("click", () => {
+  void refreshCheckpoints()
+    .then(() => $<HTMLDialogElement>("recovery-dialog").showModal())
+    .catch(handleError);
+});
+$("restore-take").addEventListener("click", () => {
+  if (!canReplaceProject() || !confirm("開啟錄音復原點？目前工程未儲存的變更會遺失。")) return;
+  const name = $<HTMLSelectElement>("recovery-files").value;
+  $<HTMLDialogElement>("recovery-dialog").close();
+  void listTakeCheckpoints()
+    .then((files) => {
+      const file = files.find((entry) => entry.name === name);
+      if (!file) throw new Error("這個錄音復原點已不存在。");
+      return open(file, true);
+    })
+    .catch(handleError);
+});
+$("remove-checkpoint").addEventListener("click", () => {
+  const name = $<HTMLSelectElement>("recovery-files").value;
+  if (!name || !canReplaceProject() || !confirm("刪除這個錄音復原點？")) return;
+  void removeTakeCheckpoint(name)
+    .then(() => refreshCheckpoints())
+    .catch(handleError);
+});
+$("browser-synth").addEventListener("click", () => {
+  const track = workspace.project.tracks.find((item) => item.id === studio.selectedTrackId && item.kind === "midi");
+  if (!track) {
+    status("請先選取 MIDI 軌。");
+    return;
+  }
+  addSynth(track).catch(handleError);
+});
+$("browser-import").addEventListener("click", () => $<HTMLInputElement>("audio-file").click());
+$<HTMLInputElement>("audio-file").addEventListener("change", (event) => {
+  const input = event.currentTarget as HTMLInputElement;
+  const files = Array.from(input.files ?? []);
+  input.value = "";
+  if (files.length) void samples.importFiles(files).catch(handleError);
+});
+studio = new StudioView({
+  workspace: () => workspace,
+  context,
+  status,
+  error: handleError,
+  async inspectWebClap(url, pluginId) {
+    const candidate = await WebClapHost.load(context, { url, pluginId, workletUrl: options.workletUrl });
+    const descriptor = candidate.descriptor;
+    candidate.dispose();
+    trustedBundles.add(new URL(url, location.href).href);
+    return descriptor;
+  },
+  addNote,
+  play: playFromLoop,
+  activeLoopRange,
+  hasCustomLoop: () => !!loopBeats,
+  selectLoopRange,
+  clearLoopRange,
+});
+const latencyInput = $<HTMLInputElement>("record-latency");
+try {
+  const saved = localStorage.getItem("audiorective-record-latency-ms");
+  if (saved !== null && Number.isFinite(Number(saved)) && Number(saved) >= 0 && Number(saved) <= 500) latencyInput.value = saved;
+} catch {
+  /* Keep the session default. */
+}
+latencyInput.addEventListener("change", () => {
+  try {
+    inputLatency();
+    localStorage.setItem("audiorective-record-latency-ms", latencyInput.value);
+  } catch (error) {
+    handleError(error);
+  }
+});
+const skinSelect = $<HTMLSelectElement>("skin");
+const skinNames = new Set(["midnight", "slate", "canvas", "orchid"]);
+try {
+  const saved = localStorage.getItem("audiorective-studio-skin");
+  if (saved && skinNames.has(saved)) {
+    skinSelect.value = saved;
+    document.documentElement.dataset.skin = saved;
+  }
+} catch {
+  /* Storage can be disabled by the browser. */
+}
+skinSelect.addEventListener("change", () => {
+  if (!skinNames.has(skinSelect.value)) return;
+  document.documentElement.dataset.skin = skinSelect.value;
+  try {
+    localStorage.setItem("audiorective-studio-skin", skinSelect.value);
+  } catch {
+    /* Use session-only skin. */
+  }
+});
+
+function animate(): void {
+  if (workspace) {
+    const position = workspace.position;
+    $("time").textContent = `${Math.floor(position / 60)}:${(position % 60).toFixed(1).padStart(4, "0")}`;
+    studio.setPlayhead(position);
+    const session = workspace.cells.session.value;
+    if (workspace.transport.state.value === "playing" && !session.playing.value.length && !session.queued.value.length) {
+      const range = looping ? loopRange() : undefined;
+      if (looping && !range) {
+        looping = false;
+        loopClipId = undefined;
+        syncLoopUi();
+      }
+      syncWorkspaceLoop();
+      if (position >= workspace.duration && !(range && position < range[1]) && !rhythmView?.enabled) workspace.stop();
+    }
+  }
+  requestAnimationFrame(animate);
+}
+
+Workspace.create(context, demoProject(), options)
+  .then((created) => {
+    workspace = created;
+    watchWorkspace(created);
+    bindSession();
+    studio.selectedTrackId = created.project.tracks[0]?.id;
+    studio.selectedClipId = created.project.tracks[0]?.clips[0]?.id;
+    renderTracks();
+    animate();
+    status(
+      created.cells.warnings.value.length
+        ? `工程已載入，但有裝置問題：${created.cells.warnings.value.join(" ")}`
+        : "工程已就緒 · 試著播放、編輯、存檔並重開",
+    );
+    void refreshCheckpoints().catch(() => undefined);
+  })
+  .catch(handleError);
+
+window.addEventListener("pagehide", () => {
+  if (midiRecording) {
+    midiRecording.input.removeEventListener("midimessage", midiRecording.monitor);
+    midiRecording.recorder.cancel();
+    midiRecording.recorder.dispose();
+  }
+  if (audioRecording) {
+    const active = audioRecording;
+    audioRecording = undefined;
+    active.recorder.cancel();
+    releaseAudioInput(active);
+    void active.completion
+      .catch(() => undefined)
+      .then(() => active.writer.abort())
+      .catch(() => undefined);
+  }
+  sessionView?.dispose();
+  rhythmView?.dispose();
+  detachRangeAuditionView?.();
+  sampleBrowser.dispose();
+  samples.dispose();
+  studio.dispose();
+  workspace?.dispose();
+  workspace?.project.dispose();
+  for (const media of ownedMedia) void media.dispose();
+  void context.close();
+});
+
+Object.assign(window, {
+  __daw: {
+    get workspace() {
+      return workspace;
+    },
+    get project() {
+      return workspace?.project;
+    },
+    get samples() {
+      return samples;
+    },
+    api: { openWorkspace, saveWorkspace, saveWorkspaceTo, exportAudioFallbackTo, portabilityReport },
+  },
+});

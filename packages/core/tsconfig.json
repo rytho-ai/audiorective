@@ -10,11 +10,12 @@
     "strict": true,
     "noUnusedLocals": true,
     "declaration": true,
+    "stripInternal": true,
     "emitDeclarationOnly": true,
     "esModuleInterop": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true
   },
-  "include": ["src", "tests/graph.types.ts"]
+  "include": ["src", "tests/graph.types.ts", "tests/registry.types.ts"]
 }

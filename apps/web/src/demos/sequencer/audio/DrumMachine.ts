@@ -19,7 +19,7 @@ export interface DrumTrack {
   readonly label: string;
   readonly sampler: Sampler;
   readonly pattern: Cell<boolean[]>;
-  readonly mute: Param<boolean>;
+  readonly muted: Param<boolean>;
 }
 
 export interface DrumMachineOptions {
@@ -90,7 +90,7 @@ export class DrumMachine extends AudioProcessor<{}, {}> {
   constructor(options: DrumMachineOptions) {
     const { audioContext, kit, bpm = 120, patternLength = DEFAULT_PATTERN_LENGTH, tickSource } = options;
     // Empty params/cells registries: the reactive surface is per-track
-    // (`pattern`, `mute` on each DrumTrack) plus `bpm`/`state`, which belong
+    // (`pattern`, `muted` on each DrumTrack) plus `bpm`/`state`, which belong
     // to the Timeline and Clock respectively.
     super(audioContext, () => ({ params: {}, cells: {} }));
 
@@ -102,14 +102,14 @@ export class DrumMachine extends AudioProcessor<{}, {}> {
     const ids: DrumVoiceId[] = ["kick", "snare", "hat", "clap"];
     this.tracks = ids.map((id) => {
       // polyphony > 1 so a fast pattern's tail isn't cut off by its own next hit
-      const sampler = new Sampler(audioContext, { buffer: kit[id], polyphony: 4 });
+      const sampler = new Sampler(audioContext, { sound: kit[id], polyphony: 4 });
       sampler.output.connect(this._master);
       return {
         id,
         label: TRACK_LABELS[id],
         sampler,
         pattern: new Cell(patternFromSteps(DEFAULT_PATTERNS[id], patternLength)),
-        mute: new Param<boolean>({ default: false, label: `${TRACK_LABELS[id]} mute` }),
+        muted: new Param<boolean>({ default: false, label: `${TRACK_LABELS[id]} mute` }),
       };
     });
 
@@ -128,11 +128,11 @@ export class DrumMachine extends AudioProcessor<{}, {}> {
       onTick: (window) => {
         // `step` is already folded into the cycle, so it indexes the pattern
         // directly -- and it stays in range across the loop wrap and any seek.
-        for (const { time, step } of window.rulers.pattern.grid(patternLength)) {
+        for (const { when, step } of window.rulers.pattern.grid(patternLength)) {
           for (const track of this.tracks) {
-            if (track.mute.value) continue;
+            if (track.muted.value) continue;
             if (!track.pattern.value[step]) continue;
-            track.sampler.trigger({ when: time });
+            track.sampler.trigger({ when });
           }
         }
       },
@@ -207,10 +207,10 @@ export class DrumMachine extends AudioProcessor<{}, {}> {
     for (const track of this.tracks) track.sampler.stopAll();
   }
 
-  destroy(): void {
-    this._clock.destroy();
-    for (const track of this.tracks) track.sampler.destroy();
+  dispose(): void {
+    this._clock.dispose();
+    for (const track of this.tracks) track.sampler.dispose();
     this._master.disconnect();
-    super.destroy();
+    super.dispose();
   }
 }

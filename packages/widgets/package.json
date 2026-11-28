@@ -1,0 +1,72 @@
+{
+  "name": "@audiorective/widgets",
+  "version": "3.0.0-beta.0",
+  "description": "Composable player controls, waveform and MIDI piano-roll display, selection and audio audition widgets",
+  "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/audiorective/audiorective/tree/main/packages/widgets#readme",
+  "bugs": {
+    "url": "https://github.com/audiorective/audiorective/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/audiorective/audiorective.git",
+    "directory": "packages/widgets"
+  },
+  "author": "Chriest Yu <jcppman@gmail.com>",
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./waveform": {
+      "types": "./dist/waveform.d.ts",
+      "import": "./dist/waveform.js"
+    },
+    "./package.json": "./package.json",
+    "./piano-roll": {
+      "types": "./dist/piano-roll.d.ts",
+      "import": "./dist/piano-roll.js"
+    },
+    "./player": {
+      "types": "./dist/player.d.ts",
+      "import": "./dist/player.js"
+    },
+    "./clip": {
+      "types": "./dist/clip.d.ts",
+      "import": "./dist/clip.js"
+    },
+    "./arrangement": {
+      "types": "./dist/arrangement.d.ts",
+      "import": "./dist/arrangement.js"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "test": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@audiorective/core": "workspace:^",
+    "@audiorective/midi": "workspace:^",
+    "@audiorective/player": "workspace:^"
+  },
+  "devDependencies": {
+    "@types/node": "^24.9.1",
+    "@vitest/browser": "^4.0.18",
+    "@vitest/browser-playwright": "^4.0.18",
+    "playwright": "^1.58.2",
+    "tsdown": "^0.15.9",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18",
+    "@audiorective/sequencer": "workspace:^"
+  },
+  "sideEffects": false
+}

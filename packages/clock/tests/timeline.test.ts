@@ -83,7 +83,7 @@ describe("Timeline — pause/resume semantics", () => {
     const ctx = makeContext(0);
     const timeline = new Timeline({ audioContext: ctx, bpm: 120 });
     timeline._resume();
-    expect(timeline.state).toBe("stopped");
+    expect(timeline.state.value).toBe("stopped");
   });
 
   test("pause while stopped stays stopped, so it cannot become resumable", () => {
@@ -97,10 +97,10 @@ describe("Timeline — pause/resume semantics", () => {
     timeline._stop();
 
     timeline._pause();
-    expect(timeline.state).toBe("stopped");
+    expect(timeline.state.value).toBe("stopped");
 
     timeline._resume();
-    expect(timeline.state).toBe("stopped");
+    expect(timeline.state.value).toBe("stopped");
   });
 
   test("pause/resume does not bump generation", () => {
@@ -126,7 +126,7 @@ describe("Timeline — seek", () => {
     expect(timeline.timeToBeat(5)).toBeCloseTo(64);
   });
 
-  test("start() and start({ atBeat }) also bump generation", () => {
+  test("_start() and _start(atBeat) also bump generation", () => {
     const ctx = makeContext(0);
     const timeline = new Timeline({ audioContext: ctx, bpm: 120 });
     const gen0 = timeline.generation;
@@ -207,5 +207,53 @@ describe("Timeline — registered ruler slots", () => {
     timeline._refreshRulerCurrents(ctx.currentTime);
     expect(timeline.rulers.fourFour.current.value).toMatchObject({ bar: 0, beatInBar: 3 });
     expect(timeline.rulers.threeFour.current.value).toMatchObject({ bar: 1, beatInBar: 0 });
+  });
+});
+
+describe("Timeline — ruler current is read-only and tracked", () => {
+  test("rulers.<key>.current is a ReadonlyCell refreshed per tick", async () => {
+    const { effect } = await import("alien-signals");
+    const ctx = makeContext(0);
+    const timeline = new Timeline({ audioContext: ctx, bpm: 120 }).addRuler("bar", new LinearBarRuler({ numerator: 4, denominator: 4 }));
+    const current = timeline.rulers.bar.current;
+    expect(Object.getOwnPropertyDescriptor(Object.getPrototypeOf(current), "value")?.set).toBeUndefined();
+    let runs = 0;
+    const stop = effect(() => {
+      void current.value;
+      runs++;
+    });
+    timeline._start();
+    ctx.currentTime = 2.5; // beat 5
+    timeline._refreshRulerCurrents(ctx.currentTime);
+    expect(runs).toBe(2);
+    stop();
+  });
+});
+
+describe("Timeline — tempo ramps", () => {
+  test("beatToTime and timeToBeat are exact inverses across a ramp, and match the analytic integral", () => {
+    const ctx = { currentTime: 0 };
+    const timeline = new Timeline({ audioContext: ctx, bpm: 120 });
+    timeline._start(0);
+    timeline.bpm.setValueAtTime(120, 0);
+    timeline.bpm.linearRampToValueAtTime(160, 8);
+    // 120 -> 160 over 8 s: 8 * 140 / 60 beats
+    expect(timeline.timeToBeat(8)).toBeCloseTo(18.666666666666668, 10);
+    expect(timeline.beatToTime(18.666666666666668)).toBeCloseTo(8, 9);
+    for (const beat of [0.5, 3, 12, 18.6, 25, 100]) {
+      expect(timeline.timeToBeat(timeline.beatToTime(beat))).toBeCloseTo(beat, 9);
+    }
+  });
+
+  test("documented accelerando: +40 BPM over 32 beats ends at start + 32 * 60 / (from + 20)", () => {
+    const ctx = { currentTime: 3 };
+    const timeline = new Timeline({ audioContext: ctx, bpm: 100 });
+    timeline._start(0);
+    const start = ctx.currentTime;
+    const from = timeline.bpm.valueAtTime(start);
+    timeline.bpm.cancelAndHoldAtTime(start);
+    const endTime = start + (32 * 60) / (from + 20);
+    timeline.bpm.linearRampToValueAtTime(from + 40, endTime);
+    expect(timeline.beatToTime(timeline.timeToBeat(start) + 32)).toBeCloseTo(endTime, 9);
   });
 });

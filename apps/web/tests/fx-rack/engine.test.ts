@@ -7,9 +7,9 @@ describe("fx-rack engine.setEngine", () => {
     vi.restoreAllMocks();
   });
 
-  it("serializes overlapping calls instead of racing to destroy the same rack", async () => {
-    await engine.core.start();
-    const destroySpy = vi.spyOn(FxRack.prototype, "destroy");
+  it("serializes overlapping calls instead of racing to dispose the same rack", async () => {
+    await engine.core.resume();
+    const disposeSpy = vi.spyOn(FxRack.prototype, "dispose");
     const before = engine.rack.value;
 
     const first = engine.setEngine("stretch");
@@ -17,11 +17,11 @@ describe("fx-rack engine.setEngine", () => {
     await Promise.all([first, second]);
 
     expect(engine.rack.value.inserts.pitchShift.engine).toBe("granular");
-    expect(destroySpy.mock.instances.filter((i) => i === before)).toHaveLength(1);
+    expect(disposeSpy.mock.instances.filter((i) => i === before)).toHaveLength(1);
   });
 
   it("carries the loaded drum loop onto the replacement rack", async () => {
-    await engine.core.start();
+    await engine.core.resume();
     await engine.loopLoaded;
     const loop = engine.rack.value.deck.buffer;
     expect(loop).toBeInstanceOf(AudioBuffer);

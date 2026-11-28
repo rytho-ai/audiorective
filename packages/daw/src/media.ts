@@ -1,0 +1,234 @@
+/** The fields of a recorder chunk that media storage reads; a recorder's output satisfies it. */
+export type AudioMediaChunk = Readonly<{
+  /** Absolute capture frame index per channel; successive chunks must be consecutive. */
+  startFrame: number;
+  /** Equal-length non-empty planar float32 PCM channels with finite samples. */
+  channels: readonly Float32Array[];
+}>;
+/** The fields of a finished recorder span that media storage reads. */
+export type AudioMediaSpan = Readonly<{
+  /** Capture sample rate in hertz; must match the media writer. */
+  sampleRate: number;
+  /** Integer number of captured channels, 1..32; must match the media writer. */
+  channelCount: number;
+  /** Inclusive absolute capture frame index per channel. */
+  startFrame: number;
+  /** Exclusive absolute capture frame index per channel; the span must be covered by written chunks. */
+  endFrame: number;
+}>;
+
+/** The compressed file behind a pending `AudioMedia`, and the archive path it came from. */
+const encodedFiles = new WeakMap<AudioMedia, Readonly<{ blob: Blob; path: string }>>();
+let creatingEncoded = false;
+
+/**
+ * Audio that a DAWproject file stores in a format the browser decodes (Ogg Vorbis, Opus, MP3, FLAC, AAC, ...) and nothing has decoded yet.
+ * `sampleRate`, `channelCount` and `frameCount` are what the file's `Audio` element states. Codec access: the reader creates it, `openWorkspace` decodes it.
+ */
+export function encodedAudioMedia(
+  blob: Blob,
+  path: string,
+  info: Readonly<{ sampleRate: number; channelCount: number; frameCount: number }>,
+): AudioMedia {
+  creatingEncoded = true;
+  try {
+    const media = new AudioMedia(blob, info.sampleRate, info.channelCount, info.frameCount);
+    encodedFiles.set(media, Object.freeze({ blob, path }));
+    return media;
+  } finally {
+    creatingEncoded = false;
+  }
+}
+
+/** Codec access: the compressed file and archive path behind a pending `AudioMedia`, or undefined for PCM media. */
+export const encodedFileOf = (media: AudioMedia): Readonly<{ blob: Blob; path: string }> | undefined => encodedFiles.get(media);
+
+/** Interleaved little-endian float32 PCM held by a Blob or disk-backed File. */
+export class AudioMedia {
+  private disposed = false;
+  constructor(
+    /** The bytes: interleaved little-endian float32 frames starting at `byteOffset` (a compressed file for pending media). */
+    readonly blob: Blob,
+    /** Hertz; a positive integer. */
+    readonly sampleRate: number,
+    /** Channels per frame, an integer from 1 to 32. */
+    readonly channelCount: number,
+    /** Sample frames per channel the media holds (1 or more). */
+    readonly frameCount: number,
+    /** Bytes in `blob` before the first frame (default 0, for a WAV the header size). */
+    readonly byteOffset = 0,
+    /** Runs once on `dispose()`, for example to delete a temporary file; omitted when nothing needs releasing. */
+    private readonly onDispose?: () => Promise<void>,
+  ) {
+    if (
+      !Number.isInteger(sampleRate) ||
+      sampleRate <= 0 ||
+      !Number.isInteger(channelCount) ||
+      channelCount < 1 ||
+      channelCount > 32 ||
+      !Number.isSafeInteger(frameCount) ||
+      frameCount < 1 ||
+      !Number.isSafeInteger(byteOffset) ||
+      byteOffset < 0 ||
+      (!creatingEncoded && byteOffset + frameCount * channelCount * 4 > blob.size)
+    )
+      throw new RangeError("AudioMedia needs a valid PCM frame window.");
+  }
+
+  /**
+   * True for audio an opened DAWproject file stores compressed that the browser has not decoded yet: its clips exist and can be moved, trimmed and saved,
+   * but cannot be read or played. `openWorkspace`, `openWorkspace` and `workspace.open` decode it before the song starts, so a Workspace never holds a pending clip.
+   */
+  get pending(): boolean {
+    return encodedFiles.has(this);
+  }
+
+  /** Release caller-owned temporary storage after no clips or undo states refer to it. */
+  async dispose(): Promise<void> {
+    if (this.disposed) return;
+    this.disposed = true;
+    await this.onDispose?.();
+  }
+
+  /** Reads `frameCount` frames (1 or more) starting at the zero-based `startFrame` as one Float32Array per channel. Rejects with `RangeError` outside `0 ..< this.frameCount`, and with an error for disposed or not-yet-decoded media. */
+  async readFrames(startFrame: number, frameCount: number): Promise<readonly Float32Array[]> {
+    if (this.disposed) throw new Error("AudioMedia is disposed.");
+    const encoded = encodedFiles.get(this);
+    if (encoded) throw new Error(`AudioMedia is not decoded yet: open the project with openWorkspace so the browser decodes "${encoded.path}".`);
+    if (
+      !Number.isInteger(startFrame) ||
+      !Number.isInteger(frameCount) ||
+      startFrame < 0 ||
+      frameCount < 1 ||
+      startFrame + frameCount > this.frameCount
+    )
+      throw new RangeError("AudioMedia read needs a valid frame window.");
+    const stride = this.channelCount * 4;
+    const bytes = await this.blob.slice(this.byteOffset + startFrame * stride, this.byteOffset + (startFrame + frameCount) * stride).arrayBuffer();
+    if (bytes.byteLength !== frameCount * stride) throw new Error("AudioMedia asset ended before its declared frame count.");
+    const view = new DataView(bytes);
+    const channels = Array.from({ length: this.channelCount }, () => new Float32Array(frameCount));
+    for (let frame = 0; frame < frameCount; frame++)
+      for (let channel = 0; channel < this.channelCount; channel++) {
+        const sample = view.getFloat32((frame * this.channelCount + channel) * 4, true);
+        if (!Number.isFinite(sample)) throw new Error("AudioMedia asset has non-finite PCM samples.");
+        channels[channel][frame] = sample;
+      }
+    return channels;
+  }
+
+  /** Reduce a frame window to display peaks without decoding the whole asset at once. */
+  async peaks(startFrame = 0, frameCount = this.frameCount): Promise<{ min: Float32Array; max: Float32Array; duration: number }> {
+    if (
+      !Number.isInteger(startFrame) ||
+      !Number.isInteger(frameCount) ||
+      startFrame < 0 ||
+      frameCount < 1 ||
+      startFrame + frameCount > this.frameCount
+    )
+      throw new RangeError("AudioMedia peaks need a valid frame window.");
+    const bins = Math.min(500_000, Math.ceil(frameCount / Math.max(1, this.sampleRate / 100)));
+    const framesPerBin = Math.ceil(frameCount / bins);
+    const min = new Float32Array(bins);
+    const max = new Float32Array(bins);
+    for (let at = 0; at < frameCount; at += 32768) {
+      const channels = await this.readFrames(startFrame + at, Math.min(32768, frameCount - at));
+      for (let frame = 0; frame < channels[0].length; frame++) {
+        const bin = Math.min(bins - 1, Math.floor((at + frame) / framesPerBin));
+        for (const channel of channels) {
+          min[bin] = Math.min(min[bin], channel[frame]);
+          max[bin] = Math.max(max[bin], channel[frame]);
+        }
+      }
+    }
+    return { min, max, duration: frameCount / this.sampleRate };
+  }
+}
+
+export interface AudioMediaStorage {
+  /** Appends interleaved little-endian float32 PCM bytes; resolves when the write is accepted. */
+  write(bytes: Uint8Array): Promise<void>;
+  /** Closes storage and returns its PCM Blob after all writes complete. */
+  finish(): Promise<Blob>;
+  /** Releases unfinished storage, including temporary files; called on cancellation or failure. */
+  abort(): Promise<void>;
+}
+
+/** Serializes recorder chunks to a caller-owned storage target without retaining PCM arrays. */
+export class AudioMediaWriter {
+  private frames = 0;
+  private firstFrame: number | undefined;
+  private pending: Promise<void> = Promise.resolve();
+  private failed: unknown;
+  private closed = false;
+  private finished = false;
+
+  constructor(
+    /** Hertz of the chunks it will accept; a positive integer. */
+    readonly sampleRate: number,
+    /** Channels per chunk, an integer from 1 to 32. */
+    readonly channelCount: number,
+    private readonly storage: AudioMediaStorage,
+  ) {
+    if (!Number.isInteger(sampleRate) || sampleRate <= 0 || !Number.isInteger(channelCount) || channelCount < 1 || channelCount > 32)
+      throw new RangeError("AudioMediaWriter needs a sample rate and 1–32 channels.");
+  }
+
+  /** Appends one recorder chunk (equal-length channels, finite samples, consecutive `startFrame`); returns when it is stored. Throws if the writer is closed, a chunk is out of order or an earlier write failed. */
+  writeChunk(chunk: AudioMediaChunk): Promise<void> {
+    if (this.closed) throw new Error("AudioMediaWriter is closed.");
+    if (this.failed) throw this.failed;
+    const count = chunk.channels[0]?.length ?? 0;
+    if (!count || chunk.channels.length !== this.channelCount || chunk.channels.some((channel) => channel.length !== count))
+      throw new Error("AudioMediaWriter needs equal-length PCM channels.");
+    if (this.firstFrame === undefined) this.firstFrame = chunk.startFrame;
+    if (chunk.startFrame !== this.firstFrame + this.frames) throw new Error("AudioMediaWriter lost captured frames.");
+    const bytes = new Uint8Array(count * this.channelCount * 4);
+    const view = new DataView(bytes.buffer);
+    for (let frame = 0; frame < count; frame++)
+      for (let channel = 0; channel < this.channelCount; channel++) {
+        const sample = chunk.channels[channel][frame];
+        if (!Number.isFinite(sample)) throw new Error("AudioMediaWriter needs finite PCM samples.");
+        view.setFloat32((frame * this.channelCount + channel) * 4, sample, true);
+      }
+    this.frames += count;
+    this.pending = this.pending
+      .then(() => this.storage.write(bytes))
+      .catch((error: unknown) => {
+        this.failed = error;
+        throw error;
+      });
+    return this.pending;
+  }
+
+  /** Closes the writer and returns the stored `AudioMedia` once every chunk is written; `span` must match the captured frames (rate, channels, first and last frame) or it throws and aborts the storage. */
+  async finish(span: AudioMediaSpan): Promise<AudioMedia> {
+    if (this.closed) throw new Error("AudioMediaWriter is closed.");
+    this.closed = true;
+    try {
+      await this.pending;
+      if (this.failed) throw this.failed;
+      if (
+        span.sampleRate !== this.sampleRate ||
+        span.channelCount !== this.channelCount ||
+        span.startFrame !== this.firstFrame ||
+        span.endFrame - span.startFrame !== this.frames
+      )
+        throw new Error("AudioMediaWriter take does not match captured frames.");
+      const media = new AudioMedia(await this.storage.finish(), this.sampleRate, this.channelCount, this.frames, 0, () => this.storage.abort());
+      this.finished = true;
+      return media;
+    } catch (error) {
+      await this.storage.abort();
+      throw error;
+    }
+  }
+
+  /** Discards what was written and releases the storage; does nothing after `finish` succeeded. Safe to call twice. */
+  async abort(): Promise<void> {
+    if (this.finished) return;
+    this.closed = true;
+    await this.pending.catch(() => undefined);
+    await this.storage.abort();
+  }
+}

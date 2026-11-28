@@ -1,0 +1,156 @@
+{
+  "area": "clip-launcher-expressive",
+  "description": "Expressive session-view features beyond launch/stop: per-clip quantize, start offset and loop region, launch modes, scene tempo, follow actions, legato, probability launch, a launch-rewriting rule, and step-pattern clips on a shared clock. Same protocol as clip-launcher.json: no API (desire mode) or one variant's type declarations only (guess mode). Expectations are variant-agnostic: they describe behaviour, not names.",
+  "tasks": [
+    {
+      "id": "X1-per-clip-quantize",
+      "prompt": "A browser session view runs at 120 BPM in 4/4 with a global launch quantize of 1 bar. The Drums track has four looping clips; clip 3 is a short fill. Clicking any Drums clip normally waits for the next bar line, but the fill (clip 3) must instead start on the next beat, whatever the global setting is. Changing the global quantize afterwards must still affect every other clip.",
+      "expectations": [
+        "The fill clip carries its own quantize of one beat; the other clips do not override it and keep following the global setting.",
+        "Launching the fill starts it on the next beat boundary computed from the transport, not on the next bar and not immediately.",
+        "Launching any other Drums clip still waits for the global boundary, and changing the global quantize at runtime changes that boundary for them.",
+        "No setTimeout or manual per-clip timing code is used for the fill."
+      ]
+    },
+    {
+      "id": "X2-offset-loop-gain-pitch",
+      "prompt": "Bass clip 2 is a four-bar looping AudioBuffer (4/4, 120 BPM). It must start playing from beat 2 of the buffer (not from its start) and, once running, loop only bars 2 and 3 of the buffer instead of the whole thing. In the clip detail panel the user can also change that clip's volume (in dB) and pitch (in semitones) while it is playing; the change must be heard on the clip without relaunching it.",
+      "expectations": [
+        "The clip starts from an offset of 1 beat into the buffer (beat 2 is one beat in: 0.5 s at 120 BPM), not 2 beats and not 0.",
+        "The loop region is bars 2 and 3 of the buffer: it begins at beat 4 of the buffer and is 8 beats (4 s) long, and the clip keeps looping inside it.",
+        "Volume in dB is converted to a linear gain correctly (for example 10^(dB/20)) and applied to the playing clip live.",
+        "Pitch in semitones is applied to the playing clip live (for example by a playback-rate or detune factor of 2^(semitones/12)), without relaunching."
+      ]
+    },
+    {
+      "id": "X3-launch-modes",
+      "prompt": "Add launch modes to Lead track clips (4/4, 120 BPM, global quantize 1 bar). Clip 1 is in gate mode: it plays only while the pad button (or the A key) is held down, and releasing stops it, with both the start and the stop landing on the next beat. Clip 2 is in toggle mode: the first click launches it, a second click while it plays stops it, both on the next bar. Clip 3 is in repeat mode: while the button is held it retriggers from its start every 2 beats.",
+      "expectations": [
+        "Gate: pressing starts clip 1 at the next beat and releasing queues its stop at the next beat; a press shorter than the boundary wait does not leave the clip playing forever.",
+        "Toggle: the second click on a playing clip 2 stops it at the next bar boundary instead of relaunching it.",
+        "Repeat: while held, clip 3 is retriggered every 2 beats, aligned to the transport grid, and stops retriggering on release.",
+        "The mode choice is per clip and the three modes are told apart without extra state machines hand-written outside the launcher where the API offers them (otherwise a clear hand-written pressed/held state is acceptable)."
+      ]
+    },
+    {
+      "id": "X4-scene-tempo",
+      "prompt": "Scenes in a session view can carry their own tempo. Scene 3 is set to 140 BPM and the rest of the project is at 120. When the user launches scene 3 (quantized to the next bar, with the clips of all tracks), the transport tempo must change to 140 exactly at that bar line together with the scene's clips, not when the button is clicked. If the user cancels the queued scene before the bar line, the tempo must stay at 120.",
+      "expectations": [
+        "The tempo change is scheduled for the scene's launch time (the bar boundary), for example as a tempo ramp or step at that audio time, not applied immediately on click.",
+        "The scene's clips and the tempo change land on the same boundary.",
+        "Cancelling the queued scene before its boundary leaves the tempo at 120 (the scheduled change is withdrawn).",
+        "The queued boundary is still computed correctly if the user changes the tempo before it arrives (it is not frozen at the old tempo)."
+      ]
+    },
+    {
+      "id": "X5-follow-actions",
+      "prompt": "Add follow actions to the Bass track: after Bass clip 1 has played for 2 bars it automatically launches another Bass clip on the next bar: 70% clip 2 and 30% clip 3. After clip 2 has played 2 bars it launches clip 1 (always). The chain keeps going until the user stops the track. The random choices must be repeatable for a given seed (use seed 7).",
+      "expectations": [
+        "A follow rule is attached to the clip as data (after N bars, a list of next clips with probabilities) or via a hook on the clip, rather than a global polling timer or setInterval.",
+        "The follow triggers after the clip has played 2 bars measured from its start (or from its loop count), aligned to a bar boundary.",
+        "The choice between clip 2 and clip 3 uses the probabilities 0.7 and 0.3 with a seeded generator, so the same seed gives the same chain; Math.random is not used.",
+        "Stopping the track stops the chain: no further follow launch fires after a stop, a seek or a transport stop."
+      ],
+      "checks": [
+        {
+          "expectation": 2,
+          "label": "no Math.random for the seeded choice",
+          "none": ["Math\\.random\\("]
+        }
+      ]
+    },
+    {
+      "id": "X6-legato",
+      "prompt": "Lead clips 1 and 2 are two looping clips of the same length (4 bars) in a session view at 120 BPM. When the user launches clip 2 with legato switched on, clip 2 must not start from its beginning: at the launch boundary it must start at the same position inside the loop that clip 1 has reached at that moment (so the melody carries on without a jump). With legato off, a launch starts the clip from its beginning as usual.",
+      "expectations": [
+        "With legato, the new clip starts at the playing clip's current position within its loop (position modulo the loop length) evaluated at the launch boundary, not at the click time.",
+        "Legato is a per-launch or per-clip choice, and with it off the clip starts from its beginning (offset 0).",
+        "The playing clip's position comes from the launcher or the transport (start time and tempo), not from a second hand-kept timer.",
+        "If nothing is playing on the track, the legato launch simply starts from the beginning."
+      ]
+    },
+    {
+      "id": "X7-probability-launch",
+      "prompt": "Pad clip 2 is set to a 60% launch chance: each time it is triggered (by a click, a scene launch or a follow), it only actually launches in 60% of the cases; otherwise nothing happens and what was playing keeps playing. The outcome sequence must be the same on every run for a given seed (use seed 42), and a chance of 100% must always launch.",
+      "expectations": [
+        "Each trigger of the clip draws a number and launches only when the draw is below 0.6 (or equivalent), so about 60% of triggers launch.",
+        "When the draw fails, nothing is queued and the currently playing clip is untouched.",
+        "The draws come from a seeded generator (seed 42) so the sequence is repeatable; Math.random is not used.",
+        "The same chance applies whether the trigger is a direct click or part of a scene launch."
+      ],
+      "checks": [
+        {
+          "expectation": 2,
+          "label": "no Math.random for the seeded draw",
+          "none": ["Math\\.random\\("]
+        }
+      ]
+    },
+    {
+      "id": "X8-launch-rule",
+      "prompt": "Add one page-level rule for the whole session view: while the Lead track is soloed, any launch of a Lead clip must wait for the next 2-bar boundary instead of the usual one; launches on other tracks are untouched, and the rule applies equally to clip clicks and scene launches. When Lead is not soloed the normal quantize applies. Solo is a boolean you already keep in the page.",
+      "expectations": [
+        "A single rule inspects every launch and rewrites the boundary for Lead launches only while solo is on, rather than patching each button handler.",
+        "The rewritten boundary is the next 2-bar (8-beat) boundary from the transport, evaluated when the launch is scheduled.",
+        "Launches on other tracks and launches with solo off keep the normal quantize.",
+        "Scene launches that include a Lead clip go through the same rule (the Lead part is delayed, the other tracks are not)."
+      ]
+    },
+    {
+      "id": "X9-pattern-clips",
+      "prompt": "The Drums track's clips are step-sequencer patterns (like kick \"X...X...X...X...\" with a hat lane) instead of audio files. They must be launched, switched and stopped on bar boundaries exactly like audio clips: launching pattern B while A plays switches on the next bar with no doubled and no missing hits at the switch; stopping the track silences the pattern at the bar line. Separately, a hi-hat step sequencer plays on the same transport and keeps running in sync with the session view regardless of which Drums pattern is active.",
+      "expectations": [
+        "The Drums clips use step patterns played by a step sequencer, started and stopped by the launcher at bar boundaries; no hand-written note scheduler or setInterval.",
+        "Switching from A to B happens exactly on the bar boundary: A's hits at and after the boundary are not played and B's start there.",
+        "Stopping the Drums track silences the pattern at the bar boundary; the pattern does not keep sounding.",
+        "The separate hi-hat sequencer is attached to the same shared clock as the session view, plays independently of the launcher, and is not stopped by launcher stops."
+      ]
+    },
+    {
+      "id": "X10-follow-nothing",
+      "prompt": "After the Chorus loop (Lead clip 2) has played 2 bars, 40% of the time nothing should change and it keeps looping; otherwise it moves on the next bar to Lead clip 3 (35% of all cases) or Lead clip 4 (25% of all cases). The choices must be repeatable for a given seed (use seed 11). The \"nothing happens\" case must not stop the clip or restart it.",
+      "expectations": [
+        "The follow rule is attached to the clip and fires after 2 bars of playing, aligned to a bar boundary.",
+        "The three outcomes carry the probabilities 0.4 (nothing), 0.35 (clip 3) and 0.25 (clip 4), drawn from a seeded generator (seed 11); Math.random is not used.",
+        "In the nothing case the clip is not stopped, not relaunched and keeps looping without a gap, and no queued launch is created.",
+        "The rule still applies on later loops, so a clip that stayed may follow on a later pass."
+      ],
+      "checks": [
+        {
+          "expectation": 1,
+          "label": "no Math.random for the seeded choice",
+          "none": ["Math\\.random\\("]
+        }
+      ]
+    },
+    {
+      "id": "X11-tempo-following-clip",
+      "prompt": "The Bass loop (Bass clip 1) is an audio file recorded at 100 BPM, 4 bars long, and loops on the session grid. Scene 3 switches the song to 128 BPM at its bar line. The bass loop must stay in time with the bars of the song both before and after the switch, and again if the user later drags the tempo; pitch changing with the speed is acceptable.",
+      "expectations": [
+        "The loop's playback speed is tied to the ratio between the song tempo and the 100 BPM it was recorded at (1.28 at 128 BPM), so its bars line up with the song's bars.",
+        "The speed follows tempo changes while the clip plays, including the scene's change at the bar line and a manual tempo change later, not just the tempo at launch time.",
+        "The loop's length in song time is derived from the recorded tempo, so the loop point stays on a bar boundary after the tempo change.",
+        "No hand-written timer or per-frame polling is used to adjust the speed."
+      ]
+    },
+    {
+      "id": "X12-live-option-edits",
+      "prompt": "In the clip panel of the session view the user can change a playing Lead clip's launch quantize, its follow rule (after N bars go to another clip) and its loop region (start and length in beats) while the clip is playing. The new settings must apply to what happens next as the user would expect: the next launch of that clip uses the new quantize, the follow rule is used for the following loop or bar count, and the loop region applies at the clip's next loop wrap, all without restarting or interrupting the playing clip.",
+      "expectations": [
+        "Each of the three settings can be changed on an existing clip after it was created, from a UI handler, without recreating or relaunching the clip.",
+        "The playing clip is not stopped, restarted or re-queued by the edit; audio continues without a gap.",
+        "A new quantize applies to the clip's next launch, not to retroactively moving an already queued or playing one.",
+        "A changed loop region takes effect for the clip's following loop (at the next wrap), and a changed follow rule is evaluated from then on."
+      ]
+    },
+    {
+      "id": "X13-grid-tempo-no-resample",
+      "prompt": "My loops are 120 BPM material and the song also stays at 120 BPM the whole time (no scene changes the tempo). I only want to tell the session view what tempo the loops were recorded at so that their bars and loop lengths are laid out on the grid correctly. Nothing should be sped up, slowed down or repitched: every loop must sound exactly as in the file.",
+      "expectations": [
+        "Each loop's recorded tempo of 120 BPM is given to the launcher so its beat grid (loop length and bar alignment) is correct.",
+        "Playback speed of every clip stays exactly 1.0 while the song stays at 120 BPM: nothing is resampled or time-stretched, and pitch is unchanged.",
+        "Whether the loops would follow a later tempo change is the API's documented default or an explicit setting; either choice is accepted, since the song tempo never changes here."
+      ]
+    }
+  ]
+}

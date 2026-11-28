@@ -1,20 +1,25 @@
 import type { SchedulableParam } from "@audiorective/core";
 import { Effect, type EffectOptions } from "./Effect";
 import { fanout } from "./internal/fanout";
+import { SMOOTHING } from "./internal/smoothing";
 
 export interface PingPongDelayOptions extends EffectOptions {
+  /** Echo spacing in seconds; defaults to 0.25. */
   delayTime?: number;
+  /** Recirculated linear level, 0..0.99; defaults to 0.2. */
   feedback?: number;
   /** Ceiling for delayTime, seconds. Default 1. */
   maxDelay?: number;
 }
 
 /**
+ * `params.delayTime` and `params.feedback` writes smooth over 10 ms automatically; scheduled ramps stay exact.
  * Stereo cross-fed delay with alternating left/right echoes. Input is summed to mono and enters on
  * the left delay, then bounces through feedback. Echoes that have crossed the feedback path arrive
  * one render quantum (128 samples) later than `delayTime`.
  */
 export class PingPongDelay extends Effect<{ delayTime: SchedulableParam; feedback: SchedulableParam }> {
+  static override readonly type: string = "PingPongDelay";
   private readonly sources: ConstantSourceNode[];
 
   constructor(ctx: BaseAudioContext, opts: PingPongDelayOptions = {}) {
@@ -48,8 +53,8 @@ export class PingPongDelay extends Effect<{ delayTime: SchedulableParam; feedbac
       { input: entry, output: merger },
       ({ param }) => ({
         params: {
-          delayTime: param({ default: opts.delayTime ?? 0.25, bind: time.offset, min: 0, max: maxDelay }),
-          feedback: param({ default: opts.feedback ?? 0.2, bind: fb.offset, min: 0, max: 0.99 }),
+          delayTime: param({ default: opts.delayTime ?? 0.25, bind: time.offset, min: 0, max: maxDelay, smoothing: SMOOTHING }),
+          feedback: param({ default: opts.feedback ?? 0.2, bind: fb.offset, min: 0, max: 0.99, smoothing: SMOOTHING }),
         },
         cells: {},
         latency: 0,
@@ -59,11 +64,11 @@ export class PingPongDelay extends Effect<{ delayTime: SchedulableParam; feedbac
     this.sources = [time, fb];
   }
 
-  override destroy(): void {
+  override dispose(): void {
     for (const s of this.sources) {
       s.stop();
       s.disconnect();
     }
-    super.destroy();
+    super.dispose();
   }
 }

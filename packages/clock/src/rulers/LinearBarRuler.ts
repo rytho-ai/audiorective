@@ -1,16 +1,23 @@
+import type { BeatTiming } from "@audiorective/core";
 import type { CoreTickWindow } from "../types";
 import { beatsPerBar, gridPoints } from "./Ruler";
-import type { GridPoint, Ruler, TimelineLike } from "./Ruler";
+import type { GridPoint, Ruler } from "./Ruler";
 
 export interface LinearBarRulerOptions {
+  /** Positive meter numerator, counted in denominator note values per bar. */
   numerator: number;
+  /** Positive meter denominator; 4 denotes a quarter note. */
   denominator: number;
 }
 
 export interface LinearBarPoint {
+  /** Zero-based bar offset: bar 0 is the first bar. */
   bar: number;
+  /** Quarter-note axis beats since the bar began, regardless of the meter denominator. */
   beatInBar: number;
+  /** Meter numerator, counted in denominator note values per bar. */
   numerator: number;
+  /** Meter denominator; 4 denotes a quarter note. */
   denominator: number;
 }
 
@@ -31,13 +38,15 @@ export class LinearBarRuler implements Ruler<LinearBarWindow, LinearBarPoint> {
     this._beatsPerBar = beatsPerBar(options.numerator, options.denominator);
   }
 
+  /** Zero-based bar and beat-in-bar of axis `beat` for this ruler's meter. */
   at(beat: number): LinearBarPoint {
     const bar = Math.floor(beat / this._beatsPerBar);
     const beatInBar = beat - bar * this._beatsPerBar;
     return { bar, beatInBar, numerator: this._numerator, denominator: this._denominator };
   }
 
-  read(window: CoreTickWindow, timeline: TimelineLike): LinearBarWindow {
+  /** The reading at the window's start beat plus `grid(division)` points over its beat range. */
+  read(window: Pick<CoreTickWindow, "beat">, timeline: BeatTiming): LinearBarWindow {
     const point = this.at(window.beat.start);
     return {
       ...point,

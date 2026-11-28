@@ -1,8 +1,16 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { BufferPlayer } from "../src";
+import { BufferPlayer, cell, effect } from "../src";
 
 function makeBuffer(ctx: AudioContext, seconds = 0.5): AudioBuffer {
   return ctx.createBuffer(1, Math.max(1, Math.ceil(ctx.sampleRate * seconds)), ctx.sampleRate);
+}
+// Ramps run on the audio clock, which can stall under load; wait on it, not wall time.
+async function waitForAudioClock(ctx: AudioContext, from: number, seconds: number): Promise<void> {
+  const deadline = Date.now() + 5000;
+  while (ctx.currentTime - from < seconds) {
+    if (Date.now() > deadline) throw new Error(`audio clock advanced only ${ctx.currentTime - from}s of ${seconds}s in 5s`);
+    await delay(5);
+  }
 }
 function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -24,7 +32,7 @@ describe("BufferPlayer", () => {
     expect((p.output as GainNode).gain.value).toBeCloseTo(0.5);
     p.params.volume.value = 0.25;
     expect((p.output as GainNode).gain.value).toBeCloseTo(0.25);
-    p.destroy();
+    p.dispose();
   });
 
   test("start() sets isPlaying; stop() clears it", () => {
@@ -34,14 +42,14 @@ describe("BufferPlayer", () => {
     expect(p.cells.isPlaying.value).toBe(true);
     p.stop();
     expect(p.cells.isPlaying.value).toBe(false);
-    p.destroy();
+    p.dispose();
   });
 
   test("start() with no buffer is a no-op", () => {
     const p = new BufferPlayer(ctx);
     p.start();
     expect(p.cells.isPlaying.value).toBe(false);
-    p.destroy();
+    p.dispose();
   });
 
   test("start() while already playing is a guarded no-op", () => {
@@ -50,7 +58,7 @@ describe("BufferPlayer", () => {
     expect(() => p.start()).not.toThrow();
     expect(p.cells.isPlaying.value).toBe(true);
     p.stop();
-    p.destroy();
+    p.dispose();
   });
 
   test("rate is a SchedulableParam whose ramp automates the live source", async () => {
@@ -63,10 +71,10 @@ describe("BufferPlayer", () => {
       .cancelScheduledValues(t)
       .setValueAtTime(p.params.rate.read(), t)
       .exponentialRampToValueAtTime(0.1, t + 0.05);
-    await delay(150);
+    await waitForAudioClock(ctx, t, 0.15);
     expect(p.params.rate.read()).toBeLessThan(0.5); // spun down on the real source
     p.stop();
-    p.destroy();
+    p.dispose();
   });
 
   test("restart re-anchors rate to base and rebinds to a fresh source", async () => {
@@ -75,7 +83,7 @@ describe("BufferPlayer", () => {
     p.start();
     const t = ctx.currentTime;
     p.params.rate.setValueAtTime(1, t).exponentialRampToValueAtTime(0.1, t + 0.05);
-    await delay(120);
+    await waitForAudioClock(ctx, t, 0.12);
     expect(p.params.rate.read()).toBeLessThan(0.5);
     p.stop();
 
@@ -83,10 +91,10 @@ describe("BufferPlayer", () => {
     expect(p.params.rate.read()).toBeCloseTo(1); // re-anchored to base, not the spun-down 0.1
     const t2 = ctx.currentTime;
     p.params.rate.setValueAtTime(1, t2).exponentialRampToValueAtTime(0.1, t2 + 0.05);
-    await delay(120);
+    await waitForAudioClock(ctx, t2, 0.12);
     expect(p.params.rate.read()).toBeLessThan(0.5); // new source automates too
     p.stop();
-    p.destroy();
+    p.dispose();
   });
 
   test("a looping player keeps playing past buffer length; non-looping ends", async () => {
@@ -95,13 +103,13 @@ describe("BufferPlayer", () => {
     await delay(200);
     expect(looping.cells.isPlaying.value).toBe(true);
     looping.stop();
-    looping.destroy();
+    looping.dispose();
 
     const once = new BufferPlayer(ctx, { buffer: makeBuffer(ctx, 0.05) });
     once.start();
     await delay(200);
     expect(once.cells.isPlaying.value).toBe(false); // ended naturally
-    once.destroy();
+    once.dispose();
   });
 
   test("toggling loop on mid-play keeps a non-looping source playing", async () => {
@@ -111,12 +119,44 @@ describe("BufferPlayer", () => {
     await delay(200);
     expect(p.cells.isPlaying.value).toBe(true); // still looping past the buffer length
     p.stop();
-    p.destroy();
+    p.dispose();
   });
 
-  test("destroy() does not throw", () => {
+  test("dispose() does not throw", () => {
     const p = new BufferPlayer(ctx, { buffer: makeBuffer(ctx, 1) });
     p.start();
-    expect(() => p.destroy()).not.toThrow();
+    expect(() => p.dispose()).not.toThrow();
+  });
+
+  test("buffer property delegates to params.buffer and is tracked", () => {
+    const b1 = makeBuffer(ctx, 1);
+    const b2 = makeBuffer(ctx, 1);
+    const p = new BufferPlayer(ctx, { buffer: b1 });
+    const seen: Array<AudioBuffer | null> = [];
+    const stop = effect(() => {
+      seen.push(p.buffer);
+    });
+    expect(p.params.buffer.value).toBe(b1);
+    p.buffer = b2;
+    expect(p.params.buffer.value).toBe(b2);
+    expect(seen).toEqual([b1, b2]);
+    stop();
+    p.dispose();
+  });
+
+  test("constructed inside an effect, its bound params survive the effect re-running", () => {
+    const trigger = cell(0);
+    let player!: BufferPlayer;
+    const stop = effect(() => {
+      void trigger.value;
+      player ??= new BufferPlayer(ctx, { buffer: makeBuffer(ctx, 1), loop: false });
+    });
+    trigger.value = 1; // re-run the outer effect
+    player.start();
+    player.params.loop.value = true;
+    const src = (player as unknown as { _source: AudioBufferSourceNode })._source;
+    expect(src.loop).toBe(true);
+    stop();
+    player.dispose();
   });
 });

@@ -1,3 +1,4 @@
+/** Thrown when an API needs a browser `AudioContext` and none exists (Node, SSR, server render); construct engines on the client only. */
 export class EngineEnvironmentError extends Error {
   constructor(message: string) {
     super(message);
@@ -5,11 +6,12 @@ export class EngineEnvironmentError extends Error {
   }
 }
 
+/** Thrown when delay compensation needs the latency of a processor that no `defineGraph` or `connect` edge has placed in a graph. */
 export class LatencyUnknownError extends Error {
   constructor(processorName: string) {
     super(
-      `${processorName}'s path latency is unknown: it hasn't appeared in a defineGraph. ` +
-        `Place it in a defineGraph — either its own processor's or the engine's — to make its path latency known.`,
+      `${processorName}'s path latency is unknown: it hasn't appeared in a defineGraph or a connect edge. ` +
+        `Place it in a defineGraph — either its own processor's or the engine's — or connect it with processor.connect(...) to make its path latency known.`,
     );
     this.name = "LatencyUnknownError";
   }

@@ -1,6 +1,7 @@
 import type { SchedulableParam } from "@audiorective/core";
 import { Effect, type EffectOptions } from "./Effect";
 import { fanout } from "./internal/fanout";
+import { SMOOTHING } from "./internal/smoothing";
 import { phasedWave } from "./internal/lfo";
 
 export interface FrequencyShifterOptions extends EffectOptions {
@@ -20,12 +21,14 @@ function allpassChain(ctx: BaseAudioContext, coefficients: number[]): { input: A
 }
 
 /**
+ * `params.frequency` writes smooth over 10 ms automatically; scheduled ramps stay exact.
  * Single-sideband shifter: a Hilbert transform splits the input into two
  * quadrature branches, each modulated by a cosine/sine at the shift frequency
  * and summed, cancelling one sideband. A negative `frequency` flips the sine's
  * sign and so selects the lower sideband instead of the upper.
  */
 export class FrequencyShifter extends Effect<{ frequency: SchedulableParam }> {
+  static override readonly type: string = "FrequencyShifter";
   private readonly oscillators: OscillatorNode[];
   private readonly freqSource: ConstantSourceNode;
 
@@ -58,7 +61,7 @@ export class FrequencyShifter extends Effect<{ frequency: SchedulableParam }> {
       ctx,
       { input: entry, output: sum },
       ({ param }) => ({
-        params: { frequency: param({ default: opts.frequency ?? 0, bind: freq.offset, min: -5000, max: 5000 }) },
+        params: { frequency: param({ default: opts.frequency ?? 0, bind: freq.offset, min: -5000, max: 5000, smoothing: SMOOTHING }) },
         cells: {},
         latency: 0,
       }),
@@ -70,13 +73,13 @@ export class FrequencyShifter extends Effect<{ frequency: SchedulableParam }> {
     this.freqSource = freq;
   }
 
-  override destroy(): void {
+  override dispose(): void {
     for (const o of this.oscillators) {
       o.stop();
       o.disconnect();
     }
     this.freqSource.stop();
     this.freqSource.disconnect();
-    super.destroy();
+    super.dispose();
   }
 }

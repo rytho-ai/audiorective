@@ -31,9 +31,10 @@ export interface AnalyserOptions {
  * ```
  */
 export class Analyser extends AudioProcessor {
+  /** The underlying `AnalyserNode`, for `getByteFrequencyData` and the other native readers; it is both `input` and `output`. */
   readonly node: AnalyserNode;
 
-  constructor(context: AudioContext, options: AnalyserOptions = {}) {
+  constructor(context: BaseAudioContext, options: AnalyserOptions = {}) {
     const node = new AnalyserNode(context, {
       fftSize: options.fftSize ?? 2048,
       smoothingTimeConstant: options.smoothingTimeConstant ?? 0.8,
@@ -82,8 +83,18 @@ export class Analyser extends AudioProcessor {
     this.node.getByteTimeDomainData(out);
   }
 
-  override destroy(): void {
-    super.destroy();
+  /** Allocate a float buffer sized for {@link readFloatWaveform}. */
+  createFloatWaveformBuffer(): Float32Array<ArrayBuffer> {
+    return new Float32Array(this.node.fftSize);
+  }
+
+  /** Fill `out` with the time-domain waveform as floats (-1..1 for in-range audio, 0 = silence), the form level meters and peak readouts need. Poll once per frame. */
+  readFloatWaveform(out: Float32Array<ArrayBuffer>): void {
+    this.node.getFloatTimeDomainData(out);
+  }
+
+  override dispose(): void {
+    super.dispose();
     this.node.disconnect();
   }
 }

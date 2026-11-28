@@ -59,7 +59,7 @@ describe("step sequencer smoke (real AudioContext + WorkerTickSource)", () => {
     expect(hat.mock.calls.length).toBeGreaterThan(0);
     expect(clap.mock.calls.length).toBe(0); // empty by default
 
-    machine.destroy();
+    machine.dispose();
   });
 
   test("the bar ruler's reactive current advances while playing", async () => {
@@ -71,6 +71,6 @@ describe("step sequencer smoke (real AudioContext + WorkerTickSource)", () => {
     await waitFor(() => machine.currentBar.value.beatInBar !== startBeat);
     expect(machine.currentBar.value.beatInBar).not.toBe(startBeat);
 
-    machine.destroy();
+    machine.dispose();
   });
 });

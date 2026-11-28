@@ -8,15 +8,20 @@ The audio engine owns its state. Your interfaces observe parameters, change valu
 
 ## Choose your packages
 
-| Package                        | What it provides                                                                                         |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------- |
-| [Core](/docs/core)             | Reactive parameters and cells, processors, playback, analysis, spatial audio, and graph routing          |
-| [Clock](/docs/clock)           | Transport, tempo automation, scheduling windows, and beat/bar/time rulers                                |
-| [Effects](/docs/effects)       | Filters, delay, reverb, distortion, modulation, pitch shifting, dynamics, channel strips, and send buses |
-| [React](/docs/react)           | Hooks and an engine context for reactive interfaces                                                      |
-| [Three.js](/docs/threejs)      | A shared audio context and spatial sound that follows scene objects                                      |
-| [PlayCanvas](/docs/playcanvas) | Engine integration and entity-to-panner bindings                                                         |
-| [Devtools](/docs/devtools)     | Processor latency measurement and assertions                                                             |
+| Package                                                                                                                                                    | What it provides                                                                                                        |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| [Core](/docs/core)                                                                                                                                         | Reactive parameters and cells, processors, playback, analysis, spatial audio, and graph routing                         |
+| [Clock](/docs/clock)                                                                                                                                       | Transport, tempo automation, scheduling windows, and beat/bar/time rulers                                               |
+| [Effects](/docs/effects)                                                                                                                                   | Filters, delay, reverb, distortion, modulation, pitch shifting, dynamics, channel strips, and send buses                |
+| [Widgets](/docs/widgets)                                                                                                                                   | Browser waveform/piano-roll display, shared selection, audition and custom drawing                                      |
+| [Player](/docs/player), [Recorder](/docs/recorder), [Samples](/docs/samples), [Pads](/docs/pads), [Sequencer](/docs/sequencer), [Launcher](/docs/launcher) | Headless capabilities, one package each: WavePlayer, AudioRecorder, SampleLibrary, PadBank, StepSequencer, ClipLauncher |
+| [MIDI](/docs/midi)                                                                                                                                         | MIDI file parsing, note editing, take recording and ordered playback events                                             |
+| [DAW](/docs/daw)                                                                                                                                           | Audio/MIDI project model, DAWproject codec and browser playback runtime, as separate entries                            |
+| [Host](/docs/host)                                                                                                                                         | WebCLAP instrument/effect host, MIDI scheduling, state and editor bridge                                                |
+| [React](/docs/react)                                                                                                                                       | Hooks and an engine context for reactive interfaces                                                                     |
+| [Three.js](/docs/threejs)                                                                                                                                  | A shared audio context and spatial sound that follows scene objects                                                     |
+| [PlayCanvas](/docs/playcanvas)                                                                                                                             | Engine integration and entity-to-panner bindings                                                                        |
+| [Devtools](/docs/devtools)                                                                                                                                 | Processor latency measurement and assertions                                                                            |
 
 [PixiJS](/docs/pixijs) uses core directly; it does not need a dedicated binding package. Other imperative interfaces can also observe and change the engine's state.
 
@@ -24,12 +29,16 @@ The audio engine owns its state. Your interfaces observe parameters, change valu
 
 Choose a source for the job:
 
-- **Sampler** plays polyphonic one-shots, with per-voice fades, reverse playback, and mute controls.
+- **Sampler** plays polyphonic one-shots and keyboards of one sound (a buffer or a sound factory), with velocity, pitch, `noteOn`/`noteOff` and a release fade.
 - **BufferPlayer** plays in-memory loops and stems with sample-accurate scheduling and a schedulable playback rate.
 - **FilePlayer** streams longer tracks with play, pause, and seek.
 - **AudioProcessor** is the base for your own instruments and effects.
 
 Route sources through effects, add a `Spatial` processor for positional sound, and use `Analyser` for waveform or frequency data. See [Choosing Playback](/docs/choosing-playback).
+
+## Waveform tools
+
+Mount a complete waveform selector into a DOM element to load a URL or File, select a range, and audition it through your own audio context and routing. For a visual-only view, provide peaks and an external playhead, then attach optional selection or marker plugins. See [Widgets](/docs/widgets) and the [waveform showroom](/showroom/waveform).
 
 ## Timing and automation
 
@@ -48,3 +57,7 @@ Use `renderOffline` for a graph or `renderTimeline` for clock-driven audio. Both
 Follow [Get Started](/docs/get-started) for a runnable sound, or [Installation](/docs/installation) to choose packages. The [showroom](/showroom) contains working examples and source links.
 
 Audiorective's audio engine runs in the browser. For Astro, Next.js, or other server-rendered frameworks, keep audio code behind a [client-only boundary](/docs/client-boundary).
+
+### MIDI notes and piano roll
+
+Use the pure `@audiorective/midi` entry to parse SMF note data into beats, edit notes in a `MidiClip` and play it on a `Clock`. Use `@audiorective/midi/web` to record a caller-selected Web MIDI input (`MidiRecorder`) or play one live (`MidiKeyboard`). Mount independent piano-roll views through `widgets/piano-roll`; the caller chooses instruments and playback. See [MIDI and Piano Roll](/docs/midi) and the [showroom](/showroom/piano-roll).

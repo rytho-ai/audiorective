@@ -3,8 +3,7 @@
 _Working document. Captures locked copy, structure, and open questions as of this session._
 
 _Canonical source for the landing page's content spine. Refine here; diffs against
-this file drive copy updates. See the site design at
-`docs/superpowers/specs/2026-06-29-audiorective-website-design.md`._
+this file drive copy updates._
 
 ---
 
