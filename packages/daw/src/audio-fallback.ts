@@ -70,11 +70,14 @@ export async function exportAudioFallbackTo(
     const sampleRate = workspace.context.sampleRate;
     const duration = Math.max(workspace.duration, 0.1) + tail;
     const frameCount = Math.ceil(duration * sampleRate);
+    // The audible output lags the timeline by the workspace's latency: record that many frames more and start every file after the lag.
+    const allowed = Math.ceil(workspace.cells.latency.value);
+    const recordedFrames = frameCount + allowed;
     // The destination only has to exist: stems stream through the recorder. One more quantum lets the recorder see the frame after its last.
     const refused = (error: unknown) =>
       new Error(`Workspace audio fallback could not start an offline render of ${duration.toFixed(1)} seconds: ${String(error)}`);
     try {
-      context = new OfflineAudioContext(1, frameCount + RENDER_QUANTUM, sampleRate);
+      context = new OfflineAudioContext(1, recordedFrames + RENDER_QUANTUM, sampleRate);
     } catch (error) {
       throw refused(error);
     }
@@ -83,6 +86,11 @@ export async function exportAudioFallbackTo(
     render = await Workspace.create(offline as unknown as AudioContext, renderProject, { ...workspace.deviceOptions, tickSource: ticks });
     if (render.cells.warnings.value.length)
       throw new Error(`Workspace audio fallback has unresolved devices: ${render.cells.warnings.value.join(" ")}`);
+    const lag = Math.ceil(render.cells.latency.value);
+    if (lag > allowed)
+      throw new Error(
+        `Workspace audio fallback needs ${lag} frames of latency compensation but the workspace reported ${allowed}; call sync() so the workspace is current, then export again.`,
+      );
     const stemTracks = renderProject.tracks.length <= 15 ? renderProject.tracks : [];
     const buses = [
       { path: "mix.wav", node: render.output },
@@ -109,7 +117,7 @@ export async function exportAudioFallbackTo(
     // The node is built synchronously from here, before rendering starts, so capture begins on frame 0.
     recording = recorder.record({
       when: 0,
-      length: frameCount / sampleRate,
+      length: recordedFrames / sampleRate,
       signal,
       onChunk: async (chunk) => {
         await writer.writeChunk(chunk);
@@ -130,7 +138,7 @@ export async function exportAudioFallbackTo(
     let previous = 0;
     const nextStop = (): number | undefined => {
       previous = Math.max(Math.ceil((tickIndex++ * TICK_INTERVAL * sampleRate) / RENDER_QUANTUM) * RENDER_QUANTUM, previous + RENDER_QUANTUM);
-      return previous < frameCount ? previous : undefined;
+      return previous < recordedFrames ? previous : undefined;
     };
     // Ask for a time inside the quantum below the target so rounding cannot move the stop one quantum later.
     const suspendAt = (frame: number) => offline.suspend((frame - RENDER_QUANTUM / 2) / sampleRate);
@@ -150,7 +158,7 @@ export async function exportAudioFallbackTo(
       await hold(render.renderSettled());
       const reachedFrames = stop;
       await until(() => reachedFrames - writtenFrames <= MAX_WRITE_LAG);
-      const progress = Math.min(1, reachedFrames / frameCount);
+      const progress = Math.min(1, reachedFrames / recordedFrames);
       if (progress - reported >= 0.01) {
         reported = progress;
         options.onProgress?.(progress);
@@ -163,12 +171,12 @@ export async function exportAudioFallbackTo(
     await hold(rendering);
     const span = await hold(recording);
     checkAbort();
-    if (span.dropouts?.some((gap) => gap.startFrame < frameCount && gap.endFrame > 0))
+    if (span.dropouts?.some((gap) => gap.startFrame < recordedFrames && gap.endFrame > 0))
       throw new Error("Workspace audio fallback lost audio frames during the project; retry the export.");
     media = await mediaWriter.finish(span);
-    if (span.startFrame !== 0 || span.endFrame < frameCount || media.frameCount < frameCount)
+    if (span.startFrame !== 0 || span.endFrame < recordedFrames || media.frameCount < recordedFrames)
       throw new Error("Workspace audio fallback missed the project start or end.");
-    const files: StoredZipEntry[] = buses.map((bus, index) => wavMediaStereoPairEntry(bus.path, media!, 0, frameCount, index));
+    const files: StoredZipEntry[] = buses.map((bus, index) => wavMediaStereoPairEntry(bus.path, media!, lag, frameCount, index));
     const manifest = new TextEncoder().encode(
       JSON.stringify(
         {

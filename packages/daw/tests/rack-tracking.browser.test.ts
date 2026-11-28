@@ -1,4 +1,6 @@
+import { Effect, type EffectOptions } from "@audiorective/effects";
 import { afterEach, describe, expect, test } from "vitest";
+import { defineRackEffect } from "../src/rack-preset";
 import { effect } from "@audiorective/core";
 import { TrackRack, type RackEffect } from "../src/track-rack";
 
@@ -45,6 +47,28 @@ describe("TrackRack readers are tracked", () => {
       () => read(r),
       () => r.setEffects([filter(0.5)]),
     );
+  });
+  test("latency follows a latent slot", async () => {
+    class Late extends Effect {
+      constructor(ctx: BaseAudioContext, opts: EffectOptions = {}) {
+        const delay = new DelayNode(ctx, { delayTime: 100 / ctx.sampleRate, maxDelayTime: 1 });
+        super(ctx, { input: delay, output: delay }, () => ({ params: {}, cells: {}, latency: 100 }), opts);
+      }
+    }
+    const late = defineRackEffect({ id: "test.late", name: "Late", parameters: [], create: (context) => new Late(context) });
+    const context = new AudioContext();
+    const r = new TrackRack(context, [], [], { definition: () => late, warn: () => undefined });
+    disposers.push(
+      () => context.close(),
+      () => r.dispose(),
+    );
+    const slot = late.slot({ id: "l" });
+    await r.prepare([slot]);
+    await expectTracked(
+      () => r.latency,
+      () => r.setEffects([slot]),
+    );
+    expect(r.latency).toBe(100);
   });
   test("setEffects inside an effect does not subscribe it", () => {
     const r = rack();

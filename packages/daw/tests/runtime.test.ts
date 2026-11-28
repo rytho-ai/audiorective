@@ -21,6 +21,7 @@ vi.mock("../src/track-rack", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/track-rack")>()),
   TrackRack: class {
     effects: readonly unknown[];
+    latency = 0;
     input = { connect: vi.fn() };
     output = { connect: vi.fn() };
     setEffects = vi.fn((effects: readonly unknown[]) => {
@@ -41,7 +42,7 @@ vi.mock("@audiorective/effects", async (importOriginal) => ({
     output = { connect: vi.fn(), disconnect: vi.fn() };
     tap = {};
     params = { gain: { value: 1 }, pan: { value: 0 }, muted: { value: false }, outputEnabled: { value: true } };
-    send = vi.fn(() => ({ params: { gain: { value: 1 }, enabled: { value: true } }, dispose: vi.fn() }));
+    send = vi.fn(() => ({ params: { gain: { value: 1 }, enabled: { value: true } }, setCompensation: vi.fn(), dispose: vi.fn() }));
     dispose = vi.fn();
     constructor() {
       fakes.channels.push(this);
@@ -61,6 +62,7 @@ vi.mock("@audiorective/host/webclap", () => ({
     load: vi.fn(async () => {
       const host = {
         descriptor: { id: "fake.synth" },
+        latency: { value: 0 },
         input: {},
         output: { connect: vi.fn(), disconnect: vi.fn() },
         loadState: vi.fn(async (bytes: Uint8Array) => fakes.loadStateImpl?.(bytes)),
@@ -420,7 +422,8 @@ describe("workspace automatic application", () => {
 
 /** Public stateful readers are tracked: an effect over each re-runs, seeing the new value, when the owner changes it. */
 describe("workspace addWebClapDevice", () => {
-  const described = () => ({ descriptor: { id: "fake.synth", name: "Synth", vendor: "t", version: "1" }, dispose: vi.fn() }) as never;
+  const described = () =>
+    ({ descriptor: { id: "fake.synth", name: "Synth", vendor: "t", version: "1" }, latency: { value: 0 }, dispose: vi.fn() }) as never;
   const gatedLoad = () => {
     let settle!: (outcome: { error?: Error }) => void;
     vi.mocked(WebClapHost.load).mockImplementationOnce(async () => described());

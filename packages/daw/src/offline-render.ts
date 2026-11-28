@@ -32,7 +32,11 @@ export class RenderControl {
   }
 }
 
-/** Render `frameCount` stereo frames of `snapshot` from frame `from`, on a fresh OfflineAudioContext with the live workspace's devices. */
+/**
+ * Render `frameCount` stereo frames of `snapshot` from frame `from`, on a fresh OfflineAudioContext with the live workspace's devices. Frame 0 of the result is the timeline frame `from`
+ * even when tracks carry latency: the context runs `workspace.cells.latency` extra frames and the render workspace's own lag is dropped from the front. A render workspace that reports more
+ * latency than the live one throws, because the context could not be sized for it.
+ */
 export async function renderSnapshotFrames(
   workspace: Workspace,
   snapshot: Project,
@@ -43,9 +47,13 @@ export async function renderSnapshotFrames(
   const { hold, checkAbort, name } = control;
   const { signal } = control;
   const sampleRate = workspace.context.sampleRate;
-  const context = new OfflineAudioContext(2, frameCount, sampleRate);
+  // The audible output lags the timeline by the workspace's latency: render that many frames more, then drop the lag.
+  const allowed = Math.ceil(workspace.cells.latency.value);
+  const length = frameCount + allowed;
+  const context = new OfflineAudioContext(2, length, sampleRate);
   const ticks = new ManualTickSource();
   let render: Workspace | undefined;
+  let lag = 0;
   let rendering: Promise<AudioBuffer> | undefined;
   try {
     const creating = Workspace.create(context as unknown as AudioContext, snapshot, {
@@ -56,6 +64,11 @@ export async function renderSnapshotFrames(
     creating.then((created) => (signal?.aborted ? created.dispose() : undefined)).catch(() => undefined);
     render = await hold(creating);
     if (render.cells.warnings.value.length) throw new Error(`${name} has unresolved devices: ${render.cells.warnings.value.join(" ")}`);
+    lag = Math.ceil(render.cells.latency.value);
+    if (lag > allowed)
+      throw new Error(
+        `${name} needs ${lag} frames of latency compensation but the workspace reported ${allowed}; call sync() so the workspace is current, then render again.`,
+      );
     render.seek(from / sampleRate);
     await hold(render.play());
     ticks.tick();
@@ -64,7 +77,7 @@ export async function renderSnapshotFrames(
     let previous = 0;
     const nextStop = (): number | undefined => {
       previous = Math.max(Math.ceil((tickIndex++ * TICK_INTERVAL * sampleRate) / RENDER_QUANTUM) * RENDER_QUANTUM, previous + RENDER_QUANTUM);
-      return previous < frameCount ? previous : undefined;
+      return previous < length ? previous : undefined;
     };
     const suspendAt = (frame: number) => context.suspend((frame - RENDER_QUANTUM / 2) / sampleRate);
     let stop = nextStop();
@@ -84,7 +97,8 @@ export async function renderSnapshotFrames(
     }
     const buffer = await hold(rendering);
     checkAbort();
-    return [buffer.getChannelData(0), buffer.getChannelData(1)];
+    const channels = [buffer.getChannelData(0), buffer.getChannelData(1)];
+    return lag === 0 && allowed === 0 ? channels : channels.map((channel) => channel.slice(lag, lag + frameCount));
   } finally {
     render?.dispose();
     if (rendering && context.state === "suspended") await context.resume().catch(() => undefined);

@@ -51,6 +51,7 @@ const COVERED_ELSEWHERE: Record<string, string> = {
   needsSync: "project-edits.browser.test.ts",
   error: "runtime.test.ts",
   warnings: "runtime.test.ts, open-in-place.browser.test.ts",
+  latency: "latency-compensation.browser.test.ts (the cell follows a rack effect and its removal)",
   session: "session-*.browser.test.ts, open-in-place.browser.test.ts",
   auditioningClip: "audition tests",
   auditioningRange: "audition tests",

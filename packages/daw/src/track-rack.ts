@@ -90,6 +90,11 @@ export class TrackRack {
     return this.cells.effects.value;
   }
 
+  /** Processing latency of the rack in samples: the sum of its effects' declared latencies, bypassed or not. Tracked: an effect that reads it re-runs when a slot is added, removed or changes its latency. */
+  get latency(): number {
+    return this.chain.latency.value;
+  }
+
   macro(id: string): RackMacro | undefined {
     return this.cells.macros.value.find((macro) => macro.id === id);
   }

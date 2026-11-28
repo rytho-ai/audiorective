@@ -95,6 +95,39 @@ describe("Channel", () => {
     expect(() => bus.receive("nope")).toThrow(/nope/);
   });
 
+  it("a send delays by its compensation and builds no delay node until asked", async () => {
+    const created: number[] = [];
+    const Original = globalThis.DelayNode;
+    globalThis.DelayNode = class extends Original {
+      constructor(context: BaseAudioContext, options?: DelayOptions) {
+        super(context, options);
+        created.push(1);
+      }
+    };
+    try {
+      const buf = await renderStereo((ctx) => {
+        const ch = new Channel(ctx);
+        const bus = new SendBus(ctx);
+        bus.define("hall");
+        const send = ch.send(bus, "hall", 1);
+        expect(created).toEqual([]);
+        send.setCompensation(0);
+        expect(created).toEqual([]);
+        send.setCompensation(100);
+        expect(created).toEqual([1]);
+        bus.receive("hall").connect(ctx.destination);
+        const src = new ConstantSourceNode(ctx, { offset: 1 });
+        src.connect(ch.input);
+        src.start();
+      }, 512);
+      const data = buf.getChannelData(0);
+      const first = data.findIndex((v) => Math.abs(v) > 0.01);
+      expect(first).toBe(100);
+    } finally {
+      globalThis.DelayNode = Original;
+    }
+  });
+
   it("a disposed send delivers nothing", async () => {
     const buf = await renderStereo((ctx) => {
       const bus = new SendBus(ctx);

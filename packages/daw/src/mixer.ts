@@ -2,11 +2,25 @@ import { smoothGain } from "./internal/playback-gain";
 import { batch } from "@audiorective/core";
 import { Channel, SendBus } from "@audiorective/effects";
 import { soloRouting } from "./mixer-routing";
+import { solveLatency, type LatencyEdge } from "./mixer-latency";
 import type { Project, ProjectTrack } from "./model";
 import type { TrackRuntime } from "./track-runtime";
 
 /** The mixer strip a track plays through: its Channel and its receive point on the shared SendBus. */
 export type MixerStrip = Pick<TrackRuntime, "channel" | "sendName">;
+
+/** Longest compensation one edge can carry, in seconds: the `maxDelayTime` of its DelayNode. */
+const MAX_COMPENSATION_SECONDS = 1;
+
+/** What the mixer reports to its Workspace: a warning message, and the master output's total lag in samples. */
+export type MixerReport = Readonly<{ warn(message: string): void; latency(samples: number): void }>;
+
+/** A track's own processing latency in samples: its WebCLAP hosts plus its rack. Tracked. */
+export function ownLatency(runtime: Pick<TrackRuntime, "hosts" | "rack">): number {
+  let total = runtime.rack.latency;
+  for (const host of runtime.hosts.values()) total += host.latency.value;
+  return total;
+}
 
 /**
  * Owns the Channel and SendBus strips and the routing between them. Project is the only owner of
@@ -17,12 +31,17 @@ export class Mixer {
   private readonly sendBus: SendBus;
   private sendSerial = 0;
   private masterVolume?: number;
+  /** Compensation delays, created the first time an edge needs more than 0 samples: a project with no latency has none. */
+  private readonly outputDelays = new Map<TrackRuntime, DelayNode>();
+  /** Tracks whose compensation is currently clamped to the limit, so each is warned about once. */
+  private readonly clamped = new Set<TrackRuntime>();
 
   constructor(
     private readonly context: AudioContext,
     private readonly output: GainNode,
     private readonly tracks: ReadonlyMap<string, TrackRuntime>,
     private readonly project: () => Project,
+    private readonly report: MixerReport,
   ) {
     this.sendBus = new SendBus(context);
   }
@@ -58,6 +77,9 @@ export class Mixer {
   /** Release a track's routing, Channel and receive point. */
   disposeStrip(runtime: TrackRuntime): void {
     runtime.channel.output.disconnect();
+    this.outputDelays.get(runtime)?.disconnect();
+    this.outputDelays.delete(runtime);
+    this.clamped.delete(runtime);
     runtime.outputDestination = undefined;
     for (const { send } of runtime.sends.values()) send.dispose();
     runtime.sends.clear();
@@ -76,6 +98,7 @@ export class Mixer {
       const runtime = this.tracks.get(track.id)!;
       if (runtime.outputDestination !== inputFor(track.routing.outputBusId)) {
         runtime.channel.output.disconnect();
+        this.outputDelays.get(runtime)?.disconnect();
         runtime.outputDestination = undefined;
       }
       for (const [id, entry] of runtime.sends) {
@@ -88,7 +111,11 @@ export class Mixer {
       const runtime = this.tracks.get(track.id)!;
       if (!runtime.outputDestination) {
         runtime.outputDestination = inputFor(track.routing.outputBusId);
-        runtime.channel.output.connect(runtime.outputDestination);
+        const delay = this.outputDelays.get(runtime);
+        if (delay) {
+          runtime.channel.output.connect(delay);
+          delay.connect(runtime.outputDestination);
+        } else runtime.channel.output.connect(runtime.outputDestination);
       }
       for (const { busId, gain } of track.routing.sends) {
         if (runtime.sends.has(busId)) continue;
@@ -96,6 +123,53 @@ export class Mixer {
         runtime.sends.set(busId, { target, send: runtime.channel.send(this.sendBus, target.sendName, gain) });
       }
     }
+  }
+
+  /**
+   * Align the tracks: solve the routing for each edge's compensation and set it on that edge's delay. A track's output edge delays between its channel output and its
+   * destination; a send edge delays inside the Send. An edge gets a delay node the first time it needs more than 0 samples. An edge that needs more than one second
+   * is clamped and its track is warned about once. Meters and taps read before these delays. Reports the master's total lag.
+   */
+  applyLatency(): void {
+    const tracks = this.project().tracks.filter((track) => this.tracks.has(track.id));
+    const own = new Map(tracks.map((track) => [track.id, ownLatency(this.tracks.get(track.id)!)]));
+    const live = (id: string | null) => id === null || this.tracks.has(id);
+    const edges: LatencyEdge[] = [];
+    for (const track of tracks) {
+      if (live(track.routing.outputBusId)) edges.push({ id: `${track.id}>`, from: track.id, to: track.routing.outputBusId });
+      for (const { busId } of track.routing.sends) if (live(busId)) edges.push({ id: `${track.id}>${busId}`, from: track.id, to: busId });
+    }
+    const { delays, total } = solveLatency({ own, edges });
+    const limit = MAX_COMPENSATION_SECONDS * this.context.sampleRate;
+    const capped = (samples: number) => (samples > limit ? limit : samples);
+    for (const track of tracks) {
+      const runtime = this.tracks.get(track.id)!;
+      const needed = [delays.get(`${track.id}>`) ?? 0, ...track.routing.sends.map(({ busId }) => delays.get(`${track.id}>${busId}`) ?? 0)];
+      if (needed.some((samples) => samples > limit)) {
+        if (!this.clamped.has(runtime)) {
+          this.clamped.add(runtime);
+          this.report.warn(
+            `Track "${track.name}" needs ${Math.ceil(Math.max(...needed))} samples of latency compensation, more than the 1 second limit: its compensation is clamped to 1 second.`,
+          );
+        }
+      } else this.clamped.delete(runtime);
+      this.setOutputDelay(runtime, capped(delays.get(`${track.id}>`) ?? 0));
+      for (const [busId, { send }] of runtime.sends) send.setCompensation(capped(delays.get(`${track.id}>${busId}`) ?? 0));
+    }
+    this.report.latency(total);
+  }
+
+  private setOutputDelay(runtime: TrackRuntime, samples: number): void {
+    let delay = this.outputDelays.get(runtime);
+    if (!delay) {
+      if (samples <= 0 || !runtime.outputDestination) return;
+      delay = new DelayNode(this.context, { maxDelayTime: MAX_COMPENSATION_SECONDS });
+      this.outputDelays.set(runtime, delay);
+      runtime.channel.output.disconnect(runtime.outputDestination);
+      runtime.channel.output.connect(delay);
+      delay.connect(runtime.outputDestination);
+    }
+    delay.delayTime.value = samples / this.context.sampleRate;
   }
 
   applyMaster(): void {

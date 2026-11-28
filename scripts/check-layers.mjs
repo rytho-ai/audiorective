@@ -70,6 +70,7 @@ const DAW_RUNTIME = [
   "opfs-media.ts",
   "audio-track-session.ts",
   "mixer-routing.ts",
+  "mixer-latency.ts",
   "schedule-clip-envelope.ts",
   "track-runtime.ts",
   "width-path.ts",

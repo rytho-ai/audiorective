@@ -88,6 +88,8 @@ export type TrackRuntime = {
   session?: AudioTrackSession;
   /** Loaded WebCLAP host instances keyed by opaque device ID. */
   hosts: Map<string, WebClapHost>;
+  /** Stops the subscription that re-solves latency compensation when this track's hosts or rack change their latency. */
+  stopLatencyWatch?: () => void;
   /** Keeps each running device's parameter table and its plug-in equal, by device ID. */
   links: Map<string, DeviceParameterLink>;
   /** The wired device chain: its edges and the gate that feeds the rack, so a changed chain can fade in over the one it replaces. */

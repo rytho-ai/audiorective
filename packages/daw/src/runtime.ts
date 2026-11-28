@@ -29,7 +29,7 @@ import { Audition, type RangeAuditionState } from "./audition";
 import { ClipStretch, renderOpenedStretches, type PreparedClipStretch } from "./clip-stretch";
 import { createWorkspaceLoop, LoopFold, type WorkspaceLoop } from "./arrangement-loop";
 import { ClipScheduler } from "./clip-scheduler";
-import { Mixer, type MixerStrip } from "./mixer";
+import { Mixer, ownLatency, type MixerStrip } from "./mixer";
 import { LevelMeters, type WorkspaceLevels } from "./level-meters";
 import { audioChannelCount, captureDeviceParameters, captureDeviceState, MidiClip, Project } from "./model";
 import { DeviceParameterLink } from "./device-parameter-link";
@@ -162,12 +162,18 @@ export class Workspace {
   private readonly mediaError = cell<string | null>(null);
   private readonly applicationError = cell<string | null>(null);
   private readonly warningMessages = cell<readonly string[]>(Object.freeze([]));
+  private readonly latencyCell = cell(0);
   private readonly audition: Audition;
   /** Live state, as cells: read inside an effect or `subscribe` to follow it. */
   readonly cells: Readonly<{
     needsSync: ReadonlyCell<boolean>;
     error: ReadonlyCell<string | null>;
     warnings: ReadonlyCell<readonly string[]>;
+    /**
+     * How many samples the audible output lags the transport position: tracks are aligned to the slowest one (plug-in and rack latency, through buses and sends), so
+     * everything plays that late together. 0 when nothing is latent. `position` and the transport are not shifted: an app that draws a playhead against the sound subtracts this.
+     */
+    latency: ReadonlyCell<number>;
     /**
      * The Session view's launcher over this Workspace's audio and MIDI tracks. `session.value.tracks[trackId].clips[i]` is the slot clip of scene i on that track
      * (`null` for an empty slot); launch it with `clip.launch()` or a whole scene with `launchScene(i)`. It follows `workspace.transport`, is built on first read
@@ -276,7 +282,12 @@ export class Workspace {
       this.mediaError.value = error?.message ?? null;
     });
     this.output = context.createGain();
-    this.mixer = new Mixer(context, this.output, this.tracks, () => this.project);
+    this.mixer = new Mixer(context, this.output, this.tracks, () => this.project, {
+      warn: (message) => this.warn(message),
+      latency: (samples) => {
+        this.latencyCell.value = samples;
+      },
+    });
     this.levelMeters = new LevelMeters(context, this.output, () => [...this.tracks].map(([id, runtime]) => [id, runtime.channel] as const));
     this.stretch = new ClipStretch(
       () => this.project,
@@ -316,6 +327,7 @@ export class Workspace {
       needsSync: readonlyCell(this.topologyPending),
       error: readonlyCell(() => this.applicationError.value ?? this.mediaError.value),
       warnings: readonlyCell(this.warningMessages),
+      latency: readonlyCell(this.latencyCell),
       session: this.sessionCell,
       auditioningClip: this.audition.cells.clip,
       auditioningRange: this.audition.cells.range,
@@ -749,6 +761,7 @@ export class Workspace {
       this.seek(0);
       this.stop();
       this.warningMessages.value = Object.freeze(warnings);
+      this.mixer.applyLatency();
       this.mediaError.value = null;
       this.applicationError.value = null;
       this.failedApplication = undefined;
@@ -779,6 +792,7 @@ export class Workspace {
       }
       if (this.project.tracks !== tracks) return await this.rebuildTracks(position);
       this.mixer.applyRouting(tracks);
+      this.mixer.applyLatency();
       this.mixer.applyMixer();
       this.sessionRevision.value++;
       this.bindNotes();
@@ -1117,6 +1131,7 @@ export class Workspace {
           this.linkDevice(runtime, stage.project, device.id, host);
         }
       }
+      this.watchLatency(track.id, runtime);
       this.wireDevices(runtime);
       this.pointMidi(runtime, track, stage.options.instruments);
       this.mixer.connectReceive(strip, runtime.input);
@@ -1193,6 +1208,7 @@ export class Workspace {
       }
     }
     runtime.hosts = hosts;
+    this.watchLatency(track.id, runtime);
     runtime.deviceKeys = keys;
     this.wireDevices(runtime, fade, { before: widthBefore, after: this.channelWidth(runtime, track) });
     this.pointMidi(runtime, track, this.options.instruments, fade);
@@ -1315,6 +1331,7 @@ export class Workspace {
       this.updateAutomation(runtime, track);
     }
     this.mixer.applyRouting(tracks);
+    this.mixer.applyLatency();
     this.mixer.applyMixer();
     if (clipsChanged) {
       this.audition.stopStale();
@@ -1938,7 +1955,20 @@ export class Workspace {
     this.scheduler.cancelAudio(undefined, crossfade);
   }
 
+  /** Re-solves the mixer's compensation whenever a host's or the rack's latency changes. Replaces the track's earlier watch, so call it again when its hosts change. */
+  private watchLatency(trackId: string, runtime: TrackRuntime): void {
+    runtime.stopLatencyWatch?.();
+    let first = true;
+    runtime.stopLatencyWatch = effect(() => {
+      ownLatency(runtime);
+      // The first run only registers what to follow: the caller's routing pass solves the initial state.
+      if (first) first = false;
+      else if (!this.disposed && this.tracks.get(trackId) === runtime) untracked(() => this.mixer.applyLatency());
+    });
+  }
+
   private disposeTrack(runtime: TrackRuntime): void {
+    runtime.stopLatencyWatch?.();
     runtime.session?.dispose();
     runtime.rack.dispose();
     for (const link of runtime.links.values()) link.dispose();

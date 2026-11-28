@@ -30,6 +30,7 @@ export class Send extends AudioProcessor<
 > {
   private readonly node: GainNode;
   private readonly gate: GainNode;
+  private compensation?: DelayNode;
 
   constructor(
     context: BaseAudioContext,
@@ -67,8 +68,26 @@ export class Send extends AudioProcessor<
     return this.gate;
   }
 
+  /**
+   * Delays this send by `samples` (0 to one second of the context, clamped) so a host can line it up with other signals feeding the same bus. The delay sits between the level and the gate:
+   * `input` and `output` do not change, and a send that is never delayed has no delay node. Takes effect at once, without a ramp. Default 0.
+   */
+  setCompensation(samples: number): void {
+    const seconds = Math.min(1, Math.max(0, samples) / this.context.sampleRate);
+    if (!this.compensation) {
+      if (seconds === 0) return;
+      const delay = new DelayNode(this.context, { maxDelayTime: 1 });
+      this.node.disconnect(this.gate);
+      this.node.connect(delay);
+      delay.connect(this.gate);
+      this.compensation = delay;
+    }
+    this.compensation.delayTime.value = seconds;
+  }
+
   override dispose(): void {
     this.release(this);
+    this.compensation?.disconnect();
     super.dispose();
     this.node.disconnect();
     this.gate.disconnect();
