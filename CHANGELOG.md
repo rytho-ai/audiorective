@@ -13,6 +13,10 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ## [Unreleased]
 
+### Changed
+
+- **daw:** a mixer value written directly is no longer a new song version. Called outside `project.edit` and `applyEdits`, `setTrackVolume`, `setTrackPan`, `setTrackMuted`, `setTrackSolo`, `setTrackMacroValue`, `setDeviceParameter` and `setMasterVolume` still apply (a running Workspace plays them and `cells.revision` advances) and still make no Undo step, but `cells.version` stays the same, so a continuous fader sweep no longer turns another writer's `applyEdits({ expectedVersion })`, a versioned save or a versioned render into a `conflict`. Inside an edit they are part of it and the version advances as before. An edit that sets the same value overwrites a direct move without a conflict; Undo's per-value conflict check is unchanged.
+
 ### Fixed
 
 - **effects:** an `Effect` whose wet arm is plain Web Audio nodes and whose build callback declares `latency` now delays its dry path by that latency (minus the arm processor's own latency, if any). Before, `effect.latency` reported the declared value but a bypassed or partly wet effect passed the dry signal earlier, so bypass and `wet: 0.5` were out of time with the wet arm. A declared `Param<number>` latency is followed live; built-in effects (declared `0`) get no extra node.

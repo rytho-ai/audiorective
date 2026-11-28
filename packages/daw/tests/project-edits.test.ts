@@ -261,7 +261,7 @@ describe("project.applyEdits", () => {
   it("reports a conflict for stale structure or a stale note edit and changes nothing", () => {
     const { project, drums, keyChorus, drumOutro } = song();
     const staleStructure = version(project);
-    project.setTrackVolume(drums.id, 0.5);
+    project.setTrackName(drums.id, "Kit");
     const op: ProjectEditOperation = { type: "moveClip", clip: { clipId: drumOutro.id }, position: { byBeats: 1 } };
     expect(project.applyEdits({ expectedVersion: staleStructure, label: "Late", ops: [op] }).status).toBe("conflict");
 
@@ -349,11 +349,11 @@ describe("project history", () => {
       ops: [{ type: "moveClip", clip: { clipId: drumOutro.id }, position: { byBeats: 2 } }],
     });
     if (receipt.status !== "applied") throw new Error(receipt.reason);
-    project.setTrackVolume(drums.id, 0.25);
+    project.setTrackName(drums.id, "Kit");
     expect(project.undo({ expectedVersion: receipt.version }).status).toBe("conflict");
     expect(project.undo().status).toBe("applied");
     expect(clipById(project, drumOutro.id)?.time).toBe(10);
-    expect(project.tracks.find(({ id }) => id === drums.id)?.volume).toBe(0.25);
+    expect(project.tracks.find(({ id }) => id === drums.id)?.name).toBe("Kit");
   });
 
   it("brings a split MIDI clip back as a working clip", () => {

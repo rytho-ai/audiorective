@@ -2092,12 +2092,12 @@ export class Project {
     return this.store.value.masterVolume;
   }
 
-  /** Set the master level as linear gain: a finite number, 0 or more (1 is unity). Inside `project.edit` it joins that Undo step. */
+  /** Set the master level as linear gain: a finite number, 0 or more (1 is unity). Inside `project.edit` it joins that Undo step and the version; outside it makes neither. */
   setMasterVolume(volume: number): void {
     assertProjectActive(this);
     if (!Number.isFinite(volume) || volume < 0) throw new RangeError("Project master volume needs a finite non-negative value.");
     if (volume === this.s.masterVolume) return;
-    this.commit({ masterVolume: volume });
+    this.commit({ masterVolume: volume }, this.valueWriteIsEdit);
   }
 
   /** Beat to seconds conversion for the current tempo changes. Tracked. */
@@ -2319,20 +2319,28 @@ export class Project {
     return track;
   }
 
-  private replace(track: ProjectTrack, patch: Partial<ProjectTrack>, state: Partial<Pick<ProjectState, "clipNames">> = {}): void {
-    this.commit({
-      ...state,
-      tracks: Object.freeze(this.s.tracks.map((item) => (item.id === track.id ? Object.freeze({ ...item, ...patch }) : item))),
-    });
+  private replace(track: ProjectTrack, patch: Partial<ProjectTrack>, state: Partial<Pick<ProjectState, "clipNames">> = {}, isEdit = true): void {
+    this.commit(
+      {
+        ...state,
+        tracks: Object.freeze(this.s.tracks.map((item) => (item.id === track.id ? Object.freeze({ ...item, ...patch }) : item))),
+      },
+      isEdit,
+    );
   }
 
-  /** Set a track's level as linear gain: a finite number, 0 or more (default 1 is unity; there is no upper limit). */
+  /** Whether a mixer value write counts as a song edit: only inside `project.edit` or `applyEdits`. A direct write advances `revision` but not the song version. */
+  private get valueWriteIsEdit(): boolean {
+    return this.editing !== undefined;
+  }
+
+  /** Set a track's level as linear gain: a finite number, 0 or more (default 1 is unity; there is no upper limit). Called outside `project.edit` it makes no Undo step and no new `cells.version`; inside one it is part of that edit. */
   setTrackVolume(trackId: string, volume: number): void {
     assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.id === trackId);
     if (!track || !Number.isFinite(volume) || volume < 0)
       throw new RangeError("Project track volume needs an existing track and non-negative value.");
-    this.replace(track, { volume });
+    this.replace(track, { volume }, {}, this.valueWriteIsEdit);
   }
 
   /** Rename a track: a non-empty string after trimming, XML-safe characters only. Names need not be unique. */
@@ -2344,29 +2352,29 @@ export class Project {
     this.replace(track, { name: name.trim() });
   }
 
-  /** Mute or unmute a track. Mute wins over solo. Default unmuted. */
+  /** Mute or unmute a track. Mute wins over solo. Default unmuted. Outside `project.edit` it makes no Undo step and no new `cells.version`. */
   setTrackMuted(trackId: string, muted: boolean): void {
     assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.id === trackId);
     if (!track || typeof muted !== "boolean") throw new RangeError("Project track mute needs an existing track and boolean value.");
-    this.replace(track, { muted });
+    this.replace(track, { muted }, {}, this.valueWriteIsEdit);
   }
 
-  /** Solo or unsolo a track; while any track is soloed the others are silent. Default off. */
+  /** Solo or unsolo a track; while any track is soloed the others are silent. Default off. Outside `project.edit` it makes no Undo step and no new `cells.version`. */
   setTrackSolo(trackId: string, solo: boolean): void {
     assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.id === trackId);
     if (!track || typeof solo !== "boolean") throw new RangeError("Project track solo needs an existing track and boolean value.");
-    this.replace(track, { solo });
+    this.replace(track, { solo }, {}, this.valueWriteIsEdit);
   }
 
-  /** Set a track's stereo position from -1 (left) to 1 (right); 0 is centre, the default. */
+  /** Set a track's stereo position from -1 (left) to 1 (right); 0 is centre, the default. Outside `project.edit` it makes no Undo step and no new `cells.version`. */
   setTrackPan(trackId: string, pan: number): void {
     assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.id === trackId);
     if (!track || !Number.isFinite(pan) || Math.abs(pan) > 1)
       throw new RangeError("Project track pan needs an existing track and a value from -1 to 1.");
-    this.replace(track, { pan });
+    this.replace(track, { pan }, {}, this.valueWriteIsEdit);
   }
 
   /** Atomically replace the dry output and post-fader sends for one track. */
@@ -2404,13 +2412,17 @@ export class Project {
 
   /** Replace the ordered built-in inserts after the track's WebCLAP devices. */
   setTrackEffects(trackId: string, effects: readonly RackEffect[]): void {
+    this.writeTrackEffects(trackId, effects, true);
+  }
+
+  private writeTrackEffects(trackId: string, effects: readonly RackEffect[], isEdit: boolean): void {
     assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.id === trackId);
     if (!track) throw new Error("Project effects need an existing track.");
     const checked = normalizeRackEffects(effects);
     const effectMacros = retainRackMacroTargets(checked, track.effectMacros);
     if (sameJson(track.effects, checked) && sameJson(track.effectMacros, effectMacros)) return;
-    this.replace(track, { effects: checked, effectMacros });
+    this.replace(track, { effects: checked, effectMacros }, {}, isEdit);
   }
 
   /** Apply both the ordered inserts and their macro settings as one Project edit. */
@@ -2422,7 +2434,7 @@ export class Project {
     this.replace(track, { effects, effectMacros: macros });
   }
 
-  /** Set one rack macro of a track to a value from 0 to 1; its mapped effect parameters follow. */
+  /** Set one rack macro of a track to a value from 0 to 1; its mapped effect parameters follow. Outside `project.edit` it makes no Undo step and no new `cells.version`. */
   setTrackMacroValue(trackId: string, macroId: string, value: number): void {
     assertProjectActive(this);
     const track = this.s.tracks.find((item) => item.id === trackId);
@@ -2430,9 +2442,12 @@ export class Project {
     if (!track || !macro) throw new Error("Project macro needs an existing track and macro.");
     if (!Number.isFinite(value) || value < 0 || value > 1) throw new RangeError("TrackRack macro value needs a number from 0 to 1.");
     if (macro.value === value) return;
-    this.replace(track, {
-      effectMacros: Object.freeze(track.effectMacros.map((item) => (item === macro ? Object.freeze({ ...item, value }) : item))),
-    });
+    this.replace(
+      track,
+      { effectMacros: Object.freeze(track.effectMacros.map((item) => (item === macro ? Object.freeze({ ...item, value }) : item))) },
+      {},
+      this.valueWriteIsEdit,
+    );
   }
 
   /** Remove a track with its clips, Session slot clips and devices; routes that pointed at a removed bus are cleared. Inside `project.edit` it joins that Undo step. */
@@ -2569,7 +2584,7 @@ export class Project {
   /**
    * Set one parameter of a device to `value`, in the parameter's own units and range (`workspace.deviceParameters(deviceId)` lists the IDs, ranges and values). `deviceId` is a
    * WebCLAP device's ID or, for a built-in rack effect, `rackDeviceId(trackId, slotId)`; a rack effect parameter writes the same Project data `setTrackEffects` does. The value is
-   * song content: it is saved, joins the Undo step of the surrounding `project.edit` or `applyEdits` (like every Project edit method it makes no step of its own) and a running Workspace applies it without a rebuild. Setting the value it
+   * song content: it is saved, joins the Undo step and version of the surrounding `project.edit` or `applyEdits` (called directly it makes no step and no new `cells.version`) and a running Workspace applies it without a rebuild. Setting the value it
    * already has changes nothing. A stepped parameter (`step: 1`) snaps the value to the nearest whole step from `min` (a tie goes up), so `53.9` applies as `54`; the method returns the value applied. Throws for an unknown device or parameter, a value outside the range, a WebCLAP device whose
    * parameter table is still empty (no Workspace has loaded it yet) and a rack parameter that a macro drives (set the macro with `setTrackMacroValue`).
    */
@@ -2589,11 +2604,16 @@ export class Project {
       value = snapParameterValue(record, value);
       if (record.value === value) return value;
       const parameters = device.parameters.map((item) => (item === record ? Object.freeze({ ...item, value }) : item));
-      this.replace(track, {
-        devices: Object.freeze(
-          track.devices.map((item) => (item === device ? Object.freeze({ ...item, parameters: Object.freeze(parameters) }) : item)),
-        ),
-      });
+      this.replace(
+        track,
+        {
+          devices: Object.freeze(
+            track.devices.map((item) => (item === device ? Object.freeze({ ...item, parameters: Object.freeze(parameters) }) : item)),
+          ),
+        },
+        {},
+        this.valueWriteIsEdit,
+      );
       return value;
     }
     const at = splitRackDeviceId(deviceId);
@@ -2607,9 +2627,10 @@ export class Project {
     }
     const macro = owner.effectMacros.find(({ targets }) => targets.some((target) => target.slotId === slot.id && target.parameter === parameterId));
     if (macro) throw new Error(`Project effect parameter "${parameterId}" is driven by macro "${macro.id}"; set the macro with setTrackMacroValue.`);
-    this.setTrackEffects(
+    this.writeTrackEffects(
       owner.id,
       owner.effects.map((item) => (item === slot ? withRackParameter(slot, parameterId, value) : item)),
+      this.valueWriteIsEdit,
     );
     // Recorded after the write so a value that changed nothing leaves no key; Undo of this parameter compares and restores only it.
     const marks = this.editing?.rack;

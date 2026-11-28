@@ -215,7 +215,7 @@ describe("project edits through the audio graph", () => {
       [1, false],
       [2, true],
     ]);
-    project.setTrackVolume(track.id, 0.5);
+    project.setTrackName(track.id, "Renamed");
     expect((await renderMixRange(workspace, { expectedVersion, range: { startBeat: 0, endBeat: 1 } })).status).toBe("conflict");
   }, 30_000);
 
@@ -344,7 +344,7 @@ describe("project edits through the audio graph", () => {
     const workspace = await workspaceFor(project);
     const version = project.cells.version.value;
     expect((await saveWorkspace(workspace, { expectedVersion: version })).length).toBeGreaterThan(0);
-    project.setTrackVolume(track.id, 0.5);
+    project.setTrackName(track.id, "Renamed");
     await expect(saveWorkspace(workspace, { expectedVersion: version })).rejects.toThrow(/changed after expectedVersion/);
     let aborted = false;
     let written = 0;

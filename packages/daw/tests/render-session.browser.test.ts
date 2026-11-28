@@ -271,7 +271,7 @@ describe("renderSession", () => {
   test("a moved version returns conflict without rendering", async () => {
     const { project, workspace, drums, b } = await setup();
     const stale = project.cells.version.value;
-    project.setTrackMuted(drums.id, true);
+    project.setTrackName(drums.id, "Kit");
     const result = await renderSession(workspace, { scenes: [b], expectedVersion: stale });
     expect(result.status).toBe("conflict");
   }, 60_000);
