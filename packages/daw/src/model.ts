@@ -2410,7 +2410,7 @@ export class Project {
     this.replace(track, { routing: next });
   }
 
-  /** Replace the ordered built-in inserts after the track's WebCLAP devices. */
+  /** Replace the ordered inserts (built-in filter, delay, EQ, or app-defined custom effects) after the track's WebCLAP devices. */
   setTrackEffects(trackId: string, effects: readonly RackEffect[]): void {
     this.writeTrackEffects(trackId, effects, true);
   }

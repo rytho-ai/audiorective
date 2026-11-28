@@ -8,7 +8,7 @@ import {
   type Workspace,
 } from "@audiorective/daw";
 
-const effectName = { filter: "Filter", delay: "Delay", eq: "EQ" } as const;
+const effectName = { filter: "Filter", delay: "Delay", eq: "EQ", custom: "自訂" } as const;
 const macroParameterNames: Record<RackMacroParameter, string> = {
   wet: "Mix",
   frequency: "頻率",
@@ -69,7 +69,7 @@ export function mountEffectRackView(root: HTMLElement, workspace: Workspace, tra
       report(error);
     }
   };
-  const add = (type: RackEffect["type"]) => {
+  const add = (type: Exclude<RackEffect["type"], "custom">) => {
     const base = { id: crypto.randomUUID(), enabled: true, wet: type === "delay" ? 0.35 : 1 };
     let effect: RackEffect;
     if (type === "filter") effect = { ...base, type, mode: "lowpass", frequency: 1200, q: 0.7 };
@@ -226,7 +226,8 @@ export function mountEffectRackView(root: HTMLElement, workspace: Workspace, tra
       slots.append(empty);
     }
     for (const [index, slot] of chain.entries()) {
-      const name = effectName[slot.type];
+      // A custom slot (from a file or the app) shows its name, mix and bypass; its own parameters belong to the app that defined it.
+      const name = slot.type === "custom" ? slot.effect : effectName[slot.type];
       const card = document.createElement("article");
       card.className = "effect-slot";
       card.dataset.effectType = slot.type;
@@ -377,7 +378,7 @@ export function mountEffectRackView(root: HTMLElement, workspace: Workspace, tra
           (effect) => (effect.type === "delay" ? effect.feedback : slot.feedback),
           (effect, feedback) => (effect.type === "delay" ? { ...effect, feedback } : effect),
         );
-      } else {
+      } else if (slot.type === "eq") {
         const bands = slot.bands.map((band, index) => {
           const label = slot.bands.length === 3 ? ["低頻", "中頻", "高頻"][index] : `頻段 ${index + 1}`;
           const access = (key: "frequency" | "gain" | "q") =>

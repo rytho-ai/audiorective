@@ -1,11 +1,13 @@
 import { batch, cell, readonlyCell, untracked, type Cell, type ReadonlyCell } from "@audiorective/core";
-import { EffectChain, Equalizer, Filter, PingPongDelay } from "@audiorective/effects";
+import { Effect, EffectChain, Equalizer, Filter, PingPongDelay, type AnyEffect } from "@audiorective/effects";
 import {
   noMacros,
   normalizeRackPreset,
   normalizeRackEffects,
   retainRackMacroTargets,
+  type RackCustom,
   type RackEffect,
+  type RackEffectDefinition,
   type RackMacroParameter,
   type RackMacroSettings,
   type RackPreset,
@@ -13,9 +15,28 @@ import {
 import { LiveRackMacro, type MacroTarget, type RackMacro } from "./rack-macro";
 export type { RackMacro };
 
-type RackNode = { type: "filter"; processor: Filter } | { type: "delay"; processor: PingPongDelay } | { type: "eq"; processor: Equalizer };
+/** A custom slot's live part: `processor` is absent when the slot passes dry (no definition, or `create` failed); `applied` holds the table values already written to the effect. */
+type CustomNode = { type: "custom"; effectId: string; processor?: AnyEffect; applied: Map<string, number>; missing: Set<string> };
+type RackNode =
+  | { type: "filter"; processor: Filter }
+  | { type: "delay"; processor: PingPongDelay }
+  | { type: "eq"; processor: Equalizer }
+  | CustomNode;
+type CustomOutcome = { effect: AnyEffect } | { problem: string };
+
+/** What a TrackRack needs from its Workspace to build custom slots. */
+export type RackCustomHost = Readonly<{
+  /** The app's definition for an effect ID, or `undefined` when it has none. */
+  definition(effectId: string): RackEffectDefinition | undefined;
+  /** Reports a custom slot that passes dry or ignores a parameter; `problem` completes the sentence "effect X ...". */
+  warn(slotId: string, effectId: string, problem: string): void;
+}>;
+
+const describe = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
 function bindMacroTarget(mapping: RackMacroSettings["targets"][number], node: RackNode, slot: RackEffect): MacroTarget {
   const { parameter } = mapping;
+  if (node.type === "custom") throw new Error("TrackRack macro target is unavailable.");
   if (parameter === "wet") return { mapping, param: node.processor.params.wet, muted: !slot.enabled };
   if (node.type === "filter" && (parameter === "frequency" || parameter === "q"))
     return { mapping, param: node.processor.params[parameter === "q" ? "Q" : "frequency"], muted: false };
@@ -34,12 +55,15 @@ export class TrackRack {
   private macros = new Map<string, LiveRackMacro>();
   private macroSink?: GainNode;
   private nodes = new Map<string, RackNode>();
+  /** Custom effects built by `prepare` and not yet placed in the rack, by slot ID. */
+  private prepared = new Map<string, { effectId: string; outcome: CustomOutcome }>();
   private disposed = false;
 
   constructor(
     private readonly context: BaseAudioContext,
     effects: readonly RackEffect[] = [],
     macros: readonly RackMacroSettings[] = noMacros,
+    private readonly host?: RackCustomHost,
   ) {
     const settings = cell<readonly RackEffect[]>(Object.freeze([]));
     const macroCells = cell<readonly RackMacro[]>(Object.freeze([]));
@@ -93,7 +117,7 @@ export class TrackRack {
   ): boolean {
     void this.cells.effects.value;
     const slot = this.nodes.get(slotId);
-    if (!slot || slot.type === "delay") return false;
+    if (!slot || (slot.type !== "filter" && slot.type !== "eq")) return false;
     slot.processor.getFrequencyResponse(frequencies, magnitudes, phases);
     return true;
   }
@@ -106,6 +130,62 @@ export class TrackRack {
     this.apply(settings, macros, false);
   }
 
+  /**
+   * Builds the custom effects `effects` names that the rack does not hold yet, so the next `setEffects` or `setPreset` can place them in one synchronous step even when a definition's
+   * `create` is asynchronous. It never rejects: a missing definition or a failing `create` becomes a dry slot with a warning when the settings are applied.
+   */
+  async prepare(effects: readonly RackEffect[]): Promise<void> {
+    this.assertAlive();
+    const wanted = effects.filter((slot): slot is RackCustom => {
+      if (slot.type !== "custom") return false;
+      const node = this.nodes.get(slot.id);
+      return !(node?.type === "custom" && node.effectId === slot.effect) && this.prepared.get(slot.id)?.effectId !== slot.effect;
+    });
+    await Promise.all(
+      wanted.map(async (slot) => {
+        const outcome = await this.resolveCustom(slot);
+        if (this.disposed) {
+          if ("effect" in outcome) outcome.effect.dispose();
+          return;
+        }
+        const stale = this.prepared.get(slot.id);
+        if (stale && "effect" in stale.outcome) stale.outcome.effect.dispose();
+        this.prepared.set(slot.id, { effectId: slot.effect, outcome });
+      }),
+    );
+  }
+
+  private async resolveCustom(slot: RackCustom): Promise<CustomOutcome> {
+    const definition = this.host?.definition(slot.effect);
+    if (!definition) return { problem: "has no definition in this Workspace" };
+    try {
+      return this.checkEffect(await definition.create(this.context, slot));
+    } catch (error) {
+      return { problem: `could not be created: ${describe(error)}` };
+    }
+  }
+
+  /** A slot `prepare` did not cover, such as one given to the constructor: `create` must answer at once. */
+  private resolveCustomNow(slot: RackCustom): CustomOutcome {
+    const definition = this.host?.definition(slot.effect);
+    if (!definition) return { problem: "has no definition in this Workspace" };
+    try {
+      const made = definition.create(this.context, slot);
+      if (made instanceof Promise) {
+        made.then((late) => late.dispose()).catch(() => undefined);
+        return { problem: "is created asynchronously; await rack.prepare(effects) before applying it" };
+      }
+      return this.checkEffect(made);
+    } catch (error) {
+      return { problem: `could not be created: ${describe(error)}` };
+    }
+  }
+
+  private checkEffect(made: unknown): CustomOutcome {
+    if (made instanceof Effect) return { effect: made as AnyEffect };
+    return { problem: "did not create an Effect from @audiorective/effects" };
+  }
+
   private assertAlive(): void {
     if (this.disposed) throw new Error("TrackRack is disposed.");
   }
@@ -113,12 +193,28 @@ export class TrackRack {
   private apply(settings: readonly RackEffect[], macros: readonly RackMacroSettings[], recall: boolean): void {
     const next = new Map<string, RackNode>();
     const created: RackNode[] = [];
+    const warnings: [string, string, string][] = [];
     const macroNodes = new Map<string, LiveRackMacro>();
     const createdMacros: LiveRackMacro[] = [];
     let newSink: GainNode | undefined;
     try {
       for (const slot of settings) {
         const existing = this.nodes.get(slot.id);
+        if (slot.type === "custom") {
+          if (existing?.type === "custom" && existing.effectId === slot.effect) {
+            next.set(slot.id, existing);
+            continue;
+          }
+          const ready = this.prepared.get(slot.id);
+          const outcome = ready?.effectId === slot.effect ? ready.outcome : this.resolveCustomNow(slot);
+          if (ready?.effectId === slot.effect) this.prepared.delete(slot.id);
+          const node: CustomNode = { type: "custom", effectId: slot.effect, applied: new Map(), missing: new Set() };
+          if ("effect" in outcome) node.processor = outcome.effect;
+          else warnings.push([slot.id, slot.effect, outcome.problem]);
+          created.push(node);
+          next.set(slot.id, node);
+          continue;
+        }
         if (
           existing?.type === slot.type &&
           (slot.type !== "eq" || (existing.type === "eq" && existing.processor.bands.length === slot.bands.length))
@@ -151,7 +247,7 @@ export class TrackRack {
         }
       }
     } catch (error) {
-      for (const node of created) node.processor.dispose();
+      for (const node of created) node.processor?.dispose();
       for (const macro of createdMacros) macro.dispose();
       newSink?.disconnect();
       throw error;
@@ -159,7 +255,7 @@ export class TrackRack {
 
     this.macroSink ??= newSink;
     const previousMacros = this.macros;
-    const desired = [...next.values()].map((node) => node.processor);
+    const desired = [...next.values()].flatMap((node) => (node.processor ? [node.processor as AnyEffect] : []));
     const effectById = new Map(settings.map((slot) => [slot.id, slot]));
     const owned = new Map<string, Set<RackMacroParameter>>();
     for (const { targets } of macros) {
@@ -174,6 +270,10 @@ export class TrackRack {
       for (const slot of settings) {
         const node = next.get(slot.id)!;
         const mapped = owned.get(slot.id);
+        if (node.type === "custom") {
+          if (slot.type === "custom" && node.processor) this.writeCustom(slot, node, warnings);
+          continue;
+        }
         if (!mapped?.has("wet")) node.processor.params.wet.value = slot.enabled ? slot.wet : 0;
         if (node.type === "filter" && slot.type === "filter") {
           if (!mapped?.has("frequency")) node.processor.params.frequency.value = slot.frequency;
@@ -202,6 +302,8 @@ export class TrackRack {
       if (previous.length !== controls.length || controls.some((control, i) => control !== previous[i]))
         this.macroCells.value = Object.freeze(controls);
     });
+    for (const [slotId, effectId, problem] of warnings) this.host?.warn(slotId, effectId, problem);
+    this.clearPrepared();
     for (const [id, macro] of previousMacros) if (macroNodes.get(id) !== macro) macro.dispose();
     if (!this.macros.size && this.macroSink) {
       this.macroSink.disconnect();
@@ -209,8 +311,33 @@ export class TrackRack {
     }
   }
 
+  /** Gives a custom effect its slot's `enabled`, `wet` and parameter values; only values that changed since the last call are written, and an effect lacking a table parameter is warned about once. */
+  private writeCustom(slot: RackCustom, node: CustomNode, warnings: [string, string, string][]): void {
+    const effect = node.processor!;
+    effect.params.wet.value = slot.enabled ? slot.wet : 0;
+    const params = effect.params as Readonly<Record<string, { value: unknown } | undefined>>;
+    for (const row of slot.parameters) {
+      const param = Object.hasOwn(params, row.id) ? params[row.id] : undefined;
+      if (!param || typeof param.value !== "number") {
+        if (!node.missing.has(row.id)) {
+          node.missing.add(row.id);
+          warnings.push([slot.id, slot.effect, `has no numeric parameter "${row.id}"; the song's value is ignored`]);
+        }
+        continue;
+      }
+      if (node.applied.get(row.id) === row.value) continue;
+      param.value = row.value;
+      node.applied.set(row.id, row.value);
+    }
+  }
+
+  private clearPrepared(): void {
+    for (const { outcome } of this.prepared.values()) if ("effect" in outcome) outcome.effect.dispose();
+    this.prepared.clear();
+  }
+
   /** Brings the chain to `desired` with the chain's crossfaded edits; effects that left the rack are disposed by `remove`. */
-  private reorder(desired: readonly (Filter | PingPongDelay | Equalizer)[]): void {
+  private reorder(desired: readonly AnyEffect[]): void {
     const chain = this.chain;
     for (const effect of untracked(() => chain.cells.effects.value)) if (!desired.includes(effect as never)) chain.remove(effect);
     desired.forEach((effect, index) => {
@@ -229,6 +356,7 @@ export class TrackRack {
     this.macroCells.value = [];
     this.macroSink?.disconnect();
     this.chain?.dispose();
+    this.clearPrepared();
     this.nodes.clear();
   }
 }

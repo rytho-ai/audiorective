@@ -22,7 +22,8 @@ import { AutomationBinding, AutomationCurve, audioParamTarget, type AutomationTa
 import { WebClapHost } from "@audiorective/host/webclap";
 import { ClipLauncher, type Clip as SessionClip, type ClipSpec } from "@audiorective/launcher";
 import type { WaveStretchAnchor, WaveStretchProcessor } from "@audiorective/player";
-import { TrackRack } from "./track-rack";
+import { TrackRack, type RackCustomHost } from "./track-rack";
+import type { RackEffectDefinition } from "./rack-preset";
 import { AudioTrackSession } from "./audio-track-session";
 import { Audition, type RangeAuditionState } from "./audition";
 import { ClipStretch, renderOpenedStretches, type PreparedClipStretch } from "./clip-stretch";
@@ -71,7 +72,10 @@ export type WorkspaceSource = Uint8Array | Blob;
  * `ownsProject` applies to a `Project` passed in: true hands it to the Workspace, which disposes it when a later `open` replaces it, or on `dispose()`; the default leaves it with the caller.
  * A song read from a file is always the Workspace's own.
  */
-export type WorkspaceOpenOptions = Pick<WorkspaceOptions, "workletUrl" | "resolveBundle" | "instruments" | "stretch" | "warnings" | "ownsProject">;
+export type WorkspaceOpenOptions = Pick<
+  WorkspaceOptions,
+  "workletUrl" | "resolveBundle" | "instruments" | "stretch" | "effects" | "warnings" | "ownsProject"
+>;
 
 export type WorkspaceOptions = {
   /** Audio node receiving the master output; default the AudioContext destination. */
@@ -96,6 +100,11 @@ export type WorkspaceOptions = {
    * changed pitch) and `warnings` says so once. A render that fails leaves that clip on varispeed with a warning. `prepareAudioClipStretch` takes its own processor.
    */
   stretch?: WaveStretchProcessor;
+  /**
+   * App-defined rack effects, from `defineRackEffect`: a track's `custom` insert names one by `effect` ID and this Workspace builds it with the definition's `create`. Passed on to every offline render
+   * (`deviceOptions`), and not saved in the file: pass it again when opening. A slot whose ID is not listed passes dry audio and adds a warning to `cells.warnings`. IDs must be unique.
+   */
+  effects?: readonly RackEffectDefinition[];
   /** Initial value of `workspace.arrangement`. Default true; false for an app that only plays Session clips. */
   arrangement?: boolean;
   /** Messages produced before the workspace existed, such as file-open warnings; they precede the workspace's own. */
@@ -105,6 +114,9 @@ export type WorkspaceOptions = {
   /** @internal Drives the transport from an offline render loop instead of a timer; used by `exportAudioFallbackTo`. */
   tickSource?: TickSource;
 };
+function assertUniqueEffects(effects: readonly RackEffectDefinition[] | undefined): void {
+  if (effects && new Set(effects.map(({ id }) => id)).size !== effects.length) throw new RangeError("Workspace effects need unique IDs.");
+}
 const isOfflineContext = (context: BaseAudioContext): boolean => typeof OfflineAudioContext !== "undefined" && context instanceof OfflineAudioContext;
 
 /** A borrowed transport view that can be passed directly to a player widget. */
@@ -198,13 +210,14 @@ export class Workspace {
    * What another workspace needs to load the same devices and instruments: a render workspace, or this project saved and opened again.
    * Its `resolveBundle` asks this workspace's own `resolveBundle` first, then approves a bundle URL this workspace has loaded for the same CLAP ID.
    */
-  get deviceOptions(): Pick<WorkspaceOptions, "workletUrl" | "resolveBundle" | "instruments" | "stretch"> {
+  get deviceOptions(): Pick<WorkspaceOptions, "workletUrl" | "resolveBundle" | "instruments" | "stretch" | "effects"> {
     const resolve = this.options.resolveBundle;
     const loaded = this.loadedBundles;
     return {
       workletUrl: this.options.workletUrl,
       instruments: this.options.instruments,
       stretch: this.options.stretch,
+      effects: this.options.effects,
       resolveBundle: async (device) =>
         (resolve ? await resolve(device) : undefined) ??
         (device.bundleUrl && loaded.get(device.pluginId)?.has(device.bundleUrl) ? device.bundleUrl : undefined),
@@ -257,6 +270,7 @@ export class Workspace {
     this.projectSource = cell(project);
     if (options.ownsProject) this.ownedProject = project;
     this.activeTempoMap = project.tempoMap;
+    assertUniqueEffects(options.effects);
     this.options = options;
     this.scheduler = new ClipScheduler(context, (error) => {
       this.mediaError.value = error?.message ?? null;
@@ -680,6 +694,7 @@ export class Workspace {
     const project = opened.project;
     const warnings = [...opened.warnings, ...(options.warnings ?? [])];
     const { warnings: _creationWarnings, ownsProject: _ownership, ...given } = options;
+    assertUniqueEffects(options.effects);
     const stage: TrackStage = {
       project,
       options: { ...this.options, ...Object.fromEntries(Object.entries(given).filter(([, value]) => value !== undefined)) },
@@ -1049,12 +1064,27 @@ export class Workspace {
   private async createTrack(track: ProjectTrack, stage: TrackStage = this.liveStage()): Promise<TrackRuntime> {
     const automationGain = this.context.createGain();
     let strip: MixerStrip | undefined;
-    let rack: TrackRack;
+    let rack: TrackRack | undefined;
+    // Until the runtime joins `this.tracks` the rack answers to the stage it is built for; afterwards to the Workspace.
+    const live = () => this.tracks.get(track.id)?.rack === rack;
+    const host: RackCustomHost = {
+      definition: (id) => (live() ? this.options : stage.options).effects?.find((definition) => definition.id === id),
+      warn: (slotId, effectId, problem) => {
+        const name = (live() ? this.project : stage.project).tracks.find((item) => item.id === track.id)?.name ?? track.name;
+        (live() ? (message: string) => this.warn(message) : stage.warn)(`Track "${name}" insert "${slotId}": effect "${effectId}" ${problem}.`);
+      },
+    };
     try {
       strip = this.mixer.createStrip(track.id, automationGain, track);
-      rack = new TrackRack(this.context, track.effects, track.effectMacros);
+      if (track.effects.some(({ type }) => type === "custom")) {
+        // A custom insert may build asynchronously: build them first so the settings go in as one synchronous step.
+        rack = new TrackRack(this.context, [], [], host);
+        await rack.prepare(track.effects);
+        rack.setPreset({ effects: track.effects, macros: track.effectMacros });
+      } else rack = new TrackRack(this.context, track.effects, track.effectMacros, host);
     } catch (error) {
       // Nothing is registered yet, so release whatever was built before the failure.
+      rack?.dispose();
       automationGain.disconnect();
       if (strip) this.mixer.releaseStrip(strip);
       throw error;
@@ -1070,7 +1100,7 @@ export class Workspace {
       links: new Map(),
       channel: strip.channel,
       automationGain,
-      rack,
+      rack: rack!,
       effectSettings: track.effects,
       macroSettings: track.effectMacros,
       sendName: strip.sendName,
@@ -1184,6 +1214,11 @@ export class Workspace {
     this.recordCurrentProject();
     const project = this.project;
     const tracks = project.tracks;
+    for (const track of tracks) {
+      const runtime = this.tracks.get(track.id);
+      if (runtime && track.effects.some(({ type }) => type === "custom")) await runtime.rack.prepare(track.effects);
+      if (this.disposed) return;
+    }
     const ids = new Set(tracks.map(({ id }) => id));
     const removed = [...this.tracks].filter(([id]) => !ids.has(id));
     const compatible =

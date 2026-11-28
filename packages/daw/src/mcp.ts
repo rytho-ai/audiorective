@@ -452,7 +452,7 @@ export const EDIT_OP_SPECS: Readonly<Record<ProjectEditOperation["type"], OpSpec
   },
   setTrackEffects: {
     summary:
-      "Replace a track's ordered inserts. Each is { id, type: filter|delay|eq, enabled, wet 0..1, ...settings } as read_project shows them under trackEffects.",
+      "Replace a track's ordered inserts. Each is { id, type: filter|delay|eq|custom, enabled, wet 0..1, ...settings } as read_project shows them under trackEffects; a custom slot is { id, type: \"custom\", enabled, wet, effect (an app-defined effect ID), parameters: [{ id, name, min, max, default, value, step?, unit? }] } and plays only when the page's Workspace knows that effect (else it passes dry audio and warns).",
     properties: { trackId: TRACK, effects: { type: "array", items: { type: "object" } } },
     required: ["trackId", "effects"],
   },
@@ -522,7 +522,9 @@ export const EDIT_OP_SPECS: Readonly<Record<ProjectEditOperation["type"], OpSpec
     summary:
       "Set one parameter of a device: a WebCLAP plug-in or a built-in effect (read_device_params lists deviceId, each row's id and its range). Send `expectedValue` (the row's value you read) so a value the person changed meanwhile returns conflict instead of being overwritten (equal within a relative 1e-6 counts as unchanged). Joins the same undo step as the other operations.",
     properties: {
-      deviceId: STR('A device ID from read_project (devices), or "trackId:slotId" for a built-in effect (read_project effectDevices).'),
+      deviceId: STR(
+        'A device ID from read_project (devices), or "trackId:slotId" for a built-in effect (read_project effectDevices, which names a custom effect under `effect`).',
+      ),
       parameterId: STR("The `id` of a read_device_params row."),
       value: prop(
         "number",
@@ -700,6 +702,7 @@ function projectView(workspace: Workspace) {
         trackId: track.id,
         slotId: slot.id,
         type: slot.type,
+        ...(slot.type === "custom" ? { effect: slot.effect } : {}),
         parameters: rackSlotParameters(slot).length,
       })),
     );

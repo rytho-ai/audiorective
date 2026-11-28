@@ -157,7 +157,7 @@ export type OpenDawProjectResult = Readonly<{
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
 const rackDevicePrefix = "audiorective.insert.";
-const rackDeviceNames: Record<RackEffect["type"], string> = { filter: "Filter", delay: "Ping Pong Delay", eq: "Equalizer" };
+const rackDeviceNames: Record<RackEffect["type"], string> = { filter: "Filter", delay: "Ping Pong Delay", eq: "Equalizer", custom: "Custom Effect" };
 const sourcePrefix = "audiorective/source/";
 /** XML and JSON entries (project.xml, metadata.xml, `audiorective/*.json`): parsed whole, so the Blob reader holds each to 8 MiB and all of them to 32 MiB. */
 const isTextPath = (path: string) => /\.(?:xml|json)$/i.test(path);
@@ -714,7 +714,7 @@ function prepareDawProject(
       for (const effect of track.effects) {
         const device = append(devices, "BuiltinDevice", {
           deviceID: rackDevicePrefix + effect.type,
-          deviceName: rackDeviceNames[effect.type],
+          deviceName: effect.type === "custom" ? effect.effect : rackDeviceNames[effect.type],
           deviceVendor: "Audiorective",
           deviceRole: "audioFX",
           loaded: true,

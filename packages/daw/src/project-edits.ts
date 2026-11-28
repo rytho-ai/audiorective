@@ -531,12 +531,12 @@ export type SetTrackRoutingEdit = Readonly<{
     }>[];
   }>;
 }>;
-/** Replace a track's ordered built-in inserts (filter, delay or eq, as `read_project` lists them). */
+/** Replace a track's ordered inserts (built-in filter, delay or eq, or an app-defined custom effect, as `read_project` lists them). */
 export type SetTrackEffectsEdit = Readonly<{
   type: "setTrackEffects";
   /** Opaque track ID or an earlier addTrack alias; the referenced track must exist. */
   trackId: EditTrackRef;
-  /** Replacement ordered built-in inserts; empty removes all inserts. */
+  /** Replacement ordered inserts; empty removes all inserts. */
   effects: readonly RackEffect[];
 }>;
 /** Replace a track's inserts and macros together: `{ effects, macros? }`. */

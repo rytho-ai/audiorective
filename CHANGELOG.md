@@ -13,6 +13,10 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ## [Unreleased]
 
+### Added
+
+- **daw, mcp:** a fourth kind of track rack effect, defined by the app. `defineRackEffect({ id, name, parameters, create })` (from `daw/project`, new types `RackEffectDefinition`, `RackEffectParameter`, `RackEffectInstance`) describes the effect; `definition.slot({ id, enabled?, wet?, values? })` builds a `RackCustom` slot (`{ type: "custom", effect, parameters }`, now part of `RackEffect`) with its parameter table. `WorkspaceOptions.effects` (also `workspace.open` options and `workspace.deviceOptions`) gives the definitions to the Workspace, which builds each custom slot with `create`, keeps the effect's `params` equal to the table without rebuilding it, and uses the same effects in every offline render. A slot without a definition, or whose `create` fails, passes dry audio and adds one line to `workspace.cells.warnings`. Custom parameters appear in `workspace.deviceParameters`, `project.setDeviceParameter`, the `setDeviceParameter` and `setTrackEffects` operations and the MCP tools, and are saved in the `.dawproject` as an `audiorective.insert.custom` device (older files open unchanged). `DeviceParameterRecord` gains an optional `unit`. No automation, macro targets or master slot for custom effects yet.
+
 ### Changed
 
 - **daw:** a mixer value written directly is no longer a new song version. Called outside `project.edit` and `applyEdits`, `setTrackVolume`, `setTrackPan`, `setTrackMuted`, `setTrackSolo`, `setTrackMacroValue`, `setDeviceParameter` and `setMasterVolume` still apply (a running Workspace plays them and `cells.revision` advances) and still make no Undo step, but `cells.version` stays the same, so a continuous fader sweep no longer turns another writer's `applyEdits({ expectedVersion })`, a versioned save or a versioned render into a `conflict`. Inside an edit they are part of it and the version advances as before. An edit that sets the same value overwrites a direct move without a conflict; Undo's per-value conflict check is unchanged.

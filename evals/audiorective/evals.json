@@ -1250,6 +1250,19 @@
         "Guards on the value the panel last showed (compares it with the current row value, or passes expectedValue and handles status conflict), and keeps the person's value when it differs",
         "Does not add its own save or undo code: Undo and the saved file already carry the value"
       ]
+    },
+    {
+      "id": 97,
+      "prompt": "My DAW page has a Project and a Workspace. I wrote my own bitcrusher as an Effect subclass and want it on the \"Lead\" track as an insert with a Bits slider, heard in the exported render and saved with the song. Do not run anything.",
+      "expected_output": "Defines the effect with defineRackEffect, passes it in WorkspaceOptions.effects, adds definition.slot() with setTrackEffects, and moves the slider with project.setDeviceParameter.",
+      "files": [],
+      "expectations": [
+        "Wraps the Effect in defineRackEffect({ id, name, parameters, create }) from the daw project entry and gives it to the Workspace as WorkspaceOptions.effects, not a parallel mixer or a second render graph",
+        "Adds the insert with project.setTrackEffects(track.id, [definition.slot({ id })]) (or the slot written as type custom with effect and parameters), keeping any built-in slots",
+        "Moves the Bits slider with project.setDeviceParameter(rackDeviceId(trackId, slotId), parameterId, value) inside project.edit, without rebuilding the effect",
+        "Does not add its own save or render code: the slot is saved in the file and the offline renders build the same effect from WorkspaceOptions.effects",
+        "Passes the same effects option again when the file is reopened"
+      ]
     }
   ]
 }

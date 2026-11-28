@@ -973,7 +973,7 @@ grid.dispose();
 
 ## Effect rack
 
-`ProjectTrack.effects` is the ordered snapshot of built-in inserts (Filter, PingPongDelay and Equalizer slots). The track's runtime rack is a data-driven layer over an [`EffectChain`](./effects.md#effectchain): it owns its effects, keeps processors with the same slot ID and type across edits, and reorders, adds and removes them with the chain's click-free crossfades. An empty rack passes audio through. Bypass (`enabled: false`) sets the effective mix to dry while preserving the configured mix. Filter accepts lowpass or highpass, 20–20,000 Hz and Q 0.1–20. Delay accepts 0.01–1 second and feedback 0–0.95. Both accept a mix from 0–1. An EQ slot is `{ id, type: "eq", enabled, wet, bands }`; each band uses `{ frequency, gain, q }` and follows the [Equalizer ranges](./effects.md#parametric-equalizer), and edits retain a slot's Equalizer when its band count stays the same.
+`ProjectTrack.effects` is the ordered snapshot of a track's inserts: the built-in kinds (Filter, PingPongDelay and Equalizer slots) and, for an effect your own app defines, [custom slots](#custom-rack-effects). A bus track has the same rack. The rack's built-in kinds are filter, delay and EQ; nothing else is built in. The track's runtime rack is a data-driven layer over an [`EffectChain`](./effects.md#effectchain): it owns its effects, keeps processors with the same slot ID and type across edits, and reorders, adds and removes them with the chain's click-free crossfades. An empty rack passes audio through. Bypass (`enabled: false`) sets the effective mix to dry while preserving the configured mix. Filter accepts lowpass or highpass, 20–20,000 Hz and Q 0.1–20. Delay accepts 0.01–1 second and feedback 0–0.95. Both accept a mix from 0–1. An EQ slot is `{ id, type: "eq", enabled, wet, bands }`; each band uses `{ frequency, gain, q }` and follows the [Equalizer ranges](./effects.md#parametric-equalizer), and edits retain a slot's Equalizer when its band count stays the same.
 
 ```typescript
 const track = project.addTrack("Lead", "midi");
@@ -987,9 +987,60 @@ Use `project.setTrackEffects(trackId, slots)` for headless project edits and awa
 
 `project.setTrackRackPreset(trackId, { effects, macros })` replaces a track's insert setup and macro settings in one edit. Macro settings are in `track.effectMacros` (see [Rack macros](#rack-macros)). Await `workspace.flush()` after structural rack edits. Bind a UI knob to `workspace.trackMacroValue(trackId, macroId)` for reads and `project.setTrackMacroValue(trackId, macroId, value)` for edits: a running Workspace moves the native macro timeline and every mapped parameter on the audio thread in the task turn that made the edit, without stopping transport. Project archives preserve mappings and positions in Audiorective metadata. The rendered audio fallback carries the audible settings to other DAWs.
 
-The DAW's Devices panel inserts, adjusts, bypasses, reorders and removes Filter, Delay and EQ slots. DAWproject uses vendor-specific `BuiltinDevice` entries in order and versioned JSON settings in `plugins/`. Open the project in Audiorective to edit the inserts. Use the audio fallback when sharing the processed sound with another DAW.
+The DAW's Devices panel inserts, adjusts, bypasses, reorders and removes Filter, Delay and EQ slots (it does not insert custom ones). DAWproject uses vendor-specific `BuiltinDevice` entries in order and versioned JSON settings in `plugins/`. Open the project in Audiorective to edit the inserts. Use the audio fallback when sharing the processed sound with another DAW.
 
 Use `workspace.trackEffectOutput(trackId)` to connect a borrowed spectrum analyser. Use `workspace.trackFilterResponse(trackId, slotId, frequencies, magnitudes, phases)` to draw the live response for a Filter or Equalizer slot. Apply editor mutations with `setTrackEffects()` so the controls, audio and saved settings share one owner.
+
+### Custom rack effects
+
+An app puts its own effect on a track or bus by defining it, giving the definition to the Workspace, and adding a `custom` slot. The definition is a `defineRackEffect({ id, name, parameters, create })` from `@audiorective/daw/project` (no DOM needed). `parameters` lists the numeric parameters a slot carries (`{ id, name, min, max, default, step?, unit? }`); `create(context, slot)` returns an [`Effect`](./effects.md#writing-your-own-effect) (or a Promise of one) whose `params` has one numeric param per parameter `id`. `definition.slot({ id, enabled?, wet?, values? })` builds the slot, with the table filled from the defaults, so you never write it by hand.
+
+```typescript
+import type { SchedulableParam } from "@audiorective/core";
+import { Project, defineRackEffect, rackDeviceId } from "@audiorective/daw/project";
+import { Workspace } from "@audiorective/daw/runtime";
+import { Effect, type EffectOptions } from "@audiorective/effects";
+
+/** Soft-clipping fuzz: `drive` is the gain in front of a tanh waveshaper. */
+class Fuzz extends Effect<{ drive: SchedulableParam }> {
+  constructor(ctx: BaseAudioContext, opts: EffectOptions = {}) {
+    const pre = new GainNode(ctx);
+    const curve = new Float32Array(1025);
+    curve.forEach((_, i) => (curve[i] = Math.tanh((i / 512 - 1) * 3)));
+    const shaper = new WaveShaperNode(ctx, { curve });
+    pre.connect(shaper);
+    super(
+      ctx,
+      { input: pre, output: shaper },
+      ({ param }) => ({ params: { drive: param({ default: 4, bind: pre.gain, min: 1, max: 20 }) }, cells: {} }),
+      opts,
+    );
+  }
+}
+
+const fuzz = defineRackEffect({
+  id: "myapp.fuzz",
+  name: "Fuzz",
+  parameters: [{ id: "drive", name: "Drive", min: 1, max: 20, default: 4 }],
+  create: (context) => new Fuzz(context),
+});
+
+const song = new Project({ bpm: 120 });
+const lead = song.addTrack("Lead", "audio");
+song.setTrackEffects(lead.id, [fuzz.slot({ id: "fuzz", wet: 0.8, values: { drive: 8 } })]);
+
+const audioContext = new AudioContext();
+const live = await Workspace.create(audioContext, song, { effects: [fuzz] });
+song.edit("More drive", () => song.setDeviceParameter(rackDeviceId(lead.id, "fuzz"), "drive", 12)); // heard at once, one Undo step, saved
+await live.flush();
+```
+
+- **Definitions are not saved.** The song stores the slot (`effect` ID, `enabled`, `wet`, and the table with each parameter's range, default and value); the code lives in the app, so pass `effects` again when you open a file (`Workspace.create`, `openWorkspace`, `workspace.open`). `WorkspaceOptions.effects` IDs must be unique.
+- **Parameters.** The Workspace writes every table value into `effect.params[id]` when it builds the effect and again on every edit (`setDeviceParameter`, `setTrackEffects`, Undo), without rebuilding it, so `create` runs once per slot. A table parameter the created effect does not expose as a numeric `param` is ignored with one warning. `create` may be asynchronous: the slot is heard as soon as it resolves. Slots are listed by `workspace.deviceParameters(rackDeviceId(trackId, slotId))` as `enabled`, `wet`, then the table, and set like any rack parameter, including through `applyEdits` with `expectedValue` and the MCP tools.
+- **`enabled` and `wet`** work as on the built-in kinds: a bypassed slot or `wet: 0` passes dry audio. Reordering, bypassing and removing slots keeps the chain click-free, and a removed slot's effect is disposed, as is every effect when the Workspace is.
+- **A slot it cannot build passes dry audio.** When the Workspace has no definition with the slot's `effect` ID, or `create` throws, rejects or does not return an `Effect`, the chain stays intact and `workspace.cells.warnings` gets one line such as `Track "Lead" insert "fuzz": effect "myapp.fuzz" has no definition in this Workspace.` The slot stays in the song, so a later Workspace that has the definition plays it.
+- **Renders and files.** `renderMixRange`, `renderStems`, `renderSession` and `exportAudioFallbackTo` build the same effects on their offline contexts, so a render includes them (an offline render stops with the warnings when a slot cannot be built). `saveDawProject` writes the slot as a `BuiltinDevice` with `deviceID="audiorective.insert.custom"` and `deviceName` the effect ID, in the same JSON state entry as the built-in inserts, and `openDawProject` restores order, `enabled`, `wet`, effect ID and table. Other DAWs do not play it; use the audio fallback to share the sound.
+- **Limits.** Parameters are numbers: no automation of a custom parameter yet, no macro mapping to one (a macro target on a custom slot throws `TrackRack macros cannot target a custom effect slot.`), no effect state beyond the table, and no custom slot on the master. Parameter IDs cannot be `wet` or `enabled` or contain `:`.
 
 ### Rack macros
 
@@ -1192,20 +1243,26 @@ Every `project.xml` and `metadata.xml` this package writes is validated against 
 | `Project has duplicate channel IDs.` / `Project bus tracks cannot contain clips.` | Use unique channel IDs and put clips on source tracks.                |
 | `Project has unsupported send settings.`                                          | Use post-fader sends with linear gain.                                |
 
-| Effect rack message                                                                                     | Fix                                                                                   |
-| ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `Project effects need an existing track.`                                                               | Use the track's current ID.                                                           |
-| `Project master volume needs a finite non-negative value.`                                              | Pass a linear gain such as `0.3` or `1` to `setMasterVolume()`.                       |
-| `Project has an unsupported built-in effect.` / `Project built-in effects must follow WebCLAP devices.` | Import supported Audiorective Filter, Delay and EQ inserts after the hosted devices.  |
-| `Project built-in effect state is missing or reused.` / `Project built-in effect state is invalid.`     | Restore the matching, versioned insert state entries.                                 |
-| `Project macro needs an existing track and macro.`                                                      | Use IDs from the track's current effectMacros.                                        |
-| `TrackRack needs unique slot IDs and valid Filter, Delay or EQ settings.`                               | Use distinct nonempty slot IDs and settings inside the [rack ranges](#effect-rack).   |
-| `TrackRack preset version must be 1.`                                                                   | Pass a version 1 snapshot or omit the version when authoring a preset.                |
-| `TrackRack macros need unique IDs, normalized values, and distinct valid targets.`                      | Use positions from 0 to 1 and assign a supported slot parameter to at most one macro. |
-| `TrackRack macro target is unavailable.`                                                                | Rebuild the preset against the current rack slots and supported ranges.               |
-| `TrackRack macro value needs a number from 0 to 1.`                                                     | Pass a finite normalized position.                                                    |
-| `TrackRack macro automation needs a time and a normalized curve starting at zero.`                      | Use absolute audio seconds for the start and a relative curve beginning at zero.      |
-| `TrackRack macro is disposed.`                                                                          | Look up the replacement control on the live rack.                                     |
+| Effect rack message                                                                                                                                                                                    | Fix                                                                                                                                                                           |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Project effects need an existing track.`                                                                                                                                                              | Use the track's current ID.                                                                                                                                                   |
+| `Project master volume needs a finite non-negative value.`                                                                                                                                             | Pass a linear gain such as `0.3` or `1` to `setMasterVolume()`.                                                                                                               |
+| `Project has an unsupported built-in effect.` / `Project built-in effects must follow WebCLAP devices.`                                                                                                | Import supported Audiorective Filter, Delay and EQ inserts after the hosted devices.                                                                                          |
+| `Project built-in effect state is missing or reused.` / `Project built-in effect state is invalid.`                                                                                                    | Restore the matching, versioned insert state entries.                                                                                                                         |
+| `Project macro needs an existing track and macro.`                                                                                                                                                     | Use IDs from the track's current effectMacros.                                                                                                                                |
+| `TrackRack needs unique slot IDs and valid Filter, Delay or EQ settings.`                                                                                                                              | Use distinct nonempty slot IDs and settings inside the [rack ranges](#effect-rack).                                                                                           |
+| `TrackRack custom effect slot "…" needs a non-empty effect ID and a parameter table with unique IDs (not "wet", "enabled" or containing ":") and finite min <= default <= max, value within min..max.` | Build the slot with `definition.slot({ id })`, or give a non-empty `effect` and a table whose rows are inside their own ranges ([custom rack effects](#custom-rack-effects)). |
+| `TrackRack macros cannot target a custom effect slot.`                                                                                                                                                 | Map macros only to built-in slots; a custom slot's `wet` and parameters are set with `setDeviceParameter`.                                                                    |
+| `Rack effect needs a non-empty id and name.` / `Rack effect "…" needs a create function.`                                                                                                              | Pass `id`, `name` and `create` to `defineRackEffect`.                                                                                                                         |
+| `Rack effect "…" needs parameters with unique IDs (not "wet", "enabled" or containing ":"), a name, and finite min <= default <= max.`                                                                 | Fix the `parameters` list of the definition.                                                                                                                                  |
+| `Rack effect "…" has no parameter "…".`                                                                                                                                                                | `definition.slot({ values })` names only parameters the definition lists.                                                                                                     |
+| `Workspace effects need unique IDs.`                                                                                                                                                                   | Give each `defineRackEffect` definition passed in `WorkspaceOptions.effects` its own `id`.                                                                                    |
+| `TrackRack preset version must be 1.`                                                                                                                                                                  | Pass a version 1 snapshot or omit the version when authoring a preset.                                                                                                        |
+| `TrackRack macros need unique IDs, normalized values, and distinct valid targets.`                                                                                                                     | Use positions from 0 to 1 and assign a supported slot parameter to at most one macro.                                                                                         |
+| `TrackRack macro target is unavailable.`                                                                                                                                                               | Rebuild the preset against the current rack slots and supported ranges.                                                                                                       |
+| `TrackRack macro value needs a number from 0 to 1.`                                                                                                                                                    | Pass a finite normalized position.                                                                                                                                            |
+| `TrackRack macro automation needs a time and a normalized curve starting at zero.`                                                                                                                     | Use absolute audio seconds for the start and a relative curve beginning at zero.                                                                                              |
+| `TrackRack macro is disposed.`                                                                                                                                                                         | Look up the replacement control on the live rack.                                                                                                                             |
 
 | Message                                                                                                                                                                                                                   | Cause and fix                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |

@@ -20,6 +20,8 @@ export type DeviceParameterRecord = Readonly<{
   value: number;
   /** 1 for integer-valued parameters, which snap a set value to the nearest whole step from `min`; omitted for continuous values. */
   step?: 1;
+  /** Unit of the values for a custom rack effect parameter, such as `"hertz"` or `"seconds"`; omitted for a plain number and for a WebCLAP parameter. */
+  unit?: string;
   /**
    * Set on a row read from a file another application wrote with `unit="normalized"`: `value` is then a fraction (0..1, `min` 0 and `max` 1) of the plug-in's real range, which is
    * unknown until the plug-in loads. A running Workspace maps it into the real range at load and stores a plain row; never set on a row a plug-in reported.
@@ -94,6 +96,21 @@ function specs(slot: RackEffect): ReadonlyMap<string, Spec> {
       ["delayTime", { name: "delay time", min: 0.01, max: 1, default: 0.25, unit: "seconds", read: (s) => (s.type === "delay" ? s.delayTime : 0) }],
       ["feedback", { name: "feedback", min: 0, max: 0.95, default: 0.2, read: (s) => (s.type === "delay" ? s.feedback : 0) }],
     );
+  } else if (slot.type === "custom") {
+    for (const row of slot.parameters) {
+      list.push([
+        row.id,
+        {
+          name: row.name,
+          min: row.min,
+          max: row.max,
+          default: row.default,
+          ...(row.step === undefined ? {} : { step: row.step }),
+          ...(row.unit === undefined ? {} : { unit: row.unit }),
+          read: (s) => (s.type === "custom" ? (s.parameters.find((item) => item.id === row.id)?.value ?? 0) : 0),
+        },
+      ]);
+    }
   } else {
     for (let index = 0; index < slot.bands.length; index++) {
       list.push(
@@ -111,7 +128,7 @@ function specs(slot: RackEffect): ReadonlyMap<string, Spec> {
 
 /**
  * The parameters of a built-in rack effect slot as device-parameter rows: `enabled` (0 or 1) and `wet` (0 to 1) on every effect; `mode` (0 lowpass, 1 highpass), `frequency` (20 to 20000 Hz) and `q`
- * (0.1 to 20) on a filter; `delayTime` (0.01 to 1 s) and `feedback` (0 to 0.95) on a delay; `band<i>.frequency`, `band<i>.gain` (dB, -24 to 24) and `band<i>.q` on an equalizer.
+ * (0.1 to 20) on a filter; `delayTime` (0.01 to 1 s) and `feedback` (0 to 0.95) on a delay; `band<i>.frequency`, `band<i>.gain` (dB, -24 to 24) and `band<i>.q` on an equalizer; a custom effect lists the rows of its parameter table after `enabled` and `wet`.
  * `default` is the value a new effect of that type starts with.
  */
 export function rackSlotParameters(slot: RackEffect): readonly DeviceParameter[] {
@@ -160,6 +177,11 @@ export function withRackParameter(slot: RackEffect, parameterId: string, value: 
   if (slot.type === "filter")
     return Object.freeze({ ...slot, ...(parameterId === "mode" ? { mode: value === 1 ? "highpass" : "lowpass" } : { [parameterId]: value }) });
   if (slot.type === "delay") return Object.freeze({ ...slot, [parameterId]: value });
+  if (slot.type === "custom")
+    return Object.freeze({
+      ...slot,
+      parameters: Object.freeze(slot.parameters.map((row) => (row.id === parameterId ? Object.freeze({ ...row, value }) : row))),
+    });
   const [, index, field] = /^band(\d+)\.(frequency|gain|q)$/.exec(parameterId)!;
   const bands = slot.bands.map((item, at) => (at === Number(index) ? Object.freeze({ ...item, [field]: value }) : item));
   return Object.freeze({ ...slot, bands: Object.freeze(bands) });
@@ -198,6 +220,7 @@ export function sameParameterTables(a: readonly DeviceParameterRecord[], b: read
             item.default === other.default &&
             item.value === other.value &&
             item.step === other.step &&
+            item.unit === other.unit &&
             item.normalized === other.normalized)
         );
       }))

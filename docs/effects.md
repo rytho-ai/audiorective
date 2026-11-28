@@ -18,6 +18,59 @@ Every live effect in this package is an `AudioProcessor` with a stable `input: G
 
 A custom effect extends `Effect`, passes its wet arm's `input`/`output` pair to `super()`, and either declares `latency` (a fixed number or a `Param<number>`) or leaves it to derive from its own internal `defineGraph`. A declared latency also delays the dry path by whatever the wet arm does not already account for (the declared value minus the arm processor's own `latency`, nothing for a declared `0`), so bypass and a partial `wet` stay aligned with the wet arm even when it is plain Web Audio nodes. An arm that loads asynchronously sets `loading: true` and calls `this.track(promise)` once; the wet arm stays muted until the promise resolves (the dry share remains `1 − wet`), and `cells.status`, `cells.error` and `ready` follow it. Set `static type` to the name `EffectChain.toJSON()` should write. `Effect`, `EffectStatus`, `WetArm`, `EffectOptions`, and `WorkletUnavailableError` are exported from `@audiorective/effects` for this purpose.
 
+```typescript
+import type { SchedulableParam } from "@audiorective/core";
+import { Effect, type EffectOptions } from "@audiorective/effects";
+
+/** A slow vibrato: an LFO moves a short delay. `rate` (Hz) and `depth` (seconds) are continuous params bound to native AudioParams. */
+class Wobble extends Effect<{ rate: SchedulableParam; depth: SchedulableParam }> {
+  private readonly lfo: OscillatorNode;
+
+  constructor(ctx: BaseAudioContext, opts: EffectOptions = {}) {
+    // Build the nodes as locals: the build callback below closes over them, and `this` does not exist before `super()`.
+    const delay = new DelayNode(ctx, { delayTime: 0.01, maxDelayTime: 0.1 });
+    const lfo = new OscillatorNode(ctx, { frequency: 2 });
+    const depth = new GainNode(ctx, { gain: 0.003 });
+    lfo.connect(depth).connect(delay.delayTime);
+    lfo.start();
+    super(
+      ctx,
+      { input: delay, output: delay }, // the wet arm: what `wet` blends with the dry input
+      ({ param }) => ({
+        params: {
+          rate: param({ default: 2, bind: lfo.frequency, min: 0.1, max: 12 }),
+          depth: param({ default: 0.003, bind: depth.gain, min: 0, max: 0.009 }),
+        },
+        cells: {},
+      }),
+      opts, // { wet?, bypass? }
+    );
+    this.lfo = lfo;
+  }
+
+  override dispose(): void {
+    this.lfo.stop();
+    super.dispose();
+  }
+}
+
+/** A wet arm of plain nodes that delays by 256 frames declares it, so the dry path is delayed to match and bypass does not shift the sound. */
+class Lookahead extends Effect {
+  constructor(ctx: BaseAudioContext, opts: EffectOptions = {}) {
+    const delay = new DelayNode(ctx, { delayTime: 256 / ctx.sampleRate, maxDelayTime: 1 });
+    super(ctx, { input: delay, output: delay }, () => ({ params: {}, cells: {}, latency: 256 }), opts);
+  }
+}
+
+const audioContext = new AudioContext();
+const wobble = new Wobble(audioContext, { wet: 0.5 });
+wobble.params.rate.value = 5; // smoothed over 10 ms like the built-in effects
+wobble.params.bypass.value = true; // fades to the dry input; settings stay
+const lookahead = new Lookahead(audioContext);
+```
+
+The same class can be a track insert in a DAW `Project`: see [custom rack effects](./daw.md#custom-rack-effects).
+
 `AnyEffect` is the exported common type for heterogeneous insert lists and shared controls over `params.wet`, `params.bypass`, `cells.status` and `ready`. Effect-specific params remain typed on each concrete effect.
 
 ## Effects

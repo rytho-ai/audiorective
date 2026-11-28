@@ -122,13 +122,17 @@ export type {
   RackFilter,
   RackDelay,
   RackEq,
+  RackCustom,
+  RackEffectDefinition,
+  RackEffectInstance,
+  RackEffectParameter,
   EffectSlot,
   RackMacroMapping,
   RackMacroParameter,
   RackMacroSettings,
   RackPreset,
 } from "./rack-preset";
-export { rackMacroRange } from "./rack-preset";
+export { rackMacroRange, defineRackEffect } from "./rack-preset";
 export { rackDeviceId, splitRackDeviceId } from "./device-parameters";
 export type { DeviceParameter, DeviceParameterRecord } from "./device-parameters";
 export { TempoMap } from "./tempo-map";
