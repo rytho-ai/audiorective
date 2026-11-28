@@ -1,4 +1,4 @@
-import type { ParamRange, ParamSpec, Readable } from "@audiorective/core";
+import type { ParamRange, ParamSpec, Readable, ReadonlyCell } from "@audiorective/core";
 import type { PluginTarget, Unsubscribe, WidgetPlugin, WidgetPluginContext } from "./types";
 
 export type StepGridRate = "1/2" | "1/4" | "1/8" | "1/16" | "1/32" | "1/64" | "1/2T" | "1/4T" | "1/8T" | "1/16T" | "1/32T" | "1/64T";
@@ -156,6 +156,8 @@ export interface StepGridPluginContext extends WidgetPluginContext {
 export type StepGridPlugin = WidgetPlugin<StepGridPluginContext>;
 
 export interface StepGridHandle extends PluginTarget<StepGridPluginContext> {
+  /** The latest error thrown by an `onCell` setup on a later refresh, after which that registration is detached; null until one throws. The console still logs it. A thrown non-`Error` is wrapped with the value as `cause`. */
+  readonly error: ReadonlyCell<Error | null>;
   /** Releases resources owned by this attachment or view; safe to call twice. */
   dispose(): void;
 }

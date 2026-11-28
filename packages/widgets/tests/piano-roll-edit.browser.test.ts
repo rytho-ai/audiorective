@@ -293,6 +293,8 @@ test("borrowed edit callback owns commit; rejected/no-op commands leave no previ
   await pointer({ action: "up" });
   expect(state(b)).toMatchObject({ start: 1, duration: 1, pitch: 60 });
   expect(log).toHaveBeenCalledTimes(1);
+  expect(a.roll.error.value).toBeNull();
+  expect(b.roll.error.value?.message).toBe("rejected command");
 });
 
 test("a custom application model needs no MidiClip or mirrored UI store", async () => {

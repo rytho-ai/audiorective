@@ -7,9 +7,11 @@ import {
   cell,
   effect,
   hash01,
+  readonlyCell,
   untracked,
   type BeatTiming,
   type CancellableEvent,
+  type ReadonlyCell,
   type EventTransform,
   type Random,
   type ParamSpec,
@@ -387,6 +389,13 @@ export class StepSequencer extends EventTarget {
   readonly context: BaseAudioContext | undefined;
   /** One live view per lane, by name: `sequencer.lanes.kick.steps[4].velocity = 0.8`. */
   readonly lanes: Readonly<Record<string, Lane>>;
+  /**
+   * The latest error thrown while firing a hit: a lane `sound` that failed to play, or an `onHit` callback (option or lane) that threw;
+   * null until one does. The other hits keep playing, the hit is still announced, and the console still logs it. A thrown non-`Error`
+   * is wrapped with the value as `cause`.
+   */
+  readonly error: ReadonlyCell<Error | null>;
+  private readonly _error = cell<Error | null>(null);
 
   constructor(lanes: Readonly<Record<string, Pattern | LaneOptions>>, options: StepSequencerOptions = {}) {
     super();
@@ -465,6 +474,7 @@ export class StepSequencer extends EventTarget {
       },
       disconnect: (name) => this.outputFor(name).disconnect(),
     };
+    this.error = readonlyCell(this._error);
     this.lanes = Object.freeze(Object.fromEntries(this.names.map((name) => [name, new Lane(name, host)])));
     for (const name of this.names) if (built[name]!.sound !== undefined) this.outputFor(name);
     if (this.abortSignal) {
@@ -643,6 +653,10 @@ export class StepSequencer extends EventTarget {
     });
   }
 
+  private hitFailed(error: unknown): void {
+    this._error.value = error instanceof Error ? error : new Error("Step Sequencer hit failed.", { cause: error });
+  }
+
   /** One hit's event, voice and callbacks. Returns a retractable event, or `null` when nothing could need retracting. */
   private fire(hit: StepHit): CancellableEvent | null {
     const pub = this.publicHit(hit);
@@ -658,6 +672,7 @@ export class StepSequencer extends EventTarget {
         });
       } catch (error) {
         console.error("Step Sequencer sound failed:", error);
+        this.hitFailed(error);
       }
     }
     const cleanups: Array<() => void> = [];
@@ -668,6 +683,7 @@ export class StepSequencer extends EventTarget {
         if (typeof cleanup === "function") cleanups.push(cleanup);
       } catch (error) {
         console.error("Step Sequencer onHit failed:", error);
+        this.hitFailed(error);
       }
     };
     this.dispatchEvent(new HitEvent(pub));

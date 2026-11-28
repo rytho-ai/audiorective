@@ -145,6 +145,13 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
   readonly state: ReadonlyCell<TransportState>;
   /** The time signature that bars (`"1m"`) are measured in. Default `[4, 4]`; writable. Attached schedulers read it through their handle. */
   readonly meter: Cell<TimeSignature>;
+  /**
+   * The latest error thrown by an attached scheduler's `schedule`, `reset` or `transport` hook; null until one throws. Only that call is
+   * skipped: the other schedulers and the transport keep running, and the console still logs it. A thrown non-`Error` is wrapped with
+   * the value as `cause`.
+   */
+  readonly error: ReadonlyCell<Error | null>;
+  private readonly _error = new Cell<Error | null>(null);
 
   private readonly _timeline: Timeline<TRulers>;
   private readonly _lookAhead: number;
@@ -188,6 +195,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
       throw new RangeError(`Clock meter must be [numerator, denominator] positive integers, got [${meter[0]}, ${meter[1]}].`);
     }
     this.meter = new Cell<TimeSignature>(meter);
+    this.error = readonlyCell(this._error);
     this._stopTempoWatch = this._timeline.bpm._onChange((when) => this._notify({ type: "tempo", when, beat: this._timeline.timeToBeat(when) }));
     this._tickSource.start(() => this._tick());
   }
@@ -264,6 +272,10 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
     }
   }
 
+  private _schedulerFailed(error: unknown): void {
+    this._error.value = error instanceof Error ? error : new Error("Clock scheduler failed.", { cause: error });
+  }
+
   private _resetSchedulers(reason: ResetReason): void {
     for (const scheduler of [...this._schedulers]) this._resetScheduler(scheduler, reason);
   }
@@ -273,6 +285,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
       scheduler.reset?.(reason);
     } catch (error) {
       console.error("Clock scheduler reset failed:", error);
+      this._schedulerFailed(error);
     }
   }
 
@@ -284,6 +297,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
         scheduler.transport(change);
       } catch (error) {
         console.error("Clock scheduler transport hook failed:", error);
+        this._schedulerFailed(error);
       }
     }
   }
@@ -563,6 +577,7 @@ export class Clock<TRulers extends Record<string, Ruler<unknown, unknown>> = Rec
             scheduler.schedule({ ...window, own }, this._timeline);
           } catch (error) {
             console.error("Clock scheduler failed:", error);
+            this._schedulerFailed(error);
           }
         }
       }

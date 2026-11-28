@@ -1,4 +1,5 @@
 /** Borrowed MIDI models (note times, duration, grid and playhead are in beats), replaceable appearance and widget-owned gesture contracts. */
+import type { ReadonlyCell } from "@audiorective/core";
 import type { MidiData, MidiNote, MidiRange } from "@audiorective/midi";
 import type { PluginTarget, SelectionCommit, SnapMode, TimeViewPluginContext, WaveformViewport } from "./types";
 export type PitchRange = Readonly<{
@@ -136,6 +137,8 @@ export type PianoRollOptions = {
   onCommit?: (commit: SelectionCommit) => void;
 };
 export interface PianoRollHandle extends PluginTarget<TimeViewPluginContext> {
+  /** The latest error thrown by `onNoteAdd`, `onNoteEdit` or `onNoteDelete`; null until one throws. The gesture ends normally and the console still logs it. A thrown non-`Error` is wrapped with the value as `cause`. */
+  readonly error: ReadonlyCell<Error | null>;
   /** Moves the external playhead to `time` in beats, or hides it with null. */
   setPlayhead(time: number | null): void;
   /** Tell the view which note the app has selected, so Delete and a chord's velocity drag act on it. */

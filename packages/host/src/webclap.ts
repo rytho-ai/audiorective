@@ -92,7 +92,10 @@ const modules = new WeakMap<AudioContext, Map<string, Promise<void>>>();
  * Browser host for one WebCLAP plug-in: an AudioProcessor (`host.connect(context.destination)`) that plays notes with the `Sampler` shape (`noteOn(note, { velocity, when })`, `noteOff(note, when)`), so a `MidiClip` or `MidiKeyboard` takes it as `instrument`.
  * Each CLAP parameter is a `Param<number>` in `params`, keyed by its CLAP id (`host.params["7"].value`); writes reach the plug-in and the plug-in's own changes update the Param.
  */
-export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: ReadonlyCell<readonly WebClapParameter[]> }> {
+export class WebClapHost extends AudioProcessor<
+  WebClapParams,
+  { parameterInfo: ReadonlyCell<readonly WebClapParameter[]>; error: ReadonlyCell<Error | null> }
+> {
   /** CLAP parameters as `Param<number>`s keyed by CLAP id (string or number); an unknown id is `undefined`. */
   declare readonly params: WebClapParamAccess;
   /** The AudioWorkletNode that runs the plug-in. */
@@ -120,6 +123,7 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
    */
   private readonly unconfirmed: Map<number, number>;
   private readonly infoStore: Cell<readonly WebClapParameter[]>;
+  private readonly errorStore: Cell<Error | null>;
   /** Channels each sounding note was started on, so `noteOff(note)` releases it where it plays. */
   private readonly noteChannels = new Map<number, Map<number, object>>();
   private disposed = false;
@@ -139,6 +143,7 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
     const unconfirmed = new Map<number, number>();
     const loadedParams = loaded.params.map(withStep);
     const infoStore = cell<readonly WebClapParameter[]>(Object.freeze(loadedParams));
+    const errorStore = cell<Error | null>(null);
     super(context, ({ param }) => {
       const params: Record<string, Param<number>> = {};
       for (const info of loadedParams) {
@@ -167,7 +172,7 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
           },
         });
       }
-      return { params: params as WebClapParams, cells: { parameterInfo: readonlyCell(infoStore) }, latency: 0 };
+      return { params: params as WebClapParams, cells: { parameterInfo: readonlyCell(infoStore), error: readonlyCell(errorStore) }, latency: 0 };
     });
     this.synced = synced;
     this.unconfirmed = unconfirmed;
@@ -175,6 +180,7 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
     this.bundleUrl = bundleUrl.replace(/\/$/, "");
     this.descriptor = loaded.descriptor;
     this.infoStore = infoStore;
+    this.errorStore = errorStore;
     this.hasEditor = loaded.hasGui;
     this.latency.value = loaded.latencySamples ?? 0;
     node.port.onmessage = (event: MessageEvent<HostMessage>) => this.receive(event.data);
@@ -481,6 +487,7 @@ export class WebClapHost extends AudioProcessor<WebClapParams, { parameterInfo: 
       case "error": {
         const error = new Error(String(message.message));
         console.error(error);
+        this.errorStore.value = error;
         this.rejectWaiters(new Error(`WebCLAP plug-in error: ${error.message}`));
         break;
       }

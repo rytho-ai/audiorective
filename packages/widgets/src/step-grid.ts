@@ -384,6 +384,7 @@ type Drag = { view: LaneView; step: number; def: ParamDef; startY: number; start
  */
 export function mountStepGrid(root: HTMLElement, options: StepGridOptions): StepGridHandle {
   const { sequencer } = options;
+  const error = cell<Error | null>(null);
   const labels = { ...DEFAULT_LABELS, ...options.labels };
   const formatStep = options.formatStep ?? ((label: string, step: number) => `${label} step ${step + 1}`);
   const laneLabel = options.laneLabel ?? ((name: string) => name);
@@ -766,9 +767,10 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
       if (!observer.active) continue;
       try {
         syncCellObserver(observer);
-      } catch (error) {
+      } catch (cause) {
         observer.detach();
-        console.error("Step grid cell attachment failed:", error);
+        console.error("Step grid cell attachment failed:", cause);
+        error.value = cause instanceof Error ? cause : new Error("Step grid cell attachment failed.", { cause });
       }
     }
   }
@@ -1050,6 +1052,7 @@ export function mountStepGrid(root: HTMLElement, options: StepGridOptions): Step
   }));
 
   return {
+    error: readonlyCell(error),
     attach: (plugin) => plugins.attach(plugin),
     dispose() {
       if (disposed) return;

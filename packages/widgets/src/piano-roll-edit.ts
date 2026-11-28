@@ -101,11 +101,8 @@ export function createNoteEditor(options: {
         if (g.moved) options.redraw();
         if (!g.moved) options.inspect(g.original);
         else if (g.preview.start !== g.original.start || g.preview.duration !== g.original.duration || g.preview.pitch !== g.original.pitch) {
-          try {
-            options.commit?.(Object.freeze({ kind: g.kind, previous: g.original, note: g.preview }));
-          } catch (error) {
-            console.error("Piano roll note edit failed:", error);
-          }
+          // The owner's commit isolates and reports a throwing callback.
+          options.commit?.(Object.freeze({ kind: g.kind, previous: g.original, note: g.preview }));
         }
       });
       ctx.listen(ctx.surface, "pointercancel", (raw) => {

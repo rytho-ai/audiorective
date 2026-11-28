@@ -121,7 +121,7 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
       options.onNoteClick?.(note);
       drawVelocity();
     },
-    commit: options.onNoteEdit,
+    commit: options.onNoteEdit && ((edit) => commitNote("edit", () => options.onNoteEdit!(edit))),
   });
   let activeNoteId: string | undefined;
   let velocityDrag: { id: number; original: MidiNote; preview: MidiNote } | undefined;
@@ -137,11 +137,13 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
     return clamp(pitches.high - row, pitches.low, pitches.high);
   };
   const beatAtX = (clientX: number) => (scale ? clamp((clientX - surface.getBoundingClientRect().left) / scale, 0, state.duration) : 0);
+  const error = cell<Error | null>(null);
   const commitNote = (label: string, run: () => void) => {
     try {
       run();
-    } catch (error) {
-      console.error(`Piano roll note ${label} failed:`, error);
+    } catch (cause) {
+      console.error(`Piano roll note ${label} failed:`, cause);
+      error.value = cause instanceof Error ? cause : new Error("Piano roll note edit failed.", { cause });
     }
   };
   /** The grid line at or before `time`, so a new note lands in the cell that was clicked. */
@@ -302,6 +304,7 @@ export function mountPianoRoll(root: HTMLElement, options: PianoRollOptions): Pi
     onCleanup: own,
   }));
   const handle: PianoRollHandle = {
+    error: readonlyCell(error),
     setPlayhead(time) {
       if (time !== null && !Number.isFinite(time)) throw new RangeError("Playhead must be finite or null.");
       position = time;

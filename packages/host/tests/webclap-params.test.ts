@@ -317,6 +317,19 @@ describe("WebClapHost params", () => {
     }
   });
 
+  it("a plug-in error with no pending request reaches cells.error, which starts null", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { host } = await load();
+      expect(host.cells.error.value).toBeNull();
+      (host.node.port as unknown as FakePort).onmessage?.({ data: { type: "error", message: "boom" } });
+      expect(host.cells.error.value?.message).toBe("boom");
+      expect(log).toHaveBeenCalled();
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it("a timed-out saveState() leaves no stale waiter: the next saveState() resolves with the next reply", async () => {
     vi.useFakeTimers();
     try {

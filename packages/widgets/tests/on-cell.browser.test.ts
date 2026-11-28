@@ -307,8 +307,10 @@ describe("step grid cell attachments", () => {
         });
       },
     });
+    expect(grid.error.value).toBeNull();
     sequencer.lanes.kick.length = 2;
     expect(errors).toHaveBeenCalledTimes(1);
+    expect(grid.error.value?.message).toBe("new cell failed");
     expect(registered).toHaveBeenCalledTimes(2);
     expect(returned).toHaveBeenCalledTimes(1);
     expect(surviving.get(1)!.isConnected).toBe(true);
