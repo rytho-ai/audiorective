@@ -6,6 +6,7 @@ export { AudioEngine, createEngine } from "./AudioEngine";
 export type { AudioEngineOptions } from "./AudioEngine";
 export { EngineEnvironmentError, LatencyUnknownError } from "./errors";
 export { Cell, cell, ReadonlyCell, readonlyCell, batch, untracked } from "./Cell";
+export type { CellOptions } from "./Cell";
 export { effect, computed } from "alien-signals";
 export { Spatial } from "./Spatial";
 export type { SpatialOptions } from "./Spatial";

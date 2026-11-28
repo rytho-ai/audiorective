@@ -246,9 +246,9 @@ export class Clip {
   index: number;
   /** Every option with its default; replaced by `configure`. */
   readonly options: ReadonlyCell<ClipSettings>;
-  /** Live volume in decibels. */
+  /** Live volume in decibels; a write that gives no finite gain (NaN, +Infinity) throws RangeError and is not stored. */
   readonly gainDb: Cell<number>;
-  /** Live pitch in semitones; a buffer's playback rate follows it, a factory reads it at start, a scheduler clip ignores it. */
+  /** Live pitch in semitones (NaN or an infinite rate throws RangeError and is not stored); a buffer's playback rate follows it, a factory reads it at start, a scheduler clip ignores it. */
   readonly pitch: Cell<number>;
   /** True from the clip's start until it is replaced, stopped or ends; independent of `queued`. */
   readonly playing: ReadonlyCell<boolean>;
@@ -305,8 +305,8 @@ export class Clip {
     });
     validate(this._opts.value);
     this.options = readonlyCell(this._opts);
-    this.gainDb = cell(o.gainDb ?? 0);
-    this.pitch = cell(o.pitch ?? 0);
+    this.gainDb = cell(o.gainDb ?? 0, { validate: validateGainDb });
+    this.pitch = cell(o.pitch ?? 0, { validate: validatePitch });
     this.playing = readonlyCell(this._playing);
     this.queued = readonlyCell(this._queued);
     this.startsAt = readonlyCell(this._startsAt);
@@ -409,6 +409,15 @@ export class Clip {
   cancelQueued(): boolean {
     return untracked(() => this.track.launcher._cancelClipQueued(this));
   }
+}
+
+// Refused before the cell stores them: a non-finite gain or rate reaching an AudioParam throws midway through applying it.
+function validateGainDb(db: number): void {
+  if (!Number.isFinite(10 ** (db / 20)))
+    throw new RangeError(`Clip Launcher requires a gainDb that gives a finite gain (-Infinity mutes), got ${db}.`);
+}
+function validatePitch(st: number): void {
+  if (!Number.isFinite(semis(st))) throw new RangeError(`Clip Launcher requires a finite pitch in semitones, got ${st}.`);
 }
 
 function validate(c: ClipSettings): void {

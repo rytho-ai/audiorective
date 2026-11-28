@@ -2,7 +2,7 @@ import { computed as alienComputed, effect as alienEffect } from "alien-signals"
 import type { ParamBind, ParamOptions, ComputedAccessor } from "./types";
 import { Param } from "./Param";
 import { SchedulableParam } from "./SchedulableParam";
-import { Cell, untracked, type ReadonlyCell } from "./Cell";
+import { Cell, untracked, type CellOptions, type ReadonlyCell } from "./Cell";
 import { defineGraph as defineGraphFn } from "./graph";
 import type { EdgeList, GraphHandle, ValidateEdges } from "./graph";
 import { addConnection, removeConnections } from "./connections";
@@ -43,8 +43,8 @@ export interface BuildHelpers {
       smoothing?: number;
     },
   ): SchedulableParam;
-  /** Creates tracked state initialized to the supplied value; no audio scheduling. */
-  cell<T>(initial: T): Cell<T>;
+  /** Creates tracked state initialized to the supplied value; no audio scheduling. `options.validate` refuses values before they are stored. */
+  cell<T>(initial: T, options?: CellOptions<T>): Cell<T>;
 }
 
 type Undeclared<Msg extends string> = { [K in Msg]: never };
@@ -120,6 +120,7 @@ export abstract class AudioProcessor<P extends ParamRegistry = ParamRegistry, C 
             max: options.max,
             step: options.step,
             display: options.display as ((value: number) => string) | undefined,
+            validate: options.validate as ((value: number) => void) | undefined,
             smoothing: options.smoothing,
           });
         }
@@ -147,7 +148,7 @@ export abstract class AudioProcessor<P extends ParamRegistry = ParamRegistry, C 
         });
       },
 
-      cell: <T>(initial: T) => new Cell<T>(initial),
+      cell: <T>(initial: T, options?: CellOptions<T>) => new Cell<T>(initial, options),
     };
 
     const result = build(helpers);

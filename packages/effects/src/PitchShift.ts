@@ -49,6 +49,9 @@ export class PitchShift extends Effect<{ pitch: Param<number> }> {
             default: opts.pitch ?? 0,
             min: -24,
             max: 24,
+            validate: (v) => {
+              if (!Number.isFinite(2 ** (v / 12))) throw new RangeError(`PitchShift needs a finite pitch in semitones, got ${v}.`);
+            },
             bind: { set: (v) => core.setPitch(v) },
           }),
         },

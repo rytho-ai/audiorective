@@ -117,6 +117,7 @@ interface ParamOptions<T> {
   max?: number;
   step?: number;
   display?: (value: T) => string;
+  validate?: (value: T) => void; // throws to refuse a value before it is stored
 }
 ```
 
@@ -148,7 +149,7 @@ class Param<T> implements Readable<T> {
 }
 ```
 
-When `bind.set` is provided, an internal effect pushes value changes to the target. Call `dispose()` to stop it. When `bind.get` is provided, the param starts from `bind.get()` rather than `default` (`default` still applies if the getter returns `undefined`); it is read once at construction, and later changes to the external state are not polled.
+When `bind.set` is provided, an internal effect pushes value changes to the target. Call `dispose()` to stop it. `min` and `max` are not enforced; to refuse a value, give `validate`: it runs on the initial value and before every `.value` or `$(x)` write, and a write it throws on is not stored and never reaches `bind.set` (the built-in effects use it for values their audio nodes cannot take, such as NaN). When `bind.get` is provided, the param starts from `bind.get()` rather than `default` (`default` still applies if the getter returns `undefined`); it is read once at construction, and later changes to the external state are not polled.
 
 ### SchedulableParamOptions
 
@@ -251,8 +252,13 @@ class Cell<T> implements Readable<T> {
   update(recipe: (draft: Draft<T>) => void): void;
 }
 
-function cell<T>(initial: T): Cell<T>;
+function cell<T>(initial: T, options?: CellOptions<T>): Cell<T>;
+interface CellOptions<T> {
+  validate?: (value: T) => void; // throws to refuse a value before it is stored
+}
 ```
+
+`validate` runs on the initial value and before every `.value`, `$(x)` or `update` write; a write it throws on leaves the cell unchanged and notifies no one. The `cell` build helper takes the same options.
 
 **Example:**
 
@@ -1458,6 +1464,7 @@ export type {
   ParamSpec,
   ParamBind,
   ParamOptions,
+  CellOptions,
   Readable,
   SignalAccessor,
   ComputedAccessor,

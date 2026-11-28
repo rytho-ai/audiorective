@@ -66,9 +66,11 @@ export class Filter extends Effect<{
           gain: param({ default: opts.gain ?? 0, bind: gain.offset, min: -40, max: 40, smoothing: SMOOTHING }),
           type: param<BiquadFilterType>({
             default: type,
+            validate: (t) => {
+              if (!FILTER_TYPES.includes(t)) throw new RangeError(`Effect: invalid filter type "${t}".`);
+            },
             bind: {
               set: (t) => {
-                if (!FILTER_TYPES.includes(t)) throw new RangeError(`Effect: invalid filter type "${t}".`);
                 stages.forEach((s) => {
                   s.type = t;
                 });

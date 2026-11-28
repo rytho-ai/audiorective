@@ -1,4 +1,5 @@
 import { signal, effect as alienEffect, getActiveSub, setActiveSub } from "alien-signals";
+import { guarded } from "./guarded";
 import { subscribeTo } from "./subscribe";
 import type { ParamOptions, SignalAccessor } from "./types";
 
@@ -25,7 +26,7 @@ export class Param<T> {
   constructor(options: ParamOptions<T>) {
     // `bind.get` seeds the value from the external state; `default` covers a getter that yields undefined.
     const initial = options.bind?.get?.();
-    this.$ = signal(initial === undefined ? options.default : initial);
+    this.$ = guarded(signal(initial === undefined ? options.default : initial), options.validate);
     this.label = options.label;
     this.min = options.min;
     this.max = options.max;

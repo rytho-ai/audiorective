@@ -14,6 +14,8 @@ export interface ParamOptions<T> extends Partial<Pick<ParamSpec, "label" | "min"
   bind?: ParamBind<T>;
   /** Optional value formatter for presentation; does not change the stored value. */
   display?: (value: T) => string;
+  /** Throws to refuse a value before it is stored: checked for the initial value and every `.value` or `$(x)` write, so a refused write leaves the param and its `bind` target unchanged. */
+  validate?: (value: T) => void;
 }
 
 /**

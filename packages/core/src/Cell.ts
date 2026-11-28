@@ -1,15 +1,22 @@
 import { computed, endBatch, setActiveSub, signal, startBatch } from "alien-signals";
 import { produce, type Draft } from "immer";
+import { guarded } from "./guarded";
 import { subscribeTo } from "./subscribe";
 import type { ComputedAccessor, SignalAccessor } from "./types";
+
+/** Options for a `Cell`. */
+export interface CellOptions<T> {
+  /** Throws to refuse a value before it is stored: checked for the initial value and every `.value`, `$(x)` or `update` write, so a refused write leaves the cell unchanged. */
+  validate?: (value: T) => void;
+}
 
 /** A writable observable value: `.value` reads (tracked) and writes, `subscribe` listens, `update` edits through immer. */
 export class Cell<T> {
   /** Raw alien-signals accessor: `$()` reads (tracked), `$(next)` writes. */
   readonly $: SignalAccessor<T>;
 
-  constructor(initial: T) {
-    this.$ = signal(initial);
+  constructor(initial: T, options?: CellOptions<T>) {
+    this.$ = guarded(signal(initial), options?.validate);
   }
 
   /** Calls `listener(value)` after each change (not on subscribe unless `immediate`); returns an unsubscribe function. Valid for useSyncExternalStore. */
@@ -31,9 +38,9 @@ export class Cell<T> {
   }
 }
 
-/** Creates a writable `Cell` holding `initial`. */
-export function cell<T>(initial: T): Cell<T> {
-  return new Cell(initial);
+/** Creates a writable `Cell` holding `initial`; `options.validate` refuses values before they are stored. */
+export function cell<T>(initial: T, options?: CellOptions<T>): Cell<T> {
+  return new Cell(initial, options);
 }
 
 /**

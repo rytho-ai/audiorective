@@ -73,6 +73,10 @@ export class Phaser extends Effect<{ frequency: SchedulableParam; Q: Schedulable
             default: octaves,
             min: 0,
             max: 10,
+            validate: (v) => {
+              if (!Number.isFinite(v) || !Number.isFinite(currentBase * 2 ** v))
+                throw new RangeError(`Phaser needs octaves that give a finite sweep, got ${v}.`);
+            },
             bind: {
               set: (v) => {
                 currentOctaves = v;
@@ -84,6 +88,10 @@ export class Phaser extends Effect<{ frequency: SchedulableParam; Q: Schedulable
             default: base,
             min: 20,
             max: 10000,
+            validate: (v) => {
+              if (!Number.isFinite(v) || !Number.isFinite(v * 2 ** currentOctaves))
+                throw new RangeError(`Phaser needs a baseFrequency that gives a finite sweep, got ${v}.`);
+            },
             bind: {
               set: (v) => {
                 currentBase = v;

@@ -117,5 +117,7 @@ See the `launch({ at })` bullet above; `ClipLauncher` events type `addEventListe
 | `Clip Launcher requires chance in 0..1, got ….` | `chance` is a probability. Pass a number from 0 to 1. |
 | `Clip Launcher can only replace the buffer of a buffer clip.` | `configure({ buffer })` on a `sound` factory or `scheduler` clip | Replace the clip with `track.setClip(slot, { buffer })`, or configure a buffer clip. |
 | `Clip Launcher requires a finite beat for `at`.` | `launch({ at })` got NaN or Infinity | Pass a transport beat. |
+| `Clip Launcher requires a gainDb that gives a finite gain (-Infinity mutes), got ….` | `gainDb` (option or `clip.gainDb.value`) was NaN, +Infinity or so large that the gain overflows. Nothing is stored. Pass decibels; `-Infinity` is silence. |
+| `Clip Launcher requires a finite pitch in semitones, got ….` | `pitch` (option or `clip.pitch.value`) was NaN or gives an infinite playback rate. Nothing is stored, and a playing clip keeps its rate. Pass semitones. |
 | `Clip Launcher requires repeatBeats above 0, got ….` | `repeatBeats` is the retrigger interval in beats of a `mode: "repeat"` clip. Pass a number above 0. |
 | `Clip Launcher requires a loop with endBeat after startBeat.` | A loop region needs `endBeat > startBeat`, in material beats. |
