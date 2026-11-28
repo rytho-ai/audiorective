@@ -49,6 +49,9 @@ type EffectCells<C> = C & { status: ReadonlyCell<EffectStatus>; error: ReadonlyC
 /** Time constant of the bypass/ready gate, seconds: about 15 ms to settle. */
 const GATE = 0.003;
 
+/** Longest dry-path delay, seconds, for a declared latency that is a `Param` (its value may grow later; larger values clamp). */
+const DRY_DELAY_MAX = 1;
+
 const detachedInitializers = new WeakMap<object, () => void>();
 
 /** @internal Initialize a detached snapshot without turning its saved bypass into a live fade. */
@@ -77,6 +80,7 @@ export abstract class Effect<P extends ParamRegistry = {}, C extends CellRegistr
   private readonly _sources: ConstantSourceNode[];
   private readonly _mixControl: { dry: readonly AudioNode[]; wet: AudioNode; wetValue: AudioParam; enabled: AudioParam };
   private readonly _mixCleanups: Array<() => void> = [];
+  private readonly _dryDelay: DelayNode | undefined;
   private readonly _status: Cell<EffectStatus>;
   private readonly _error: Cell<Error | null>;
   private _ready: Promise<void> = Promise.resolve();
@@ -105,11 +109,14 @@ export abstract class Effect<P extends ParamRegistry = {}, C extends CellRegistr
     wetSignal.start();
     enabled.start();
     ready.start();
+    const armProcessor = arm.output instanceof AudioProcessor ? arm.output : undefined;
+    let declared: number | Param<number> | undefined;
     const status = cell<EffectStatus>(arm.loading ? "loading" : "ready");
     const error = cell<Error | null>(null);
 
     super(ctx, (h) => {
       const built = build(h);
+      declared = built.latency;
       const wet = h.param({ default: opts.wet ?? 1, bind: wetSignal.offset, min: 0, max: 1, smoothing: SMOOTHING });
       const bypass = h.param<boolean>({ default: opts.bypass ?? false });
       const result: { params: EffectParams<P>; cells: EffectCells<C>; latency?: number | Param<number> } = {
@@ -132,9 +139,32 @@ export abstract class Effect<P extends ParamRegistry = {}, C extends CellRegistr
     const armInput = arm.input instanceof AudioProcessor ? arm.input.input : arm.input;
     if (!armInput) throw new Error("Effect: wet arm's input processor has no input node");
 
+    // A declared latency the graph cannot see (a bare-node wet arm) must still reach the dry arm,
+    // or bypass and partial wet would sound earlier than the wet arm. Delay dry by what the arm lacks.
+    const armLatency = () => armProcessor?.latency.value ?? 0;
+    const missing = () => (declared === undefined ? 0 : Math.max(0, (typeof declared === "number" ? declared : declared.value) - armLatency()));
+    let dryDelay: DelayNode | undefined;
+    if (declared !== undefined && (typeof declared !== "number" || missing() > 0)) {
+      const max = typeof declared === "number" ? declared / ctx.sampleRate : DRY_DELAY_MAX;
+      dryDelay = new DelayNode(ctx, { delayTime: Math.min(missing() / ctx.sampleRate, max), maxDelayTime: Math.max(max, 1 / ctx.sampleRate) });
+      const delay = dryDelay;
+      if (typeof declared !== "number" || armProcessor) {
+        this.effect(() => {
+          delay.delayTime.value = Math.min(missing() / ctx.sampleRate, max);
+        });
+      }
+    }
+    this._dryDelay = dryDelay;
+    const dryEdges: ReadonlyArray<readonly [AudioNode, AudioNode]> = dryDelay
+      ? [
+          [input, dryDelay],
+          [dryDelay, dry],
+        ]
+      : [[input, dry]];
+
     this.defineGraph(
       () => [
-        [input, dry],
+        ...dryEdges,
         [dry, output],
         [input, armInput],
         [arm.output, wetGain],
@@ -237,6 +267,7 @@ export abstract class Effect<P extends ParamRegistry = {}, C extends CellRegistr
     this._gone = true;
     detachedInitializers.delete(this);
     for (const cleanup of this._mixCleanups.splice(0)) cleanup();
+    this._dryDelay?.disconnect();
     for (const s of this._sources) {
       s.stop();
       s.disconnect();

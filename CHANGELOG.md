@@ -13,6 +13,10 @@ predates that API. See the "Version mismatches" note in the skill.
 
 ## [Unreleased]
 
+### Fixed
+
+- **effects:** an `Effect` whose wet arm is plain Web Audio nodes and whose build callback declares `latency` now delays its dry path by that latency (minus the arm processor's own latency, if any). Before, `effect.latency` reported the declared value but a bypassed or partly wet effect passed the dry signal earlier, so bypass and `wet: 0.5` were out of time with the wet arm. A declared `Param<number>` latency is followed live; built-in effects (declared `0`) get no extra node.
+
 ## [3.0.0-beta.0] - 2026-11-27
 
 ### Added
